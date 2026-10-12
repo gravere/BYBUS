@@ -15,7 +15,7 @@ import androidx.compose.ui.unit.dp
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
 @Composable
-internal fun LauncherDetails(page: String, state: LauncherUiState, onUpdate: () -> Unit,
+internal fun LauncherDetails(page: String, state: LauncherUiState,
     onGameStore: () -> Unit,
     onAppUpdate: () -> Unit,
     onSync: () -> Unit, onRestore: () -> Unit, onExport: () -> Unit, onSettings: () -> Unit,
@@ -25,12 +25,10 @@ internal fun LauncherDetails(page: String, state: LauncherUiState, onUpdate: () 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         when (page) {
             "tools" -> {
-                DetailSection("更新") {
-                    SheetAction(Glyph.Refresh, "应用更新", navigation = true, onClick = onAppUpdate)
+                DetailSection("版本与资源") {
+                    SheetAction(Glyph.Refresh, "更新", subtitle = "应用与汉化资源", navigation = true, onClick = onAppUpdate)
                     HorizontalDivider(color = C.Line)
                     SheetAction(Glyph.Import, "游戏更新", navigation = true, onClick = onGameStore)
-                    HorizontalDivider(color = C.Line)
-                    SheetAction(Glyph.Refresh, "检查汉化更新", enabled && state.container?.gameImported == true, onClick = onUpdate)
                 }
                 DetailSection("管理") {
                     SheetAction(Glyph.Import, "同步游戏", enabled && state.installedVersion != null,

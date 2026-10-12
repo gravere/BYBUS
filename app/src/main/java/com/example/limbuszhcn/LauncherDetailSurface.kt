@@ -49,7 +49,7 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
                 Crossfade(page, animationSpec = tween(180), modifier = Modifier.weight(1f).padding(end = 12.dp), label = "detail title") { active ->
                     Text(when (active) {
                         "tools" -> "设置与工具"; "status" -> "运行状态"; "error" -> "准备未完成"
-                        "project" -> "翻译项目"; "updates" -> "游戏更新"; "app-update" -> "应用更新"; else -> "关于"
+                        "project" -> "翻译项目"; "updates" -> "游戏更新"; "app-update" -> "更新"; else -> "关于"
                     }, style = MaterialTheme.typography.headlineSmall)
                 }
                 IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {

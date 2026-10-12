@@ -1,4 +1,5 @@
 import java.util.Properties
+import java.security.MessageDigest
 
 buildscript {
     repositories { mavenCentral() }
@@ -112,7 +113,7 @@ val verifyBundledGoogleAssets = tasks.register("verifyBundledGoogleAssets") {
     doLast {
         fun digest(files: List<java.io.File>): String {
             check(files.all { it.isFile }) { "Run python scripts/fetch-build-assets.py before building." }
-            val sha = java.security.MessageDigest.getInstance("SHA-256")
+            val sha = MessageDigest.getInstance("SHA-256")
             files.forEach { file -> file.inputStream().buffered().use { input ->
                 val buffer = ByteArray(128 * 1024)
                 while (true) { val count = input.read(buffer); if (count < 0) break; sha.update(buffer, 0, count) }

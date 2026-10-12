@@ -10,8 +10,9 @@ import com.example.limbuszhcn.selfupdate.AppUpdateState
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
 @Composable
-internal fun AppUpdatesPane(state: AppUpdateState, installEnabled: Boolean, onCheck: () -> Unit,
-    onDownload: () -> Unit, onInstall: () -> Unit, onCancel: () -> Unit, onOpenPage: () -> Unit) {
+internal fun AppUpdatesPane(state: AppUpdateState, launcher: LauncherUiState, onCheck: () -> Unit,
+    onDownload: () -> Unit, onInstall: () -> Unit, onCancel: () -> Unit, onOpenPage: () -> Unit,
+    onTranslationUpdate: () -> Unit) {
     val release = state.release
     val available = release?.newerThan(state.installedCode) == true
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -42,18 +43,28 @@ internal fun AppUpdatesPane(state: AppUpdateState, installEnabled: Boolean, onCh
         state.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
         if (available) {
             Button(onClick = if (state.ready) onInstall else onDownload,
-                enabled = !state.busy && (!state.ready || installEnabled),
+                enabled = !state.busy && (!state.ready || !launcher.busy),
                 modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)) {
                 Text(if (state.ready) "安装更新" else "下载更新")
             }
             Text("覆盖安装会保留游戏资源、登录和设置。", color = C.Muted, style = MaterialTheme.typography.bodySmall)
         }
-        DetailSection("更新来源") {
-            SheetAction(Glyph.Refresh, "检查更新", !state.busy, onClick = onCheck)
+        DetailSection("应用版本") {
+            SheetAction(Glyph.Refresh, "检查应用更新", !state.busy, onClick = onCheck)
             HorizontalDivider(color = C.Line)
             SheetAction(Glyph.External, "GitHub 发行页面", external = true, onClick = onOpenPage)
         }
         if (state.busy) TextButton(onClick = onCancel, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("取消") }
+        DetailSection("汉化资源") {
+            SheetAction(Glyph.Refresh, "检查汉化更新", !launcher.busy && launcher.container?.gameImported == true,
+                subtitle = if (launcher.busy && launcher.stage == "检查零协更新并校验汉化文件") launcher.message
+                    else launcher.translation?.let { "已安装 · ${it.version}" } ?: "都市零协会",
+                onClick = onTranslationUpdate)
+        }
+        if (!launcher.busy && launcher.stage == "检查零协更新并校验汉化文件") {
+            Text(launcher.message, color = if (launcher.failed) MaterialTheme.colorScheme.error else C.Muted,
+                style = MaterialTheme.typography.bodySmall)
+        }
     }
 }

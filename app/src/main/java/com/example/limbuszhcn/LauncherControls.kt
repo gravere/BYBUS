@@ -156,7 +156,10 @@ internal fun LauncherGlyph(glyph: Glyph, color: Color, modifier: Modifier = Modi
                         cubicTo(15f, 14.5f, 17.2f, 15.8f, 17.8f, 18.5f)
                     }, color, style = stroke)
                 }
-                Glyph.Refresh -> { drawArc(color, 35f, 280f, false, Offset(4f, 4f), Size(16f, 16f), style = stroke); path(15f, 3f, 19.5f, 6.5f, 15f, 8f) }
+                Glyph.Refresh -> {
+                    drawArc(color, 45f, 270f, false, Offset(4f, 4f), Size(16f, 16f), style = stroke)
+                    path(17.66f, 2.66f, 17.66f, 6.34f, 13.98f, 6.34f)
+                }
                 Glyph.Import -> { path(4f, 15f, 4f, 20f, 20f, 20f, 20f, 15f); line(12f, 3f, 12f, 15f); path(7f, 10f, 12f, 15f, 17f, 10f) }
                 Glyph.File -> {
                     path(14f, 3f, 5f, 3f, 5f, 21f, 19f, 21f, 19f, 8f, 14f, 3f, 14f, 8f, 19f, 8f)

@@ -162,10 +162,10 @@ internal fun LauncherScreen(
                         GameUpdatesPane(state, onCheckGameUpdate, onSelectGameSource, onOpenGamePage,
                             onOpenInstallSource, onImportGame, onInstallGame, onCancelGameInstall)
                     } else if (active == "app-update") {
-                        AppUpdatesPane(appUpdateState, !state.busy, onCheckAppUpdate, onDownloadAppUpdate,
-                            onInstallAppUpdate, onCancelAppUpdate, onOpenAppRelease)
+                        AppUpdatesPane(appUpdateState, state, onCheckAppUpdate, onDownloadAppUpdate,
+                            onInstallAppUpdate, onCancelAppUpdate, onOpenAppRelease, onUpdate)
                     } else {
-                        LauncherDetails(active, state, onUpdate = { close(); onUpdate() }, onGameStore = { openChild("updates") },
+                        LauncherDetails(active, state, onGameStore = { openChild("updates") },
                             onAppUpdate = { openChild("app-update"); onCheckAppUpdate() },
                             onSync = { close(); onSync() }, onRestore = { close(); onRestore() },
                             onExport = { close(); onExport() }, onSettings = { close(); onSettings() },

@@ -19,9 +19,9 @@
 
 | 更新对象 | 入口 | 行为 |
 | --- | --- | --- |
-| BYBUS 应用 | 设置与工具 → 应用更新 | 检查本仓库最新正式 Release，下载安装包，校验后交给系统确认覆盖安装 |
+| BYBUS 应用 | 设置与工具 → 更新 → 检查应用更新 | 检查本仓库最新正式 Release，下载安装包，校验后交给系统确认覆盖安装 |
 | 游戏本体 | 设置与工具 → 游戏更新 | 查看多个渠道的版本与安装入口，也可选择完整本地安装包；返回后识别系统版本并同步 |
-| 零协汉化 | 启动前自动检查，或「检查汉化更新」 | 获取零协公开 Release，校验文件并复用持久索引；已有有效缓存时支持网络失败回退 |
+| 零协汉化 | 启动前自动检查，或设置与工具 → 更新 → 检查汉化更新 | 获取零协公开 Release，校验文件并复用持久索引；已有有效缓存时支持网络失败回退 |
 
 应用更新不会要求 GitHub Token。它核对 APK 的 SHA-256、实际包名、递增版本号和签名，拒绝其他签名的安装包。检查失败会显示原因，不会误报「已是最新版本」。也可以打开 [GitHub 发行页面](https://github.com/gravere/LimbusZhLauncher/releases/latest)手动下载。
 
@@ -78,5 +78,20 @@ python scripts/prepare-release.py --apk app/build/outputs/apk/release/app-releas
 - [协作约定](AGENTS.md)
 
 首次公开提交为清理后的当前源码快照，不包含开发机器的 Git 调试历史、诊断包或签名材料。上游来源和版权说明保留。
+
+## 来源与致谢
+
+BYBUS 建立在以下项目和贡献者的工作之上。感谢他们开放源码、维护兼容能力、制作中文翻译与字体。
+
+| 项目 | 在 BYBUS 中的作用 |
+| --- | --- |
+| [BBBEANNN / limbusZhCN](https://github.com/BBBEANNN/limbusZhCN) | 基础项目及最初的 Android 汉化、容器接入工作；BYBUS 在其基础上继续修改 |
+| [都市零协会 / LocalizeLimbusCompany](https://github.com/LocalizeLimbusCompany/LocalizeLimbusCompany) | 简体中文翻译、汉化发布资源及所使用的中文字体来源；感谢译者、校对和维护者持续更新 |
+| [ServenScorpion / VirtualApp](https://github.com/ServenScorpion/VirtualApp) | 本仓库固定引入的 Android 容器源码；同时感谢 VirtualApp 原项目及相关贡献者 |
+| [microG / GmsCore](https://github.com/microg/GmsCore) | 容器中使用的 Google 服务兼容组件与 Companion |
+| [be5invis / Sarasa Gothic](https://github.com/be5invis/Sarasa-Gothic) | 游戏中文显示使用的更纱黑体（Sarasa Gothic SC Bold） |
+| [Android Open Source Project](https://source.android.com/) 与 [AndroidX](https://developer.android.com/jetpack/androidx) | Android 基础代码、apksig 签名验证与 Jetpack Compose 等界面组件 |
+
+以上项目保持各自的版权和许可证，列名不代表其作者参与或认可 BYBUS。固定版本、来源记录和许可文本见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，VirtualApp 引入记录见 [UPSTREAM.txt](third_party/virtualapp-upstream/UPSTREAM.txt)。
 
 本项目为非官方社区工具，与 Project Moon 无隶属或背书关系。项目原创代码采用 [GPL v3](LICENSE)；VirtualApp、microG、字体等依各自条款，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。中文翻译版权归都市零协会及其相应权利人。
