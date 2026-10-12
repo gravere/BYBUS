@@ -2,7 +2,7 @@
 
 Android《边狱巴士》简体中文启动器，使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeLimbusCompany)汉化资源。
 
-[下载 APK](https://github.com/gravere/bybus/releases/latest) · [使用说明](#开始使用) · [问题反馈](https://github.com/gravere/bybus/issues) · [构建指南](docs/building.md)
+[下载 APK](https://github.com/gravere/BYBUS/releases/latest) · [使用说明](#开始使用) · [问题反馈](https://github.com/gravere/BYBUS/issues) · [构建指南](docs/building.md)
 
 ## 功能
 
@@ -16,7 +16,7 @@ Android《边狱巴士》简体中文启动器，使用[都市零协会](https:/
 
 需要 **Android 8.0 及以上、ARM64（arm64-v8a）设备**，并已安装官方《边狱巴士》。实际运行兼容性取决于设备系统与游戏版本。
 
-1. 从 [Releases](https://github.com/gravere/bybus/releases/latest) 下载 `BYBUS-v1.0.1-arm64-v8a.apk` 并安装。
+1. 从 [Releases](https://github.com/gravere/BYBUS/releases/latest) 下载 `BYBUS-v1.0.1-arm64-v8a.apk` 并安装。
 2. 打开 BYBUS，点击「启动游戏」，按提示导入已安装的游戏。
 3. 首次进入时登录账号并下载游戏资源；完成后返回 BYBUS，再启动一次以应用汉化。
 4. 此后从 BYBUS 启动游戏即可。
@@ -31,11 +31,11 @@ BYBUS 与系统原版的数据独立，首次使用需要重新登录和下载�
 | 游戏 | 设置与工具 → 游戏更新 |
 | 汉化 | 启动前自动检查，也可在「更新」中手动检查 |
 
-手动更新 BYBUS 时，下载最新 APK **覆盖安装**即可保留数据。卸载应用或清除数据会删除容器内的资源和配置。各版本变化见 [Release 说明](https://github.com/gravere/bybus/releases)。
+手动更新 BYBUS 时，下载最新 APK **覆盖安装**即可保留数据。卸载应用或清除数据会删除容器内的资源和配置。各版本变化见 [Release 说明](https://github.com/gravere/BYBUS/releases)。
 
 ## 反馈与贡献
 
-遇到闪退、漏译或显示问题，请在 [Issues](https://github.com/gravere/bybus/issues/new/choose) 选择对应模板，提供设备型号、Android 版本、BYBUS 与游戏版本，以及复现步骤。运行问题可附上「设置与工具 → 导出诊断」生成的诊断包。
+遇到闪退、漏译或显示问题，请在 [Issues](https://github.com/gravere/BYBUS/issues/new/choose) 选择对应模板，提供设备型号、Android 版本、BYBUS 与游戏版本，以及复现步骤。运行问题可附上「设置与工具 → 导出诊断」生成的诊断包。
 
 欢迎提交改进建议和 Pull Request。参与开发请阅读[构建指南](docs/building.md)与[架构说明](docs/project-architecture.md)。
 

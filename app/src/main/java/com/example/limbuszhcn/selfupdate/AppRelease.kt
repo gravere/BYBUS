@@ -4,7 +4,7 @@ import org.json.JSONObject
 import java.net.URI
 
 internal object AppReleases {
-    const val REPOSITORY = "gravere/bybus"
+    const val REPOSITORY = "gravere/BYBUS"
     const val REPOSITORY_ID = "1415176635"
     const val PAGE = "https://github.com/$REPOSITORY/releases/latest"
     private const val API_PATH = "/repositories/$REPOSITORY_ID/releases"
