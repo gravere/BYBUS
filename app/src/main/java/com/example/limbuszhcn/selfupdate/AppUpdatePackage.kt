@@ -6,14 +6,13 @@ import android.os.Build
 import androidx.core.content.FileProvider
 import com.android.apksig.ApkVerifier
 import com.android.apksig.apk.ApkUtils
-import com.example.limbuszhcn.R
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.util.zip.ZipFile
 
-class AppUpdateFileProvider : FileProvider(R.xml.app_update_paths)
+class AppUpdateFileProvider : FileProvider()
 
 internal object AppUpdatePackage {
     @Suppress("DEPRECATION")

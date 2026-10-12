@@ -17,6 +17,26 @@ assert re.fullmatch(r'v\d+(?:\.\d+){1,2}', version)
 gradle = (root/'app/build.gradle.kts').read_text(encoding='utf-8')
 assert code == int(re.search(r'versionCode\s*=\s*(\d+)', gradle)[1]), 'Build differs from source version'
 assert version == re.search(r'versionName\s*=\s*"([^"]+)"', gradle)[1]
+# The static FileProvider URI helper reads manifest metadata, not a subclass constructor.
+manifest_tree = subprocess.check_output([args.aapt, 'dump', 'xmltree', str(args.apk.resolve()), 'AndroidManifest.xml'], text=True, encoding='utf-8')
+nodes = manifest_tree.splitlines()
+providers = []
+for i, line in enumerate(nodes):
+    if line.lstrip().startswith('E: provider '):
+        indent = len(line) - len(line.lstrip())
+        end = next((j for j in range(i+1, len(nodes)) if nodes[j].lstrip().startswith('E: ') and len(nodes[j])-len(nodes[j].lstrip()) <= indent), len(nodes))
+        block = '\n'.join(nodes[i:end])
+        if f'="{identity[1]}.app-updates"' in block:
+            providers.append(block)
+assert len(providers) == 1, 'Missing or duplicate app update FileProvider'
+provider = providers[0]
+assert re.search(r'android:exported\([^)]*\)=\(type 0x12\)0x0\b', provider), 'Update provider must not be exported'
+assert re.search(r'android:grantUriPermissions\([^)]*\)=\(type 0x12\)0xffffffff\b', provider), 'Update provider must allow temporary URI grants'
+assert '="android.support.FILE_PROVIDER_PATHS"' in provider, 'Missing FileProvider paths metadata; app update installation would fail'
+resource_ids = re.findall(r'android:resource\([^)]*\)=@(0x[a-fA-F0-9]+)', provider)
+resources = subprocess.check_output([args.aapt, 'dump', 'resources', str(args.apk.resolve())], text=True, encoding='utf-8')
+paths_id = re.search(r'resource (0x[a-fA-F0-9]+) '+re.escape(identity[1])+r':xml/app_update_paths:', resources)
+assert paths_id and resource_ids == [paths_id[1]], 'Update provider points to the wrong paths resource'
 apksigner = Path(args.aapt).with_name('apksigner.bat' if Path(args.aapt).suffix == '.exe' else 'apksigner')
 verification = subprocess.check_output([str(apksigner), 'verify', '--print-certs', str(args.apk.resolve())], text=True, encoding='utf-8')
 signer = re.search(r'Signer #1 certificate SHA-256 digest: ([a-f0-9]{64})', verification)
