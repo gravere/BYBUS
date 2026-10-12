@@ -4,9 +4,11 @@ import org.json.JSONObject
 import java.net.URI
 
 internal object AppReleases {
-    const val REPOSITORY = "gravere/LimbusZhLauncher"
+    const val REPOSITORY = "gravere/bybus"
+    const val REPOSITORY_ID = "1415176635"
     const val PAGE = "https://github.com/$REPOSITORY/releases/latest"
-    const val API = "https://api.github.com/repos/$REPOSITORY/releases"
+    private const val API_PATH = "/repositories/$REPOSITORY_ID/releases"
+    const val API = "https://api.github.com$API_PATH"
     const val PACKAGE = "com.example.limbuszhcn"
     const val APK = "BYBUS.apk"
     const val MANIFEST = "bybus-update.json"
@@ -17,8 +19,8 @@ internal object AppReleases {
         val uri = URI(url)
         if (uri.scheme != "https" || uri.rawUserInfo != null || uri.port !in listOf(-1, 443) || uri.fragment != null) return false
         when (uri.host) {
-            "api.github.com" -> uri.path == "/repos/$REPOSITORY/releases/latest" ||
-                uri.path.matches(Regex("/repos/$REPOSITORY/releases/assets/[1-9][0-9]*"))
+            "api.github.com" -> uri.path == "$API_PATH/latest" ||
+                uri.path.matches(Regex("$API_PATH/assets/[1-9][0-9]*"))
             "release-assets.githubusercontent.com", "objects.githubusercontent.com", "github-releases.githubusercontent.com" -> true
             else -> false
         }

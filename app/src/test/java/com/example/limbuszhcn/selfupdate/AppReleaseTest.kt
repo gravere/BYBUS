@@ -40,11 +40,17 @@ class AppReleaseTest {
         assertTrue(AppReleases.allowed("${AppReleases.API}/latest"))
         assertTrue(AppReleases.allowed("${AppReleases.API}/assets/123"))
         assertTrue(AppReleases.allowed("https://release-assets.githubusercontent.com/github-production-release-asset/a?token=signed"))
-        listOf("http://api.github.com/repos/gravere/LimbusZhLauncher/releases/latest",
-            "https://api.github.com.evil.test/repos/gravere/LimbusZhLauncher/releases/latest",
+        listOf(AppReleases.API.replace("https:", "http:") + "/latest",
+            AppReleases.API.replace("api.github.com", "api.github.com.evil.test") + "/latest",
+            "https://api.github.com/repositories/1415176636/releases/latest",
+            "https://api.github.com/repositories/${AppReleases.REPOSITORY_ID}/issues",
+            "https://api.github.com/repositories/${AppReleases.REPOSITORY_ID}/releases/assets/0",
+            "https://api.github.com/repos/${AppReleases.REPOSITORY}/releases/latest",
             "https://api.github.com/repos/other/app/releases/latest", "https://api.github.com/user",
             "https://release-assets.githubusercontent.com@evil.test/a", "https://name:secret@objects.githubusercontent.com/a",
             "https://objects.githubusercontent.com:4433/a", "file:///data/local/tmp/app.apk").forEach { assertFalse(it, AppReleases.allowed(it)) }
+        assertEquals("https://api.github.com/repositories/${AppReleases.REPOSITORY_ID}/releases/assets/123",
+            ReleaseAsset(123, "BYBUS.apk", 1000).url)
     }
     @Test fun boundedCopyRejectsOversizeAndCancellation() {
         rejects { AppUpdateRepository.copy(ByteArrayInputStream(ByteArray(5)), 4) { _, _ -> } }

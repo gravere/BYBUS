@@ -16,8 +16,8 @@ VirtualApp 源码已随仓库保存，无需初始化子模块。当前发行目
 ## 获取源码与依赖
 
 ```sh
-git clone https://github.com/gravere/LimbusZhLauncher.git
-cd LimbusZhLauncher
+git clone https://github.com/gravere/bybus.git
+cd bybus
 python scripts/fetch-build-assets.py
 ```
 
