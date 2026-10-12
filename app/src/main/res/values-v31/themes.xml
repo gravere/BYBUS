@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.LimbusZhCN" parent="Theme.LimbusZhCN.Base">
+        <item name="android:windowSplashScreenBackground">@color/launcher_window_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/launcher_starting_window</item>
+    </style>
+</resources>

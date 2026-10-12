@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="Theme.LimbusZhCN.Core" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/launcher_window_background</item>
+        <item name="android:statusBarColor">@color/launcher_window_background</item>
+        <item name="android:navigationBarColor">@color/launcher_window_background</item>
+        <item name="android:windowLightStatusBar">@bool/launcher_light_system_bars</item>
+        <item name="android:colorAccent">@color/launcher_window_accent</item>
+    </style>
+    <style name="Theme.LimbusZhCN.Base" parent="Theme.LimbusZhCN.Core" />
+    <style name="Theme.LimbusZhCN" parent="Theme.LimbusZhCN.Base" />
+</resources>

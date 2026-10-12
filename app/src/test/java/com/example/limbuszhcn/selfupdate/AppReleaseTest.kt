@@ -1,0 +1,65 @@
+package com.example.limbuszhcn.selfupdate
+
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.*
+import org.junit.Test
+import java.io.ByteArrayInputStream
+import java.nio.file.Files
+
+class AppReleaseTest {
+    private fun release() = JSONObject().put("tag_name", "v1.0-build.41").put("draft", false).put("prerelease", false)
+        .put("assets", JSONArray().put(JSONObject().put("id", 123L).put("name", "BYBUS.apk").put("state", "uploaded").put("size", 1000L)))
+    private fun manifest() = JSONObject().put("schemaVersion", 1).put("packageName", AppReleases.PACKAGE)
+        .put("versionName", "v1.0").put("versionCode", 41).put("minSdk", 26).put("apkName", "BYBUS.apk")
+        .put("sha256", "a".repeat(64)).put("size", 1000L).put("notes", "保留数据升级")
+    private fun rejects(action: () -> Unit) { assertThrows(Exception::class.java, action) }
+
+    @Test fun usesMonotonicBuildCodeEvenWhenDisplayVersionIsUnchanged() {
+        val parsed = AppRelease.parse(release(), manifest())
+        assertTrue(parsed.newerThan(40)); assertFalse(parsed.newerThan(41)); assertFalse(parsed.newerThan(42))
+    }
+    @Test fun rejectsDraftAndPrerelease() {
+        rejects { AppRelease.parse(release().put("draft", true), manifest()) }
+        rejects { AppRelease.parse(release().put("prerelease", true), manifest()) }
+    }
+    @Test fun rejectsWrongAppAndMismatchedReleaseCode() {
+        rejects { AppRelease.parse(release(), manifest().put("packageName", "com.ProjectMoon.LimbusCompany")) }
+        rejects { AppRelease.parse(release(), manifest().put("versionCode", 42)) }
+        rejects { AppRelease.parse(release(), manifest().put("schemaVersion", 2)) }
+    }
+    @Test fun rejectsAmbiguousIncompleteOrOversizedAssets() {
+        val duplicate = release().apply { getJSONArray("assets").put(getJSONArray("assets").getJSONObject(0)) }
+        rejects { AppRelease.parse(duplicate, manifest()) }
+        rejects { AppRelease.parse(release().apply { getJSONArray("assets").getJSONObject(0).put("state", "new") }, manifest()) }
+        rejects { AppRelease.parse(release().apply { getJSONArray("assets").getJSONObject(0).put("size", AppReleases.MAX_APK_BYTES + 1) }, manifest()) }
+        rejects { AppRelease.parse(release(), manifest().put("size", 999)) }
+        rejects { AppRelease.parse(release(), manifest().put("sha256", "bad")) }
+    }
+    @Test fun onlyTrustsExactGitHubHostsAndRepositoryEndpoints() {
+        assertTrue(AppReleases.allowed("${AppReleases.API}/latest"))
+        assertTrue(AppReleases.allowed("${AppReleases.API}/assets/123"))
+        assertTrue(AppReleases.allowed("https://release-assets.githubusercontent.com/github-production-release-asset/a?token=signed"))
+        listOf("http://api.github.com/repos/gravere/LimbusZhLauncher/releases/latest",
+            "https://api.github.com.evil.test/repos/gravere/LimbusZhLauncher/releases/latest",
+            "https://api.github.com/repos/other/app/releases/latest", "https://api.github.com/user",
+            "https://release-assets.githubusercontent.com@evil.test/a", "https://name:secret@objects.githubusercontent.com/a",
+            "https://objects.githubusercontent.com:4433/a", "file:///data/local/tmp/app.apk").forEach { assertFalse(it, AppReleases.allowed(it)) }
+    }
+    @Test fun boundedCopyRejectsOversizeAndCancellation() {
+        rejects { AppUpdateRepository.copy(ByteArrayInputStream(ByteArray(5)), 4) { _, _ -> } }
+        try {
+            Thread.currentThread().interrupt()
+            assertThrows(java.util.concurrent.CancellationException::class.java) {
+                AppUpdateRepository.copy(ByteArrayInputStream(ByteArray(1)), 1) { _, _ -> }
+            }
+        } finally { Thread.interrupted() }
+    }
+    @Test fun hashChangesWhenCachedFileChanges() {
+        val file = Files.createTempFile("bybus-update", ".apk").toFile()
+        try {
+            file.writeText("original"); val original = AppUpdateRepository.hash(file)
+            file.writeText("modified"); assertNotEquals(original, AppUpdateRepository.hash(file))
+        } finally { file.delete() }
+    }
+}

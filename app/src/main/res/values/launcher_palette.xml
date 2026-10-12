@@ -1,0 +1,6 @@
+<resources>
+    <color name="launcher_window_background">#F7F7F2</color>
+    <color name="launcher_window_accent">#315A4C</color>
+    <color name="launcher_icon_background">#254B40</color>
+    <bool name="launcher_light_system_bars">true</bool>
+</resources>

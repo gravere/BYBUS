@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+        <package android:name="com.ProjectMoon.LimbusCompany" />
+        <package android:name="com.android.vending" />
+        <package android:name="com.uptodown" />
+        <package android:name="com.apkpure.aegon" />
+        <package android:name="com.qooapp.qoohelper" />
+        <package android:name="com.taptap" />
+        <package android:name="com.taptap.global" />
+        <!-- Android 11 起 PackageManager 查询受限；显式声明常见 ROM 的后台权限管理器，
+             才能在 vivo/iQOO、MIUI、ColorOS、EMUI 等设备上验证并打开对应设置页。 -->
+        <package android:name="com.iqoo.secure" />
+        <package android:name="com.vivo.permissionmanager" />
+        <package android:name="com.miui.securitycenter" />
+        <package android:name="com.coloros.safecenter" />
+        <package android:name="com.oplus.battery" />
+        <package android:name="com.huawei.systemmanager" />
+        <package android:name="com.hihonor.systemmanager" />
+        <package android:name="com.meizu.safe" />
+    </queries>
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <application
+        android:name=".LimbusZhCNApplication"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.LimbusZhCN"
+        tools:targetApi="31">
+        <receiver android:name=".update.GameInstallReceiver" android:exported="false" />
+        <provider
+            android:name=".selfupdate.AppUpdateFileProvider"
+            android:authorities="${applicationId}.app-updates"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.LimbusZhCN">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

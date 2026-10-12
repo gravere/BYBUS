@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- The optional legacy guest notification checks permission and catches failures.
+         Do not declare a host permission solely for it: that enables guest prompts. -->
+    <issue id="NotificationPermission">
+        <ignore regexp=".*com\.lody\.virtual\.client\.hook\.proxies\.am\.MethodProxies\.SetServiceForeground.*" />
+    </issue>
+</lint>

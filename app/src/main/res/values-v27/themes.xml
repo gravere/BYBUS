@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.LimbusZhCN.Base" parent="Theme.LimbusZhCN.Core">
+        <item name="android:windowLightNavigationBar">@bool/launcher_light_system_bars</item>
+    </style>
+</resources>
