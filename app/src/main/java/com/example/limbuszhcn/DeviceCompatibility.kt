@@ -37,28 +37,34 @@ internal data class DeviceCompatibilityReport(
     val isIgnoringBatteryOptimizations: Boolean,
     val warnings: List<String>
 ) {
-    /** 当前设备是否满足容器最基本的系统版本与 arm64 条件。 */
+    /** Match the shipped native runtime boundary, not merely the APK's minSdk. */
     val isSupported: Boolean
-        get() = sdkInt >= MIN_SUPPORTED_SDK && hasRequiredAbi
+        get() = hasRequiredAbi && is64BitProcess &&
+            com.lody.virtual.helper.compat.LimbusNativeStructure.supportsEnvironment(sdkInt, REQUIRED_ABI, pageSizeBytes)
+
+    val blockingReason: String?
+        get() = when {
+            sdkInt != 36 -> "当前游戏兼容方案仅支持 Android 16（API 36）"
+            !hasRequiredAbi || !is64BitProcess -> "当前游戏兼容方案需要 64 位 ARM 运行环境"
+            pageSizeBytes != 4096L -> if (pageSizeBytes == 0L) "无法确认系统内存页大小" else "当前游戏兼容方案仅支持 4 KB 内存页"
+            else -> null
+        }
 
     /** 面向主界面展示的简短状态。 */
     val statusLabel: String
         get() = when {
-            !isSupported -> "不兼容"
+            !isSupported -> "设备暂不支持"
             warnings.isNotEmpty() -> "有待确认项"
-            else -> "基础兼容"
+            else -> "设备条件满足"
         }
 
     /** 汇总需要用户关注的建议；没有提醒时返回稳定状态说明。 */
     val recommendation: String
-        get() = warnings.joinToString("；").ifBlank {
+        get() = (listOfNotNull(blockingReason) + warnings).joinToString("；").ifBlank {
             "系统与 arm64 基础条件满足；游戏运行仍需实际确认"
         }
 
     companion object {
-        /** 当前 Limbus Company 本体与汉化器共同支持的最低 API。 */
-        const val MIN_SUPPORTED_SDK = 26
-
         /** 当前游戏 Android 包使用的原生 ABI。 */
         const val REQUIRED_ABI = "arm64-v8a"
     }
@@ -84,18 +90,9 @@ internal class DeviceCompatibility(private val context: Context) {
         }.getOrDefault(false)
         val hasArm64 = Build.SUPPORTED_64_BIT_ABIS.contains(DeviceCompatibilityReport.REQUIRED_ABI)
         val warnings = buildList {
-            if (Build.VERSION.SDK_INT < DeviceCompatibilityReport.MIN_SUPPORTED_SDK) {
-                add("系统低于 Android 8.0，当前游戏本体无法运行")
-            }
-            if (!hasArm64) {
-                add("系统没有 arm64 运行环境，无法加载游戏与汉化原生库")
-            }
             if (isAggressiveBackgroundRom() && !ignoresBatteryOptimizations) {
                 // 国产 ROM 经常在 Activity 切换到游戏后清理容器 server；这里只提示用户显式放行。
                 add("建议在系统设置中允许自启动、后台高耗电和后台运行")
-            }
-            if (readPageSizeBytes() == 16_384L) {
-                add("当前为 16 KB 内存页，内置 microG 的原生依赖尚未完成此环境验证")
             }
             if (activityManager.isLowRamDevice) {
                 add("设备处于低内存模式，启动前建议关闭其他大型应用")

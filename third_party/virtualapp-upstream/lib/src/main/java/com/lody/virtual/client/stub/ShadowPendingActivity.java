@@ -16,6 +16,7 @@ import com.lody.virtual.helper.compat.IntentCompat;
 import com.lody.virtual.helper.compat.LimbusActivityCompat;
 import com.lody.virtual.helper.compat.LimbusBillingUiPolicy;
 import com.lody.virtual.helper.compat.LimbusBillingDiagnostics;
+import com.lody.virtual.helper.compat.PendingUiState;
 import com.lody.virtual.helper.utils.ComponentUtils;
 import com.lody.virtual.remote.ClientConfig;
 import com.lody.virtual.remote.IntentSenderData;
@@ -35,10 +36,11 @@ import java.lang.reflect.Method;
 
 public class ShadowPendingActivity extends Activity {
 
-    private static final int GOOGLE_IDENTITY_UI_REQUEST = 0x4c47;
-    private static final int BILLING_UI_REQUEST = 0x4c42;
+    private static final int GOOGLE_IDENTITY_UI_REQUEST = PendingUiState.GOOGLE_IDENTITY;
+    private static final int BILLING_UI_REQUEST = PendingUiState.BILLING;
     private static final String BILLING_IN_FLIGHT = "bybus.billing_ui_in_flight";
-    private boolean billingInFlight;
+    private static final String PENDING_UI_REQUEST = "bybus.pending_ui_request";
+    private final PendingUiState pendingUi = new PendingUiState();
 
     /**
      * 初始化 PendingIntent 桥接页面，并将目标请求分发到对应的虚拟 Activity。
@@ -51,10 +53,13 @@ public class ShadowPendingActivity extends Activity {
         // ColorOS 兜底，避免生命周期返回后生成 PhoneWindow 导航栏时解引用空服务。
         AppInstrumentation.installOplusActivityManagerFallbackIfNeeded(this);
         super.onCreate(savedInstanceState);
-        if (savedInstanceState != null && savedInstanceState.getBoolean(BILLING_IN_FLIGHT, false)) {
+        if (savedInstanceState != null) {
+            pendingUi.restore(savedInstanceState.getInt(PENDING_UI_REQUEST,
+                    savedInstanceState.getBoolean(BILLING_IN_FLIGHT, false) ? BILLING_UI_REQUEST : 0));
+        }
+        if (pendingUi.waiting()) {
             // Android retains the child/result relationship across recreation. Do not open a
             // second checkout or let this translucent bridge finish before the child returns.
-            billingInFlight = true;
             return;
         }
         Intent originalIntent = getIntent();
@@ -138,12 +143,12 @@ public class ShadowPendingActivity extends Activity {
                 String sourcePackage = ext.resultTo == null ? null
                         : VActivityManager.get().getPackageForToken(ext.resultTo);
                 if (LimbusBillingUiPolicy.canRelayResult(sourcePackage, ext.resultTo != null, ext.requestCode)) {
-                    billingInFlight = true;
+                    pendingUi.begin(BILLING_UI_REQUEST);
                     if (startVirtualPendingUiForResult(finalIntent, info, data.userId, ext, BILLING_UI_REQUEST)) {
                         LimbusBillingDiagnostics.record("event=billing_ui_bridge_started");
                         return;
                     }
-                    billingInFlight = false;
+                    pendingUi.finish(BILLING_UI_REQUEST);
                     LimbusBillingDiagnostics.record("event=billing_ui_bridge_start_failed");
                     // A real launch failure is an error, not a successful or fabricated purchase.
                     setResult(RESULT_CANCELED, new Intent().putExtra("RESPONSE_CODE", 6));
@@ -152,9 +157,12 @@ public class ShadowPendingActivity extends Activity {
                 }
                 LimbusBillingDiagnostics.record("event=billing_ui_bridge_source_unavailable");
             }
-            if (isGoogleIdentityUi(finalIntent)
-                    && startVirtualPendingUiForResult(finalIntent, info, data.userId, ext, GOOGLE_IDENTITY_UI_REQUEST)) {
-                return;
+            if (isGoogleIdentityUi(finalIntent)) {
+                pendingUi.begin(GOOGLE_IDENTITY_UI_REQUEST);
+                if (startVirtualPendingUiForResult(finalIntent, info, data.userId, ext, GOOGLE_IDENTITY_UI_REQUEST)) {
+                    return;
+                }
+                pendingUi.finish(GOOGLE_IDENTITY_UI_REQUEST);
             }
             int res = VActivityManager.get().startActivity(finalIntent, info, ext.resultTo, ext.options, ext.resultWho, ext.requestCode, data.userId);
             if (res != 0 && ext.resultTo != null && ext.requestCode > 0) {
@@ -180,14 +188,14 @@ public class ShadowPendingActivity extends Activity {
     @Override
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
-        if (billingInFlight) outState.putBoolean(BILLING_IN_FLIGHT, true);
+        outState.putInt(PENDING_UI_REQUEST, pendingUi.savedRequest());
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (!pendingUi.finish(requestCode)) return;
         if (requestCode == BILLING_UI_REQUEST) {
-            billingInFlight = false;
             LimbusBillingDiagnostics.record("event=billing_ui_bridge_result resultCode=" + resultCode
                     + " dataPresent=" + (data != null ? 1 : 0));
             // Preserve the complete real cancellation/error/purchase result without inspecting it.
@@ -197,7 +205,7 @@ public class ShadowPendingActivity extends Activity {
         }
         if (requestCode == GOOGLE_IDENTITY_UI_REQUEST) {
             Log.i("LimbusVA", "Relay Google Identity UI result resultCode=" + resultCode
-                    + " data=" + data);
+                    + " dataPresent=" + (data != null));
             setResult(resultCode, data);
             finish();
         }

@@ -84,6 +84,7 @@ internal class LauncherViewModel(application: Application) : AndroidViewModel(ap
     fun restore() = coordinator.restore()
     fun exportDiagnostics() = coordinator.exportDiagnostics()
     fun exportPickerOpened() = coordinator.exportPickerOpened()
+    fun exportPickerFailed(error: Throwable) = coordinator.exportPickerFailed(error)
     fun saveDiagnostics(destination: Uri?) = coordinator.saveDiagnostics(destination)
     fun showError(error: Throwable) = coordinator.showError(error)
 }

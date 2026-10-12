@@ -25,7 +25,7 @@ internal class DebugLogExporter(private val context: Context) {
         containerStatus: ContainerStatus,
         activeTranslation: PatchInstallSummary?
     ): File {
-        val outputDirectory = File(context.cacheDir, "diagnostics").apply {
+        val outputDirectory = File(context.filesDir, "diagnostics").apply {
             require(isDirectory || mkdirs()) { "无法创建诊断目录" }
             listFiles()?.filter { it.name.startsWith(FILE_PREFIX) }?.forEach(File::delete)
         }

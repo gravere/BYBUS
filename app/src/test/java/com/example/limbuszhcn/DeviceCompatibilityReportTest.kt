@@ -9,13 +9,13 @@ import org.junit.Test
  * 验证设备兼容报告不会把不满足系统版本或 ABI 的机型误报为可用。
  */
 class DeviceCompatibilityReportTest {
-    /** 验证 Android 8 arm64 设备满足游戏与容器的基础条件。 */
+    /** 安装下限不能冒充游戏原生兼容范围。 */
     @Test
-    fun acceptsAndroidEightArm64Device() {
+    fun rejectsInstallationOnlyAndroidEightDevice() {
         val report = report(sdkInt = 26, hasRequiredAbi = true)
 
-        assertTrue(report.isSupported)
-        assertEquals("基础兼容", report.statusLabel)
+        assertFalse(report.isSupported)
+        assertTrue(report.recommendation.contains("Android 16"))
     }
 
     /** 验证只有 32 位系统环境的设备会明确显示不兼容。 */
@@ -24,20 +24,32 @@ class DeviceCompatibilityReportTest {
         val report = report(sdkInt = 35, hasRequiredAbi = false)
 
         assertFalse(report.isSupported)
-        assertEquals("不兼容", report.statusLabel)
+        assertEquals("设备暂不支持", report.statusLabel)
     }
 
     /** 基础条件通过时，提醒项仍需单独确认，不能被误报为全面兼容。 */
     @Test
     fun marksSupportedDeviceThatNeedsOemSettings() {
         val report = report(
-            sdkInt = 35,
+            sdkInt = 36,
             hasRequiredAbi = true,
             warnings = listOf("需要允许后台运行")
         )
 
         assertTrue(report.isSupported)
         assertEquals("有待确认项", report.statusLabel)
+    }
+
+    @Test fun acceptsOnlyVerifiedProcessAndPageSize() {
+        val valid = report(36, true)
+        assertTrue(valid.isSupported)
+        assertEquals("设备条件满足", valid.statusLabel)
+        listOf(valid.copy(sdkInt = 35), valid.copy(sdkInt = 37),
+            valid.copy(is64BitProcess = false), valid.copy(pageSizeBytes = 16384),
+            valid.copy(pageSizeBytes = 0)).forEach {
+            assertFalse(it.isSupported)
+            assertFalse(it.blockingReason.isNullOrBlank())
+        }
     }
 
     /** 构造不依赖 Android 运行时的测试报告。 */

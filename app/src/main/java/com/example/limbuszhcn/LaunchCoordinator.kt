@@ -66,7 +66,8 @@ internal class LaunchCoordinator private constructor(application: Application) {
     private val gameUpdates = GameUpdateSource.entries.associateWith { source ->
         com.example.limbuszhcn.update.GameUpdateRepository(app.filesDir.toPath().resolve("game-update-${source.key}.properties"), source = source)
     }
-    private var pendingArchive: File? = null
+    private val diagnosticExport = DiagnosticExportState(app.filesDir.toPath().resolve("diagnostics"))
+    private var exportSaveQueued = false
     private val packageUpdates = GamePackageInstaller(app)
     private var preparedUpdate: PreparedGameUpdate? = null
     private val runtime by lazy {
@@ -89,6 +90,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
                 .onFailure { PersistentDiagnosticLog.error(TAG, "Recover package update", it) }
         }
         refresh()
+        queueDiagnosticSave(recovering = true)
     }
 
     private fun publish(change: (LauncherUiState) -> LauncherUiState) {
@@ -98,7 +100,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
     private fun stage(label: String, step: Int = -1) = publish { it.copy(stage = label, launchStep = step) }
 
     private fun perform(label: String, allowPackageUpdate: Boolean = false, task: () -> String) {
-        if (state.busy || pendingArchive != null) return
+        if (state.busy || exportSaveQueued) return
         if (!allowPackageUpdate && (state.gameInstallPending || state.gameInstallReview != null)) {
             state = state.copy(updatesRequest = state.updatesRequest + 1)
             return
@@ -314,27 +316,79 @@ internal class LaunchCoordinator private constructor(application: Application) {
     }
 
     fun exportDiagnostics() = perform("正在生成诊断包") {
-        val archive = DebugLogExporter(app).export(readGameStatus().first, installer().activeInstallSummary())
-        publish { pendingArchive = archive; it.copy(exportRequest = archive) }
+        val previous = runCatching { diagnosticExport.read() }.getOrElse {
+            diagnosticExport.discardMarker()
+            null
+        }
+        val archive = previous?.archive?.toFile() ?: run {
+            DebugLogExporter(app).export(readGameStatus().first, installer().activeInstallSummary())
+                .also { diagnosticExport.begin(it.toPath()) }
+        }
+        publish { it.copy(exportRequest = archive) }
         "诊断包已生成，请选择保存位置"
     }
 
     fun exportPickerOpened() { state = state.copy(exportRequest = null) }
 
     fun saveDiagnostics(destination: Uri?) {
-        val archive = pendingArchive ?: return
-        pendingArchive = null
-        perform(if (destination == null) "取消导出" else "正在保存诊断包") {
-            try {
-                if (destination == null) "已取消导出诊断包"
-                else {
-                    app.contentResolver.openOutputStream(destination, "w").use { output ->
-                        requireNotNull(output) { "无法打开所选保存位置" }
-                        archive.inputStream().use { it.copyTo(output) }
+        if (exportSaveQueued) return
+        val selected = runCatching {
+            destination?.let {
+                runCatching { app.contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
+            }
+            // Persist the result before queuing: startup recovery must not swallow it.
+            diagnosticExport.selected(destination?.toString())
+        }
+        if (selected.isFailure) {
+            runCatching { diagnosticExport.discardMarker() }
+            showError(requireNotNull(selected.exceptionOrNull()))
+            return
+        }
+        queueDiagnosticSave()
+    }
+
+    fun exportPickerFailed(error: Throwable) {
+        state = state.copy(exportRequest = null)
+        // Keep the archive so a later tap can retry the picker.
+        showError(error)
+    }
+
+    private fun queueDiagnosticSave(recovering: Boolean = false) {
+        if (!recovering) {
+            exportSaveQueued = true
+            state = state.copy(busy = true, stage = "正在保存诊断包", failed = false)
+        }
+        worker.execute {
+            val result = runCatching {
+                com.example.limbuszhcn.storage.OperationLock.run(app.filesDir.toPath()) {
+                    val pending = diagnosticExport.read() ?: return@run null
+                    if (!pending.cancelled && pending.destination == null) return@run null
+                    publish { it.copy(busy = true, stage = "正在保存诊断包") }
+                    if (pending.cancelled) {
+                        diagnosticExport.complete()
+                        "已取消导出诊断包"
+                    } else {
+                        val uri = Uri.parse(requireNotNull(pending.destination))
+                        app.contentResolver.openOutputStream(uri, "wt").use { output ->
+                            requireNotNull(output) { "无法打开所选保存位置，请重新导出" }
+                            pending.archive.toFile().inputStream().use { it.copyTo(output) }
+                        }
+                        diagnosticExport.complete()
+                        runCatching { app.contentResolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
+                        "诊断包已保存"
                     }
-                    "诊断包已保存"
                 }
-            } finally { archive.delete() }
+            }
+            result.exceptionOrNull()?.let {
+                PersistentDiagnosticLog.error(TAG, "Save diagnostics", it)
+                runCatching { diagnosticExport.retry() }.onFailure { diagnosticExport.discardMarker() }
+            }
+            publish {
+                exportSaveQueued = false
+                if (result.isSuccess && result.getOrNull() == null) it
+                else it.copy(busy = false, failed = result.isFailure,
+                    message = result.getOrElse { error -> error.userMessage() }.orEmpty())
+            }
         }
     }
 

@@ -1,16 +1,22 @@
-# BYBUS v1.0.1
+# BYBUS v1.0.3
 
-[下载 Android ARM64 安装包](https://github.com/gravere/BYBUS/releases/download/v1.0.1-build.44/BYBUS-v1.0.1-arm64-v8a.apk)
+[下载 Android ARM64 安装包](https://github.com/gravere/BYBUS/releases/download/v1.0.3-build.46/BYBUS-v1.0.3-arm64-v8a.apk)
 
 ## 更新内容
 
-- 更新项目地址为 `gravere/BYBUS`，同步文档、反馈和下载入口。
-- 修复仓库改名后应用无法检查更新的问题。
+- 修复同文词条被其他语境的译文覆盖，以及部分文本随显示顺序出现漏译的问题。
+- 修复字体引用和材质状态恢复异常，避免中文被错误图集渲染成碎字。
+- 修复 Google 登录页面重建时重复打开，以及诊断导出被系统中断后无法继续的问题。
+- 明确设备兼容范围，区分设备暂不支持与游戏构建待适配。
 
 ## 安装
 
-下载 `BYBUS-v1.0.1-arm64-v8a.apk`，覆盖安装即可保留游戏资源与配置。首次使用请阅读[使用说明](https://github.com/gravere/BYBUS#开始使用)。
+下载 `BYBUS-v1.0.3-arm64-v8a.apk`，覆盖安装即可保留游戏资源与配置。首次使用请阅读[使用说明](https://github.com/gravere/BYBUS#开始使用)。
 
 v1.0 用户请手动覆盖安装本版一次，之后可继续在应用内更新。
 
 附件中的 `BYBUS.apk` 用于应用内更新，与带版本的安装包内容一致。校验值见 `SHA256SUMS.txt`。
+
+## 验证范围
+
+本版完成本地构建、针对性回归检查和安装包校验；尚未完成真机画面验证。

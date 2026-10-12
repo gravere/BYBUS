@@ -55,9 +55,42 @@ class TranslationIndexCompilerTest {
             add(record("JP_UI.json", "c", "dialog", "了解", "收到"))
         }
         val compiled = compiler.compile("v", "archive")
-        assertEquals("罪人", compiled.uniqueEntries["囚人"])
-        assertNull(compiled.uniqueEntries["了解"])
+        assertEquals("囚人", compiled.uniqueEntries["囚人"])
+        assertEquals("了解", compiled.uniqueEntries["了解"])
         assertFalse(compiled.termEntries.containsKey("了解"))
+    }
+
+    @Test
+    fun identityRecordsAndTranslationChainsKeepTheirOwnContexts() {
+        val compiler = TranslationIndexCompiler()
+        fun add(id: String, source: String, target: String) = compiler.add(
+            record("BattleKeywords.json", id, "name", source, target).copy(stableId = id))
+        add("identity", "精神", "精神")
+        repeat(10) { add("translated-$it", "精神", "精神力") }
+        add("guard", "ガード", "防御")
+        add("defense", "防御", "抵御")
+        add("unused", "unused", "unused")
+        add("unused-translated", "unused", "未使用")
+        val result = compiler.compile("v", "archive")
+        fun target(id: String, source: String) = result.contextualEntries[
+            TranslationIndexCompiler.contextKey(id, "name", source)] ?: result.uniqueEntries[source] ?: source
+        assertEquals("精神", target("identity", "精神"))
+        assertEquals("精神力", target("translated-0", "精神"))
+        assertEquals("抵御", target("defense", "防御"))
+        assertEquals("防御", target("guard", "ガード"))
+        assertEquals("unused", target("unused", "unused"))
+        assertEquals("未使用", target("unused-translated", "unused"))
+        assertEquals("精神", result.uniqueEntries["精神"])
+        assertFalse(result.termEntries.containsKey("精神"))
+    }
+
+    @Test
+    fun reusedIdentityWithConflictingTargetsPreservesOriginal() {
+        val result = TranslationIndexCompiler().apply {
+            add(record("A", "same", "name", "保存", "保存").copy(stableId = "same"))
+            add(record("B", "same", "name", "保存", "检查点").copy(stableId = "same"))
+        }.compile("v", "archive")
+        assertEquals("保存", result.contextualEntries[TranslationIndexCompiler.contextKey("same", "name", "保存")])
     }
 
     @Test

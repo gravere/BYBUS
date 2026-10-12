@@ -14,6 +14,8 @@ internal class GameLaunchCompatibility(private val context: Context) {
     private var approved: GameBuildIdentity? = null
 
     fun requireApproved(): GameBuildIdentity {
+        val device = com.example.limbuszhcn.DeviceCompatibility(context).report()
+        require(device.isSupported) { requireNotNull(device.blockingReason) }
         val info = installedInfo()
         val identity = identity(info)
         if (identity == approved) return identity

@@ -4,6 +4,7 @@
 #include "LimbusTextProvenance.h"
 #include "LimbusFontProof.h"
 #include "LimbusFlowTextProof.h"
+#include "LimbusManagedState.h"
 #include "../Substrate/SubstrateHook.h"
 
 #include <android/log.h>
@@ -105,20 +106,26 @@ bool g_resolver_reported = false;
 bool g_probe_started = false;
 bool g_hook_installed = false;
 bool g_font_attempted = false;
+pthread_t g_unity_init_thread{};
 void *g_tmp_font_asset = nullptr;
 void *g_ui_font = nullptr;
-// 译文来源按 UTF-8 内容登记，避免游戏复制 IL2CPP String 后丢失仅依赖对象地址的字体标记。
-std::unordered_set<std::string> g_translated_managed_texts;
-// Called with g_font_state_lock held. Timers and formatted counts must not retain
-// every value ever displayed during a long session.
-void remember_translated_text(const std::string &text) {
-    if (text.size() > 16384) return;
-    if (g_translated_managed_texts.size() >= 4096) g_translated_managed_texts.clear();
-    g_translated_managed_texts.insert(text);
+limbus_managed::GcApi g_gc;
+limbus_managed::Registry<bool> g_translated_objects(g_gc, 262144);
+limbus_managed::RecentOutputs g_recent_font_outputs;
+limbus_managed::Ref g_tmp_font_root;
+limbus_managed::Ref g_ui_font_root;
+// Called with g_font_state_lock held. Identity survives GC safely and content
+// evidence is used only for styling copies, never to veto another source.
+bool remember_translated_text(void *object, const std::string &text) {
+    if (!g_translated_objects.put(object, 0, true)) return false;
+    g_recent_font_outputs.add(text);
+    return true;
 }
 struct TmpComponentState {
     void *font = nullptr;
     void *shared_material = nullptr;
+    limbus_managed::Ref font_root;
+    limbus_managed::Ref material_root;
     float line_spacing = 0.0f;
     bool has_line_spacing = false;
     float font_size = 0.0f;
@@ -134,9 +141,10 @@ struct TmpComponentState {
     int32_t overflow_mode = 0;
     bool has_overflow_mode = false;
 };
-std::unordered_map<void *, TmpComponentState> g_original_tmp_states;
+limbus_managed::Registry<TmpComponentState> g_original_tmp_states(g_gc, 8192);
 struct UiComponentState {
     void *font = nullptr;
+    limbus_managed::Ref font_root;
     float line_spacing = 1.0f;
     bool has_line_spacing = false;
     int32_t font_size = 0;
@@ -152,7 +160,7 @@ struct UiComponentState {
     int32_t vertical_overflow = 0;
     bool has_vertical_overflow = false;
 };
-std::unordered_map<void *, UiComponentState> g_original_ui_states;
+limbus_managed::Registry<UiComponentState> g_original_ui_states(g_gc, 4096);
 uint64_t g_translation_hits = 0;
 char g_il2cpp_path[PATH_MAX] = {};
 
@@ -211,6 +219,7 @@ tmp_set_text_fn g_original_ui_set_text = nullptr;
 tmp_set_text_fn g_original_announcer_set_description = nullptr;
 const void *g_announcer_description_field = nullptr;
 const void *g_object_get_instance_id_info = nullptr;
+const void *g_object_is_alive_info = nullptr;
 std::unordered_map<void *, int32_t> g_announcer_text_ids;
 typedef void *(*choice_read_fn)(void *, void *, void *, const void *);
 choice_read_fn g_original_choice_read_string = nullptr;
@@ -705,6 +714,8 @@ std::string reflow_personality_title(const std::string &text, size_t *line_count
     return output;
 }
 
+bool ensure_tmp_font();
+
 void *translate_managed_string(void *managed_text, const std::string &stable_id = {},
                                const char *display_field = nullptr) {
     if (managed_text == nullptr || g_string_length == nullptr || g_string_chars == nullptr) {
@@ -719,13 +730,21 @@ void *translate_managed_string(void *managed_text, const std::string &stable_id 
     // A previously produced translation can cross multiple setters and render
     // passes. Preserve that exact result instead of applying another term pass.
     pthread_mutex_lock(&g_font_state_lock);
-    bool already_translated = g_translated_managed_texts.count(source) != 0;
+    bool already_translated = g_translated_objects.find(managed_text) != nullptr;
     pthread_mutex_unlock(&g_font_state_lock);
     if (already_translated) return managed_text;
     std::unordered_map<std::string, std::string>::const_iterator match = g_index.find(source);
     std::string translated;
     auto context = stable_id.empty() || display_field == nullptr ? g_contextual_index.end() :
             g_contextual_index.find(stable_id + '\x1f' + display_field + '\x1f' + source);
+    // Copies of released Chinese strings are stable independent of lookup order.
+    // Compiler contexts disambiguate original JP fields that share those bytes.
+    if (context == g_contextual_index.end()) {
+        pthread_mutex_lock(&g_font_state_lock);
+        bool released_output = g_font_catalogue.contains(source);
+        pthread_mutex_unlock(&g_font_state_lock);
+        if (released_output) return managed_text;
+    }
     // An unscoped numeric UI value is data, not a global glossary label. In
     // particular, a floor-name rule must never turn a timer's :30 into :30层.
     if (context == g_contextual_index.end() && limbus_font_proof::numeric_display(source)) return managed_text;
@@ -750,12 +769,15 @@ void *translate_managed_string(void *managed_text, const std::string &stable_id 
         }
     }
     if (!is_usable_display_text(translated)) return managed_text;
+    if (translated == source) return managed_text;
+    if (!ensure_tmp_font()) return managed_text;
     void *replacement = new_managed_string(translated);
     if (replacement != nullptr) {
         pthread_mutex_lock(&g_font_state_lock);
         // 只登记接管层确实生成过的完整译文，不能按“含非 ASCII”泛化为中文主字体。
-        remember_translated_text(translated);
+        bool retained = remember_translated_text(replacement, translated);
         pthread_mutex_unlock(&g_font_state_lock);
+        if (!retained) return managed_text;
         uint64_t hits = g_acquisition_hits.fetch_add(1, std::memory_order_relaxed) + 1;
         if (hits == 1 || hits % 500 == 0) {
             LT_LOGI("Text acquisition translation hits=%llu",
@@ -776,8 +798,8 @@ bool is_translated_managed_string(void *managed_text) {
         return false;
     }
     pthread_mutex_lock(&g_font_state_lock);
-    bool translated = g_translated_managed_texts.find(text) !=
-            g_translated_managed_texts.end();
+    bool translated = g_translated_objects.find(managed_text) != nullptr ||
+            g_recent_font_outputs.contains(text);
     if (!translated) translated = g_font_catalogue.contains(text);
     pthread_mutex_unlock(&g_font_state_lock);
     return translated;
@@ -1078,7 +1100,7 @@ void *finish_formatted_translation(void *result, const std::vector<std::string> 
     for (const std::string &field : fields) {
         if (limbus_text_provenance::contains_translated_field(text, field)) {
             pthread_mutex_lock(&g_font_state_lock);
-            remember_translated_text(text);
+            remember_translated_text(translated, text);
             pthread_mutex_unlock(&g_font_state_lock);
             break;
         }
@@ -1161,8 +1183,26 @@ acquisition2_fn const kAcquisition2Replacements[] = {ACQUISITION_SLOTS(ACQUISITI
 
 bool ensure_tmp_font() {
     pthread_mutex_lock(&g_lock);
+    // TextData formatters can also run on resource workers. Unity asset creation
+    // belongs to the initialization/UI thread; an early worker may defer text,
+    // but must never permanently poison font readiness with a wrong-thread call.
+    if (!g_font_attempted && !pthread_equal(pthread_self(), g_unity_init_thread)) {
+        pthread_mutex_unlock(&g_lock);
+        return false;
+    }
     if (!g_font_attempted) {
         g_font_attempted = true;
+        void *probe = new_managed_string("BYBUS font ownership");
+        auto first = limbus_managed::retain(g_gc, probe);
+        auto weak = std::make_shared<limbus_managed::Reference>(g_gc, probe, true);
+        auto second = limbus_managed::retain(g_gc, probe);
+        const bool handles_valid = probe && first && second &&
+                first->get() == probe && weak->get() == probe && second->get() == probe;
+        LT_LOGI("Managed font ownership round-trip=%d handleBits=%zu", handles_valid, sizeof(limbus_managed::Handle) * 8);
+        if (!handles_valid) {
+            pthread_mutex_unlock(&g_lock);
+            return false;
+        }
         std::string font_file(g_active_pointer);
         size_t separator = font_file.find_last_of('/');
         if (separator != std::string::npos) font_file.resize(separator);
@@ -1190,17 +1230,20 @@ bool ensure_tmp_font() {
             g_tmp_font_asset = g_runtime_invoke(
                     g_create_tmp_font_info, nullptr, asset_args, &exception);
         }
-        // 少数旧界面仍使用 UnityEngine.UI.Text，TMP_FontAsset 无法直接赋给它们。
-        // Android 的 sans-serif 是系统复合字体族，会按字符回退到设备内置中文字体，
-        // 因而可作为旧文本组件的稳定中文主字体，避免继续采样原日文字体的缺字方块。
+        if (exception != nullptr) g_tmp_font_asset = nullptr;
+        g_tmp_font_root = limbus_managed::retain(g_gc, g_tmp_font_asset);
+        if (!g_tmp_font_root) g_tmp_font_asset = nullptr;
+        // This Android player does not create a dynamic legacy Font from a TTF
+        // path. Preserve the verified CJK-capable system fallback for UI.Text.
         void *ui_exception = nullptr;
         void *ui_font_name = new_managed_string("sans-serif");
         int32_t ui_font_size = 32;
         void *ui_font_args[] = {ui_font_name, &ui_font_size};
-        if (ui_font_name != nullptr && g_create_dynamic_font_info != nullptr &&
-            g_runtime_invoke != nullptr) {
-            g_ui_font = g_runtime_invoke(
-                    g_create_dynamic_font_info, nullptr, ui_font_args, &ui_exception);
+        if (ui_font_name && g_create_dynamic_font_info) {
+            g_ui_font = g_runtime_invoke(g_create_dynamic_font_info, nullptr, ui_font_args, &ui_exception);
+            if (ui_exception) g_ui_font = nullptr;
+            g_ui_font_root = limbus_managed::retain(g_gc, g_ui_font);
+            if (!g_ui_font_root) g_ui_font = nullptr;
         }
         void *fallback_list = nullptr;
         void *add_exception = nullptr;
@@ -1213,17 +1256,19 @@ bool ensure_tmp_font() {
             const void *add_method = list_class == nullptr || g_class_get_method == nullptr ? nullptr :
                     g_class_get_method(list_class, "Add", 1);
             void *add_args[] = {g_tmp_font_asset};
-            if (add_method != nullptr) {
+            if (add_method != nullptr && add_exception == nullptr) {
                 g_runtime_invoke(add_method, fallback_list, add_args, &add_exception);
             }
+            if (!add_method || add_exception) { g_tmp_font_asset = nullptr; g_tmp_font_root.reset(); }
             LT_LOGI("Registered TMP fallback font list=%p add=%p exception=%p",
                     fallback_list, add_method, add_exception);
         }
         LT_LOGI("Dynamic CJK TMP font creation path=%s face=%d tmpFont=%p exception=%p",
                 font_file.c_str(), face_index,
                 g_tmp_font_asset, exception);
-        LT_LOGI("Dynamic CJK UI font creation family=sans-serif size=%d uiFont=%p exception=%p",
-                ui_font_size, g_ui_font, ui_exception);
+        if (!g_get_fallback_fonts_info) { g_tmp_font_asset = nullptr; g_tmp_font_root.reset(); }
+        LT_LOGI("Dynamic CJK UI font creation source=android-sans-serif uiFont=%p exception=%p",
+                g_ui_font, ui_exception);
     }
     bool ready = g_tmp_font_asset != nullptr;
     pthread_mutex_unlock(&g_lock);
@@ -1548,7 +1593,7 @@ bool read_choice_list(void *list, std::string *complete, bool *verified) {
     }
     if (!*verified) {
         pthread_mutex_lock(&g_font_state_lock);
-        *verified = g_font_catalogue.contains(*complete) || g_translated_managed_texts.count(*complete) != 0;
+        *verified = g_font_catalogue.contains(*complete) || g_recent_font_outputs.contains(*complete);
         pthread_mutex_unlock(&g_font_state_lock);
     }
     return true;
@@ -1781,10 +1826,29 @@ void apply_material_outline(void *material, const MaterialOutlineStyle &style) {
     }
 }
 
-TmpComponentState capture_tmp_component_state(void *instance, void *font) {
+bool unity_object_alive(void *instance) {
+    if (!instance || !g_object_is_alive_info) return false;
+    void *args[] = {instance}, *exception = nullptr;
+    void *boxed = g_runtime_invoke(g_object_is_alive_info, nullptr, args, &exception);
+    return !exception && boxed && *static_cast<uint8_t *>(g_object_unbox(boxed));
+}
+
+int32_t component_id(void *instance) {
+    int32_t id = 0;
+    if (!invoke_int_getter(g_object_get_instance_id_info, instance, &id)) return 0;
+    return id;
+}
+
+bool capture_tmp_component_state(void *instance, void *font, TmpComponentState *state) {
+    int32_t id = component_id(instance);
+    if (!id || !g_object_is_alive_info) return false;
     TmpComponentState candidate;
     candidate.font = font;
+    candidate.font_root = limbus_managed::retain(g_gc, font);
+    if (font && !candidate.font_root) return false;
     candidate.shared_material = invoke_object_getter(g_tmp_get_shared_material_info, instance);
+    candidate.material_root = limbus_managed::retain(g_gc, candidate.shared_material);
+    if (candidate.shared_material && !candidate.material_root) return false;
     candidate.has_line_spacing = invoke_float_getter(
             g_tmp_get_line_spacing_info, instance, &candidate.line_spacing);
     candidate.has_font_size = invoke_float_getter(
@@ -1800,26 +1864,29 @@ TmpComponentState capture_tmp_component_state(void *instance, void *font) {
     candidate.has_overflow_mode = invoke_int_getter(
             g_tmp_get_overflow_mode_info, instance, &candidate.overflow_mode);
     pthread_mutex_lock(&g_font_state_lock);
-    // Called only when the component currently uses a different primary font.
-    // Unity can recycle its address after destroying a previous text component.
-    g_original_tmp_states[instance] = candidate;
+    bool saved = g_original_tmp_states.put(instance, id, candidate);
     pthread_mutex_unlock(&g_font_state_lock);
-    return candidate;
+    if (saved && state) *state = candidate;
+    return saved;
 }
 
 bool find_tmp_component_state(void *instance, TmpComponentState *state) {
+    int32_t id = component_id(instance);
+    if (!id) return false;
     pthread_mutex_lock(&g_font_state_lock);
-    auto saved = g_original_tmp_states.find(instance);
-    bool found = saved != g_original_tmp_states.end();
-    if (found && state != nullptr) *state = saved->second;
+    // Also collect when a page reuses existing components without new captures.
+    static uint32_t reads = 0;
+    if ((++reads & 63) == 0) g_original_tmp_states.collect(16);
+    auto saved = g_original_tmp_states.find(instance, id);
+    bool found = saved != nullptr;
+    if (found && state != nullptr) *state = *saved;
     pthread_mutex_unlock(&g_font_state_lock);
     return found;
 }
 
 void *translated_tmp_material(void *instance, void *requested_material) {
     TmpComponentState state;
-    if (instance == nullptr || !find_tmp_component_state(instance, &state) ||
-        g_tmp_get_font == nullptr ||
+    if (instance == nullptr || g_tmp_get_font == nullptr ||
         g_tmp_get_font(instance, g_tmp_get_font_info) != g_tmp_font_asset) {
         return requested_material;
     }
@@ -1828,14 +1895,20 @@ void *translated_tmp_material(void *instance, void *requested_material) {
     void *font_material = invoke_object_getter(
             g_tmp_font_get_material_info, g_tmp_font_asset);
     if (font_material == nullptr) return requested_material;
+    // Losing restoration metadata must never bind the Japanese atlas to a
+    // Chinese font. The matching default is safer than corrupt glyph sampling.
+    if (!find_tmp_component_state(instance, &state)) return font_material;
     if (requested_material == nullptr || requested_material == font_material) return font_material;
     if (g_converted_font_materials.count(requested_material)) return requested_material;
     // Keep the latest game preset for recycled components, including selection
     // and disabled states. TMP's material manager copies style but replaces the
     // atlas and its metrics, preventing a Japanese atlas or lost outline.
+    int32_t id = component_id(instance);
+    auto material_root = limbus_managed::retain(g_gc, requested_material);
+    if (!material_root) return font_material;
     pthread_mutex_lock(&g_font_state_lock);
-    auto saved = g_original_tmp_states.find(instance);
-    if (saved != g_original_tmp_states.end()) saved->second.shared_material = requested_material;
+    auto saved = g_original_tmp_states.find(instance, id);
+    if (saved) { saved->shared_material = requested_material; saved->material_root = material_root; }
     pthread_mutex_unlock(&g_font_state_lock);
     auto cached = g_font_materials.find(requested_material);
     if (g_get_fallback_material_info == nullptr || g_retain_fallback_material_info == nullptr ||
@@ -1869,14 +1942,10 @@ void replacement_tmp_set_material(void *instance, void *material, const void *me
 
 void restore_tmp_component_state(void *instance) {
     TmpComponentState state;
-    bool restore = false;
+    int32_t id = component_id(instance);
+    if (!id) return;
     pthread_mutex_lock(&g_font_state_lock);
-    auto saved = g_original_tmp_states.find(instance);
-    if (saved != g_original_tmp_states.end()) {
-        state = saved->second;
-        g_original_tmp_states.erase(saved);
-        restore = true;
-    }
+    bool restore = g_original_tmp_states.take(instance, id, &state);
     pthread_mutex_unlock(&g_font_state_lock);
     if (!restore) return;
     if (g_tmp_get_font == nullptr ||
@@ -1909,9 +1978,13 @@ void restore_tmp_component_state(void *instance) {
     }
 }
 
-UiComponentState capture_ui_component_state(void *instance) {
+bool capture_ui_component_state(void *instance) {
+    int32_t id = component_id(instance);
+    if (!id || !g_object_is_alive_info) return false;
     UiComponentState candidate;
     candidate.font = invoke_object_getter(g_ui_get_font_info, instance);
+    candidate.font_root = limbus_managed::retain(g_gc, candidate.font);
+    if (candidate.font && !candidate.font_root) return false;
     candidate.has_line_spacing = invoke_float_getter(
             g_ui_get_line_spacing_info, instance, &candidate.line_spacing);
     candidate.has_font_size = invoke_int_getter(
@@ -1927,31 +2000,30 @@ UiComponentState capture_ui_component_state(void *instance) {
     candidate.has_vertical_overflow = invoke_int_getter(
             g_ui_get_vertical_overflow_info, instance, &candidate.vertical_overflow);
     pthread_mutex_lock(&g_font_state_lock);
-    // Just like TMP, an old Unity UI.Text address can be reused by a new object.
-    g_original_ui_states[instance] = candidate;
+    bool saved = g_original_ui_states.put(instance, id, candidate);
     pthread_mutex_unlock(&g_font_state_lock);
-    return candidate;
+    return saved;
 }
 
 bool find_ui_component_state(void *instance, UiComponentState *state) {
+    int32_t id = component_id(instance);
+    if (!id) return false;
     pthread_mutex_lock(&g_font_state_lock);
-    auto saved = g_original_ui_states.find(instance);
-    bool found = saved != g_original_ui_states.end();
-    if (found && state != nullptr) *state = saved->second;
+    static uint32_t reads = 0;
+    if ((++reads & 63) == 0) g_original_ui_states.collect(16);
+    auto saved = g_original_ui_states.find(instance, id);
+    bool found = saved != nullptr;
+    if (found && state != nullptr) *state = *saved;
     pthread_mutex_unlock(&g_font_state_lock);
     return found;
 }
 
 void restore_ui_component_state(void *instance) {
     UiComponentState state;
-    bool restore = false;
+    int32_t id = component_id(instance);
+    if (!id) return;
     pthread_mutex_lock(&g_font_state_lock);
-    auto saved = g_original_ui_states.find(instance);
-    if (saved != g_original_ui_states.end()) {
-        state = saved->second;
-        g_original_ui_states.erase(saved);
-        restore = true;
-    }
+    bool restore = g_original_ui_states.take(instance, id, &state);
     pthread_mutex_unlock(&g_font_state_lock);
     if (!restore) return;
     if (invoke_object_getter(g_ui_get_font_info, instance) != g_ui_font) return;
@@ -2133,9 +2205,9 @@ void *apply_tmp_component_layout_markup(void *instance, void *managed_text) {
     void *replacement = new_managed_string(formatted);
     if (replacement == nullptr) return managed_text;
     pthread_mutex_lock(&g_font_state_lock);
-    remember_translated_text(formatted);
+    bool retained = remember_translated_text(replacement, formatted);
     pthread_mutex_unlock(&g_font_state_lock);
-    return replacement;
+    return retained ? replacement : managed_text;
 }
 
 void *prepare_tmp_text(void *instance, void *managed_text, bool restore_untranslated = true) {
@@ -2164,9 +2236,8 @@ void *prepare_tmp_text(void *instance, void *managed_text, bool restore_untransl
                 if (!status.empty() && ensure_tmp_font()) {
                     void *label = new_managed_string(status);
                     if (label != nullptr) {
-                        replacement = label;
                         pthread_mutex_lock(&g_font_state_lock);
-                        remember_translated_text(status);
+                        if (remember_translated_text(label, status)) replacement = label;
                         pthread_mutex_unlock(&g_font_state_lock);
                     }
                 }
@@ -2184,7 +2255,11 @@ void *prepare_tmp_text(void *instance, void *managed_text, bool restore_untransl
                 for (void *font_target : font_targets) {
                     void *current_font = g_tmp_get_font(font_target, g_tmp_get_font_info);
                     if (current_font != g_tmp_font_asset) {
-                        auto original_style = capture_tmp_component_state(font_target, current_font);
+                        TmpComponentState original_style;
+                        if (!capture_tmp_component_state(font_target, current_font, &original_style)) {
+                            if (font_target == instance) return managed_text;
+                            continue;
+                        }
                         g_tmp_set_font(font_target, g_tmp_font_asset, g_tmp_set_font_info);
                         // TMP 组件可能保留旧字体的共享材质；字体图集与材质不匹配时会把
                         // 正确字形采样成碎片或白块，因此在字体切换后显式绑定中文字体材质。
@@ -2313,10 +2388,10 @@ void *prepare_ui_text(void *instance, void *managed_text) {
         return replacement;
     }
     ensure_tmp_font();
-    if (instance == nullptr || g_ui_font == nullptr) return replacement;
+    if (instance == nullptr || g_ui_font == nullptr) return managed_text;
     void *current_font = invoke_object_getter(g_ui_get_font_info, instance);
     if (current_font != g_ui_font) {
-        capture_ui_component_state(instance);
+        if (!capture_ui_component_state(instance)) return managed_text;
         invoke_object_setter(g_ui_set_font_info, instance, g_ui_font);
         uint64_t switches = g_ui_primary_font_switches.fetch_add(
                 1, std::memory_order_relaxed) + 1;
@@ -2575,7 +2650,13 @@ bool load_index_file(const char *path) {
     g_contextual_index.swap(loaded_contextual);
     for (const auto *table : {&g_index, &g_contextual_index}) {
         for (const auto &entry : *table) {
-            g_font_catalogue.add(entry.second);
+            const auto separator = entry.first.rfind('\x1f');
+            const std::string source = table == &g_contextual_index && separator != std::string::npos
+                    ? entry.first.substr(separator + 1) : entry.first;
+            // Identity guards may contain untranslated kana or placeholder
+            // metadata. They block a wrong replacement, not authorize a font.
+            if (source != entry.second || !contains_japanese_kana(source))
+                g_font_catalogue.add(entry.second);
         }
     }
     LT_LOGI("Font provenance catalogue labels=%zu templates=%zu",
@@ -2796,6 +2877,11 @@ bool report_il2cpp_resolver(const MappedElfResolver &resolver, bool query_domain
     object_get_class_fn object_get_class =
             resolver.resolve<object_get_class_fn>("il2cpp_object_get_class");
     object_unbox_fn object_unbox = resolver.resolve<object_unbox_fn>("il2cpp_object_unbox");
+    limbus_managed::GcApi gc;
+    gc.retain = resolver.resolve<decltype(gc.retain)>("il2cpp_gchandle_new");
+    gc.weak = resolver.resolve<decltype(gc.weak)>("il2cpp_gchandle_new_weakref");
+    gc.target = resolver.resolve<decltype(gc.target)>("il2cpp_gchandle_get_target");
+    gc.release = resolver.resolve<decltype(gc.release)>("il2cpp_gchandle_free");
     class_get_parent_fn class_get_parent =
             resolver.resolve<class_get_parent_fn>("il2cpp_class_get_parent");
     class_get_fields_fn class_get_fields =
@@ -3209,13 +3295,15 @@ bool report_il2cpp_resolver(const MappedElfResolver &resolver, bool query_domain
     if (get_global_language_method != nullptr) {
         memcpy(&get_global_language_pointer, get_global_language_method, sizeof(void *));
     }
-    bool hook_ready = tmp_pointer != nullptr && tmp_set_font_pointer != nullptr &&
+    bool hook_ready = gc.ready() &&
+            tmp_pointer != nullptr && tmp_set_font_pointer != nullptr &&
             tmp_get_font_pointer != nullptr &&
             create_tmp_font_pointer != nullptr && create_dynamic_font_pointer != nullptr &&
             get_global_language_pointer != nullptr &&
             string_length != nullptr && string_chars != nullptr && string_new_utf16 != nullptr &&
             runtime_invoke != nullptr && object_get_class != nullptr && object_unbox != nullptr;
     if (hook_ready && !g_hook_installed) {
+        g_gc = gc;
         g_string_length = string_length;
         g_string_chars = string_chars;
         g_string_new_utf16 = string_new_utf16;
@@ -3285,6 +3373,9 @@ bool report_il2cpp_resolver(const MappedElfResolver &resolver, bool query_domain
         g_rect_transform_get_rect_info = rect_transform_get_rect_method;
         g_object_get_name_info = object_get_name_method;
         g_object_get_instance_id_info = find_method_by_signature(unity_object_class, "GetInstanceID", "");
+        g_object_is_alive_info = find_method_by_signature(unity_object_class, "op_Implicit", "UnityEngine.Object");
+        g_original_tmp_states.set_alive(unity_object_alive);
+        g_original_ui_states.set_alive(unity_object_alive);
         g_component_get_transform_info = component_get_transform_method;
         g_transform_get_parent_info = transform_get_parent_method;
         g_transform_get_child_info = find_method_by_signature(transform_class, "GetChild", "System.Int32");
@@ -3635,6 +3726,7 @@ bool report_il2cpp_resolver(const MappedElfResolver &resolver, bool query_domain
 
 void *replacement_il2cpp_init(const char *domain_name) {
     void *domain = g_original_il2cpp_init(domain_name);
+    g_unity_init_thread = pthread_self();
     MappedElfResolver resolver;
     bool resolved = resolver.open(g_il2cpp_path) && report_il2cpp_resolver(resolver, true);
     pthread_mutex_lock(&g_lock);

@@ -253,6 +253,7 @@ private fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefres
     val title = when {
         state.busy -> when (state.launchStep) { 0 -> "准备游戏"; 1 -> "检查汉化"; 2 -> "正在启动"; else -> "正在处理" }
         needsDetection -> "检测游戏"
+        state.compatibility?.isSupported == false -> "查看设备兼容性"
         state.nativeCompatibilityIssue != null -> "查看兼容状态"
         !canLaunch -> "查看运行状态"
         state.failed -> "重新启动"
@@ -266,6 +267,7 @@ private fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefres
         state.failed -> "准备未完成 · 查看详情"
         missing -> "从更新渠道安装，或选择完整安装包"
         state.container == null -> "正在检测已安装游戏"
+        state.compatibility?.isSupported == false -> state.compatibility.blockingReason.orEmpty()
         state.nativeCompatibilityIssue != null -> "当前游戏版本需要兼容更新"
         !canLaunch -> "轻触查看设备与游戏状态"
         else -> "启动前检查游戏与汉化更新"

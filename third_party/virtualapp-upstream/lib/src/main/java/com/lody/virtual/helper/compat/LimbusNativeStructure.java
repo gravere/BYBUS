@@ -14,6 +14,9 @@ public final class LimbusNativeStructure {
     public static final String FAMILY = "limbus-engine1-sdk36-arm64-full";
     private static final long MAX_LIBRARY = 512L * 1024 * 1024;
     private static final int HEAD = 16 * 1024, TAIL = 128 * 1024;
+    public static boolean supportsEnvironment(int sdk, String abi, long pageSize) {
+        return sdk == 36 && "arm64-v8a".equals(abi) && pageSize == 4096;
+    }
 
     // Immutable code regions shared by the independently inspected 471 and 478 libraries:
     // PLT; report frame/dispatch; path checks/cleanup; maps; both CRC callers; path scan; JNI detach.
@@ -79,7 +82,7 @@ public final class LimbusNativeStructure {
     }
 
     public static String qualify(Image protection, Image il2cpp, int sdk, String abi, long pageSize) {
-        if (sdk != 36 || !"arm64-v8a".equals(abi) || pageSize != 4096) return "";
+        if (!supportsEnvironment(sdk, abi, pageSize)) return "";
         try {
             Elf engine = new Elf(protection), game = new Elf(il2cpp);
             Section text = engine.section(".text"), bss = engine.section(".bss");

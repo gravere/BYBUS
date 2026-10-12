@@ -43,13 +43,13 @@ android {
 
     defaultConfig {
         applicationId = "com.example.limbuszhcn"
-        // 与当前 Limbus Company 本体保持一致，覆盖 Android 8.0 及以上仍在使用的常见机型。
-        // VirtualApp 库自身最低支持 API 23，但应用使用了 java.time，因此安全下限设为 API 26。
+        // Launcher installation/diagnostics only; game support follows the native profiles.
+        // java.time requires API 26. DeviceCompatibility exposes the narrower runtime boundary.
         minSdk = 26
         targetSdk = 35
         // 显示版本使用 BYBUS 命名；内部版本号保持递增，确保旧版可直接覆盖升级。
-        versionCode = 44
-        versionName = "v1.0.1"
+        versionCode = 46
+        versionName = "v1.0.3"
         // 版本页随资源更新，避免 Kotlin 增量编译保留旧的 BuildConfig 内联常量。
         resValue("string", "app_version_name", requireNotNull(versionName))
 

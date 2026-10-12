@@ -84,10 +84,10 @@ class MainActivity : ComponentActivity() {
             val exportPicker = rememberLauncherForActivityResult(
                 ActivityResultContracts.CreateDocument("application/zip"), model::saveDiagnostics
             )
-            androidx.compose.runtime.LaunchedEffect(state.exportRequest) {
-                state.exportRequest?.let { archive ->
+            androidx.compose.runtime.LaunchedEffect(state.exportRequest, resumed.value) {
+                if (resumed.value) state.exportRequest?.let { archive ->
                     model.exportPickerOpened()
-                    exportPicker.launch(archive.name)
+                    runCatching { exportPicker.launch(archive.name) }.onFailure(model::exportPickerFailed)
                 }
             }
             LimbusZhCNTheme {

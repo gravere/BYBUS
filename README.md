@@ -14,9 +14,9 @@ Android《边狱巴士》简体中文启动器，使用[都市零协会](https:/
 
 ## 开始使用
 
-需要 **Android 8.0 及以上、ARM64（arm64-v8a）设备**，并已安装官方《边狱巴士》。实际运行兼容性取决于设备系统与游戏版本。
+当前游戏运行方案支持 **Android 16（API 36）、64 位 ARM（arm64-v8a）、4 KB 内存页设备**，并需已安装官方《边狱巴士》。游戏构建仍须通过应用内兼容检查；其他系统和 16 KB 内存页设备暂不支持运行游戏。
 
-1. 从 [Releases](https://github.com/gravere/BYBUS/releases/latest) 下载 `BYBUS-v1.0.1-arm64-v8a.apk` 并安装。
+1. 从 [Releases](https://github.com/gravere/BYBUS/releases/latest) 下载 `BYBUS-v1.0.3-arm64-v8a.apk` 并安装。
 2. 打开 BYBUS，点击「启动游戏」，按提示导入已安装的游戏。
 3. 首次进入时登录账号并下载游戏资源；完成后返回 BYBUS，再启动一次以应用汉化。
 4. 此后从 BYBUS 启动游戏即可。

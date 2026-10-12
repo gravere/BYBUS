@@ -20,7 +20,7 @@ import kotlin.io.path.readText
 import kotlin.io.path.outputStream
 import kotlin.io.path.writeText
 
-internal const val TRANSLATION_COMPILER_REVISION = "jp-pairing-8"
+internal const val TRANSLATION_COMPILER_REVISION = "jp-pairing-9"
 
 /**
  * 表示一条从官方日文显示字段到中文显示字段的结构化配对记录。
@@ -73,7 +73,6 @@ internal data class CompiledTranslationIndex(
  */
 internal class TranslationIndexCompiler {
     private val records = mutableListOf<TranslationIndexRecord>()
-    private val unchangedFontLabels = mutableSetOf<String>()
 
     /** 保存一条由下载包配对记录派生的短术语及其来源优先级。 */
     private data class TermCandidate(
@@ -97,16 +96,8 @@ internal class TranslationIndexCompiler {
         ) {
             return
         }
-        if (record.source == record.translation) {
-            // LLC can approve the same Han label as the Japanese resource. It
-            // still needs the Chinese face, but must never outvote a real
-            // translation, create a term rule, or style arbitrary Latin text.
-            if (record.source.any { it in '\u3400'..'\u9FFF' } &&
-                record.source.none { it in '\u3040'..'\u30FF' || it in '\uFF66'..'\uFF9F' }) {
-                unchangedFontLabels += record.source
-            }
-            return
-        }
+        // An identity pair is a real context, not just font metadata. Dropping
+        // it lets another resource's translation overwrite an approved label.
         // 不维护宿主自定义译名；有效译文原样来自用户已下载并校验的汉化包。
         records += record
     }
@@ -137,6 +128,8 @@ internal class TranslationIndexCompiler {
             )
         )
         val bySource = sorted.groupBy(TranslationIndexRecord::source)
+        val unchangedSources = sorted.filter { it.source == it.translation }.map { it.source }.toSet()
+        val translatedOutputs = sorted.filter { it.source != it.translation }.map { it.translation }.toSet()
         val unique = linkedMapOf<String, String>()
         val terms = linkedMapOf<String, String>()
         val contextual = linkedMapOf<String, String>()
@@ -145,25 +138,31 @@ internal class TranslationIndexCompiler {
         bySource.toSortedMap().forEach { (source, occurrences) ->
             val translations = occurrences.groupingBy(TranslationIndexRecord::translation).eachCount()
             val numeric = isNumericLiteral(source)
-            if (translations.size > 1 || numeric) {
+            if (translations.size > 1 || numeric || source in translatedOutputs) {
                 occurrences.mapNotNull { record ->
                     contextKey(record.stableId, record.field, source)?.let { it to record.translation }
                 }.groupBy({ it.first }, { it.second }).toSortedMap().forEach { (key, targets) ->
                     // Even a dominant global spelling must not overwrite a different,
                     // unambiguous translation attached to this exact resource entry.
-                    targets.distinct().singleOrNull()?.let { contextual[key] = it }
+                    val distinct = targets.distinct()
+                    (distinct.singleOrNull() ?: source.takeIf { it in distinct })
+                        ?.let { contextual[key] = it }
                 }
             }
-            val resolved = resolveTranslation(translations)
-            if (resolved != null && !numeric) {
+            val resolved = if (source in unchangedSources) source else resolveTranslation(translations)
+            // Identity guards for conflicting spellings are also needed at TMP's
+            // unscoped boundary. Plain Latin/kana-only identity records need no rule.
+            val identityRule = translations.size > 1 || source.isApprovedHanLabel()
+            if (resolved != null && !numeric && (resolved != source || identityRule)) {
                 unique[source] = resolved
-                if (translations.size > 1) dominantEntries += 1
+                if (translations.size > 1 && source !in unchangedSources) dominantEntries += 1
             } else if (resolved == null) {
                 conflicts += 1
             }
         }
         val termCandidates = mutableListOf<TermCandidate>()
         sorted.forEach { record ->
+            if (record.source == record.translation) return@forEach
             val priority = termSourcePriority(record.path)
             if (TranslationTextPolicy.isTermField(record.field)) {
                 normalizedTerms(record.source, record.translation).forEach { (source, translation) ->
@@ -180,6 +179,9 @@ internal class TranslationIndexCompiler {
             }
         }
         termCandidates.groupBy(TermCandidate::source).toSortedMap().forEach { (source, candidates) ->
+            // Terms have no identity/field context. They cannot override a
+            // spelling explicitly retained elsewhere in the same release.
+            if (source in unchangedSources) return@forEach
             val highestPriority = candidates.maxOf(TermCandidate::priority)
             val preferred = candidates.filter { candidate -> candidate.priority == highestPriority }
             val translations = preferred.groupingBy(TermCandidate::translation).eachCount()
@@ -191,9 +193,6 @@ internal class TranslationIndexCompiler {
                     unique[source] = translation
                 }
             }
-        }
-        unchangedFontLabels.sorted().filter { it !in bySource }.forEach { label ->
-            unique.putIfAbsent(label, label)
         }
         val digest = MessageDigest.getInstance("SHA-256")
         fun updateDigest(value: String) {
@@ -209,14 +208,14 @@ internal class TranslationIndexCompiler {
             listOf(record.path, record.id, record.field, record.source, record.translation, record.stableId.orEmpty())
                 .forEach(::updateDigest)
         }
-        unchangedFontLabels.sorted().forEach { updateDigest("font-identity"); updateDigest(it) }
         return CompiledTranslationIndex(
             version = version,
             archiveSha256 = archiveSha256,
             inputSha256 = digest.digest().toHex(),
             uniqueEntries = unique,
             termEntries = terms,
-            sourceRecordCount = sorted.size,
+            // Keep the readiness metric comparable with existing generations.
+            sourceRecordCount = sorted.count { it.source != it.translation },
             conflictCount = conflicts,
             dominantEntryCount = dominantEntries,
             candidateSourceFileCount = candidateSourceFileCount,
@@ -235,6 +234,10 @@ internal class TranslationIndexCompiler {
             winner.value >= 3 && winner.value * 5 >= total * 4 && winner.value >= runnerUp * 3
         }
     }
+
+    private fun String.isApprovedHanLabel(): Boolean =
+        any { it in '\u3400'..'\u9FFF' } &&
+            none { it in '\u3040'..'\u30FF' || it in '\uFF66'..'\uFF9F' }
 
     private fun termSourcePriority(path: String): Int {
         val fileName = path.substringAfterLast('/').substringAfterLast('\\').lowercase().removePrefix("jp_")

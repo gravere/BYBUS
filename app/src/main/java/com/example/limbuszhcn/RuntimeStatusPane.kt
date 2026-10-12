@@ -43,6 +43,7 @@ internal fun RuntimeStatusPane(state: LauncherUiState, onGameUpdates: () -> Unit
                 DetailRow("兼容性", when {
                     state.installedVersion == null -> "等待安装"
                     state.compatibility == null -> "正在检测"
+                    !state.compatibility.isSupported -> "设备暂不支持"
                     state.nativeCompatibilityIssue != null -> "当前构建待适配"
                     else -> "当前构建已匹配"
                 })

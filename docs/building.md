@@ -47,6 +47,21 @@ export PATH="$JAVA_HOME/bin:$PATH"
 
 输出文件为 `app/build/outputs/apk/debug/app-debug.apk`。默认调试签名不能覆盖已安装的正式版。
 
+## 局部回归验证
+
+文本接管与生命周期的本地回归用例可单独运行：
+
+```sh
+./gradlew :app:testDebugUnitTest --tests '*TranslationIndexCompilerTest' --tests '*DiagnosticExportStateTest' --tests '*DeviceCompatibilityReportTest' --tests '*PendingUiStateTest'
+python scripts/extract-runtime-test.py /path/to/temp
+c++ -std=c++17 -I/path/to/temp scripts/native-managed-tests.cpp -o /path/to/temp/native-managed-tests
+/path/to/temp/native-managed-tests
+c++ -std=c++17 -I/path/to/temp scripts/native-material-tests.cpp -o /path/to/temp/native-material-tests
+/path/to/temp/native-material-tests
+```
+
+原生用例从当前运行时代码提取翻译与材质函数，模拟 IL2CPP GC 接口，验证上下文、64 位引用、缓存、组件销毁和图集匹配边界；它不替代游戏内视觉核对。Windows 可使用 Visual Studio 的 C++ 编译器，并启用 `/std:c++17 /utf-8`。
+
 ## 签名与发行文件
 
 在本地 `signing/keystore.properties` 配置 `storeFile`、`storePassword`、`keyAlias` 和 `keyPassword`，然后运行 `:app:assembleRelease`。同一应用的覆盖升级必须使用相同签名。
