@@ -1,4 +1,4 @@
-"""Generate public release assets from a built APK. Never reads signing credentials."""
+"""Generate named Android release assets and metadata from a signed BYBUS APK."""
 from pathlib import Path
 import argparse, hashlib, json, re, shutil, subprocess
 
@@ -17,6 +17,8 @@ assert re.fullmatch(r'v\d+(?:\.\d+){1,2}', version)
 gradle = (root/'app/build.gradle.kts').read_text(encoding='utf-8')
 assert code == int(re.search(r'versionCode\s*=\s*(\d+)', gradle)[1]), 'Build differs from source version'
 assert version == re.search(r'versionName\s*=\s*"([^"]+)"', gradle)[1]
+native_code = re.search(r'^native-code:(.*)$', badging, re.MULTILINE)
+assert native_code and re.findall(r"'([^']+)'", native_code[1]) == ['arm64-v8a'], 'Unexpected APK architecture'
 # The static FileProvider URI helper reads manifest metadata, not a subclass constructor.
 manifest_tree = subprocess.check_output([args.aapt, 'dump', 'xmltree', str(args.apk.resolve()), 'AndroidManifest.xml'], text=True, encoding='utf-8')
 nodes = manifest_tree.splitlines()
@@ -42,14 +44,26 @@ verification = subprocess.check_output([str(apksigner), 'verify', '--print-certs
 signer = re.search(r'Signer #1 certificate SHA-256 digest: ([a-f0-9]{64})', verification)
 assert signer, 'APK signature not verified'
 args.output.mkdir(parents=True, exist_ok=True)
-apk = args.output/'BYBUS.apk'
-if apk.resolve() != args.apk.resolve(): shutil.copyfile(args.apk, apk)
-sha = hashlib.file_digest(apk.open('rb'), 'sha256').hexdigest()
+apk = args.output/f'BYBUS-{version}-arm64-v8a.apk'
+if not apk.exists() or not apk.samefile(args.apk):
+    # Unlink before writing: a previous output may share an inode with its alias.
+    if apk.exists(): apk.unlink()
+    shutil.copyfile(args.apk, apk)
+# Existing clients require this exact name. Both downloads contain the same APK.
+compat_apk = args.output/'BYBUS.apk'
+if not compat_apk.exists() or not compat_apk.samefile(apk):
+    if compat_apk.exists(): compat_apk.unlink()
+    try: compat_apk.hardlink_to(apk)
+    except OSError: shutil.copyfile(apk, compat_apk)
+def digest(path):
+    with path.open('rb') as stream: return hashlib.file_digest(stream, 'sha256').hexdigest()
+sha = digest(apk)
 notes = (root/'docs/release-notes.md').read_text(encoding='utf-8')
 manifest = dict(schemaVersion=1, packageName=identity[1], versionName=version, versionCode=code,
-                minSdk=min_sdk, apkName=apk.name, size=apk.stat().st_size, sha256=sha,
+                minSdk=min_sdk, apkName=compat_apk.name, size=apk.stat().st_size, sha256=sha,
                 notes='\n'.join(line.removeprefix('- ') for line in notes.splitlines() if line.startswith('- ')))
 (args.output/'bybus-update.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
-files = [apk, args.output/'bybus-update.json']
-(args.output/'SHA256SUMS.txt').write_text(''.join(hashlib.file_digest(p.open('rb'), 'sha256').hexdigest()+'  '+p.name+'\n' for p in files), encoding='utf-8')
-print(json.dumps(dict(tag=f'{version}-build.{code}', sha256=sha, size=apk.stat().st_size, signer=signer[1])))
+files = [apk, compat_apk, args.output/'bybus-update.json']
+(args.output/'SHA256SUMS.txt').write_text(''.join(digest(p)+'  '+p.name+'\n' for p in files), encoding='utf-8')
+print(json.dumps(dict(tag=f'{version}-build.{code}', name=f'BYBUS {version}', apkName=apk.name,
+                     compatibilityApkName=compat_apk.name, sha256=sha, size=apk.stat().st_size, signer=signer[1])))

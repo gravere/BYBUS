@@ -1,6 +1,6 @@
 # BYBUS 应用更新与发布
 
-应用升级独立于游戏安装及零协汉化更新。固定发布仓库为 `gravere/LimbusZhLauncher`，公开读取 GitHub Releases，无 Token、账号或可配置镜像地址；不把开发机器的凭据写入应用。
+应用升级独立于游戏安装及零协汉化更新。发布仓库为 `gravere/LimbusZhLauncher`，通过公开的 GitHub Releases API 查询。
 
 ## 更新路径
 
@@ -12,13 +12,28 @@
 - FileProvider 的路径必须通过 Manifest 中的 `android.support.FILE_PROVIDER_PATHS` 元数据声明；静态 `getUriForFile` 不读取子类构造函数的资源参数。发行脚本核对最终 APK 中的元数据指向和 Provider 权限，防止下载成功后无法生成安装 URI。
 - 同时保留「GitHub 发行页面」入口，网络失败时展示真实原因，不把查询失败写成已是最新版。
 
-## 发布边界
+## 发行文件与版本
 
-- 源码仓库不保存可从官方重建的 microG APK。`scripts/fetch-build-assets.py` 固定上游 Release、文件大小和 SHA-256，构建前获取并拆分；本机已有匹配文件直接复用。正式 APK 继续内置完全相同的组件，不增加手机首次运行的可执行依赖下载。
+| 文件 | 用途 |
+| --- | --- |
+| `BYBUS-<版本>-arm64-v8a.apk` | 手动下载安装包，如 `BYBUS-v1.0-arm64-v8a.apk` |
+| `BYBUS.apk` | 已发布更新器使用的固定名称；与上述安装包逐字节相同 |
+| `bybus-update.json` | 应用更新元数据 |
+| `SHA256SUMS.txt` | 全部安装包与更新元数据的 SHA-256 |
 
-- 当前用户要求公开发布。上传前审查当前源码和发行附件中的凭据、个人账号、设备信息和本机路径。首次公开发布使用审查后的当前源文件树，独立创建公开发布历史，避免把本地调试历史带入公开仓库；本地开发历史保持原样。
-- Release 附件包含签名 `BYBUS.apk`、`bybus-update.json` 和 `SHA256SUMS.txt`；发布说明使用中文。上传完成并核对 SHA-256 后才将草稿转为正式版本。
-- 私钥、签名密码、诊断包、设备截屏、账号数据、原版游戏资源及临时文件均不进入仓库或发行附件。
-- 显示版本保持 `v1.0`，内部版本递增；首次带应用更新功能的版本为 41。发布标签 `v1.0-build.41` 唯一绑定本次源码与安装包，后续构建不得覆盖同一标签的已发布文件。
+Release 标题采用 `BYBUS <版本>`。对外版本来自 `versionName`，内部 `versionCode` 用于 Android 覆盖升级，每次发布安装包都须递增。后续正式版本使用 `v1.0.1` 等递增版本名，使下载后的文件也可区分版本。
+
+现有更新协议严格核对 `<版本>-build.<versionCode>` 标签和 `BYBUS.apk` 名称，保留该标签格式与兼容附件。改名不能破坏旧更新器；下载说明优先链接带版本的 APK，兼容附件在 GitHub 中标注用途。本地两种文件名尽量通过硬链接共用一份内容。
+
+## 发布流程
+
+1. 更新版本、中文 Release 说明，完成受影响功能的验证。
+2. 使用 `scripts/prepare-release.py` 生成发行文件。
+3. 建立与源码提交对应的发布标签，上传全部附件到草稿 Release。
+4. 核对上传文件的大小与 SHA-256，再发布为正式版本。
+
+已发布 APK 与标签保持不变；文案与文件名调整可添加内容相同的下载别名，并更新校验清单。旧更新元数据与兼容附件必须继续有效。
+
+构建依赖由 `scripts/fetch-build-assets.py` 固定版本、大小与 SHA-256。完整构建步骤见[构建指南](building.md)。
 
 参考：[GitHub Releases API](https://docs.github.com/en/rest/releases/releases)、[Release 文件接口](https://docs.github.com/en/rest/releases/assets)、[Android FileProvider](https://developer.android.com/reference/androidx/core/content/FileProvider)。
