@@ -108,12 +108,30 @@ internal fun <T> SourceTabs(options: List<T>, selected: T, label: (T) -> String,
     }
 }
 
-internal enum class Glyph { Mark, Bus, Settings, Battery, Account, Arrow, Chevron, Refresh, Import, File, Stop, Globe, Play, External, Check, Close, Info }
+internal enum class Glyph {
+    Mark, Bus, Settings, Battery, Account, Arrow, Chevron, Refresh, File, Stop, Globe, Play, External, Check, Close, Info,
+    Upgrade, Gamepad, Sync, Apps, Translation, ReleaseTag, Folder, Store, Progress, BookOpen
+}
 
 @Composable
 internal fun LauncherGlyph(glyph: Glyph, color: Color, modifier: Modifier = Modifier, description: String? = null) {
-    if (glyph == Glyph.Mark) {
-        Icon(androidx.compose.ui.res.painterResource(R.drawable.ic_bybus), description, modifier, tint = color)
+    val vector = when (glyph) {
+        Glyph.Mark -> R.drawable.ic_bybus
+        Glyph.Refresh -> R.drawable.ic_action_refresh
+        Glyph.Upgrade -> R.drawable.ic_action_upgrade
+        Glyph.Gamepad -> R.drawable.ic_action_gamepad
+        Glyph.Sync -> R.drawable.ic_action_sync
+        Glyph.Apps -> R.drawable.ic_action_apps
+        Glyph.Translation -> R.drawable.ic_action_translation
+        Glyph.ReleaseTag -> R.drawable.ic_action_release
+        Glyph.Folder -> R.drawable.ic_action_folder
+        Glyph.Store -> R.drawable.ic_action_store
+        Glyph.Progress -> R.drawable.ic_action_progress
+        Glyph.BookOpen -> R.drawable.ic_action_book
+        else -> null
+    }
+    if (vector != null) {
+        Icon(androidx.compose.ui.res.painterResource(vector), description, modifier, tint = color)
         return
     }
     Canvas(if (description != null) modifier.semantics { contentDescription = description } else modifier) {
@@ -125,7 +143,8 @@ internal fun LauncherGlyph(glyph: Glyph, color: Color, modifier: Modifier = Modi
                 drawPath(p, color, style = stroke)
             }
             when (glyph) {
-                Glyph.Mark -> Unit // Shared vector is handled above.
+                Glyph.Mark, Glyph.Refresh, Glyph.Upgrade, Glyph.Gamepad, Glyph.Sync, Glyph.Apps, Glyph.Translation,
+                Glyph.ReleaseTag, Glyph.Folder, Glyph.Store, Glyph.Progress, Glyph.BookOpen -> Unit // Vectors above.
                 Glyph.Arrow -> { line(4f, 12f, 20f, 12f); path(14f, 6f, 20f, 12f, 14f, 18f) }
                 Glyph.Chevron -> path(9f, 6f, 15f, 12f, 9f, 18f)
                 Glyph.Play -> drawPath(Path().apply { moveTo(8f, 5f); lineTo(19f, 12f); lineTo(8f, 19f); close() }, color)
@@ -156,11 +175,6 @@ internal fun LauncherGlyph(glyph: Glyph, color: Color, modifier: Modifier = Modi
                         cubicTo(15f, 14.5f, 17.2f, 15.8f, 17.8f, 18.5f)
                     }, color, style = stroke)
                 }
-                Glyph.Refresh -> {
-                    drawArc(color, 45f, 270f, false, Offset(4f, 4f), Size(16f, 16f), style = stroke)
-                    path(17.66f, 2.66f, 17.66f, 6.34f, 13.98f, 6.34f)
-                }
-                Glyph.Import -> { path(4f, 15f, 4f, 20f, 20f, 20f, 20f, 15f); line(12f, 3f, 12f, 15f); path(7f, 10f, 12f, 15f, 17f, 10f) }
                 Glyph.File -> {
                     path(14f, 3f, 5f, 3f, 5f, 21f, 19f, 21f, 19f, 8f, 14f, 3f, 14f, 8f, 19f, 8f)
                     line(9f, 12f, 15f, 12f); line(9f, 16f, 15f, 16f)

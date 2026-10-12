@@ -105,7 +105,7 @@ internal fun ProjectDetails(tracking: ProjectTrackingState, onRefresh: () -> Uni
     }
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconTile(Glyph.Globe, accent = true)
+            IconTile(Glyph.Progress, accent = true)
             Column(Modifier.weight(1f).padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("都市零协会", style = MaterialTheme.typography.titleMedium)
                 Text("边狱巴士 · 简体中文", color = C.Muted, style = MaterialTheme.typography.bodySmall)
@@ -177,7 +177,7 @@ private fun ParaTranzDetails(state: ProjectTrackerState, onOpenLink: (String) ->
     Text("项目统计不代表本机汉化覆盖率。译文正式发布后，会在启动游戏时检查更新。",
         color = C.Muted, style = MaterialTheme.typography.bodySmall)
     HorizontalDivider(color = C.Line)
-    SheetAction(Glyph.File, "原文对照快照", subtitle = "2026/08/04 冻结记录", external = true) {
+    SheetAction(Glyph.BookOpen, "原文对照快照", subtitle = "2026/08/04 冻结记录", external = true) {
         onOpenLink(ZeroProject.SNAPSHOT_URL)
     }
 }

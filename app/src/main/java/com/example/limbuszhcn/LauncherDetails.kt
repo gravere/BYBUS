@@ -26,12 +26,12 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
         when (page) {
             "tools" -> {
                 DetailSection("版本与资源") {
-                    SheetAction(Glyph.Refresh, "更新", subtitle = "应用与汉化资源", navigation = true, onClick = onAppUpdate)
+                    SheetAction(Glyph.Upgrade, "更新", subtitle = "应用与汉化资源", navigation = true, onClick = onAppUpdate)
                     HorizontalDivider(color = C.Line)
-                    SheetAction(Glyph.Import, "游戏更新", navigation = true, onClick = onGameStore)
+                    SheetAction(Glyph.Gamepad, "游戏更新", navigation = true, onClick = onGameStore)
                 }
                 DetailSection("管理") {
-                    SheetAction(Glyph.Import, "同步游戏", enabled && state.installedVersion != null,
+                    SheetAction(Glyph.Sync, "同步游戏", enabled && state.installedVersion != null,
                         subtitle = "保留已下载的游戏资源", onClick = onSync)
                     HorizontalDivider(color = C.Line)
                     SheetAction(Glyph.Battery, "后台运行", enabled, navigation = true, onClick = onSettings)

@@ -16,13 +16,10 @@ internal fun AppUpdatesPane(state: AppUpdateState, launcher: LauncherUiState, on
     val release = state.release
     val available = release?.newerThan(state.installedCode) == true
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            IconTile(Glyph.Refresh)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("BYBUS", style = MaterialTheme.typography.titleLarge)
-                Text("${androidx.compose.ui.res.stringResource(R.string.app_version_name)} · 构建 ${state.installedCode}",
-                    color = C.Muted, style = MaterialTheme.typography.bodySmall)
-            }
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("BYBUS", style = MaterialTheme.typography.titleLarge)
+            Text("${androidx.compose.ui.res.stringResource(R.string.app_version_name)} · 构建 ${state.installedCode}",
+                color = C.Muted, style = MaterialTheme.typography.bodySmall)
         }
         Text(state.message, style = MaterialTheme.typography.titleMedium)
         if (state.busy) {
@@ -51,13 +48,13 @@ internal fun AppUpdatesPane(state: AppUpdateState, launcher: LauncherUiState, on
             Text("覆盖安装会保留游戏资源、登录和设置。", color = C.Muted, style = MaterialTheme.typography.bodySmall)
         }
         DetailSection("应用版本") {
-            SheetAction(Glyph.Refresh, "检查应用更新", !state.busy, onClick = onCheck)
+            SheetAction(Glyph.Apps, "检查应用更新", !state.busy, onClick = onCheck)
             HorizontalDivider(color = C.Line)
-            SheetAction(Glyph.External, "GitHub 发行页面", external = true, onClick = onOpenPage)
+            SheetAction(Glyph.ReleaseTag, "GitHub 发行页面", external = true, onClick = onOpenPage)
         }
         if (state.busy) TextButton(onClick = onCancel, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("取消") }
         DetailSection("汉化资源") {
-            SheetAction(Glyph.Refresh, "检查汉化更新", !launcher.busy && launcher.container?.gameImported == true,
+            SheetAction(Glyph.Translation, "检查汉化更新", !launcher.busy && launcher.container?.gameImported == true,
                 subtitle = if (launcher.busy && launcher.stage == "检查零协更新并校验汉化文件") launcher.message
                     else launcher.translation?.let { "已安装 · ${it.version}" } ?: "都市零协会",
                 onClick = onTranslationUpdate)

@@ -88,13 +88,13 @@ internal fun GameUpdatesPane(state: LauncherUiState, onCheck: () -> Unit,
 
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("其他方式", color = C.Muted, style = MaterialTheme.typography.labelMedium)
-            SheetAction(Glyph.Import, "从文件更新", !state.busy && !state.gameInstallPending && state.gameInstallReview == null,
+            SheetAction(Glyph.Folder, "从文件更新", !state.busy && !state.gameInstallPending && state.gameInstallReview == null,
                 subtitle = "APK、分包、XAPK / APKS", navigation = true, onClick = onImport)
             HorizontalDivider(color = C.Line)
             SheetAction(Glyph.Globe, "APKPure 网页", external = true, onClick = { onPage(GameStores.APKPURE_PAGE) })
             if (state.installSource.canOpen && GameStores.sourceFor(state.installSource) == null) {
                 HorizontalDivider(color = C.Line)
-                SheetAction(Glyph.External, "原安装商店 · ${state.installSource.label}", external = true, onClick = onOriginalStore)
+                SheetAction(Glyph.Store, "原安装商店 · ${state.installSource.label}", external = true, onClick = onOriginalStore)
             }
         }
         Text("保留系统安装包，游戏资源继续在 BYBUS 内下载。", color = C.Muted, style = MaterialTheme.typography.bodySmall)
