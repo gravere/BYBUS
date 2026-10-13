@@ -127,6 +127,33 @@ int main() {
     assert(!fonts.contains_fragments({"<sprite name=icon>在", "02:14", "后恢复", "1", "脑啡肽。"}, 4));
     assert(fonts.contains_fragments({"第", "02", "层，", "02", "层入口"}, 4));
     assert(!fonts.contains_fragments({"第", "02", "层，", "03", "层入口"}, 4));
+    // Download dialogs format the released template after its getter returns.
+    fonts.add("需要下载{0}的数据。");
+    fonts.add("推荐在Wi-Fi环境下进行下载。");
+    fonts.add("容量{0}，确认{0}。");
+    for (const auto value : {"0 B", "123.4 MB", "1.2 GB", "1,024.25 MiB", "3 KB/s"}) {
+        assert(fonts.contains(std::string("需要下载") + value + "的数据。"));
+        assert(fonts.contains_fragments({"需要下载", value, "的数据。"}, 0));
+        assert(!fonts.contains(value));
+    }
+    assert(fonts.contains("需要下载<color=#fff>123.4 MB</color>的数据。"));
+    assert(fonts.contains("容量1.2 GB，确认1.2 GB。"));
+    assert(!fonts.contains("容量1.2 GB，确认1.3 GB。"));
+    for (const auto value : {"MB", ".5MB", "1.MB", "1..2MB", "1,23MB", "1,234,MB", "1MBextra",
+                            "12MB/s/s", "1/2GB", "NaNMB", "-1MB", "1e3MB", "玩家MB",
+                            "<font=Other>1MB</font>", "<sprite=0>1MB"}) {
+        assert(!fonts.contains(std::string("需要下载") + value + "的数据。"));
+        assert(!fonts.contains_fragments({"需要下载", value, "的数据。"}, 0));
+    }
+    assert(fonts.contains("需要下载123.4 MB的数据。\n推荐在Wi-Fi环境下进行下载。"));
+    assert(fonts.contains("需要下载123.4 MB的数据。<br>推荐在Wi-Fi环境下进行下载。"));
+    assert(!fonts.contains("需要下载123.4 MB的数据。\n未知的正文。"));
+    assert(!fonts.contains("需要下载123.4 MB的数据。\n推荐在Wi-Fi环境下进行下载。附加未知内容"));
+    assert(!fonts.contains("需要下载\n123.4 MB的数据。未知内容"));
+    assert(!fonts.contains("<font=Other>需要下载123.4 MB的数据。\n推荐在Wi-Fi环境下进行下载。</font>"));
+    std::string too_many_paragraphs;
+    for (int n = 0; n < 17; ++n) too_many_paragraphs += "需要下载123.4 MB的数据。\n";
+    assert(!fonts.contains(too_many_paragraphs));
     assert(!fonts.fragment_candidate(std::string(513, 'x')));
     assert(!fonts.contains(std::string(16385, 'x')));
     assert(limbus_font_proof::pattern("{0}{1}中文").slots.empty());

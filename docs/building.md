@@ -58,9 +58,13 @@ c++ -std=c++17 -I/path/to/temp scripts/native-managed-tests.cpp -o /path/to/temp
 /path/to/temp/native-managed-tests
 c++ -std=c++17 -I/path/to/temp scripts/native-material-tests.cpp -o /path/to/temp/native-material-tests
 /path/to/temp/native-material-tests
+c++ -std=c++17 scripts/native-text-tests.cpp -o /path/to/temp/native-text-tests
+/path/to/temp/native-text-tests
+c++ -std=c++17 -I/path/to/temp scripts/native-legacy-font-tests.cpp -o /path/to/temp/native-legacy-font-tests
+/path/to/temp/native-legacy-font-tests
 ```
 
-原生用例从当前运行时代码提取翻译与材质函数，模拟 IL2CPP GC 接口，验证上下文、64 位引用、缓存、组件销毁和图集匹配边界；它不替代游戏内视觉核对。Windows 可使用 Visual Studio 的 C++ 编译器，并启用 `/std:c++17 /utf-8`。
+原生用例从当前运行时代码提取翻译、材质与旧字体加载函数，模拟 IL2CPP GC 接口，验证上下文、64 位引用、容量参数、材质共享与释放、字体加载失败和图集匹配边界；它不替代游戏内视觉核对。Windows 可使用 Visual Studio 的 C++ 编译器，并启用 `/std:c++17 /utf-8`。
 
 ## 签名与发行文件
 

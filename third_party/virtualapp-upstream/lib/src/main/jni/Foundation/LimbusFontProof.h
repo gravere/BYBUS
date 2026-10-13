@@ -54,6 +54,32 @@ inline bool number(std::string_view value) {
 inline bool numeric_display(std::string_view value) {
     return value.size() <= 512 && number(canonical(value));
 }
+inline bool storage_quantity(std::string_view value) {
+    if (value.empty() || value.size() > 64) return false;
+    if (value.size() > 2 && value.substr(value.size() - 2) == "/s") value.remove_suffix(2);
+    bool unit_found = false;
+    for (std::string_view unit : {"KiB", "MiB", "GiB", "TiB", "KB", "MB", "GB", "TB", "B"}) {
+        if (value.size() > unit.size() && value.substr(value.size() - unit.size()) == unit) {
+            value.remove_suffix(unit.size()); unit_found = true; break;
+        }
+    }
+    if (!unit_found || value.size() > 32) return false;
+    const auto dot = value.find('.');
+    auto integer = value.substr(0, dot);
+    auto digits = [](std::string_view part) {
+        if (part.empty()) return false;
+        for (char c : part) if (c < '0' || c > '9') return false;
+        return true;
+    };
+    if (dot != value.npos && !digits(value.substr(dot + 1))) return false;
+    const auto comma = integer.find(',');
+    if (comma == integer.npos) return digits(integer);
+    if (comma == 0 || comma > 3 || !digits(integer.substr(0, comma))) return false;
+    for (size_t pos = comma; pos < integer.size(); pos += 4) {
+        if (integer[pos] != ',' || integer.size() - pos < 4 || !digits(integer.substr(pos + 1, 3))) return false;
+    }
+    return (integer.size() - comma) % 4 == 0;
+}
 struct Pattern {
     std::vector<std::string> literals;
     std::vector<unsigned> slots;
@@ -94,12 +120,13 @@ class Catalogue {
     std::vector<Pattern> patterns_;
     std::unordered_set<std::string> fragments_;
     std::unordered_map<std::string, bool> recent_;
+    std::unordered_map<std::string, bool> paragraphs_;
 
     bool argument(std::string_view value) const {
         // IntroductionPreset previews replace {0} with this exact mask. The
         // entire released template still has to match; arbitrary names or a
         // bare mask are not provenance, and no displayed text is rewritten.
-        return value == "■■■■■" || number(value) ||
+        return value == "■■■■■" || number(value) || storage_quantity(value) ||
                 (value.size() <= 256 && labels_.count(std::string(value)) != 0);
     }
     bool match(const Pattern &p, std::string_view text, size_t slot, size_t pos,
@@ -125,7 +152,7 @@ class Catalogue {
         return false;
     }
 public:
-    void clear() { labels_.clear(); patterns_.clear(); fragments_.clear(); recent_.clear(); }
+    void clear() { labels_.clear(); patterns_.clear(); fragments_.clear(); recent_.clear(); paragraphs_.clear(); }
     void add(std::string_view released) {
         auto label = canonical(released);
         bool non_ascii = false;
@@ -196,8 +223,7 @@ public:
     }
     bool contains(std::string_view rendered) {
         if (contains_atomic(rendered)) return true;
-        if (rendered.size() > 8192 || rendered.find("•") == rendered.npos ||
-            rendered.find("<noparse") != rendered.npos) return false;
+        if (rendered.size() > 8192 || rendered.find("<noparse") != rendered.npos) return false;
         // Start-buff cards concatenate several released descriptions. Validate
         // every complete bullet, including its parameters, never a prose substring.
         std::string list_text(rendered);
@@ -206,6 +232,27 @@ public:
                 (list_text[i + 2] == 'r' || list_text[i + 2] == 'R') && list_text[i + 3] == '>')
                 list_text.replace(i, 4, "\n");
         rendered = list_text;
+        if (rendered.find("•") == rendered.npos) {
+            if (rendered.find('\n') == rendered.npos) return false;
+            // Keep line boundaries in this cache: joining known complete
+            // paragraphs is not permission to match arbitrary substrings.
+            auto known = paragraphs_.find(list_text);
+            if (known != paragraphs_.end()) return known->second;
+            size_t count = 0;
+            bool valid = true;
+            for (size_t start = 0; start <= rendered.size();) {
+                const auto end = rendered.find('\n', start);
+                auto line = rendered.substr(start, end == rendered.npos ? rendered.npos : end - start);
+                if (!canonical(line).empty() &&
+                    (++count > 16 || line.size() > 2048 || !contains_atomic(line))) { valid = false; break; }
+                if (end == rendered.npos) break;
+                start = end + 1;
+            }
+            valid = valid && count >= 2;
+            if (paragraphs_.size() >= 256) paragraphs_.clear();
+            paragraphs_.emplace(std::move(list_text), valid);
+            return valid;
+        }
         std::vector<std::string> items;
         for (size_t start = 0; start <= rendered.size();) {
             size_t end = rendered.find('\n', start);

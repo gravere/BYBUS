@@ -5,6 +5,7 @@
 #include "LimbusFontProof.h"
 #include "LimbusFlowTextProof.h"
 #include "LimbusManagedState.h"
+#include "LimbusFontMaterials.h"
 #include "../Substrate/SubstrateHook.h"
 
 #include <android/log.h>
@@ -109,6 +110,7 @@ bool g_font_attempted = false;
 pthread_t g_unity_init_thread{};
 void *g_tmp_font_asset = nullptr;
 void *g_ui_font = nullptr;
+bool g_ui_uses_system_font = true;
 limbus_managed::GcApi g_gc;
 limbus_managed::Registry<bool> g_translated_objects(g_gc, 262144);
 limbus_managed::RecentOutputs g_recent_font_outputs;
@@ -126,6 +128,7 @@ struct TmpComponentState {
     void *shared_material = nullptr;
     limbus_managed::Ref font_root;
     limbus_managed::Ref material_root;
+    limbus_font_materials::Lease converted_material;
     float line_spacing = 0.0f;
     bool has_line_spacing = false;
     float font_size = 0.0f;
@@ -145,6 +148,8 @@ limbus_managed::Registry<TmpComponentState> g_original_tmp_states(g_gc, 8192);
 struct UiComponentState {
     void *font = nullptr;
     limbus_managed::Ref font_root;
+    int32_t font_style = 0;
+    bool has_font_style = false;
     float line_spacing = 1.0f;
     bool has_line_spacing = false;
     int32_t font_size = 0;
@@ -204,6 +209,12 @@ create_tmp_font_fn g_create_tmp_font = nullptr;
 runtime_invoke_fn g_runtime_invoke = nullptr;
 object_get_class_fn g_object_get_class = nullptr;
 object_unbox_fn g_object_unbox = nullptr;
+void *(*g_object_new)(void *) = nullptr;
+void *g_unity_font_class = nullptr;
+const void *g_font_path_constructor_info = nullptr;
+const void *g_font_dynamic_info = nullptr;
+const void *g_font_has_character_info = nullptr;
+const void *g_destroy_object_info = nullptr;
 class_get_method_global_fn g_class_get_method = nullptr;
 const void *(*g_class_get_methods)(void *, void **) = nullptr;
 const char *(*g_method_get_name)(const void *) = nullptr;
@@ -255,8 +266,8 @@ const void *g_tmp_font_get_material_info = nullptr;
 const void *g_tmp_get_font_material_info = nullptr;
 const void *g_get_fallback_material_info = nullptr;
 const void *g_retain_fallback_material_info = nullptr;
-std::unordered_map<void *, void *> g_font_materials;
-std::unordered_set<void *> g_converted_font_materials;
+const void *g_release_fallback_material_info = nullptr;
+limbus_font_materials::Pool g_converted_font_materials(g_gc);
 const void *g_tmp_get_shared_material_info = nullptr;
 const void *g_tmp_set_shared_material_info = nullptr;
 const void *g_tmp_get_line_spacing_info = nullptr;
@@ -276,6 +287,8 @@ const void *g_tmp_set_overflow_mode_info = nullptr;
 const void *g_tmp_get_rect_transform_info = nullptr;
 const void *g_ui_get_font_info = nullptr;
 const void *g_ui_set_font_info = nullptr;
+const void *g_ui_get_font_style_info = nullptr;
+const void *g_ui_set_font_style_info = nullptr;
 const void *g_ui_get_line_spacing_info = nullptr;
 const void *g_ui_set_line_spacing_info = nullptr;
 const void *g_ui_get_font_size_info = nullptr;
@@ -1181,6 +1194,43 @@ acquisition2_fn const kAcquisition2Replacements[] = {ACQUISITION_SLOTS(ACQUISITI
 #undef ACQUISITION2_ENTRY
 #undef ACQUISITION_SLOTS
 
+bool unity_object_alive(void *instance);
+bool invoke_bool_getter(const void *method_info, void *instance, bool *value);
+
+limbus_managed::Ref load_bundled_ui_font(void *font_path) {
+    if (!font_path || !g_object_new || !g_unity_font_class || !g_font_path_constructor_info ||
+        !g_font_dynamic_info || !g_font_has_character_info || !g_destroy_object_info ||
+        !g_runtime_invoke || !g_object_unbox) return {};
+    void *font = g_object_new(g_unity_font_class);
+    auto root = limbus_managed::retain(g_gc, font);
+    if (!root) return {};
+    void *args[] = {font_path}, *exception = nullptr;
+    g_runtime_invoke(g_font_path_constructor_info, font, args, &exception);
+    bool dynamic = false;
+    bool valid = !exception && unity_object_alive(font) &&
+            invoke_bool_getter(g_font_dynamic_info, font, &dynamic) && dynamic;
+    // Missing glyphs would silently use another face. Check representative
+    // simplified Chinese characters before exposing this Font to legacy UI.
+    for (int32_t glyph : {0x6c49, 0x8bd1, 0x8111, 0x9176}) {
+        if (!valid) break;
+        void *glyph_args[] = {&glyph};
+        void *result = g_runtime_invoke(g_font_has_character_info, font, glyph_args, &exception);
+        void *unboxed = !exception && result ? g_object_unbox(result) : nullptr;
+        valid = unboxed && *static_cast<uint8_t *>(unboxed);
+    }
+    if (valid) return root;
+    if (unity_object_alive(font)) {
+        void *destroy_args[] = {font}, *destroy_exception = nullptr;
+        g_runtime_invoke(g_destroy_object_info, nullptr, destroy_args, &destroy_exception);
+    }
+    return {};
+}
+
+int32_t translated_legacy_font_style(int32_t original_style, bool system_font) {
+    // Unity FontStyle: Normal=0, Bold=1, Italic=2, BoldAndItalic=3.
+    return system_font && original_style >= 0 && original_style <= 3 ? original_style | 1 : original_style;
+}
+
 bool ensure_tmp_font() {
     pthread_mutex_lock(&g_lock);
     // TextData formatters can also run on resource workers. Unity asset creation
@@ -1233,17 +1283,23 @@ bool ensure_tmp_font() {
         if (exception != nullptr) g_tmp_font_asset = nullptr;
         g_tmp_font_root = limbus_managed::retain(g_gc, g_tmp_font_asset);
         if (!g_tmp_font_root) g_tmp_font_asset = nullptr;
-        // This Android player does not create a dynamic legacy Font from a TTF
-        // path. Preserve the verified CJK-capable system fallback for UI.Text.
+        // Validate the same bundled face independently for the legacy renderer.
+        // The fallback remains available if this player cannot create that Font.
         void *ui_exception = nullptr;
-        void *ui_font_name = new_managed_string("sans-serif");
-        int32_t ui_font_size = 32;
-        void *ui_font_args[] = {ui_font_name, &ui_font_size};
-        if (ui_font_name && g_create_dynamic_font_info) {
-            g_ui_font = g_runtime_invoke(g_create_dynamic_font_info, nullptr, ui_font_args, &ui_exception);
-            if (ui_exception) g_ui_font = nullptr;
-            g_ui_font_root = limbus_managed::retain(g_gc, g_ui_font);
-            if (!g_ui_font_root) g_ui_font = nullptr;
+        g_ui_font_root = load_bundled_ui_font(font_path);
+        g_ui_uses_system_font = !g_ui_font_root;
+        if (g_ui_font_root) {
+            g_ui_font = g_ui_font_root->get();
+        } else {
+            void *ui_font_name = new_managed_string("sans-serif");
+            int32_t ui_font_size = 32;
+            void *ui_font_args[] = {ui_font_name, &ui_font_size};
+            if (ui_font_name && g_create_dynamic_font_info) {
+                g_ui_font = g_runtime_invoke(g_create_dynamic_font_info, nullptr, ui_font_args, &ui_exception);
+                if (ui_exception) g_ui_font = nullptr;
+                g_ui_font_root = limbus_managed::retain(g_gc, g_ui_font);
+                if (!g_ui_font_root) g_ui_font = nullptr;
+            }
         }
         void *fallback_list = nullptr;
         void *add_exception = nullptr;
@@ -1267,8 +1323,10 @@ bool ensure_tmp_font() {
                 font_file.c_str(), face_index,
                 g_tmp_font_asset, exception);
         if (!g_get_fallback_fonts_info) { g_tmp_font_asset = nullptr; g_tmp_font_root.reset(); }
-        LT_LOGI("Dynamic CJK UI font creation source=android-sans-serif uiFont=%p exception=%p",
-                g_ui_font, ui_exception);
+        LT_LOGI("Dynamic CJK UI font creation source=%s uiFont=%p exception=%p",
+                g_ui_uses_system_font ? "android-sans-serif-bold" : "bundled-Sarasa-Bold", g_ui_font, ui_exception);
+        append_native_metadata("font-state.log", g_ui_font == nullptr ? "legacy_font=unavailable" :
+                g_ui_uses_system_font ? "legacy_font=system-bold-fallback" : "legacy_font=bundled-validated");
     }
     bool ready = g_tmp_font_asset != nullptr;
     pthread_mutex_unlock(&g_lock);
@@ -1752,7 +1810,7 @@ void observe_popup_font(void *instance, void *managed_text, bool legacy) {
     snprintf(row, sizeof(row), "kind=%d type=%s component=%p proof=%d primary=%d font=%s style=%d weight=%d material=%p converted=%d dilate=%.4f normal=%.4f bold=%.4f outline=%.4f scale=%.4f gradient=%.4f tags_font=%d tags_sprite=%d wrap=%d overflow=%d rect=%.1fx%.1f breaks=%zu text_hash=%016llx shape=%s",
             kind, legacy ? "ui" : "tmp", instance, proof,
             font && font == (legacy ? g_ui_font : g_tmp_font_asset), font_name.c_str(), style, weight,
-            material, g_converted_font_materials.count(material) != 0,
+            material, g_converted_font_materials.find(material) != nullptr,
             read_material_number(material, "_FaceDilate"), read_material_number(material, "_WeightNormal"),
             read_material_number(material, "_WeightBold"), read_material_number(material, "_OutlineWidth"),
             read_material_number(material, "_ScaleRatioA"), read_material_number(material, "_GradientScale"),
@@ -1884,6 +1942,21 @@ bool find_tmp_component_state(void *instance, TmpComponentState *state) {
     return found;
 }
 
+bool retain_tmp_material(void *material) {
+    if (!g_runtime_invoke || !g_retain_fallback_material_info || !g_release_fallback_material_info) return false;
+    void *args[] = {material}, *exception = nullptr;
+    g_runtime_invoke(g_retain_fallback_material_info, nullptr, args, &exception);
+    return exception == nullptr;
+}
+
+void release_tmp_material(void *material) {
+    if (!g_runtime_invoke || !g_release_fallback_material_info) return;
+    void *args[] = {material}, *exception = nullptr;
+    // TMP defers destruction to its own render-loop cleanup. It is safe to
+    // release the old lease immediately before assigning the new material.
+    g_runtime_invoke(g_release_fallback_material_info, nullptr, args, &exception);
+}
+
 void *translated_tmp_material(void *instance, void *requested_material) {
     TmpComponentState state;
     if (instance == nullptr || g_tmp_get_font == nullptr ||
@@ -1898,35 +1971,43 @@ void *translated_tmp_material(void *instance, void *requested_material) {
     // Losing restoration metadata must never bind the Japanese atlas to a
     // Chinese font. The matching default is safer than corrupt glyph sampling.
     if (!find_tmp_component_state(instance, &state)) return font_material;
-    if (requested_material == nullptr || requested_material == font_material) return font_material;
-    if (g_converted_font_materials.count(requested_material)) return requested_material;
+    int32_t id = component_id(instance);
+    auto assign_lease = [&](limbus_font_materials::Lease lease) {
+        pthread_mutex_lock(&g_font_state_lock);
+        auto saved = g_original_tmp_states.find(instance, id);
+        if (saved) saved->converted_material = std::move(lease);
+        pthread_mutex_unlock(&g_font_state_lock);
+    };
+    if (requested_material == nullptr || requested_material == font_material) {
+        assign_lease({});
+        return font_material;
+    }
+    if (auto lease = g_converted_font_materials.find(requested_material)) {
+        assign_lease(std::move(lease));
+        return requested_material;
+    }
     // Keep the latest game preset for recycled components, including selection
     // and disabled states. TMP's material manager copies style but replaces the
     // atlas and its metrics, preventing a Japanese atlas or lost outline.
-    int32_t id = component_id(instance);
     auto material_root = limbus_managed::retain(g_gc, requested_material);
     if (!material_root) return font_material;
     pthread_mutex_lock(&g_font_state_lock);
     auto saved = g_original_tmp_states.find(instance, id);
     if (saved) { saved->shared_material = requested_material; saved->material_root = material_root; }
     pthread_mutex_unlock(&g_font_state_lock);
-    auto cached = g_font_materials.find(requested_material);
     if (g_get_fallback_material_info == nullptr || g_retain_fallback_material_info == nullptr ||
-        (cached == g_font_materials.end() && g_converted_font_materials.size() >= 128)) return font_material;
+        g_release_fallback_material_info == nullptr) return font_material;
     void *args[] = {requested_material, font_material};
     void *exception = nullptr;
     // Even a known source preset may have changed in place. Let TMP refresh its
     // own cached conversion instead of returning our previous material blindly.
     void *converted = g_runtime_invoke(g_get_fallback_material_info, nullptr, args, &exception);
     if (exception != nullptr || converted == nullptr) return font_material;
-    if (g_converted_font_materials.count(converted)) return converted;
-    if (g_converted_font_materials.size() >= 128) return font_material;
-    void *retain_args[] = {converted};
-    g_runtime_invoke(g_retain_fallback_material_info, nullptr, retain_args, &exception);
-    if (exception != nullptr) return font_material;
-    // At most 128 TMP-owned materials are retained for this guest process.
-    g_font_materials[requested_material] = converted;
-    g_converted_font_materials.insert(converted);
+    auto lease = g_converted_font_materials.acquire(converted, retain_tmp_material, release_tmp_material);
+    if (!lease) return font_material;
+    // Only live component records hold strong leases. New presets retain their
+    // own style even after more than 128 materials have been visited.
+    assign_lease(std::move(lease));
     return converted;
 }
 
@@ -1985,6 +2066,7 @@ bool capture_ui_component_state(void *instance) {
     candidate.font = invoke_object_getter(g_ui_get_font_info, instance);
     candidate.font_root = limbus_managed::retain(g_gc, candidate.font);
     if (candidate.font && !candidate.font_root) return false;
+    candidate.has_font_style = invoke_int_getter(g_ui_get_font_style_info, instance, &candidate.font_style);
     candidate.has_line_spacing = invoke_float_getter(
             g_ui_get_line_spacing_info, instance, &candidate.line_spacing);
     candidate.has_font_size = invoke_int_getter(
@@ -2029,6 +2111,7 @@ void restore_ui_component_state(void *instance) {
     if (invoke_object_getter(g_ui_get_font_info, instance) != g_ui_font) return;
     // 列表和页签会复用旧 UI.Text；离开中文文本时恢复原设置，避免影响未汉化资源。
     if (state.font != nullptr) invoke_object_setter(g_ui_set_font_info, instance, state.font);
+    if (state.has_font_style) invoke_int_setter(g_ui_set_font_style_info, instance, state.font_style);
     if (state.has_line_spacing) {
         invoke_float_setter(g_ui_set_line_spacing_info, instance, state.line_spacing);
     }
@@ -2399,6 +2482,11 @@ void *prepare_ui_text(void *instance, void *managed_text) {
             LT_LOGI("UI.Text Chinese primary font switches=%llu font=%p",
                     static_cast<unsigned long long>(switches), g_ui_font);
         }
+    }
+    UiComponentState state;
+    if (find_ui_component_state(instance, &state) && state.has_font_style) {
+        invoke_int_setter(g_ui_set_font_style_info, instance,
+                         translated_legacy_font_style(state.font_style, g_ui_uses_system_font));
     }
     return replacement;
 }
@@ -2874,6 +2962,7 @@ bool report_il2cpp_resolver(const MappedElfResolver &resolver, bool query_domain
     string_new_utf16_fn string_new_utf16 =
             resolver.resolve<string_new_utf16_fn>("il2cpp_string_new_utf16");
     runtime_invoke_fn runtime_invoke = resolver.resolve<runtime_invoke_fn>("il2cpp_runtime_invoke");
+    auto object_new = resolver.resolve<void *(*)(void *)>("il2cpp_object_new");
     object_get_class_fn object_get_class =
             resolver.resolve<object_get_class_fn>("il2cpp_object_get_class");
     object_unbox_fn object_unbox = resolver.resolve<object_unbox_fn>("il2cpp_object_unbox");
@@ -3191,6 +3280,8 @@ bool report_il2cpp_resolver(const MappedElfResolver &resolver, bool query_domain
             class_get_method_from_name(ui_text_class, "get_font", 0);
     const void *ui_set_font_method = ui_text_class == nullptr ? nullptr :
             class_get_method_from_name(ui_text_class, "set_font", 1);
+    const void *ui_get_font_style_method = find_method_by_signature(ui_text_class, "get_fontStyle", "");
+    const void *ui_set_font_style_method = find_method_by_signature(ui_text_class, "set_fontStyle", "UnityEngine.FontStyle");
     const void *ui_get_line_spacing_method = ui_text_class == nullptr ? nullptr :
             class_get_method_from_name(ui_text_class, "get_lineSpacing", 0);
     const void *ui_set_line_spacing_method = ui_text_class == nullptr ? nullptr :
@@ -3243,6 +3334,12 @@ bool report_il2cpp_resolver(const MappedElfResolver &resolver, bool query_domain
             tmp_material_manager_class, "GetFallbackMaterial", "UnityEngine.Material,UnityEngine.Material");
     const void *retain_fallback_material_method = find_method_by_signature(
             tmp_material_manager_class, "AddFallbackMaterialReference", "UnityEngine.Material");
+    const void *release_fallback_material_method = find_method_by_signature(
+            tmp_material_manager_class, "ReleaseFallbackMaterial", "UnityEngine.Material");
+    const void *font_path_constructor = find_method_by_signature(unity_font_class, ".ctor", "System.String");
+    const void *font_dynamic = find_method_by_signature(unity_font_class, "get_dynamic", "");
+    const void *font_has_character = find_method_by_signature(unity_font_class, "HasCharacter", "System.Int32");
+    const void *destroy_object = find_method_by_signature(unity_object_class, "Destroy", "UnityEngine.Object");
     LT_LOGI("TMP fallback getter class=%p method=%p", tmp_settings_class, get_fallback_fonts_method);
     LT_LOGI("TMP style methods material=%p fontAssetMaterial=%p fontMaterial=%p/%p shared=%p/%p spacing=%p/%p"
             " fontSize=%p/%p min=%p/%p max=%p/%p auto=%p/%p wrap=%p/%p overflow=%p/%p"
@@ -3310,6 +3407,12 @@ bool report_il2cpp_resolver(const MappedElfResolver &resolver, bool query_domain
         g_runtime_invoke = runtime_invoke;
         g_object_get_class = object_get_class;
         g_object_unbox = object_unbox;
+        g_object_new = object_new;
+        g_unity_font_class = unity_font_class;
+        g_font_path_constructor_info = font_path_constructor;
+        g_font_dynamic_info = font_dynamic;
+        g_font_has_character_info = font_has_character;
+        g_destroy_object_info = destroy_object;
         g_class_get_method = class_get_method_from_name;
         g_class_get_methods = class_get_methods;
         g_method_get_name = method_get_name;
@@ -3336,6 +3439,7 @@ bool report_il2cpp_resolver(const MappedElfResolver &resolver, bool query_domain
         g_tmp_get_font_material_info = tmp_get_font_material_method;
         g_get_fallback_material_info = get_fallback_material_method;
         g_retain_fallback_material_info = retain_fallback_material_method;
+        g_release_fallback_material_info = release_fallback_material_method;
         g_tmp_get_shared_material_info = tmp_get_shared_material_method;
         g_tmp_set_shared_material_info = tmp_set_shared_material_method;
         g_tmp_get_line_spacing_info = tmp_get_line_spacing_method;
@@ -3355,6 +3459,8 @@ bool report_il2cpp_resolver(const MappedElfResolver &resolver, bool query_domain
         g_tmp_get_rect_transform_info = tmp_get_rect_transform_method;
         g_ui_get_font_info = ui_get_font_method;
         g_ui_set_font_info = ui_set_font_method;
+        g_ui_get_font_style_info = ui_get_font_style_method;
+        g_ui_set_font_style_info = ui_set_font_style_method;
         g_ui_get_line_spacing_info = ui_get_line_spacing_method;
         g_ui_set_line_spacing_info = ui_set_line_spacing_method;
         g_ui_get_font_size_info = ui_get_font_size_method;

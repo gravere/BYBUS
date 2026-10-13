@@ -12,6 +12,9 @@ for signature in ("bool remember_translated_text(", "void *translate_managed_str
 output = pathlib.Path(sys.argv[1])
 output.mkdir(parents=True, exist_ok=True)
 (output / "runtime-translation-under-test.inc").write_text("\n\n".join(pieces), encoding="utf-8")
-start = source.index("void *translated_tmp_material(")
-end = source.index("\n}", start) + 2
+start = source.index("bool retain_tmp_material(")
+end = source.index("\nvoid replacement_tmp_set_shared_material(", start)
 (output / "runtime-material-under-test.inc").write_text(source[start:end], encoding="utf-8")
+start = source.index("limbus_managed::Ref load_bundled_ui_font(")
+end = source.index("\nbool ensure_tmp_font() {", start)
+(output / "runtime-legacy-font-under-test.inc").write_text(source[start:end], encoding="utf-8")
