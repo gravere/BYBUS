@@ -164,4 +164,13 @@ class AppUpdateDeltaTest {
         assertArrayEquals(f.target.readBytes(), repo.download(f.release, f.base, null) {}.readBytes())
         repo.clear(); assertTrue(cache.list()!!.isEmpty())
     }
+
+    @Test fun rateLimitedPatchDoesNotImmediatelyRetryTheFullDownload() {
+        val f = fixture(); val cache = temporary.newFolder(); var requests = 0
+        val repo = AppUpdateRepository(cache, AppUpdateTransport { _, _, _ ->
+            requests++; throw UpdateHttpException(429, 60_000)
+        })
+        assertThrows(UpdateHttpException::class.java) { repo.download(f.release, f.base, f.delta) {} }
+        assertEquals(1, requests); assertTrue(cache.list()!!.isEmpty())
+    }
 }

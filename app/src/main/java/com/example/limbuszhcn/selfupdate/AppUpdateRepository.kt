@@ -10,12 +10,6 @@ import java.net.URL
 import java.security.MessageDigest
 import java.util.concurrent.CancellationException
 
-internal class UpdateHttpException(val status: Int, val retryAfterMillis: Long) : Exception(when (status) {
-    403, 429 -> "GitHub 暂时限制了请求，请稍后重试或查看发行页面"
-    404 -> "暂未找到正式发行版，请稍后重试"
-    else -> "更新服务暂时不可用（HTTP $status）"
-})
-
 internal fun interface AppUpdateTransport {
     fun read(url: String, binary: Boolean, consume: (InputStream, Long) -> Unit)
 }
@@ -72,6 +66,7 @@ internal class AppUpdateRepository @JvmOverloads constructor(private val directo
                     reconstructed = true
                 } catch (error: Exception) {
                     if (error is CancellationException || Thread.currentThread().isInterrupted) throw CancellationException()
+                    if (error is UpdateHttpException && error.retryAfterMillis > 0) throw error
                     pending.delete(); patch.delete()
                     fallback = true
                     progress(AppUpdateProgress("增量更新不可用，改为下载完整包", null, null))
@@ -156,9 +151,20 @@ internal class AppUpdateRepository @JvmOverloads constructor(private val directo
                         url = URL(URL(url), requireNotNull(connection.getHeaderField("Location"))).toString()
                     } else {
                         if (status != 200) {
-                            val retry = connection.getHeaderField("Retry-After")?.toLongOrNull()?.times(1000)
-                            val reset = connection.getHeaderField("X-RateLimit-Reset")?.toLongOrNull()?.times(1000)?.minus(System.currentTimeMillis())
-                            throw UpdateHttpException(status, maxOf(60_000, retry ?: 0, reset ?: 0).coerceAtMost(86_400_000))
+                            val body = connection.errorStream?.use { input ->
+                                val bytes = ByteArray(8192)
+                                var used = 0
+                                while (used < bytes.size) {
+                                    if (Thread.currentThread().isInterrupted) throw CancellationException()
+                                    val count = input.read(bytes, used, bytes.size - used)
+                                    if (count <= 0) break
+                                    used += count
+                                }
+                                String(bytes, 0, used, Charsets.UTF_8)
+                            }.orEmpty()
+                            throw UpdateHttpException.fromResponse(status, connection.getHeaderField("X-RateLimit-Remaining"),
+                                connection.getHeaderField("X-RateLimit-Reset"), connection.getHeaderField("Retry-After"),
+                                connection.getHeaderField("Date"), body, System.currentTimeMillis())
                         }
                         return connection.inputStream.use { consume(it, connection.contentLengthLong) }
                     }

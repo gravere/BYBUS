@@ -13,6 +13,8 @@
 - 使用限于单个升级缓存目录的 FileProvider 授予临时只读权限，交给 Android 系统确认覆盖安装。不会静默安装、卸载旧版或清除数据。用户拒绝后仍可重试；进程重建后不自动发起安装。
 - FileProvider 的路径必须通过 Manifest 中的 `android.support.FILE_PROVIDER_PATHS` 元数据声明；静态 `getUriForFile` 不读取子类构造函数的资源参数。发行脚本核对最终 APK 中的元数据指向和 Provider 权限，防止下载成功后无法生成安装 URI。
 - 同时保留「GitHub 发行页面」入口，网络失败时展示真实原因，不把查询失败写成已是最新版。
+- 自动进入页面可复用一分钟内的成功结果；手动检查可主动刷新，不共用本地成功缓存与服务器限流的等待时间。仅 429，或具有剩余配额为零、有效 Retry-After / 限流错误消息的 403 记录服务器等待；普通 403、404、5xx 和网络失败不读取配额重置时间来锁住检查。
+- 服务器等待在当前进程使用单调时钟，界面显示剩余时间并到期恢复检查按钮；重启后仅恢复有记录时间、范围合法且仍有效的服务器等待。升级清理旧 `retryAt` 字段，成功检查也清除持久等待，取消请求不写入等待状态。
 
 ## 增量下载
 
@@ -21,7 +23,7 @@
 - 元数据继续使用 schema 1 和 `BYBUS.apk`，以兼容旧更新器；新增可选 `deltas` 数组，最多声明三个旧版本。每项绑定旧构建号、旧 APK 大小和 SHA-256、补丁资源名称、大小、SHA-256 及格式。可选补丁信息不可用时保留完整更新能力。
 - 检查更新的后台线程读取宿主自身 `ApplicationInfo.sourceDir`，核对旧 APK 大小和 SHA-256 后才展示增量下载量；不读取游戏 APK，不需要保留旧的下载文件。下载前再次核对基准文件。
 - 补丁通过 GZIP 流保存有界的 COPY / DATA 指令。COPY 复用旧 APK 中逐字节相同的压缩数据区，DATA 携带新版字节。ZIP 头、签名块、中央目录和对齐字节都按原样恢复，禁止解压重打包或重新签名。解码器限制基准/目标大小、指令数量、偏移和输出总量，使用固定缓冲区，支持取消。
-- 补丁下载完成须验证大小和 SHA-256；合成完整 APK 后须匹配发行版的 SHA-256，并继续执行 APK 签名、包名、构建号与最低系统版本验证。任何补丁不匹配或合成失败只回退一次完整下载；用户取消不触发回退。界面展示下载、合成、回退及校验阶段。
+- 补丁下载完成须验证大小和 SHA-256；合成完整 APK 后须匹配发行版的 SHA-256，并继续执行 APK 签名、包名、构建号与最低系统版本验证。补丁不匹配或合成失败只回退一次完整下载；用户取消不触发回退，服务器限流时等待恢复，不立即回退并再次请求。界面展示下载、合成、回退及校验阶段。
 - 缓存只保留当前目标 APK，补丁和未完成文件在成功、失败或取消后清理。增量减少网络下载量，合成和系统覆盖安装仍需要完整 APK 的临时空间。
 - 发行脚本优先选取输出目录内最多三个较新的、构建号不低于 48 的已签名旧 APK，也可用 `--base-apk` 显式指定。只有签名一致、逐字节重建校验通过且补丁小于完整包的 80% 才随 Release 发布；否则只发布完整包。首次引入协议的构建 48 不发布无客户端可用的补丁。
 
@@ -54,4 +56,4 @@ Release 标题采用 `BYBUS <版本>`。对外版本来自 `versionName`，内�
 
 构建依赖由 `scripts/fetch-build-assets.py` 固定版本、大小与 SHA-256。完整构建步骤见[构建指南](building.md)。
 
-参考：[GitHub Releases API](https://docs.github.com/en/rest/releases/releases)、[Release 文件接口](https://docs.github.com/en/rest/releases/assets)、[Android FileProvider](https://developer.android.com/reference/androidx/core/content/FileProvider)。
+参考：[GitHub Releases API](https://docs.github.com/en/rest/releases/releases)、[Release 文件接口](https://docs.github.com/en/rest/releases/assets)、[GitHub 请求限流](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)、[Android FileProvider](https://developer.android.com/reference/androidx/core/content/FileProvider)。
