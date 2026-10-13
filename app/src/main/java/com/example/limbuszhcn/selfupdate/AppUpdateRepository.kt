@@ -16,7 +16,14 @@ internal class UpdateHttpException(val status: Int, val retryAfterMillis: Long) 
     else -> "更新服务暂时不可用（HTTP $status）"
 })
 
-internal class AppUpdateRepository(private val directory: File) {
+internal fun interface AppUpdateTransport {
+    fun read(url: String, binary: Boolean, consume: (InputStream, Long) -> Unit)
+}
+
+internal data class AppUpdateProgress(val message: String, val percent: Int?, val delta: AppDelta?)
+
+internal class AppUpdateRepository @JvmOverloads constructor(private val directory: File,
+    private val transport: AppUpdateTransport = AppUpdateTransport { url, binary, consume -> fetch(url, binary, consume) }) {
     private val apk get() = File(directory, AppReleases.APK)
 
     fun check(): AppRelease {
@@ -27,43 +34,82 @@ internal class AppUpdateRepository(private val directory: File) {
         return AppRelease.parse(release, JSONObject(readJson(metadata.url, 32 * 1024, binary = true)))
     }
 
-    private fun readJson(url: String, maxBytes: Int, binary: Boolean = false): String =
-        fetch(url, binary) { input, _ ->
-            val output = ByteArrayOutputStream()
+    private fun readJson(url: String, maxBytes: Int, binary: Boolean = false): String {
+        val output = ByteArrayOutputStream()
+        transport.read(url, binary) { input, _ ->
             copy(input, maxBytes.toLong()) { bytes, count -> output.write(bytes, 0, count) }
-            output.toString("UTF-8")
         }
+        return output.toString("UTF-8")
+    }
 
-    fun download(release: AppRelease, progress: (Int) -> Unit): File = synchronized(stagingLock) {
+    fun selectDelta(release: AppRelease, installedCode: Long, baseApk: File): AppDelta? {
+        val delta = release.deltas.singleOrNull { it.fromVersionCode == installedCode } ?: return null
+        return try { delta.takeIf { AppUpdateDelta.matchesBase(baseApk, it) } }
+        catch (_: java.io.IOException) { null }
+    }
+
+    fun download(release: AppRelease, baseApk: File?, delta: AppDelta?, progress: (AppUpdateProgress) -> Unit): File = synchronized(stagingLock) {
         require(directory.isDirectory || directory.mkdirs()) { "无法创建更新缓存" }
-        if (apk.isFile && apk.length() == release.apk.size && hash(apk) == release.sha256) return@synchronized apk
         val pending = File(directory, "download.part")
+        val patch = File(directory, "update.delta.part")
+        pending.delete(); patch.delete()
+        if (apk.isFile && apk.length() == release.apk.size && hash(apk) == release.sha256) return@synchronized apk
+        apk.delete()
         try {
-            val digest = MessageDigest.getInstance("SHA-256")
-            var last = -1
-            val size = fetch(release.apk.url, binary = true) { input, length ->
-                require(length <= 0 || length == release.apk.size) { "下载文件大小与发行信息不一致" }
-                pending.outputStream().use { output ->
-                    var total = 0L
-                    copy(input, release.apk.size) { bytes, count ->
-                        output.write(bytes, 0, count)
-                        digest.update(bytes, 0, count)
-                        total += count
-                        val percent = (total * 100 / release.apk.size).toInt()
-                        if (percent != last) { last = percent; progress(percent) }
+            var reconstructed = false
+            var fallback = false
+            if (delta != null && baseApk != null) {
+                try {
+                    progress(AppUpdateProgress("正在校验已安装版本", null, delta))
+                    require(delta in release.deltas && AppUpdateDelta.matchesBase(baseApk, delta)) { "差异补丁与当前版本不匹配" }
+                    downloadAsset(delta.asset, delta.sha256, patch) {
+                        progress(AppUpdateProgress("正在下载差异补丁", it, delta))
                     }
-                    output.fd.sync()
-                    total
+                    progress(AppUpdateProgress("正在合成安装包", 0, delta))
+                    AppUpdateDelta.apply(baseApk, patch, pending, delta, release) {
+                        progress(AppUpdateProgress("正在合成安装包", it, delta))
+                    }
+                    reconstructed = true
+                } catch (error: Exception) {
+                    if (error is CancellationException || Thread.currentThread().isInterrupted) throw CancellationException()
+                    pending.delete(); patch.delete()
+                    fallback = true
+                    progress(AppUpdateProgress("增量更新不可用，改为下载完整包", null, null))
                 }
             }
-            require(size == release.apk.size && digest.digest().hex() == release.sha256) { "安装包校验失败，请重新下载" }
+            if (!reconstructed) downloadAsset(release.apk, release.sha256, pending) {
+                progress(AppUpdateProgress(if (fallback) "已回退完整包 · 正在下载" else "正在下载完整安装包", it, null))
+            }
             if (Thread.currentThread().isInterrupted) throw CancellationException()
             AtomicFiles.move(pending.toPath(), apk.toPath(), replace = true)
             apk
-        } finally { pending.delete() }
+        } finally { pending.delete(); patch.delete() }
     }
 
-    fun clear() = synchronized(stagingLock) { apk.delete(); File(directory, "download.part").delete() }
+    private fun downloadAsset(asset: ReleaseAsset, sha256: String, target: File, progress: (Int) -> Unit) {
+        val digest = MessageDigest.getInstance("SHA-256")
+        var total = 0L
+        var last = -1
+        progress(0)
+        transport.read(asset.url, true) { input, length ->
+            require(length <= 0 || length == asset.size) { "下载文件大小与发行信息不一致" }
+            target.outputStream().use { output ->
+                copy(input, asset.size) { bytes, count ->
+                    output.write(bytes, 0, count)
+                    digest.update(bytes, 0, count)
+                    total += count
+                    val percent = (total * 100 / asset.size).toInt()
+                    if (percent != last) { last = percent; progress(percent) }
+                }
+                output.fd.sync()
+            }
+        }
+        require(total == asset.size && digest.digest().hex() == sha256) { "下载文件校验失败，请重新下载" }
+    }
+
+    fun clear() = synchronized(stagingLock) {
+        apk.delete(); File(directory, "download.part").delete(); File(directory, "update.delta.part").delete()
+    }
 
     companion object {
         // A recreated screen must not race a cancelled worker still leaving a socket read.

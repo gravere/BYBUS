@@ -48,8 +48,8 @@ android {
         minSdk = 26
         targetSdk = 35
         // 显示版本使用 BYBUS 命名；内部版本号保持递增，确保旧版可直接覆盖升级。
-        versionCode = 47
-        versionName = "v1.0.4"
+        versionCode = 48
+        versionName = "v1.0.5"
         // 版本页随资源更新，避免 Kotlin 增量编译保留旧的 BuildConfig 内联常量。
         resValue("string", "app_version_name", requireNotNull(versionName))
 

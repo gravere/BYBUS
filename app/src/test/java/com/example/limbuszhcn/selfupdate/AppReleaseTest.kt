@@ -68,4 +68,24 @@ class AppReleaseTest {
             file.writeText("modified"); assertNotEquals(original, AppUpdateRepository.hash(file))
         } finally { file.delete() }
     }
+
+    @Test fun optionalDeltaMetadataKeepsOldFullApkProtocolUsable() {
+        val remote = release().put("tag_name", "v1.0.6-build.49")
+        val data = manifest().put("versionName", "v1.0.6").put("versionCode", 49)
+        val patch = JSONObject().put("format", AppReleases.DELTA_FORMAT).put("fromVersionCode", 48)
+            .put("fromSize", 1000L).put("fromSha256", "b".repeat(64)).put("sha256", "c".repeat(64))
+            .put("name", "BYBUS-update-48-to-49.delta").put("size", 100L)
+        remote.getJSONArray("assets").put(JSONObject().put("id", 124L).put("name", patch.getString("name"))
+            .put("state", "uploaded").put("size", 100L))
+        assertTrue(AppRelease.parse(remote, data).deltas.isEmpty())
+        data.put("deltas", JSONArray().put(patch))
+        assertEquals(48L, AppRelease.parse(remote, data).deltas.single().fromVersionCode)
+        listOf("format" to "future-format", "fromSha256" to "invalid", "fromVersionCode" to 47,
+            "name" to "other.delta", "size" to 99L).forEach { (key, value) ->
+            val invalid = JSONObject(patch.toString()).put(key, value)
+            val parsed = AppRelease.parse(remote, JSONObject(data.toString()).put("deltas", JSONArray().put(invalid)))
+            assertTrue(parsed.deltas.isEmpty()); assertEquals(1000L, parsed.apk.size)
+        }
+        assertTrue(AppRelease.parse(remote, data.put("deltas", JSONArray().put(patch).put(patch))).deltas.isEmpty())
+    }
 }

@@ -76,4 +76,12 @@ c++ -std=c++17 -I/path/to/temp scripts/native-legacy-font-tests.cpp -o /path/to/
 python scripts/prepare-release.py --apk app/build/outputs/apk/release/app-release.apk --output dist/release --aapt "$env:ANDROID_HOME/build-tools/35.0.0/aapt.exe"
 ```
 
-脚本检查 APK 版本、签名与安装器配置，输出带版本及架构的安装包、应用更新兼容包、更新元数据和校验文件。文件约定与发布流程见[应用更新与发布](app-updates.md)。
+脚本检查 APK 版本、签名与安装器配置，输出带版本及架构的安装包、应用更新兼容包、更新元数据和校验文件。输出目录中有构建 48 及以上的旧正式 APK 时，会自动为最多三个较新版本生成并回放验证差异补丁；也可通过 `--base-apk /path/to/previous.apk` 指定基准。基准须与目标签名一致，补丁大于完整包的 80% 时不发布。上传元数据 `deltas` 中声明的全部文件，并在发行说明顶部链接完整 APK，避免首次安装用户误下载补丁。
+
+更新器的局部回归：
+
+```sh
+./gradlew :app:testDebugUnitTest --tests '*selfupdate.*'
+```
+
+`scripts/apk_delta.py --base previous.apk --target current.apk --patch update.delta` 可单独测量补丁大小并验证逐字节还原。该命令不检查 Android 版本与签名，正式发行必须使用 `prepare-release.py`。文件约定与发布流程见[应用更新与发布](app-updates.md)。

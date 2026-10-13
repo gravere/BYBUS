@@ -1,11 +1,13 @@
 """Generate named Android release assets and metadata from a signed BYBUS APK."""
 from pathlib import Path
 import argparse, hashlib, json, re, shutil, subprocess
+from apk_delta import create_patch
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--apk', required=True, type=Path)
 parser.add_argument('--output', required=True, type=Path)
 parser.add_argument('--aapt', required=True)
+parser.add_argument('--base-apk', action='append', type=Path, help='Signed older APK; repeat up to three times. Defaults to previous APKs in output.')
 args = parser.parse_args()
 root = Path(__file__).resolve().parent.parent
 badging = subprocess.check_output([args.aapt, 'dump', 'badging', str(args.apk.resolve())], text=True, encoding='utf-8')
@@ -58,12 +60,41 @@ if not compat_apk.exists() or not compat_apk.samefile(apk):
 def digest(path):
     with path.open('rb') as stream: return hashlib.file_digest(stream, 'sha256').hexdigest()
 sha = digest(apk)
+explicit_bases = args.base_apk is not None
+candidates = args.base_apk if explicit_bases else list(args.output.glob('BYBUS-v*-arm64-v8a.apk'))
+assert not explicit_bases or len(candidates) <= 3, 'At most three base APKs are supported'
+bases = []
+for base in candidates:
+    if base.resolve() == apk.resolve(): continue
+    base_badging = subprocess.check_output([args.aapt, 'dump', 'badging', str(base.resolve())], text=True, encoding='utf-8')
+    base_identity = re.search(r"package: name='([^']+)' versionCode='(\d+)'", base_badging)
+    eligible = base_identity and base_identity[1] == identity[1] and 48 <= int(base_identity[2]) < code
+    if not eligible:
+        assert not explicit_bases, 'Base APK must already support deltas (build >=48) and precede this version'
+        continue
+    bases.append((int(base_identity[2]), base))
+bases.sort(key=lambda entry: entry[0], reverse=True)
+assert len({entry[0] for entry in bases}) == len(bases), 'Ambiguous base APK build codes'
+deltas = []
+patch_files = []
+for base_code, base in bases[:3]:
+    base_verification = subprocess.check_output([str(apksigner), 'verify', '--print-certs', str(base.resolve())], text=True, encoding='utf-8')
+    base_signer = re.search(r'Signer #1 certificate SHA-256 digest: ([a-f0-9]{64})', base_verification)
+    assert base_signer and base_signer[1] == signer[1], 'Base APK has a different signer'
+    patch = args.output/f'BYBUS-update-{base_code}-to-{code}.delta'
+    delta = create_patch(base, apk, patch)
+    if delta['size'] >= apk.stat().st_size * 4 // 5:
+        patch.unlink()
+        continue
+    delta['fromVersionCode'] = base_code
+    deltas.append(delta)
+    patch_files.append(patch)
 notes = (root/'docs/release-notes.md').read_text(encoding='utf-8')
 manifest = dict(schemaVersion=1, packageName=identity[1], versionName=version, versionCode=code,
                 minSdk=min_sdk, apkName=compat_apk.name, size=apk.stat().st_size, sha256=sha,
-                notes='\n'.join(line.removeprefix('- ') for line in notes.splitlines() if line.startswith('- ')))
+                deltas=deltas, notes='\n'.join(line.removeprefix('- ') for line in notes.splitlines() if line.startswith('- ')))
 (args.output/'bybus-update.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
-files = [apk, compat_apk, args.output/'bybus-update.json']
+files = [apk, compat_apk, *patch_files, args.output/'bybus-update.json']
 (args.output/'SHA256SUMS.txt').write_text(''.join(digest(p)+'  '+p.name+'\n' for p in files), encoding='utf-8')
 print(json.dumps(dict(tag=f'{version}-build.{code}', name=f'BYBUS {version}', apkName=apk.name,
-                     compatibilityApkName=compat_apk.name, sha256=sha, size=apk.stat().st_size, signer=signer[1])))
+                     compatibilityApkName=compat_apk.name, sha256=sha, size=apk.stat().st_size, signer=signer[1], deltas=deltas)))
