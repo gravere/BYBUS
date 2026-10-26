@@ -1183,7 +1183,7 @@ public final class VClient extends IVClient.Stub {
                     throw new IllegalStateException("Translation font is not prepared; relaunch from the host launcher");
                 }
                 File activeIndexPointer = new File(host.getFilesDir(),
-                        "translation-cache/translation-index/active-index.path");
+                        "translation-cache/translation-index/runtime-index.path");
                 NativeEngine.configureLimbusTranslationRuntime(activeIndexPointer.getAbsolutePath());
                 Log.i("LimbusVA", "Configured main-game translation runtime pointer=" + activeIndexPointer);
                 applyLimbusTranslationRedirects();

@@ -35,6 +35,8 @@ import com.lody.virtual.client.stub.StubManifest;
 import com.lody.virtual.client.interfaces.IInjector;
 import com.lody.virtual.helper.compat.ActivityManagerCompat;
 import com.lody.virtual.helper.compat.BundleCompat;
+import com.lody.virtual.helper.compat.MicrogActivityIdentity;
+import com.lody.virtual.helper.compat.MicrogAuthUiPolicy;
 import com.lody.virtual.os.VUserHandle;
 import com.lody.virtual.remote.ClientConfig;
 import com.lody.virtual.remote.StubActivityRecord;
@@ -433,15 +435,23 @@ public final class AppInstrumentation extends InstrumentationDelegate implements
         String callingPackage = null;
         if (GMS_PACKAGE.equals(info.packageName)
                 && MICROG_AUTH_SIGN_IN_ACTIVITY.equals(info.name)) {
-            installActivityClientCallerProxyIfNeeded();
             callingPackage = GMS_PACKAGE;
             callingActivity = new ComponentName(
                     GMS_PACKAGE,
                     MICROG_ASSISTED_SIGN_IN_ACTIVITY);
         }
+        Intent intent = activity.getIntent();
+        if (intent != null && intent.getBooleanExtra(MicrogAuthUiPolicy.BRIDGED_LOGIN, false)
+                && MicrogAuthUiPolicy.isGameIdentityBridge(GMS_PACKAGE, info.packageName,
+                info.name, intent.getAction(), intent.getStringExtra("client_package_name"))) {
+            callingPackage = LIMBUS_PACKAGE;
+            callingActivity = new ComponentName(LIMBUS_PACKAGE, "androidx.credentials.playservices.HiddenActivity");
+        }
         if (callingPackage == null || callingActivity == null) {
             return;
         }
+        MicrogActivityIdentity.remember(mirror.android.app.Activity.mToken.get(activity), callingActivity);
+        if (Build.VERSION.SDK_INT >= 31) installActivityClientCallerProxyIfNeeded();
         try {
             if (mirror.android.app.Activity.mCallingPackage != null) {
                 mirror.android.app.Activity.mCallingPackage.set(activity, callingPackage);
@@ -473,15 +483,13 @@ public final class AppInstrumentation extends InstrumentationDelegate implements
             sActivityClientControllerBase = base;
             InvocationHandler handler = (proxy, method, args) -> {
                 String name = method.getName();
-                if (args != null && args.length > 0 && args[0] instanceof IBinder
-                        && HCallbackStub.isClientLocalActivityToken((IBinder) args[0])) {
+                ComponentName caller = args != null && args.length > 0 && args[0] instanceof IBinder
+                        ? MicrogActivityIdentity.caller((IBinder) args[0]) : null;
+                if (caller != null) {
                     if ("getCallingPackage".equals(name)) {
-                        return GMS_PACKAGE;
+                        return caller.getPackageName();
                     }
                     if ("getCallingActivity".equals(name)) {
-                        ComponentName caller = new ComponentName(
-                                GMS_PACKAGE,
-                                MICROG_ASSISTED_SIGN_IN_ACTIVITY);
                         return caller;
                     }
                 }
@@ -615,7 +623,11 @@ public final class AppInstrumentation extends InstrumentationDelegate implements
 
     @Override
     public void callActivityOnDestroy(Activity activity) {
-        super.callActivityOnDestroy(activity);
+        try {
+            super.callActivityOnDestroy(activity);
+        } finally {
+            MicrogActivityIdentity.forget(mirror.android.app.Activity.mToken.get(activity));
+        }
     }
 
     @Override

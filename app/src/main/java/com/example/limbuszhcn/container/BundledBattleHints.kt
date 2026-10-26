@@ -5,9 +5,11 @@ import java.nio.ByteOrder
 import java.nio.charset.CodingErrorAction
 import java.util.zip.ZipFile
 
-/** Read-only bootstrap hints. Unsupported Unity layouts are deliberately ignored. */
+/** Read-only startup tables. Unsupported Unity layouts are deliberately ignored. */
 internal object BundledBattleHints {
-    private val names = setOf("JP_BattleHint", "JP_BattleHint_NormalBattle", "JP_BattleHint_AbnorBattle")
+    private val names = setOf("JP_MainUIText", "JP_LoginUIText",
+        "JP_BattleHint", "JP_BattleHint_NormalBattle", "JP_BattleHint_AbnorBattle")
+    fun isStartupTable(fileName: String): Boolean = fileName.removeSuffix(".json") in names
     private val assetPath = Regex("assets/bin/Data/[0-9a-f]{32}")
     private const val MAX_FILE = 1024 * 1024
     private const val PREFIX_SIZE = 512

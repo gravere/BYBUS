@@ -169,6 +169,7 @@ class ContainerPatchInstaller(
         val candidateFiles = manifest.entries.count { it.cachePath.endsWith(".json", ignoreCase = true) }
         var availableFiles = 0
         val indexCompiler = TranslationIndexCompiler()
+        val startupCompiler = TranslationIndexCompiler()
         manifest.entries.forEach { entry ->
             val source = patchDirectory.resolve(entry.cachePath).toAbsolutePath().normalize()
             if (!source.isRegularFile() || !source.name.endsWith(".json", ignoreCase = true)) {
@@ -178,12 +179,19 @@ class ContainerPatchInstaller(
             val japaneseSource = japaneseSourceFor(target)
             // Only uniquely named manifest resources can be matched to a bundled name.
             val bundledName = japaneseSource.substringAfterLast('/')
+            val isStartupTable = sourceNameCounts[bundledName] == 1 &&
+                BundledBattleHints.isStartupTable(bundledName) &&
+                japaneseSource == storage.rootPath().replace('\\', '/').trimEnd('/') + "/jp/" + bundledName
+            fun addRecords(records: List<TranslationIndexRecord>) {
+                records.forEach(indexCompiler::add)
+                if (isStartupTable) records.forEach(startupCompiler::add)
+            }
             val bundled = bundledHints[bundledName].takeIf {
                 sourceNameCounts[bundledName] == 1
             }
             if (bundled != null) {
                 runCatching { TranslationJsonPairer.pair(japaneseSource, bundled, source.readText(Charsets.UTF_8)) }
-                    .getOrNull()?.takeIf { it.sufficientlyPaired }?.records?.forEach(indexCompiler::add)
+                    .getOrNull()?.takeIf { it.sufficientlyPaired }?.records?.let(::addRecords)
             }
             val japaneseJson = storage.read(japaneseSource) ?: return@forEach
             val pair = runCatching { TranslationJsonPairer.pair(
@@ -195,7 +203,7 @@ class ContainerPatchInstaller(
             // Coverage is a readiness gate, not evidence that individually paired
             // rows are wrong. Keep proven rows from partially translated tables.
             if (pair.records.isNotEmpty()) {
-                pair.records.forEach(indexCompiler::add)
+                addRecords(pair.records)
                 activeFiles += 1
             }
         }
@@ -216,6 +224,7 @@ class ContainerPatchInstaller(
         val stableInputs = fingerprint == buildCache.fingerprint(identity, inputs, storage) &&
             identity == inputIdentity(BundledBattleHints.read(installedApkPaths()))
         val activated = resourcesReady && recordCountSafe && stableInputs && compiledIndex.uniqueEntries.isNotEmpty()
+        var startupAvailable = false
         if (activated) {
             val activeIndex = TranslationIndexStore(indexRoot()).activate(compiledIndex)
             runCatching { android.util.Log.i(
@@ -230,6 +239,7 @@ class ContainerPatchInstaller(
             ) }
             patchDirectory.resolve(ACTIVE_MARKER_FILE).writeText("runtime-index-jp-ui\n", Charsets.UTF_8)
             store.activeManifest()?.let { buildCache.save(fingerprint, it) }
+            store.clearBootstrap()
         } else if (!resourcesReady) {
             runCatching { android.util.Log.w(
                 TAG,
@@ -243,6 +253,16 @@ class ContainerPatchInstaller(
                 "Translation index has no unambiguous entries version=${manifest.requestedVersion}" +
                     " preserved=$previousIndexAvailable"
             ) }
+        }
+        if (!activated && !previousIndexAvailable) {
+            val startup = startupCompiler.compile(manifest.requestedVersion, manifest.archiveSha256)
+            if (stableInputs && startup.uniqueEntries.isNotEmpty()) {
+                store.activate(startup, bootstrap = true)
+                startupAvailable = true
+            } else {
+                // Do not reuse startup text from a different/partially changing APK snapshot.
+                store.clearBootstrap()
+            }
         }
         runCatching {
             val retained = store.pruneAndRetainedVersions() + manifest.requestedVersion
@@ -258,6 +278,7 @@ class ContainerPatchInstaller(
             availableSourceFiles = availableFiles,
             sourceRecordCount = compiledIndex.sourceRecordCount,
             previousIndexPreserved = !activated && previousIndexAvailable,
+            startupIndexAvailable = startupAvailable,
             pendingReason = when {
                 activated -> null
                 !stableInputs -> "资源正在变化，保留已有汉化，请在游戏下载结束后重试"

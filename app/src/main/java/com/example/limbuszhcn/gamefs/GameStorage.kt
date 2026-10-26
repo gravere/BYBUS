@@ -30,6 +30,7 @@ data class PatchInstallSummary(
     val sourceRecordCount: Int = 0,
     val previousIndexPreserved: Boolean = false,
     val reusedIndex: Boolean = false,
+    val startupIndexAvailable: Boolean = false,
     val pendingReason: String? = null
 )
 

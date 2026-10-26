@@ -1023,13 +1023,9 @@ class MethodProxies {
         }
 
         private boolean isMicrogSignInActivity(Intent intent, ActivityInfo activityInfo) {
-            ComponentName component = intent == null ? null : intent.getComponent();
-            String className = component != null ? component.getClassName() : (activityInfo == null ? null : activityInfo.name);
-            return "com.google.android.gms".equals(getAppPkg())
-                    && activityInfo != null
-                    && "com.google.android.gms".equals(activityInfo.packageName)
-                    && className != null
-                    && className.startsWith("org.microg.gms.auth.signin.");
+            return activityInfo != null && com.lody.virtual.helper.compat.MicrogAuthUiPolicy.useClientLocal(
+                    getAppPkg(), VirtualRuntime.getProcessName(), activityInfo.packageName,
+                    activityInfo.processName, activityInfo.name);
         }
 
         private void logLimbusCredentialNativeMappings() {
@@ -1192,6 +1188,8 @@ class MethodProxies {
         @Override
         public Object call(Object who, Method method, Object... args) throws Throwable {
             IBinder token = (IBinder) args[0];
+            ComponentName known = com.lody.virtual.helper.compat.MicrogActivityIdentity.caller(token);
+            if (known != null) return known.getPackageName();
             if (LIMBUS_PACKAGE.equals(getAppPkg()) && HCallbackStub.isClientLocalActivityToken(token)) {
                 Log.i("LimbusVA", "getCallingPackage client-local token=" + token
                         + " -> " + LIMBUS_PACKAGE + "/" + LIMBUS_UNITY_ACTIVITY);
@@ -1876,6 +1874,8 @@ class MethodProxies {
         @Override
         public Object call(Object who, Method method, Object... args) throws Throwable {
             IBinder token = (IBinder) args[0];
+            ComponentName known = com.lody.virtual.helper.compat.MicrogActivityIdentity.caller(token);
+            if (known != null) return known;
             if (LIMBUS_PACKAGE.equals(getAppPkg()) && HCallbackStub.isClientLocalActivityToken(token)) {
                 ComponentName caller = new ComponentName(LIMBUS_PACKAGE, LIMBUS_UNITY_ACTIVITY);
                 Log.i("LimbusVA", "getCallingActivity client-local token=" + token

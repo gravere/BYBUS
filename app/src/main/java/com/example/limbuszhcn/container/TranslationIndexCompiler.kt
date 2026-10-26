@@ -20,7 +20,7 @@ import kotlin.io.path.readText
 import kotlin.io.path.outputStream
 import kotlin.io.path.writeText
 
-internal const val TRANSLATION_COMPILER_REVISION = "jp-pairing-9"
+internal const val TRANSLATION_COMPILER_REVISION = "jp-pairing-10"
 
 /**
  * 表示一条从官方日文显示字段到中文显示字段的结构化配对记录。
@@ -356,17 +356,17 @@ internal class TranslationIndexStore(private val root: Path) {
      * @param index 已完成冲突与质量校验的编译结果。
      * @return 当前激活的二进制索引绝对路径。
      */
-    fun activate(index: CompiledTranslationIndex): Path {
+    fun activate(index: CompiledTranslationIndex, bootstrap: Boolean = false): Path {
         val versions = root.resolve("versions")
         versions.createDirectories()
         val directoryName =
-            "${index.version.safePathSegment()}-s$INDEX_SCHEMA-${index.inputSha256.take(12)}"
+            "${if (bootstrap) "bootstrap-" else ""}${index.version.safePathSegment()}-s$INDEX_SCHEMA-${index.inputSha256.take(12)}"
         val versionDirectory = versions.resolve(directoryName)
         if (validatedManifest(versionDirectory) == null) {
             val staging = versions.resolve(".$directoryName.staging-${System.nanoTime()}")
             staging.createDirectories()
             writeIndex(staging.resolve(INDEX_FILE), index.uniqueEntries, index.termEntries, index.contextualEntries)
-            writeManifest(staging.resolve(MANIFEST_FILE), index)
+            writeManifest(staging.resolve(MANIFEST_FILE), index, bootstrap)
             if (versionDirectory.isDirectory()) {
                 // Repair only an invalid generation; never overwrite a validated active index.
                 moveAtomically(staging.resolve(INDEX_FILE), versionDirectory.resolve(INDEX_FILE), true)
@@ -379,15 +379,16 @@ internal class TranslationIndexStore(private val root: Path) {
         val indexFile = versionDirectory.resolve(INDEX_FILE).toAbsolutePath().normalize()
         require(Files.isRegularFile(indexFile)) { "Translation index is missing: $indexFile" }
         root.createDirectories()
-        val current = validPointer(root.resolve(ACTIVE_POINTER), allowPreviousSchema = true)
+        val pointerName = if (bootstrap) BOOTSTRAP_POINTER else ACTIVE_POINTER
+        val current = if (bootstrap) null else validPointer(root.resolve(ACTIVE_POINTER), allowPreviousSchema = true)
         if (current != null && current != indexFile) {
             val previous = root.resolve(".previous-index.tmp")
             previous.writeText(current.toString() + "\n", Charsets.UTF_8)
             moveAtomically(previous, root.resolve("previous-index.path"), replaceExisting = true)
         }
-        val pointerTemp = root.resolve(".$ACTIVE_POINTER.tmp-${System.nanoTime()}")
+        val pointerTemp = root.resolve(".$pointerName.tmp-${System.nanoTime()}")
         pointerTemp.writeText(indexFile.toString().replace('\\', '/') + "\n", Charsets.UTF_8)
-        moveAtomically(pointerTemp, root.resolve(ACTIVE_POINTER), replaceExisting = true)
+        moveAtomically(pointerTemp, root.resolve(pointerName), replaceExisting = true)
         return indexFile
     }
 
@@ -396,7 +397,28 @@ internal class TranslationIndexStore(private val root: Path) {
      *
      * @return 指针存在且已删除时返回 `true`。
      */
-    fun deactivate(): Boolean = Files.deleteIfExists(root.resolve(ACTIVE_POINTER))
+    fun deactivate(): Boolean {
+        clearBootstrap()
+        Files.deleteIfExists(root.resolve(RUNTIME_POINTER))
+        return Files.deleteIfExists(root.resolve(ACTIVE_POINTER))
+    }
+
+    fun clearBootstrap() { Files.deleteIfExists(root.resolve(BOOTSTRAP_POINTER)) }
+
+    /** Full and startup-only readiness remain separate; native code receives one verified pointer. */
+    fun selectRuntimeIndex(): String {
+        val full = validPointer(root.resolve(ACTIVE_POINTER))
+        val bootstrap = if (full == null) validPointer(root.resolve(BOOTSTRAP_POINTER)) else null
+        val selected = full ?: bootstrap
+        if (selected == null) {
+            Files.deleteIfExists(root.resolve(RUNTIME_POINTER))
+            return "none"
+        }
+        val temp = root.resolve(".$RUNTIME_POINTER.tmp")
+        temp.writeText(selected.toString().replace('\\', '/') + "\n", Charsets.UTF_8)
+        moveAtomically(temp, root.resolve(RUNTIME_POINTER), replaceExisting = true)
+        return if (full != null) "full" else "startup"
+    }
 
     /** Only report a persistent index as usable after checking its location and SHA-256. */
     fun activeManifest(): Properties? = runCatching {
@@ -405,18 +427,20 @@ internal class TranslationIndexStore(private val root: Path) {
         val indexFile = Paths.get(pointer.readText(Charsets.UTF_8).trim()).toAbsolutePath().normalize()
         val versions = root.resolve("versions").toAbsolutePath().normalize()
         if (!indexFile.startsWith(versions) || indexFile.fileName.toString() != INDEX_FILE) return null
-        validatedManifest(indexFile.parent)
+        validatedManifest(indexFile.parent)?.takeIf { it.getProperty("indexKind", "full") == "full" }
     }.getOrNull()
 
     private fun validPointer(pointer: Path, allowPreviousSchema: Boolean = false): Path? = runCatching {
         val file = Paths.get(pointer.readText().trim()).toAbsolutePath().normalize()
         val versions = root.resolve("versions").toAbsolutePath().normalize()
+        val expectedKind = if (pointer.fileName.toString() == BOOTSTRAP_POINTER) "startup" else "full"
         file.takeIf { it.startsWith(versions) && it.fileName.toString() == INDEX_FILE &&
-            validatedManifest(it.parent, allowPreviousSchema) != null }
+            validatedManifest(it.parent, allowPreviousSchema)?.getProperty("indexKind", "full") == expectedKind }
     }.getOrNull()
 
     fun pruneAndRetainedVersions(): Set<String> {
         val keep = listOfNotNull(validPointer(root.resolve(ACTIVE_POINTER), true),
+            validPointer(root.resolve(BOOTSTRAP_POINTER)),
             validPointer(root.resolve("previous-index.path"), true))
         val directories = keep.map { it.parent }.toSet()
         val versions = root.resolve("versions").toAbsolutePath().normalize()
@@ -464,8 +488,9 @@ internal class TranslationIndexStore(private val root: Path) {
         }
     }
 
-    private fun writeManifest(path: Path, index: CompiledTranslationIndex) {
+    private fun writeManifest(path: Path, index: CompiledTranslationIndex, bootstrap: Boolean) {
         val properties = Properties().apply {
+            setProperty("indexKind", if (bootstrap) "startup" else "full")
             setProperty("schema", INDEX_SCHEMA.toString())
             setProperty("version", index.version)
             setProperty("archiveSha256", index.archiveSha256)
@@ -517,6 +542,8 @@ internal class TranslationIndexStore(private val root: Path) {
 
     companion object {
         const val ACTIVE_POINTER = "active-index.path"
+        const val BOOTSTRAP_POINTER = "bootstrap-index.path"
+        const val RUNTIME_POINTER = "runtime-index.path"
         const val INDEX_FILE = "index.bin"
         private const val MANIFEST_FILE = "manifest.properties"
         // 稀疏上下文只保存同文异译；完整原文必须参与键，绝不按裸 id 替换。

@@ -408,6 +408,7 @@ private fun PatchInstallSummary.description(): String = when {
     indexActivated && reusedIndex -> "汉化 $version 已校验，复用现有索引"
     indexActivated -> "汉化 $version 索引已保存，有效资源 $availableSourceFiles/$candidateSourceFiles"
     previousIndexPreserved -> "${pendingReason ?: "资源尚未完整"}；继续使用现有汉化"
+    startupIndexAvailable -> "已准备启动页汉化；下载完整游戏资源后，返回 BYBUS 再启动以启用完整汉化"
     else -> "汉化包已保存，请在游戏中下载完整资源，退出后再从本应用启动"
 }
 
