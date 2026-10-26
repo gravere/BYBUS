@@ -6,6 +6,8 @@
 #include "LimbusFlowTextProof.h"
 #include "LimbusManagedState.h"
 #include "LimbusFontMaterials.h"
+#include "LimbusLanguageGetterPatch.h"
+#include "RuntimePage.h"
 #include "../Substrate/SubstrateHook.h"
 
 #include <android/log.h>
@@ -193,7 +195,6 @@ typedef void (*tmp_set_material_fn)(void *, void *, const void *);
 typedef void (*tmp_set_text_fn)(void *, void *, const void *);
 typedef void (*tmp_set_text_string_fn)(void *, void *, bool, const void *);
 typedef void (*tmp_parse_input_fn)(void *, const void *);
-typedef int32_t (*get_language_fn)(void *, const void *);
 typedef void *(*class_get_parent_fn)(void *);
 typedef const void *(*class_get_fields_fn)(void *, void **);
 typedef const char *(*field_get_name_fn)(const void *);
@@ -321,8 +322,6 @@ const void *g_material_get_color_info = nullptr;
 const void *g_material_set_color_info = nullptr;
 il2cpp_init_fn g_original_il2cpp_init = nullptr;
 dlsym_fn g_original_unity_dlsym = nullptr;
-get_language_fn g_original_get_language = nullptr;
-get_language_fn g_original_global_get_language = nullptr;
 class_get_parent_fn g_class_get_parent = nullptr;
 class_get_fields_fn g_class_get_fields = nullptr;
 field_get_name_fn g_field_get_name = nullptr;
@@ -333,7 +332,6 @@ typedef char *(*type_get_name_owned_fn)(const void *);
 typedef void (*il2cpp_free_owned_fn)(void *);
 type_get_name_owned_fn g_type_get_name = nullptr;
 il2cpp_free_owned_fn g_il2cpp_free = nullptr;
-std::atomic<uint32_t> g_language_hook_hits{0};
 std::atomic<uint64_t> g_acquisition_hits{0};
 std::atomic<uint64_t> g_nested_list_hits{0};
 std::atomic<uint64_t> g_tmp_primary_font_switches{0};
@@ -2580,24 +2578,6 @@ void replacement_tmp_set_text_string(void *instance, void *managed_text, bool sy
     observe_popup_font(instance, replacement, false);
 }
 
-int32_t replacement_get_language(void *instance, const void *method) {
-    uint32_t hits = g_language_hook_hits.fetch_add(1, std::memory_order_relaxed) + 1;
-    if (hits <= 5 || hits % 5000 == 0) {
-        LT_LOGI("Japanese language getter hit=%u source=LocalGameOptionData instance=%p method=%p",
-                hits, instance, method);
-    }
-    return 2;  // LOCALIZE_LANGUAGE.JP
-}
-
-int32_t replacement_global_get_language(void *instance, const void *method) {
-    uint32_t hits = g_language_hook_hits.fetch_add(1, std::memory_order_relaxed) + 1;
-    if (hits <= 5 || hits % 5000 == 0) {
-        LT_LOGI("Japanese language getter hit=%u source=GlobalGameManager.Lang instance=%p method=%p",
-                hits, instance, method);
-    }
-    return 2;  // LOCALIZE_LANGUAGE.JP
-}
-
 bool read_exact(FILE *file, void *buffer, size_t size) {
     return size == 0 || fread(buffer, 1, size, file) == size;
 }
@@ -2908,6 +2888,85 @@ private:
     size_t strings_size_;
 };
 
+struct LanguageCodeWindow {
+    runtime_page::Span pages = {};
+    int protection = 0;
+};
+
+// Never read an instruction or mprotect beyond a proven readable/executable mapping.
+bool inspect_language_code(void *pointer, size_t width, LanguageCodeWindow &window) {
+    window = {};
+    if (!runtime_page::span(reinterpret_cast<uintptr_t>(pointer), width,
+                            runtime_page::size(), window.pages)) return false;
+    FILE *maps = fopen("/proc/self/maps", "r");
+    if (!maps) return false;
+    char line[PATH_MAX + 160];
+    bool found = false;
+    while (fgets(line, sizeof(line), maps)) {
+        unsigned long begin = 0, end = 0;
+        char permissions[5] = {};
+        if (sscanf(line, "%lx-%lx %4s", &begin, &end, permissions) != 3 ||
+            window.pages.start < begin || window.pages.start >= end ||
+            window.pages.length > end - window.pages.start) continue;
+        if (permissions[0] == 'r' && permissions[2] == 'x') {
+            window.protection = PROT_READ | PROT_EXEC;
+            if (permissions[1] == 'w') window.protection |= PROT_WRITE;
+            found = true;
+        }
+        break;
+    }
+    fclose(maps);
+    return found;
+}
+
+bool install_language_getter(const char *name, void *pointer, uintptr_t next_method) {
+#if defined(__aarch64__)
+    const uintptr_t address = reinterpret_cast<uintptr_t>(pointer);
+    LanguageCodeWindow window;
+    if (!address || (address & 3u) || next_method <= address ||
+        !inspect_language_code(pointer, sizeof(uint32_t), window)) {
+        LT_LOGW("Skip language getter %s: unknown entry or mapping", name);
+        return false;
+    }
+    uint32_t first_word = 0;
+    memcpy(&first_word, pointer, sizeof(first_word));
+    const auto plan = limbus_language::plan_language_getter_patch(address, next_method, first_word);
+    if (plan.strategy != limbus_language::Strategy::kDirect ||
+        !inspect_language_code(pointer, plan.width, window)) {
+        LT_LOGW("Skip language getter %s: insufficient proven code space", name);
+        return false;
+    }
+    LimbusOwnedCodePatch owned(pointer, plan.width);
+    if (!owned.is_recording()) {
+        LT_LOGW("Skip language getter %s: integrity ledger unavailable", name);
+        return false;
+    }
+    unsigned char before[sizeof(plan.words)];
+    memcpy(before, pointer, plan.width);
+    void *page = reinterpret_cast<void *>(window.pages.start);
+    if (mprotect(page, window.pages.length, window.protection | PROT_WRITE) != 0) {
+        LT_LOGW("Skip language getter %s: mprotect errno=%d", name, errno);
+        return false;
+    }
+    const bool applied = limbus_language::apply_direct_plan(pointer, plan) &&
+                         memcmp(pointer, plan.words, plan.width) == 0;
+    if (!applied) memcpy(pointer, before, plan.width);
+    __builtin___clear_cache(static_cast<char *>(pointer), static_cast<char *>(pointer) + plan.width);
+    const bool restored = mprotect(page, window.pages.length, window.protection) == 0;
+    if (!restored) LT_LOGW("Language getter %s permission restore failed errno=%d", name, errno);
+    char event[192];
+    snprintf(event, sizeof(event), "getter=%s installed=%d width=%zu permissions_restored=%d",
+             name, applied, plan.width, restored);
+    append_native_metadata("font-state.log", event);
+    LT_LOGI("%s", event);
+    // Bytes are already live even if restoring page permissions failed. Do not install
+    // a second hook or claim to have observed a game call by invoking a null instance.
+    return applied;
+#else
+    return false;
+#endif
+}
+
 bool report_il2cpp_resolver(const MappedElfResolver &resolver, bool query_domain) {
     typedef void *(*domain_get_fn)();
     typedef const void **(*domain_get_assemblies_fn)(const void *, size_t *);
@@ -2955,6 +3014,15 @@ bool report_il2cpp_resolver(const MappedElfResolver &resolver, bool query_domain
             resolver.resolve<method_get_param_fn>("il2cpp_method_get_param");
     method_get_return_type_fn method_get_return_type =
             resolver.resolve<method_get_return_type_fn>("il2cpp_method_get_return_type");
+    auto method_get_class = resolver.resolve<void *(*)(const void *)>("il2cpp_method_get_class");
+    auto method_is_generic = resolver.resolve<bool (*)(const void *)>("il2cpp_method_is_generic");
+    auto class_from_type = resolver.resolve<void *(*)(const void *)>("il2cpp_class_from_type");
+    auto class_is_enum = resolver.resolve<bool (*)(void *)>("il2cpp_class_is_enum");
+    auto class_get_field_from_name = resolver.resolve<const void *(*)(void *, const char *)>(
+            "il2cpp_class_get_field_from_name");
+    auto field_get_flags = resolver.resolve<int (*)(const void *)>("il2cpp_field_get_flags");
+    auto field_static_get_value = resolver.resolve<void (*)(const void *, void *)>(
+            "il2cpp_field_static_get_value");
     type_get_name_fn type_get_name = resolver.resolve<type_get_name_fn>("il2cpp_type_get_name");
     il2cpp_free_fn il2cpp_free = resolver.resolve<il2cpp_free_fn>("il2cpp_free");
     string_length_fn string_length = resolver.resolve<string_length_fn>("il2cpp_string_length");
@@ -3024,6 +3092,8 @@ bool report_il2cpp_resolver(const MappedElfResolver &resolver, bool query_domain
     void *rpg_format_class = nullptr;
     const void *get_language_method = nullptr;
     const void *get_global_language_method = nullptr;
+    void *get_language_class = nullptr;
+    void *get_global_language_class = nullptr;
     struct AcquisitionTarget {
         std::string name;
         void *klass;
@@ -3128,12 +3198,14 @@ bool report_il2cpp_resolver(const MappedElfResolver &resolver, bool query_domain
             void *klass = class_from_name(image, "LocalSave", "LocalGameOptionData");
             if (klass != nullptr) {
                 get_language_method = class_get_method_from_name(klass, "GetLanguage", 0);
+                get_language_class = klass;
             }
         }
         if (get_global_language_method == nullptr) {
             void *klass = class_from_name(image, "", "GlobalGameManager");
             if (klass != nullptr) {
                 get_global_language_method = class_get_method_from_name(klass, "get_Lang", 0);
+                get_global_language_class = klass;
             }
         }
     }
@@ -3713,14 +3785,54 @@ bool report_il2cpp_resolver(const MappedElfResolver &resolver, bool query_domain
                            reinterpret_cast<void *>(replacement_tmp_set_text_string),
                            reinterpret_cast<void **>(&g_original_tmp_set_text_string));
         }
-        if (get_language_pointer != nullptr) {
-            hook_limbus_owned_function(get_language_pointer,
-                           reinterpret_cast<void *>(replacement_get_language),
-                           reinterpret_cast<void **>(&g_original_get_language));
-        }
-        hook_limbus_owned_function(get_global_language_pointer,
-                       reinterpret_cast<void *>(replacement_global_get_language),
-                       reinterpret_cast<void **>(&g_original_global_get_language));
+        auto next_managed_method = [&](void *pointer) -> uintptr_t {
+            const auto address = reinterpret_cast<uintptr_t>(pointer);
+            const auto position = std::lower_bound(managed_method_addresses.begin(),
+                                                   managed_method_addresses.end(), address);
+            return position != managed_method_addresses.end() && *position == address &&
+                    position + 1 != managed_method_addresses.end() ? *(position + 1) : 0;
+        };
+        auto language_getter_valid = [&](const void *method, void *owner, const char *name) {
+            if (!method || !owner || !method_get_name || !method_get_param_count ||
+                !method_get_flags || !method_get_return_type || !method_get_class ||
+                !method_is_generic || !class_from_type || !class_is_enum || !class_get_name ||
+                !class_get_namespace || !class_get_field_from_name || !field_get_type ||
+                !field_get_flags || !field_static_get_value || !type_get_name || !il2cpp_free)
+                return false;
+            const char *actual_name = method_get_name(method);
+            if (!actual_name || strcmp(actual_name, name) || method_get_class(method) != owner ||
+                method_get_param_count(method) != 0 || method_is_generic(method) ||
+                !limbus_language::is_instance_method(method, method_get_flags)) return false;
+            const void *return_type = method_get_return_type(method);
+            void *enum_class = return_type ? class_from_type(return_type) : nullptr;
+            if (!enum_class || !class_is_enum(enum_class)) return false;
+            const char *enum_name = class_get_name(enum_class);
+            const char *enum_namespace = class_get_namespace(enum_class);
+            if (!enum_name || strcmp(enum_name, "LOCALIZE_LANGUAGE") ||
+                !enum_namespace || *enum_namespace) return false;
+            const void *value_field = class_get_field_from_name(enum_class, "value__");
+            const void *jp_field = class_get_field_from_name(enum_class, "JP");
+            if (!value_field || !jp_field || (field_get_flags(jp_field) & 0x0050) != 0x0050)
+                return false; // Only a static literal can be read without game initialization.
+            const void *jp_type = field_get_type(jp_field);
+            if (!jp_type || class_from_type(jp_type) != enum_class) return false;
+            const void *value_type = field_get_type(value_field);
+            char *value_name = value_type ? type_get_name(value_type) : nullptr;
+            const bool int32_enum = value_name && strcmp(value_name, "System.Int32") == 0;
+            if (value_name) il2cpp_free(value_name);
+            if (!int32_enum) return false;
+            int32_t jp = INT32_MIN;
+            field_static_get_value(jp_field, &jp);
+            return jp == 2;
+        };
+        const bool option_language_valid = language_getter_valid(
+                get_language_method, get_language_class, "GetLanguage");
+        const bool global_language_valid = language_getter_valid(
+                get_global_language_method, get_global_language_class, "get_Lang");
+        const bool option_language_installed = option_language_valid && install_language_getter(
+                "LocalGameOptionData.GetLanguage", get_language_pointer, next_managed_method(get_language_pointer));
+        const bool global_language_installed = global_language_valid && install_language_getter(
+                "GlobalGameManager.get_Lang", get_global_language_pointer, next_managed_method(get_global_language_pointer));
         size_t acquisition_counts[] = {0, 0, 0};
         std::unordered_set<void *> acquisition_pointers;
         bool acquisition_ready = class_get_methods != nullptr && method_get_name != nullptr &&
@@ -3811,10 +3923,14 @@ bool report_il2cpp_resolver(const MappedElfResolver &resolver, bool query_domain
                 set_text_string_pointer, reinterpret_cast<void *>(g_original_tmp_set_text_string));
         LT_LOGI("UI.Text translation hook setter=%p/%p",
                 ui_pointer, reinterpret_cast<void *>(g_original_ui_set_text));
-        LT_LOGI("Japanese language hooks installed option=%p/%p global=%p/%p",
-                get_language_pointer, reinterpret_cast<void *>(g_original_get_language),
-                get_global_language_pointer,
-                reinterpret_cast<void *>(g_original_global_get_language));
+        LT_LOGI("Japanese language patches option=%d global=%d metadata_valid=%d/%d",
+                option_language_installed, global_language_installed,
+                option_language_valid, global_language_valid);
+        char language_status[128];
+        snprintf(language_status, sizeof(language_status), "language_option=%d language_global=%d metadata_valid=%d/%d",
+                 option_language_installed, global_language_installed,
+                 option_language_valid, global_language_valid);
+        append_native_metadata("font-state.log", language_status);
         LT_LOGI("Text acquisition hooks installed argc0=%zu argc1=%zu argc2=%zu ready=%d",
                 acquisition_counts[0], acquisition_counts[1], acquisition_counts[2],
                 acquisition_ready);

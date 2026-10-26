@@ -17,6 +17,7 @@ import android.content.IIntentReceiver;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ActivityInfo;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ProviderInfo;
 import android.content.pm.ResolveInfo;
@@ -2138,6 +2139,12 @@ class MethodProxies {
             int intentReceiverIndex = indexOfFirst(args, IIntentReceiver.class);
             com.lody.virtual.helper.compat.ReceiverRegistrationCompat
                     .clearRequiredPermission(method.getParameterTypes(), args);
+            ApplicationInfo receiverApp = VClient.get().getCurrentApplicationInfo();
+            if (receiverApp != null) {
+                com.lody.virtual.helper.compat.ReceiverRegistrationCompat.applyLegacyMicrogExportFlag(
+                        Build.VERSION.SDK_INT, getAppPkg(), receiverApp.targetSdkVersion,
+                        method.getParameterTypes(), args);
+            }
             int filterIndex = intentFilterIndex >= 0 ? intentFilterIndex : IDX_IntentFilter;
             IntentFilter filter = (IntentFilter) args[filterIndex];
             if (filter == null) {

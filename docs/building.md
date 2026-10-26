@@ -66,6 +66,16 @@ c++ -std=c++17 -I/path/to/temp scripts/native-legacy-font-tests.cpp -o /path/to/
 
 原生用例从当前运行时代码提取翻译、材质与旧字体加载函数，模拟 IL2CPP GC 接口，验证上下文、64 位引用、容量参数、材质共享与释放、字体加载失败和图集匹配边界；它不替代游戏内视觉核对。Windows 可使用 Visual Studio 的 C++ 编译器，并启用 `/std:c++17 /utf-8`。
 
+语言 getter 与 Google 广播改动可只运行以下回归：
+
+```sh
+c++ -std=c++17 scripts/native-language-getter-tests.cpp -o /path/to/temp/native-language-getter-tests
+/path/to/temp/native-language-getter-tests
+c++ -std=c++17 scripts/native-integrity-tests.cpp -o /path/to/temp/native-integrity-tests
+/path/to/temp/native-integrity-tests
+./gradlew :app:testDebugUnitTest --tests '*ReceiverRegistrationCompatTest' --tests '*MicrogAuthUiPolicyTest' --tests '*LimbusAuthenticationCompatTest' --tests '*LimbusBillingBroadcastPolicyTest' --tests '*LimbusBillingUiPolicyTest'
+```
+
 ## 签名与发行文件
 
 在本地 `signing/keystore.properties` 配置 `storeFile`、`storePassword`、`keyAlias` 和 `keyPassword`，然后运行 `:app:assembleRelease`。同一应用的覆盖升级必须使用相同签名。

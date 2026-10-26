@@ -9,6 +9,7 @@ class LimbusOwnedCodePatch {
 public:
     LimbusOwnedCodePatch(void *address, size_t size);
     ~LimbusOwnedCodePatch();
+    bool is_recording() const { return address_ != nullptr; }
     LimbusOwnedCodePatch(const LimbusOwnedCodePatch &) = delete;
     LimbusOwnedCodePatch &operator=(const LimbusOwnedCodePatch &) = delete;
 private:

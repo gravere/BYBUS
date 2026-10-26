@@ -179,10 +179,11 @@
   IO 层会再次搬运已 patch 的前导指令并在 `__fix_instructions` 崩溃;但仍须早于 Unity
   首次请求 `il2cpp_init`。
 - 轻量模式只支持游戏日语模式。必须在 IL2CPP 初始化边界后将
-  `GlobalGameManager.Lang` 的运行时返回值固定为 `JP=2`,并以实际 getter 命中日志验证
-  生效;可同时兼容 hook `LocalSave.LocalGameOptionData.GetLanguage()`,但不得只以 hook
-  安装成功判断语言已切换。不得改写 PlayerPrefs 中同一对象携带的 key、iv、账号或
-  其他设置字段。
+  `GlobalGameManager.Lang` 的运行时返回值固定为 `JP=2`。两个语言 getter 必须按
+  `docs/language-getter-and-receiver-compat.md` 核对完整元数据、枚举值和相邻函数边界，
+  使用 8 字节直接返回（保留 BTI 时为 12 字节），不得用普通 16/20 字节远跳覆盖短函数。
+  安装结果不等于实际游戏语言已验证；没有真机观察时须明确标注。不得改写 PlayerPrefs
+  中同一对象携带的 key、iv、账号或其他设置字段。
 - 首页的普通用户主路径为“启动汉化版游戏”:默认联网检查 GitHub Releases、复用已校验的
   汉化包缓存、必要时同步游戏,再激活索引并启动。GitHub Releases 是唯一汉化获取途径；
   生产界面固定都市零协会最新正式 Release 地址，不提供修改源、中转服务地址或 Token 配置。
