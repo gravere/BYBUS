@@ -45,6 +45,8 @@
 #include <asm/unistd.h>
 
 #include "IORelocator.h"
+#include "RuntimePage.h"
+#include "Arm64Entry.h"
 #include "LimbusTranslationRuntime.h"
 #include "LimbusCodeIntegrityCompat.h"
 #include "MapsRedirector.h"
@@ -1758,7 +1760,8 @@ static bool limbus_signal_is_mapped(uintptr_t address) {
         return false;
     }
     unsigned char residency = 0;
-    constexpr uintptr_t page_size = 4096;
+    const uintptr_t page_size = runtime_page::size();
+    if (page_size == 0) return false;
     uintptr_t page = address & ~(page_size - 1);
     return limbus_signal_raw_syscall4(
             __NR_mincore,
@@ -1956,7 +1959,9 @@ static void limbus_sigsegv_guard(int sig, siginfo_t *info, void *context) {
     cursor = limbus_signal_append_signed(cursor, end, pc_mapped ? 1 : 0);
     cursor = limbus_signal_append_text(cursor, end, " lr_mapped=");
     cursor = limbus_signal_append_signed(cursor, end, lr_mapped ? 1 : 0);
-    if (pc_mapped && (pc & 0xfffU) <= 0xff0U) {
+    const uintptr_t page_size = runtime_page::size();
+    if (pc_mapped && page_size && (pc & 3U) == 0 &&
+            (pc & (page_size - 1)) <= page_size - 4 * sizeof(uint32_t)) {
         /*
          * 仅在 mincore 确认当前页存在、且四条指令不会跨页时读取，避免诊断逻辑
          * 对已经损坏的 PC 再次触发嵌套 SIGSEGV。
@@ -4248,10 +4253,8 @@ static void patch_limbus_syscall_return_zero(void *func) {
     if (func == nullptr) {
         return;
     }
-    long page_size = sysconf(_SC_PAGESIZE);
-    if (page_size <= 0) {
-        page_size = 4096;
-    }
+    const size_t page_size = runtime_page::size();
+    if (!page_size) return;
     uintptr_t page_start = reinterpret_cast<uintptr_t>(func) & ~static_cast<uintptr_t>(page_size - 1);
     if (mprotect(reinterpret_cast<void *>(page_start),
                  static_cast<size_t>(page_size),
@@ -4311,10 +4314,8 @@ static long limbus_direct_pread64(int fd, void *buf, size_t count, off64_t offse
 #endif
 
 static void *allocate_limbus_branch_trampoline(void *source, size_t size) {
-    long page_size = sysconf(_SC_PAGESIZE);
-    if (page_size <= 0) {
-        page_size = 4096;
-    }
+    const size_t page_size = runtime_page::size();
+    if (!page_size || !source || size != page_size) return MAP_FAILED;
     uintptr_t source_page = reinterpret_cast<uintptr_t>(source)
             & ~static_cast<uintptr_t>(page_size - 1);
 #ifndef MAP_FIXED_NOREPLACE
@@ -4323,7 +4324,7 @@ static void *allocate_limbus_branch_trampoline(void *source, size_t size) {
     const uintptr_t step = 0x100000;
     for (uintptr_t distance = step; distance <= 0x07000000; distance += step) {
         uintptr_t candidates[] = {
-                source_page + distance,
+                source_page <= UINTPTR_MAX - distance ? source_page + distance : 0,
                 source_page > distance ? source_page - distance : 0,
         };
         for (uintptr_t candidate : candidates) {
@@ -4337,7 +4338,10 @@ static void *allocate_limbus_branch_trampoline(void *source, size_t size) {
                                 -1,
                                 0);
             if (result != MAP_FAILED) {
-                return result;
+                // Older kernels may ignore MAP_FIXED_NOREPLACE and treat the
+                // address as a hint. Never accept a different, distant mapping.
+                if (reinterpret_cast<uintptr_t>(result) == candidate) return result;
+                munmap(result, size);
             }
         }
     }
@@ -4348,10 +4352,8 @@ static bool patch_limbus_direct_syscall(void *svc, void *handler, const char *la
     if (svc == nullptr) {
         return false;
     }
-    long page_size = sysconf(_SC_PAGESIZE);
-    if (page_size <= 0) {
-        page_size = 4096;
-    }
+    const size_t page_size = runtime_page::size();
+    if (!page_size) return false;
     void *trampoline = allocate_limbus_branch_trampoline(svc, static_cast<size_t>(page_size));
     if (trampoline == MAP_FAILED) {
         ALOGE("Limbus direct %s >>> unable to allocate near trampoline errno=%d",
@@ -4384,6 +4386,10 @@ static bool patch_limbus_direct_syscall(void *svc, void *handler, const char *la
     }
     uint32_t branch = 0x94000000
             | (static_cast<uint32_t>(delta >> 2) & 0x03ffffff); // bl trampoline
+    if (!runtime_page::register_executable_page(reinterpret_cast<uintptr_t>(trampoline))) {
+        munmap(trampoline, page_size);
+        return false;
+    }
     uintptr_t source_page = reinterpret_cast<uintptr_t>(svc)
             & ~static_cast<uintptr_t>(page_size - 1);
     if (mprotect(reinterpret_cast<void *>(source_page),
@@ -4392,6 +4398,7 @@ static bool patch_limbus_direct_syscall(void *svc, void *handler, const char *la
         ALOGE("Limbus direct %s >>> source mprotect failed errno=%d",
               label != nullptr ? label : "(null)",
               errno);
+        runtime_page::unregister_executable_page(reinterpret_cast<uintptr_t>(trampoline));
         munmap(trampoline, static_cast<size_t>(page_size));
         return false;
     }
@@ -4461,10 +4468,8 @@ static bool patch_limbus_relative_branch(uintptr_t base,
               current);
         return false;
     }
-    long page_size = sysconf(_SC_PAGESIZE);
-    if (page_size <= 0) {
-        page_size = 4096;
-    }
+    const size_t page_size = runtime_page::size();
+    if (!page_size) return false;
     uintptr_t page_start = reinterpret_cast<uintptr_t>(from)
             & ~static_cast<uintptr_t>(page_size - 1);
     if (mprotect(reinterpret_cast<void *>(page_start),
@@ -4509,10 +4514,8 @@ static bool patch_limbus_nop(uintptr_t base,
               current);
         return false;
     }
-    long page_size = sysconf(_SC_PAGESIZE);
-    if (page_size <= 0) {
-        page_size = 4096;
-    }
+    const size_t page_size = runtime_page::size();
+    if (!page_size) return false;
     uintptr_t page_start = reinterpret_cast<uintptr_t>(target)
             & ~static_cast<uintptr_t>(page_size - 1);
     if (mprotect(reinterpret_cast<void *>(page_start),
@@ -4964,28 +4967,33 @@ bool relocate_linker(const char* LINKER_PATH) {
 }
 
 void startIOHook(int api_level) {
+    // Populate the cache outside signal context and fail before any partial hooks.
+    if (!runtime_page::size()) {
+        ALOGE("IO hook >>> unsupported or unknown kernel page size");
+        return;
+    }
     void *handle = dlopen("libc.so", RTLD_NOW);
 
     if (handle) {
         init_limbus_container_process_flag();
         ignore_limbus_sigalrm_if_needed();
         HOOK_SYMBOL(handle, fchownat);
-        if (api_level >= 36) {
-            /*
-             * Android 16 的 arm64 bionic renameat 只有 12 字节，末尾直接跳转
-             * renameat2。旧 MSHookFunction 需要改写 16 字节，会越界覆盖紧邻的
-             * rmdir 首指令并产生 SIGILL；API 36 保留 libc 原实现。
-             */
-            ALOGE("IO hook >>> skip Android 16 arm64 libc renameat hook to preserve adjacent rmdir");
-            /*
-             * rename/renameat 在 Android 16 都会跳转到独立的 renameat2 包装；该入口有
-             * 足够的 28 字节可供旧 inline hook 安全建立跳板。UnityCache 的 native
-             * Temp -> Shared 提交也经过这里，因此改 hook renameat2 才能保留下载资源。
-             */
-            HOOK_SYMBOL(handle, renameat2);
-            ALOGE("IO hook >>> hooked Android 16 arm64 libc renameat2 for virtual cache commits");
+        // Bionic short wrappers can also be backported by an OEM. Choose from
+        // the actual entry instructions instead of the Android version number.
+        void *rename_entry = dlsym(handle, "renameat");
+        const size_t rename_words = (reinterpret_cast<uintptr_t>(rename_entry) & 7u) ? 5 : 4;
+        if (arm64_entry_has_room(static_cast<const uint32_t *>(rename_entry), 5, rename_words)) {
+            MSHookFunction(rename_entry, reinterpret_cast<void *>(new_renameat),
+                           reinterpret_cast<void **>(&orig_renameat));
         } else {
-            HOOK_SYMBOL(handle, renameat);
+            void *entry2 = dlsym(handle, "renameat2");
+            const size_t words2 = (reinterpret_cast<uintptr_t>(entry2) & 7u) ? 5 : 4;
+            if (arm64_entry_has_room(static_cast<const uint32_t *>(entry2), 5, words2)) {
+                MSHookFunction(entry2, reinterpret_cast<void *>(new_renameat2),
+                               reinterpret_cast<void **>(&orig_renameat2));
+            } else {
+                ALOGE("IO hook >>> no safe rename wrapper; leave libc unchanged");
+            }
         }
         HOOK_SYMBOL(handle, mkdirat);
         HOOK_SYMBOL(handle, mknodat);

@@ -52,9 +52,54 @@ class NativeStructureTest {
             val altered = changed(engine, offset, (engine.full[offset].toInt() xor 1).toByte())
             assertEquals("Changed critical site 0x${offset.toString(16)}", "", qualify(altered, game))
         }
-        assertEquals("", LimbusNativeStructure.qualify(engine, game, 35, "arm64-v8a", 4096))
+        assertEquals("", LimbusNativeStructure.qualify(engine, game, 25, "arm64-v8a", 4096))
         assertEquals("", LimbusNativeStructure.qualify(engine, game, 36, "x86_64", 4096))
-        assertEquals("", LimbusNativeStructure.qualify(engine, game, 36, "arm64-v8a", 16384))
+        assertEquals("", LimbusNativeStructure.qualify(engine, game, 36, "arm64-v8a", 65536))
+    }
+
+    @Test fun sameOriginalLibrariesQualifyAcrossAndroidAndPageSizes() {
+        val (engine, game) = fixtures()
+        val expected = qualify(engine, game)
+        assertFalse(expected.isEmpty())
+        for (sdk in listOf(26, 28, 30, 31, 33, 34, 35, 36, 37)) {
+            for (page in listOf(4096L, 16384L)) {
+                assertEquals("API $sdk / page $page", expected,
+                    LimbusNativeStructure.qualify(engine, game, sdk, "arm64-v8a", page))
+                for (image in listOf(engine, game)) {
+                    LimbusNativeStructure.requireLoadAlignment(ByteArrayInputStream(image.head), image.size, page)
+                }
+            }
+        }
+    }
+
+    @Test fun nativeHeadersMustMatchActualPageSizeAndRemainBounded() {
+        val header = ByteArray(16384)
+        val b = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN)
+        b.put(byteArrayOf(127, 69, 76, 70, 2, 1, 1))
+        b.putShort(16, 3); b.putShort(18, 183); b.putInt(20, 1)
+        b.putLong(32, 64); b.putShort(52, 64); b.putShort(54, 56); b.putShort(56, 1)
+        b.putInt(64, 1); b.putInt(68, 5)
+        b.putLong(96, 4096); b.putLong(104, 4096); b.putLong(112, 16384)
+        fun check(page: Long) = LimbusNativeStructure.requireLoadAlignment(
+            ByteArrayInputStream(header), 64L * 1024 * 1024, page)
+        fun rejected(page: Long) {
+            try { check(page); fail("Accepted malformed/unaligned native library") }
+            catch (_: java.io.IOException) { }
+        }
+        check(4096); check(16384) // No attempt to decompress the remaining 64 MB.
+        b.putLong(112, 4096)
+        check(4096); rejected(16384)
+        b.putLong(112, 16384); b.putLong(80, 4096)
+        rejected(4096) // p_vaddr and p_offset must agree modulo p_align.
+        b.putLong(80, 0); b.putLong(96, Long.MAX_VALUE)
+        rejected(4096)
+        b.putLong(96, 4096); b.putLong(32, 16370)
+        rejected(4096)
+        b.putLong(32, 64); rejected(0); rejected(65536)
+        try {
+            LimbusNativeStructure.requireLoadAlignment(ByteArrayInputStream(header.copyOf(80)), 4096, 4096)
+            fail("Accepted truncated native header")
+        } catch (_: java.io.IOException) { }
     }
 
     @Test fun malformedElfCannotSupplyOffsetsOrSizes() {

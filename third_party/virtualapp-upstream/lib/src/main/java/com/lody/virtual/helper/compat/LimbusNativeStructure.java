@@ -11,11 +11,13 @@ import java.util.List;
 /** Read-only, bounded ELF qualification. No code scanning, extraction, or learned fingerprints. */
 public final class LimbusNativeStructure {
     private LimbusNativeStructure() {}
-    public static final String FAMILY = "limbus-engine1-sdk36-arm64-full";
+    public static final String FAMILY = "limbus-engine1-arm64-full";
+    public static final int MIN_SDK = 26;
     private static final long MAX_LIBRARY = 512L * 1024 * 1024;
     private static final int HEAD = 16 * 1024, TAIL = 128 * 1024;
     public static boolean supportsEnvironment(int sdk, String abi, long pageSize) {
-        return sdk == 36 && "arm64-v8a".equals(abi) && pageSize == 4096;
+        return sdk >= MIN_SDK && "arm64-v8a".equals(abi) &&
+                (pageSize == 4096 || pageSize == 16384);
     }
 
     // Immutable code regions shared by the independently inspected 471 and 478 libraries:
@@ -84,7 +86,7 @@ public final class LimbusNativeStructure {
     public static String qualify(Image protection, Image il2cpp, int sdk, String abi, long pageSize) {
         if (!supportsEnvironment(sdk, abi, pageSize)) return "";
         try {
-            Elf engine = new Elf(protection), game = new Elf(il2cpp);
+            Elf engine = new Elf(protection, pageSize), game = new Elf(il2cpp, pageSize);
             Section text = engine.section(".text"), bss = engine.section(".bss");
             engine.requireCode(text);
             require(text.address == 0x17130 && text.offset == text.address && text.size == 0x135c90,
@@ -114,21 +116,58 @@ public final class LimbusNativeStructure {
     }
     static final class Segment {
         final long flags, offset, address, size, memory;
-        Segment(byte[] data, int at, long fileSize) throws IOException {
+        Segment(byte[] data, int at, long fileSize, long pageSize) throws IOException {
             flags = u32(data, at + 4); offset = u64(data, at + 8); address = u64(data, at + 16);
             size = u64(data, at + 32); memory = u64(data, at + 40);
             long alignment = u64(data, at + 48);
             require(range(offset, size, fileSize) && size <= memory && range(address, memory, MAX_LIBRARY * 2),
                     "Invalid load segment");
-            require(alignment >= 4096 && (alignment & (alignment - 1)) == 0 &&
+            require(alignment >= pageSize && (alignment & (alignment - 1)) == 0 &&
                     address % alignment == offset % alignment, "Load alignment");
         }
+    }
+
+    /** Inspect only bounded ELF headers; do not decompress large game libraries twice. */
+    public static void requireLoadAlignment(InputStream input, long fileSize, long pageSize) throws IOException {
+        require(fileSize >= 64 && fileSize <= MAX_LIBRARY, "Library size");
+        byte[] header = new byte[(int) Math.min(HEAD, fileSize)];
+        int offset = 0;
+        while (offset < header.length) {
+            if (Thread.currentThread().isInterrupted()) throw new IOException("Inspection interrupted");
+            int read = input.read(header, offset, header.length - offset);
+            require(read > 0, "Truncated ELF header");
+            offset += read;
+        }
+        loadSegments(header, fileSize, pageSize);
+    }
+
+    private static List<Segment> loadSegments(byte[] h, long fileSize, long pageSize) throws IOException {
+        require(pageSize == 4096 || pageSize == 16384, "Unsupported page size");
+        require(h.length >= 64 && h[0] == 127 && h[1] == 'E' && h[2] == 'L' && h[3] == 'F' &&
+                h[4] == 2 && h[5] == 1 && h[6] == 1 && u16(h, 16) == 3 &&
+                u16(h, 18) == 183 && u32(h, 20) == 1 && u16(h, 52) == 64, "ELF identity");
+        int count = u16(h, 56);
+        long at = u64(h, 32);
+        require(u16(h, 54) == 56 && count > 0 && count <= 64 && at >= 64 &&
+                range(at, count * 56L, h.length), "ELF program table");
+        List<Segment> loads = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            int row = (int) at + i * 56;
+            if (u32(h, row) == 1) loads.add(new Segment(h, row, fileSize, pageSize));
+        }
+        require(!loads.isEmpty(), "Missing load segments");
+        for (int i = 0; i < loads.size(); i++) for (int j = i + 1; j < loads.size(); j++) {
+            Segment a = loads.get(i), b = loads.get(j);
+            require(a.address + a.memory <= b.address || b.address + b.memory <= a.address,
+                    "Overlapping load segments");
+        }
+        return loads;
     }
     static final class Elf {
         final Image image;
         final byte[] sections, names;
-        final List<Segment> loads = new ArrayList<>();
-        Elf(Image image) throws IOException {
+        final List<Segment> loads;
+        Elf(Image image, long pageSize) throws IOException {
             this.image = image;
             byte[] h = image.bytes(0, 64);
             require(h[0] == 127 && h[1] == 'E' && h[2] == 'L' && h[3] == 'F' &&
@@ -137,15 +176,7 @@ public final class LimbusNativeStructure {
             int pc = u16(h, 56), sc = u16(h, 60), ni = u16(h, 62);
             require(u16(h, 54) == 56 && pc > 0 && pc <= 64 && u16(h, 58) == 64 &&
                     sc > 0 && sc <= 256 && ni > 0 && ni < sc, "ELF table shape");
-            byte[] programs = image.bytes(u64(h, 32), pc * 56L);
-            for (int i = 0; i < pc; i++) if (u32(programs, i * 56) == 1)
-                loads.add(new Segment(programs, i * 56, image.size));
-            require(!loads.isEmpty(), "Missing load segments");
-            for (int i = 0; i < loads.size(); i++) for (int j = i + 1; j < loads.size(); j++) {
-                Segment a = loads.get(i), b = loads.get(j);
-                require(a.address + a.memory <= b.address || b.address + b.memory <= a.address,
-                        "Overlapping load segments");
-            }
+            loads = loadSegments(image.head, image.size, pageSize);
             sections = image.bytes(u64(h, 40), sc * 64L);
             Section strings = new Section(sections, ni * 64);
             require(strings.type == 3 && strings.size > 0 && strings.size <= 16 * 1024, "ELF names");

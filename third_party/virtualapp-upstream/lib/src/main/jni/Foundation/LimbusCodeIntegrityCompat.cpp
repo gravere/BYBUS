@@ -41,7 +41,7 @@ const IntegrityLayout *integrity_layout() {
     static constexpr IntegrityLayout build478{0x4049e40, 0x462f79c, 0x5e595c, 0x59d24b0, 0xb913d99fu, 0xbfb79f2du, 0xb14fa8aeu};
     const char *profile = getenv("V_LIMBUS_NATIVE_PROFILE");
     if (!profile) return nullptr;
-    if (strcmp(profile, "limbus-engine1-sdk36-arm64-full") == 0) {
+    if (strcmp(profile, "limbus-engine1-arm64-full") == 0) {
         static const IntegrityLayout automatic = [] {
             IntegrityLayout value;
             limbus_parse_integrity_layout(getenv("V_LIMBUS_NATIVE_LAYOUT"), value);

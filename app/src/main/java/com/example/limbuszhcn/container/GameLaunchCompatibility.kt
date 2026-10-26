@@ -19,9 +19,11 @@ internal class GameLaunchCompatibility(private val context: Context) {
         val info = installedInfo()
         val identity = identity(info)
         if (identity == approved) return identity
-        val profile = LimbusNativeProfile.findApproved(context, info, requireNotNull(info.applicationInfo))
-        require(profile.endsWith("-full")) {
-            "游戏 ${info.versionName ?: identity.version} 的底层结构未通过自动兼容检查，需要更新 BYBUS。已有登录、资源和汉化文件均保留。"
+        val profile = LimbusNativeProfile.inspect(context, info, requireNotNull(info.applicationInfo))
+        require(profile.approved() && profile.id.endsWith("-full")) {
+            profile.failureReason.ifBlank {
+                "游戏 ${info.versionName ?: identity.version} 的底层结构未通过自动兼容检查，需要更新 BYBUS。已有登录、资源和汉化文件均保留。"
+            }
         }
         return identity.also { approved = it }
     }

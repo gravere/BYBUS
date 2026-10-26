@@ -420,6 +420,15 @@ public class NativeEngine {
                     VLog.w(TAG, "Legacy hidden-API exemption unavailable: %s", e.toString());
                 }
             }
+            // Some OEM Android 10–15 builds also filter Java meta-reflection.
+            // Reuse the same maintained path and exemptions when that happens.
+            if (!bypassed && Build.VERSION.SDK_INT < 36) {
+                try {
+                    bypassed = LSPass.setHiddenApiExemptions(exemptions);
+                } catch (Throwable e) {
+                    VLog.w(TAG, "Hidden-API fallback unavailable: %s", e.toString());
+                }
+            }
             if (bypassed) {
                 VLog.i(TAG, "Hidden-API exemptions installed for SDK %d", Build.VERSION.SDK_INT);
             } else {
