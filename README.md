@@ -55,6 +55,8 @@ Releases 保留最近三个正式构建的发行文件。
 
 感谢以下项目及其贡献者：
 
+感谢 [UMP40](https://github.com/UMP40) 对原生运行时与 Google 登录兼容的代码贡献。
+
 | 项目 | 贡献 |
 | --- | --- |
 | [BBBEANNN / limbusZhCN](https://github.com/BBBEANNN/limbusZhCN) | BYBUS 的基础项目，提供 Android 汉化与容器接入实现 |
