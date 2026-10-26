@@ -21,6 +21,9 @@ assert code == int(re.search(r'versionCode\s*=\s*(\d+)', gradle)[1]), 'Build dif
 assert version == re.search(r'versionName\s*=\s*"([^"]+)"', gradle)[1]
 native_code = re.search(r'^native-code:(.*)$', badging, re.MULTILINE)
 assert native_code and re.findall(r"'([^']+)'", native_code[1]) == ['arm64-v8a'], 'Unexpected APK architecture'
+required_features = set(re.findall(r"^\s*uses-feature: name='([^']+)'", badging, re.MULTILINE))
+assert not required_features.intersection('android.hardware.' + name for name in
+    ('camera', 'bluetooth', 'location', 'microphone', 'telephony', 'wifi')), 'Optional hardware was marked required'
 # The static FileProvider URI helper reads manifest metadata, not a subclass constructor.
 manifest_tree = subprocess.check_output([args.aapt, 'dump', 'xmltree', str(args.apk.resolve()), 'AndroidManifest.xml'], text=True, encoding='utf-8')
 nodes = manifest_tree.splitlines()

@@ -30,7 +30,11 @@ public final class LimbusNativeProfile {
     public static final class Match {
         public final String id;
         public final String layout;
-        private Match(String id, String layout) { this.id = id; this.layout = layout; }
+        public final String failureReason;
+        private Match(String id, String layout) { this(id, layout, ""); }
+        private Match(String id, String layout, String reason) {
+            this.id = id; this.layout = layout; this.failureReason = reason;
+        }
         public boolean approved() { return !id.isEmpty(); }
     }
     private static final Match NONE = new Match("", "");
@@ -57,6 +61,12 @@ public final class LimbusNativeProfile {
                 identity += "|" + path.length() + ":" + path + ":" + file.length() + ":" + file.lastModified();
             }
             if (identity.equals(cachedIdentity)) return cachedMatch;
+            try {
+                requireLibraryAlignment(paths, page);
+            } catch (java.io.IOException invalid) {
+                return new Match("", "", "游戏安装包的原生库不满足当前设备的 " + (page / 1024) +
+                        " KB 加载条件，请先更新或重新安装官方游戏；已有容器数据保留。");
+            }
             LimbusNativeStructure.Image protection = library(paths, "libcovault-appsec.so", true);
             LimbusNativeStructure.Image game = library(paths, "libil2cpp.so", false);
             Match result = NONE;
@@ -81,6 +91,26 @@ public final class LimbusNativeProfile {
             android.util.Log.w("LimbusVA", "Native qualification rejected: " + error.getClass().getSimpleName());
             return NONE;
         }
+    }
+
+    private static void requireLibraryAlignment(ArrayList<String> paths, long page) throws Exception {
+        java.util.HashSet<String> found = new java.util.HashSet<>();
+        for (String path : paths) try (ZipFile zip = new ZipFile(path)) {
+            java.util.Enumeration<? extends ZipEntry> entries = zip.entries();
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                String name = entry.getName();
+                if (!name.startsWith("lib/arm64-v8a/") || !name.endsWith(".so")) continue;
+                if (!found.add(name) || found.size() > 128)
+                    throw new java.io.IOException("Duplicate or excessive native libraries");
+                try (InputStream input = zip.getInputStream(entry)) {
+                    LimbusNativeStructure.requireLoadAlignment(input, entry.getSize(), page);
+                }
+            }
+        }
+        for (String required : new String[]{"libcovault-appsec.so", "libil2cpp.so", "libunity.so", "libmain.so"})
+            if (!found.contains("lib/arm64-v8a/" + required))
+                throw new java.io.IOException("Incomplete native libraries");
     }
 
     @SuppressWarnings("deprecation")

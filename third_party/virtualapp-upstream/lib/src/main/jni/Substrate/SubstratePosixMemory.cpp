@@ -22,6 +22,7 @@
 #define SubstrateInternal
 #include "CydiaSubstrate.h"
 #include "SubstrateLog.hpp"
+#include "../Foundation/RuntimePage.h"
 
 #include <sys/mman.h>
 
@@ -48,14 +49,11 @@ extern "C" SubstrateMemoryRef SubstrateMemoryCreate(SubstrateAllocatorRef alloca
         return NULL;
     }
 
-    if (size == 0)
+    runtime_page::Span pages;
+    if (!runtime_page::span(reinterpret_cast<uintptr_t>(data), size, runtime_page::size(), pages))
         return NULL;
-
-    long page(sysconf(_SC_PAGESIZE)); // Portable applications should employ sysconf(_SC_PAGESIZE) instead of getpagesize
-
-    uintptr_t base(reinterpret_cast<uintptr_t>(data) / page * page);
-    size_t width(((reinterpret_cast<uintptr_t>(data) + size - 1) / page + 1) * page - base);
-    void *address(reinterpret_cast<void *>(base));
+    size_t width(pages.length);
+    void *address(reinterpret_cast<void *>(pages.start));
 
     if (mprotect(address, width, PROT_READ | PROT_WRITE | PROT_EXEC) == -1) {
         MSLog(MSLogLevelError, "MS:Error:mprotect() = %d", errno);

@@ -34,7 +34,10 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sys/mman.h>
+#include <pthread.h>
+#include <errno.h>
 #include "And64InlineHook.hpp"
+#include "../Foundation/RuntimePage.h"
 #define   A64_MAX_INSTRUCTIONS 5
 #define   A64_MAX_REFERENCES   (A64_MAX_INSTRUCTIONS * 2)
 #define   A64_NOP              0xd503201fu
@@ -449,34 +452,35 @@ extern "C" {
 #define __intval(p)                reinterpret_cast<intptr_t>(p)
 #define __uintval(p)               reinterpret_cast<uintptr_t>(p)
 #define __ptr(p)                   reinterpret_cast<void *>(p)
-#define __page_size                4096
-#define __page_align(n)            __align_up(static_cast<uintptr_t>(n), __page_size)
-#define __ptr_align(x)             __ptr(__align_down(reinterpret_cast<uintptr_t>(x), __page_size))
-#define __align_up(x, n)           (((x) + ((n) - 1)) & ~((n) - 1))
-#define __align_down(x, n)         ((x) & -(n))
 #define __countof(x)               static_cast<intptr_t>(sizeof(x) / sizeof((x)[0])) // must be signed
 #define __atomic_increase(p)       __sync_add_and_fetch(p, 1)
 #define __sync_cmpswap(p, v, n)    __sync_bool_compare_and_swap(p, v, n)
 #define __predict_true(exp)        __builtin_expect((exp) != 0, 1)
-#define __make_rwx(p, n)           ::mprotect(__ptr_align(p), \
-                                              __page_align(__uintval(p) + n) != __page_align(__uintval(p)) ? __page_align(n) + __page_size : __page_align(n), \
-                                              PROT_READ | PROT_WRITE | PROT_EXEC)
-
-//-------------------------------------------------------------------------
-
-static __attribute((aligned(__page_size))) uint32_t __insns_pool[A64_MAX_BACKUPS][A64_MAX_INSTRUCTIONS * 10];
-
-//-------------------------------------------------------------------------
-
-class A64HookInit
-{
-public:
-    A64HookInit()
-    {
-        __make_rwx(__insns_pool, sizeof(__insns_pool));
+static int __make_rwx(void *address, size_t length) {
+    runtime_page::Span pages;
+    if (!runtime_page::span(__uintval(address), length, runtime_page::size(), pages)) {
+        errno = EINVAL;
+        return -1;
     }
+    return ::mprotect(__ptr(pages.start), pages.length, PROT_READ | PROT_WRITE | PROT_EXEC);
+}
+
+//-------------------------------------------------------------------------
+
+// Both ends are page-isolated on 4 KB and 16 KB kernels. Padding belongs to
+// the pool, so mprotect never changes unrelated adjacent data permissions.
+struct alignas(runtime_page::kMaxSupported) TrampolinePool {
+    uint32_t instructions[A64_MAX_BACKUPS][A64_MAX_INSTRUCTIONS * 10];
 };
-static A64HookInit __init;
+static TrampolinePool __insns_pool;
+static bool __pool_ready = false;
+static pthread_once_t __pool_once = PTHREAD_ONCE_INIT;
+
+//-------------------------------------------------------------------------
+
+static void initialize_pool() {
+    __pool_ready = __make_rwx(&__insns_pool, sizeof(__insns_pool)) == 0;
+}
 
 //-------------------------------------------------------------------------
 
@@ -485,9 +489,11 @@ static uint32_t *FastAllocateTrampoline()
     static_assert((A64_MAX_INSTRUCTIONS * 10 * sizeof(uint32_t)) % 8 == 0, "8-byte align");
     static volatile int32_t __index = -1;
 
+    if (pthread_once(&__pool_once, initialize_pool) != 0 || !__pool_ready) return NULL;
+
     int32_t i = __atomic_increase(&__index);
-    if (__predict_true(i >= 0 && i < __countof(__insns_pool))) {
-        return __insns_pool[i];
+    if (__predict_true(i >= 0 && i < __countof(__insns_pool.instructions))) {
+        return __insns_pool.instructions[i];
     } //if
 
     return NULL;
@@ -500,6 +506,7 @@ A64_JNIEXPORT void *A64HookFunctionV(void *const symbol, void *const replace,
 {
     static constexpr uint_fast64_t mask = 0x03ffffffu; // 0b00000011111111111111111111111111
 
+    if (!symbol || !replace || (__uintval(symbol) & 3u) || (__uintval(replace) & 3u)) return NULL;
     uint32_t *trampoline = static_cast<uint32_t *>(rwx), *original = static_cast<uint32_t *>(symbol);
 
     static_assert(A64_MAX_INSTRUCTIONS >= 5, "please fix A64_MAX_INSTRUCTIONS!");
@@ -507,13 +514,13 @@ A64_JNIEXPORT void *A64HookFunctionV(void *const symbol, void *const replace,
     if (llabs(pc_offset) >= (mask >>1)) {
         int32_t count = (reinterpret_cast<uint64_t>(original + 2) & 7u) != 0u ? 5 : 4;
         if (trampoline) {
-            if (rwx_size < count * 10u) {
+            if (rwx_size < count * 10u * sizeof(uint32_t)) {
                 return NULL;
             } //if
             __fix_instructions(original, count, trampoline);
         } //if
 
-        if (__make_rwx(original, 5 * sizeof(uint32_t)) == 0) {
+        if (__make_rwx(original, count * sizeof(uint32_t)) == 0) {
             if (count == 5) {
                 original[0] = A64_NOP;
                 ++original;
@@ -521,14 +528,14 @@ A64_JNIEXPORT void *A64HookFunctionV(void *const symbol, void *const replace,
             original[0] = 0x58000051u; // LDR X17, #0x8
             original[1] = 0xd61f0220u; // BR X17
             *reinterpret_cast<int64_t *>(original + 2) = __intval(replace);
-            __flush_cache(symbol, 5 * sizeof(uint32_t));
+            __flush_cache(symbol, count * sizeof(uint32_t));
 
         } else {
             trampoline = NULL;
         } //if
     } else {
         if (trampoline) {
-            if (rwx_size < 1u * 10u) {
+            if (rwx_size < 10u * sizeof(uint32_t)) {
                 return NULL;
             } //if
             __fix_instructions(original, 1, trampoline);
@@ -556,8 +563,8 @@ A64_JNIEXPORT void A64HookFunction(void *const symbol, void *const replace, void
         *result = trampoline;
         if (trampoline == NULL) return;
     } //if
-    assert(__make_rwx(symbol, 4096) == 0);
-    trampoline = A64HookFunctionV(symbol, replace, trampoline, A64_MAX_INSTRUCTIONS * 10u);
+    trampoline = A64HookFunctionV(symbol, replace, trampoline,
+                                 A64_MAX_INSTRUCTIONS * 10u * sizeof(uint32_t));
     if (trampoline == NULL && result != NULL) {
         *result = NULL;
     } //if

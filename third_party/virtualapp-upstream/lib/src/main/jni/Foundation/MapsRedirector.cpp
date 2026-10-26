@@ -11,6 +11,7 @@
 #include "MapsRedirector.h"
 #include "Log.h"
 #include "SandboxFs.h"
+#include "RuntimePage.h"
 
 static int create_temp_file() {
     char pattern[PATH_MAX] = {0};
@@ -65,13 +66,13 @@ static bool is_limbus_anonymous_exec_trampoline(const char *line) {
     int parsed = sscanf(line, "%lx-%lx %4s %lx %15s %lu %n",
                         &start, &end, permissions, &offset, device, &inode, &consumed);
     if (parsed != 6 || start >= end || strcmp(permissions, "r-xp") != 0
-            || offset != 0 || inode != 0 || end - start != 4096) {
+            || offset != 0 || inode != 0 || end - start != runtime_page::size()) {
         return false;
     }
     while (line[consumed] == ' ' || line[consumed] == '\t') {
         ++consumed;
     }
-    return line[consumed] == '\0';
+    return line[consumed] == '\0' && runtime_page::owns_executable_page(start, end);
 }
 
 static const char *rewrite_limbus_map_path(const char *path, char *buffer, size_t size) {

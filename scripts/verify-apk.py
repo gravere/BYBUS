@@ -5,6 +5,7 @@ import struct
 import sys
 import zipfile
 import lzma
+import io
 
 apk = Path(sys.argv[1])
 report_path = Path(sys.argv[2])
@@ -52,6 +53,7 @@ with zipfile.ZipFile(apk) as archive:
         'Chinese font': (['assets/runtime/ChineseFont.ttf.xz'], 'a56a06f1af27726bc5def015b61deecbbdf5ae6d954a91b1131d8a17290def35')
     }
     result['bundled_asset_hashes'] = {}
+    result['bundled_google_16k_alignment'] = {}
     native_runtime = archive.read('lib/arm64-v8a/libv++_64.so')
     font_name = 'ChineseFont-' + expected_assets['Chinese font'][1][:8] + '.ttf'
     assert font_name.encode('ascii') in native_runtime, 'Native font path does not match the bundled face'
@@ -61,6 +63,25 @@ with zipfile.ZipFile(apk) as archive:
         actual = digest_entries(archive, paths)
         assert actual == expected, name + ': checksum mismatch'
         result['bundled_asset_hashes'][name] = actual
+        if name.startswith('microG'):
+            # A host APK can be aligned while a nested component is not. Record
+            # this separately; optional upstream libraries are not silently fixed.
+            with zipfile.ZipFile(io.BytesIO(b''.join(archive.read(part) for part in paths))) as component:
+                native = [entry for entry in component.infolist()
+                          if entry.filename.startswith('lib/arm64-v8a/') and entry.filename.endswith('.so')]
+                incompatible = []
+                for entry in native:
+                    with component.open(entry) as stream: header = stream.read(16384)
+                    assert header[:6] == b'\x7fELF\x02\x01', entry.filename
+                    offset = struct.unpack_from('<Q', header, 32)[0]
+                    width, count = struct.unpack_from('<HH', header, 54)
+                    assert width == 56 and 0 < count <= 64 and offset + count * width <= len(header)
+                    loads = [struct.unpack_from('<IIQQQQQQ', header, offset + i * width) for i in range(count)]
+                    if any(s[0] == 1 and (s[7] < 16384 or (s[3] - s[2]) % 16384) for s in loads):
+                        incompatible.append(entry.filename)
+                result['bundled_google_16k_alignment'][name] = {
+                    'arm64_library_count': len(native), 'unaligned_libraries': incompatible,
+                    'device_login_verified': False}
     result['license_assets'] = [name for name in names if name.startswith('assets/licenses/')]
     assert len(result['license_assets']) >= 2
     result['no_signing_secrets_packaged'] = not any('keystore.properties' in name or name.endswith(('.jks','.p12','.keystore')) for name in names)

@@ -44,9 +44,10 @@ internal data class DeviceCompatibilityReport(
 
     val blockingReason: String?
         get() = when {
-            sdkInt != 36 -> "当前游戏兼容方案仅支持 Android 16（API 36）"
+            sdkInt < com.lody.virtual.helper.compat.LimbusNativeStructure.MIN_SDK -> "需要 Android 8.0 或更新版本"
             !hasRequiredAbi || !is64BitProcess -> "当前游戏兼容方案需要 64 位 ARM 运行环境"
-            pageSizeBytes != 4096L -> if (pageSizeBytes == 0L) "无法确认系统内存页大小" else "当前游戏兼容方案仅支持 4 KB 内存页"
+            pageSizeBytes != 4096L && pageSizeBytes != 16384L ->
+                if (pageSizeBytes <= 0L) "无法确认系统内存页大小" else "当前内存页大小暂不支持（支持 4 KB 和 16 KB）"
             else -> null
         }
 
@@ -89,7 +90,14 @@ internal class DeviceCompatibility(private val context: Context) {
             powerManager.isIgnoringBatteryOptimizations(context.packageName)
         }.getOrDefault(false)
         val hasArm64 = Build.SUPPORTED_64_BIT_ABIS.contains(DeviceCompatibilityReport.REQUIRED_ABI)
+        val pageSize = readPageSizeBytes()
         val warnings = buildList {
+            if (pageSize == 16384L) {
+                add("Google 组件含尚未适配 16 KB 的可选原生库，登录与付款兼容性仍需确认")
+            }
+            if (Build.VERSION.SDK_INT > 36) {
+                add("此系统版本尚未完成运行验证；游戏仍需通过原生结构检查")
+            }
             if (isAggressiveBackgroundRom() && !ignoresBatteryOptimizations) {
                 // 国产 ROM 经常在 Activity 切换到游戏后清理容器 server；这里只提示用户显式放行。
                 add("建议在系统设置中允许自启动、后台高耗电和后台运行")
@@ -107,7 +115,7 @@ internal class DeviceCompatibility(private val context: Context) {
             sdkInt = Build.VERSION.SDK_INT,
             abiLabel = Build.SUPPORTED_ABIS.joinToString(","),
             hasRequiredAbi = hasArm64,
-            pageSizeBytes = readPageSizeBytes(),
+            pageSizeBytes = pageSize,
             is64BitProcess = android.os.Process.is64Bit(),
             isLowRamDevice = activityManager.isLowRamDevice,
             isIgnoringBatteryOptimizations = ignoresBatteryOptimizations,
