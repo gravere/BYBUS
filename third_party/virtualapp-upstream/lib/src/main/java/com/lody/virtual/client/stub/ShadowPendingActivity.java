@@ -139,6 +139,13 @@ public class ShadowPendingActivity extends Activity {
                         + " sender=" + ext.sender + " resultTo=" + ext.resultTo);
             }
             ActivityInfo info = VirtualCore.get().resolveActivityInfo(finalIntent, data.userId);
+            if (info != null && com.lody.virtual.helper.compat.MicrogAuthUiPolicy.isGameIdentityBridge(
+                    data.creator, info.packageName, info.name, finalIntent.getAction(),
+                    finalIntent.getStringExtra("client_package_name"))) {
+                // The host parent is intentionally absent from VAMS. Carry only the fact that
+                // this exact Google-created login was checked, never account/credential data.
+                finalIntent.putExtra(com.lody.virtual.helper.compat.MicrogAuthUiPolicy.BRIDGED_LOGIN, true);
+            }
             if (info != null && LimbusBillingUiPolicy.isCheckoutTarget(data.creator, info.packageName, info.name)) {
                 String sourcePackage = ext.resultTo == null ? null
                         : VActivityManager.get().getPackageForToken(ext.resultTo);

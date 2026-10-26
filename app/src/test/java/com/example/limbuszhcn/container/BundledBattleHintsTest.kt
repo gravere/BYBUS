@@ -33,6 +33,15 @@ class BundledBattleHintsTest {
         assertTrue(BundledBattleHints.read(listOf(apk.toString())).isEmpty())
     }
 
+    @Test fun firstRunTablesUseTheSameBoundedReaderAndExactAllowlist() {
+        val text = """{"dataList":[{"id":1,"content":"ログイン"}]}"""
+        for (name in listOf("JP_MainUIText", "JP_LoginUIText")) {
+            assertEquals("$name.json" to text, BundledBattleHints.parse(fixture(text, name)))
+        }
+        assertNull(BundledBattleHints.parse(fixture(text, "JP_LoginUIText_Other")))
+        assertFalse(BundledBattleHints.isStartupTable("StoryData/JP_LoginUIText.json"))
+    }
+
     @Test fun bundledAndDownloadedVariantsUseTheSameTranslationWithoutReplacingGameData() {
         val translator = """{"dataList":[{"id":1,"content":"提示正文"}]}"""
         val baseline = """{"dataList":[{"id":1,"content":"古いヒント"}]}"""
@@ -47,7 +56,7 @@ class BundledBattleHintsTest {
         assertEquals("提示正文", compiled.uniqueEntries["更新したヒント"])
     }
 
-    private fun fixture(text: String, name: String = "JP_BattleHint"): ByteArray {
+    internal fun fixture(text: String, name: String = "JP_BattleHint"): ByteArray {
         val nameBytes = name.toByteArray()
         val textBytes = text.toByteArray()
         val textOffset = ((144 + 4 + nameBytes.size + 3) and -4) + 4

@@ -11,6 +11,8 @@ import kotlin.io.path.writeText
 internal class RuntimeReceipt(private val indexRoot: Path) {
     fun beginLaunch() {
         Files.createDirectories(indexRoot)
+        val mode = TranslationIndexStore(indexRoot).selectRuntimeIndex()
+        indexRoot.resolve("launch-mode.txt").writeText(mode + "\n", Charsets.UTF_8)
         val temp = indexRoot.resolve("launch.request.tmp")
         temp.writeText(UUID.randomUUID().toString() + "\n")
         AtomicFiles.move(temp, indexRoot.resolve("launch.request"), true)
@@ -25,7 +27,9 @@ internal class RuntimeReceipt(private val indexRoot: Path) {
         val receipt = AtomicFiles.readProperties(indexRoot.resolve("runtime-state.properties"))
         if (receipt.getProperty("request") != request) return "尚未收到本次游戏进程的确认"
         val detail = when (receipt.getProperty("state")) {
-            "hooks_installed" -> "上次启动：索引和文本接管已加载，游戏画面仍需确认"
+            "hooks_installed" -> if (runCatching { indexRoot.resolve("launch-mode.txt").readText().trim() }.getOrNull() == "startup")
+                "上次启动：启动页汉化已准备，完整汉化等待游戏资源下载"
+                else "上次启动：索引和文本接管已加载，游戏画面仍需确认"
             "index_loaded" -> "上次启动：索引已加载，等待文本接管初始化"
             "no_index" -> "上次启动：资源准备模式，尚无可用索引"
             else -> "上次启动：文本接管未完成，可导出诊断包"
