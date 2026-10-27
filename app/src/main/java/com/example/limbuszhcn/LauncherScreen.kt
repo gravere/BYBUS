@@ -141,7 +141,16 @@ internal fun LauncherScreen(
                             Spacer(Modifier.height(20.dp))
                             InstallationCard(state) { open("status") }
                             Spacer(Modifier.height(if (layout.centeredDetails) 16.dp else 28.dp))
-                            ProjectCard(projectState) { open("project") }
+                            if (layout.centeredDetails) {
+                                Surface(Modifier.fillMaxWidth(), color = C.Panel, contentColor = C.Ink,
+                                    shape = RoundedCornerShape(24.dp)) {
+                                    Box(Modifier.padding(20.dp)) {
+                                        ProjectDetails(projectState, onRefreshProject, onSelectProjectSource, onOpenLink)
+                                    }
+                                }
+                            } else {
+                                ProjectCard(projectState) { open("project") }
+                            }
                             Spacer(Modifier.height(10.dp))
                             AboutLink { open("about") }
                             Spacer(Modifier.height(24.dp))

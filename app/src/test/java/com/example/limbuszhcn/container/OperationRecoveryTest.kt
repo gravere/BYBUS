@@ -74,6 +74,26 @@ class OperationRecoveryTest {
         assertEquals("300", store.activeManifest()!!.getProperty("version"))
     }
 
+    @Test fun runtimeReceiptDoesNotConfuseLoadedHooksWithReadyFonts() {
+        val root = temporary.root.toPath()
+        val receipt = RuntimeReceipt(root)
+        receipt.beginLaunch()
+        val request = root.resolve("launch.request").readText().trim()
+        fun respond(font: String) = root.resolve("runtime-state.properties").writeText(
+            "request=$request\nstate=hooks_installed\nfontState=$font\nnativeProfile=verified-test")
+        respond("pending")
+        assertTrue(receipt.description().contains("等待中文字体初始化"))
+        respond("failed")
+        assertTrue(receipt.description().contains("中文字体初始化失败"))
+        respond("ready")
+        assertTrue(receipt.description().contains("中文字体已加载"))
+        root.resolve("launch-mode.txt").writeText("startup")
+        assertTrue(receipt.description().contains("完整汉化等待游戏资源下载"))
+        receipt.beginLaunch()
+        respond("ready") // A previous game's font receipt cannot confirm the next launch.
+        assertFalse(receipt.description().contains("已加载"))
+    }
+
     @Test fun releasePruningPreservesActivePreviousAndLegacyRestorationData() {
         val root = temporary.root.toPath()
         val patches = Files.createDirectories(root.resolve("patch-cache"))

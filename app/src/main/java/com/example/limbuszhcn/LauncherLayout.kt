@@ -18,7 +18,7 @@ internal data class LauncherLayout(
             val margin = if (width < 360) 16f else if (width < 1200) 24f else 32f
             val gap = if (width < 1200) 24f else 32f
             val availableColumns = (minOf(width, 1320f) - margin * 2 - gap) / 2
-            val twoColumns = width >= 760 && availableColumns >= 320 * scale
+            val twoColumns = width > height && width >= 760 && availableColumns >= 320 * scale
             val centered = width >= 600
             val compactHeight = height < 480
             return LauncherLayout(
