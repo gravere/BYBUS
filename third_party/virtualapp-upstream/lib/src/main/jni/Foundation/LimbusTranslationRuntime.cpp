@@ -7,6 +7,7 @@
 #include "LimbusManagedState.h"
 #include "LimbusFontMaterials.h"
 #include "LimbusLanguageGetterPatch.h"
+#include "LimbusRuntimeSymbols.h"
 #include "RuntimePage.h"
 #include "../Substrate/SubstrateHook.h"
 
@@ -15,7 +16,6 @@
 #include <arpa/inet.h>
 #include <atomic>
 #include <dlfcn.h>
-#include <elf.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -108,7 +108,11 @@ bool g_configured = false;
 bool g_resolver_reported = false;
 bool g_probe_started = false;
 bool g_hook_installed = false;
-bool g_font_attempted = false;
+bool g_font_ready = false;
+unsigned g_font_attempts = 0;
+bool g_font_gc_validated = false;
+thread_local bool g_inside_font_init = false;
+void write_runtime_receipt(const char *state);
 pthread_t g_unity_init_thread{};
 void *g_tmp_font_asset = nullptr;
 void *g_ui_font = nullptr;
@@ -216,6 +220,7 @@ const void *g_font_path_constructor_info = nullptr;
 const void *g_font_dynamic_info = nullptr;
 const void *g_font_has_character_info = nullptr;
 const void *g_destroy_object_info = nullptr;
+const void *g_current_thread_is_main_info = nullptr;
 class_get_method_global_fn g_class_get_method = nullptr;
 const void *(*g_class_get_methods)(void *, void **) = nullptr;
 const char *(*g_method_get_name)(const void *) = nullptr;
@@ -322,6 +327,7 @@ const void *g_material_get_color_info = nullptr;
 const void *g_material_set_color_info = nullptr;
 il2cpp_init_fn g_original_il2cpp_init = nullptr;
 dlsym_fn g_original_unity_dlsym = nullptr;
+limbus_runtime::Symbols g_il2cpp_symbols;
 class_get_parent_fn g_class_get_parent = nullptr;
 class_get_fields_fn g_class_get_fields = nullptr;
 field_get_name_fn g_field_get_name = nullptr;
@@ -1229,106 +1235,111 @@ int32_t translated_legacy_font_style(int32_t original_style, bool system_font) {
     return system_font && original_style >= 0 && original_style <= 3 ? original_style | 1 : original_style;
 }
 
-bool ensure_tmp_font() {
-    pthread_mutex_lock(&g_lock);
-    // TextData formatters can also run on resource workers. Unity asset creation
-    // belongs to the initialization/UI thread; an early worker may defer text,
-    // but must never permanently poison font readiness with a wrong-thread call.
-    if (!g_font_attempted && !pthread_equal(pthread_self(), g_unity_init_thread)) {
-        pthread_mutex_unlock(&g_lock);
-        return false;
-    }
-    if (!g_font_attempted) {
-        g_font_attempted = true;
+bool is_unity_main_thread() {
+    if (!g_current_thread_is_main_info) return pthread_equal(pthread_self(), g_unity_init_thread);
+    if (!g_runtime_invoke || !g_object_unbox) return false;
+    void *exception = nullptr;
+    void *boxed = g_runtime_invoke(g_current_thread_is_main_info, nullptr, nullptr, &exception);
+    void *value = !exception && boxed ? g_object_unbox(boxed) : nullptr;
+    return value && *static_cast<uint8_t *>(value) != 0;
+}
+
+// Called only on Unity's main thread, under g_lock and a reentrancy guard.
+bool prepare_tmp_font(void *fallback_list) {
+    if (!g_font_gc_validated) {
         void *probe = new_managed_string("BYBUS font ownership");
         auto first = limbus_managed::retain(g_gc, probe);
         auto weak = std::make_shared<limbus_managed::Reference>(g_gc, probe, true);
         auto second = limbus_managed::retain(g_gc, probe);
-        const bool handles_valid = probe && first && second &&
+        g_font_gc_validated = probe && first && second &&
                 first->get() == probe && weak->get() == probe && second->get() == probe;
-        LT_LOGI("Managed font ownership round-trip=%d handleBits=%zu", handles_valid, sizeof(limbus_managed::Handle) * 8);
-        if (!handles_valid) {
-            pthread_mutex_unlock(&g_lock);
+        LT_LOGI("Managed font ownership round-trip=%d handleBits=%zu", g_font_gc_validated, sizeof(limbus_managed::Handle) * 8);
+        if (!g_font_gc_validated) return false;
+    }
+    std::string font_file(g_active_pointer);
+    size_t separator = font_file.find_last_of('/');
+    if (separator != std::string::npos) font_file.resize(separator);
+    separator = font_file.find_last_of('/');
+    if (separator != std::string::npos) font_file.resize(separator);
+    font_file += "/runtime-font/ChineseFont-a56a06f1.ttf";
+    auto path_root = limbus_managed::retain(g_gc, new_managed_string(font_file));
+    void *font_path = path_root ? path_root->get() : nullptr;
+    if (!font_path) return false;
+    if (!g_tmp_font_root) {
+        int32_t face_index = 0, sampling_size = 32, atlas_padding = 9;
+        int32_t render_mode = 4169; // GlyphRenderMode.SDFAA.
+        // Sarasa CJK needs this capacity; a 1024 atlas lost previously visible glyphs.
+        int32_t atlas_width = 4096, atlas_height = 4096;
+        int32_t population_mode = 1; // AtlasPopulationMode.Dynamic.
+        uint8_t multi_atlas = 1;
+        void *args[] = {font_path, &face_index, &sampling_size, &atlas_padding, &render_mode,
+                        &atlas_width, &atlas_height, &population_mode, &multi_atlas};
+        void *exception = nullptr;
+        void *asset = g_create_tmp_font_info ? g_runtime_invoke(g_create_tmp_font_info, nullptr, args, &exception) : nullptr;
+        if (exception || !asset) return false;
+        g_tmp_font_root = limbus_managed::retain(g_gc, asset);
+        if (!g_tmp_font_root) {
+            if (g_destroy_object_info) {
+                void *destroy_args[] = {asset};
+                g_runtime_invoke(g_destroy_object_info, nullptr, destroy_args, &exception);
+            }
             return false;
         }
-        std::string font_file(g_active_pointer);
-        size_t separator = font_file.find_last_of('/');
-        if (separator != std::string::npos) font_file.resize(separator);
-        separator = font_file.find_last_of('/');
-        if (separator != std::string::npos) font_file.resize(separator);
-        font_file += "/runtime-font/ChineseFont-a56a06f1.ttf";
-        void *font_path = new_managed_string(font_file);
-        int32_t face_index = 0;
-        int32_t sampling_size = 32;
-        int32_t atlas_padding = 9;
-        int32_t render_mode = 4169;  // GlyphRenderMode.SDFAA.
-        // The bundled Sarasa CJK face has substantially larger glyph contours
-        // than the system fallback.  A 1024 atlas fills during the first skill
-        // screen and TMP then drops glyphs that were already visible.
-        int32_t atlas_width = 4096;
-        int32_t atlas_height = 4096;
-        int32_t population_mode = 1;  // AtlasPopulationMode.Dynamic.
-        uint8_t multi_atlas = 1;
-        void *asset_args[] = {
-                font_path, &face_index, &sampling_size, &atlas_padding, &render_mode,
-                &atlas_width, &atlas_height, &population_mode, &multi_atlas
-        };
-        void *exception = nullptr;
-        if (font_path != nullptr && g_runtime_invoke != nullptr) {
-            g_tmp_font_asset = g_runtime_invoke(
-                    g_create_tmp_font_info, nullptr, asset_args, &exception);
-        }
-        if (exception != nullptr) g_tmp_font_asset = nullptr;
-        g_tmp_font_root = limbus_managed::retain(g_gc, g_tmp_font_asset);
-        if (!g_tmp_font_root) g_tmp_font_asset = nullptr;
-        // Validate the same bundled face independently for the legacy renderer.
-        // The fallback remains available if this player cannot create that Font.
-        void *ui_exception = nullptr;
+        g_tmp_font_asset = g_tmp_font_root->get();
+    }
+    // Keep a successfully created asset rooted if TMP settings are not ready
+    // yet. A retry must not allocate another large atlas or another UI font.
+    void *list_class = g_object_get_class(fallback_list);
+    const void *add_method = list_class ? g_class_get_method(list_class, "Add", 1) : nullptr;
+    if (!add_method) return false;
+    const void *contains_method = g_class_get_method(list_class, "Contains", 1);
+    void *args[] = {g_tmp_font_asset}, *exception = nullptr;
+    void *boxed = contains_method ? g_runtime_invoke(contains_method, fallback_list, args, &exception) : nullptr;
+    void *contained = !exception && boxed ? g_object_unbox(boxed) : nullptr;
+    if (exception) return false;
+    if (!contained || !*static_cast<uint8_t *>(contained)) {
+        g_runtime_invoke(add_method, fallback_list, args, &exception);
+        if (exception) return false;
+    }
+    if (!g_ui_font_root) {
         g_ui_font_root = load_bundled_ui_font(font_path);
         g_ui_uses_system_font = !g_ui_font_root;
-        if (g_ui_font_root) {
-            g_ui_font = g_ui_font_root->get();
-        } else {
-            void *ui_font_name = new_managed_string("sans-serif");
-            int32_t ui_font_size = 32;
-            void *ui_font_args[] = {ui_font_name, &ui_font_size};
-            if (ui_font_name && g_create_dynamic_font_info) {
-                g_ui_font = g_runtime_invoke(g_create_dynamic_font_info, nullptr, ui_font_args, &ui_exception);
-                if (ui_exception) g_ui_font = nullptr;
-                g_ui_font_root = limbus_managed::retain(g_gc, g_ui_font);
-                if (!g_ui_font_root) g_ui_font = nullptr;
-            }
+        if (!g_ui_font_root) {
+            auto name_root = limbus_managed::retain(g_gc, new_managed_string("sans-serif"));
+            void *name = name_root ? name_root->get() : nullptr;
+            int32_t size = 32;
+            void *ui_args[] = {name, &size};
+            void *font = name && g_create_dynamic_font_info ?
+                    g_runtime_invoke(g_create_dynamic_font_info, nullptr, ui_args, &exception) : nullptr;
+            if (!exception) g_ui_font_root = limbus_managed::retain(g_gc, font);
         }
-        void *fallback_list = nullptr;
-        void *add_exception = nullptr;
-        if (g_tmp_font_asset != nullptr && exception == nullptr &&
-            g_get_fallback_fonts_info != nullptr && g_object_get_class != nullptr) {
-            fallback_list = g_runtime_invoke(
-                    g_get_fallback_fonts_info, nullptr, nullptr, &add_exception);
-            void *list_class = fallback_list == nullptr ? nullptr :
-                    g_object_get_class(fallback_list);
-            const void *add_method = list_class == nullptr || g_class_get_method == nullptr ? nullptr :
-                    g_class_get_method(list_class, "Add", 1);
-            void *add_args[] = {g_tmp_font_asset};
-            if (add_method != nullptr && add_exception == nullptr) {
-                g_runtime_invoke(add_method, fallback_list, add_args, &add_exception);
-            }
-            if (!add_method || add_exception) { g_tmp_font_asset = nullptr; g_tmp_font_root.reset(); }
-            LT_LOGI("Registered TMP fallback font list=%p add=%p exception=%p",
-                    fallback_list, add_method, add_exception);
-        }
-        LT_LOGI("Dynamic CJK TMP font creation path=%s face=%d tmpFont=%p exception=%p",
-                font_file.c_str(), face_index,
-                g_tmp_font_asset, exception);
-        if (!g_get_fallback_fonts_info) { g_tmp_font_asset = nullptr; g_tmp_font_root.reset(); }
-        LT_LOGI("Dynamic CJK UI font creation source=%s uiFont=%p exception=%p",
-                g_ui_uses_system_font ? "android-sans-serif-bold" : "bundled-Sarasa-Bold", g_ui_font, ui_exception);
-        append_native_metadata("font-state.log", g_ui_font == nullptr ? "legacy_font=unavailable" :
+        g_ui_font = g_ui_font_root ? g_ui_font_root->get() : nullptr;
+        append_native_metadata("font-state.log", !g_ui_font ? "legacy_font=unavailable" :
                 g_ui_uses_system_font ? "legacy_font=system-bold-fallback" : "legacy_font=bundled-validated");
     }
-    bool ready = g_tmp_font_asset != nullptr;
-    pthread_mutex_unlock(&g_lock);
-    return ready;
+    return true;
+}
+
+bool ensure_tmp_font() {
+    if (g_inside_font_init) return false;
+    struct InitScope {
+        InitScope() { g_inside_font_init = true; pthread_mutex_lock(&g_lock); }
+        ~InitScope() { pthread_mutex_unlock(&g_lock); g_inside_font_init = false; }
+    } scope;
+    if (g_font_ready) return true;
+    if (g_font_attempts >= 3 || !is_unity_main_thread() || !g_runtime_invoke ||
+        !g_get_fallback_fonts_info || !g_object_get_class || !g_class_get_method || !g_object_unbox) return false;
+    void *exception = nullptr;
+    void *fallback_list = g_runtime_invoke(g_get_fallback_fonts_info, nullptr, nullptr, &exception);
+    // Early resource workers / unavailable TMP settings do not spend the retry budget.
+    if (exception || !fallback_list) return false;
+    ++g_font_attempts;
+    g_font_ready = prepare_tmp_font(fallback_list);
+    LT_LOGI("CJK font attempt=%u ready=%d threadCheck=%s", g_font_attempts, g_font_ready,
+            g_current_thread_is_main_info ? "unity-api" : "init-thread-fallback");
+    write_runtime_receipt(g_index.empty() ? "no_index" :
+            g_hook_installed ? "hooks_installed" : "hook_setup_incomplete");
+    return g_font_ready;
 }
 
 bool invoke_float_getter(const void *method_info, void *instance, float *value) {
@@ -2645,6 +2656,8 @@ void write_runtime_receipt(const char *state) {
     if (output == nullptr) return;
     fprintf(output, "request=%s\nstate=%s\npid=%d\nentries=%zu\nterms=%zu\nnativeProfile=%s\n",
             request, state, getpid(), g_index.size(), g_terms.size(), profile);
+    fprintf(output, "fontState=%s\nfontAttempts=%u\n",
+            g_font_ready ? "ready" : g_font_attempts >= 3 ? "failed" : "pending", g_font_attempts);
     fflush(output);
     fsync(fileno(output));
     fclose(output);
@@ -2768,125 +2781,12 @@ bool load_active_index() {
     return load_index_file(canonical);
 }
 
-class MappedElfResolver {
-public:
-    MappedElfResolver() : mapping_(MAP_FAILED), size_(0), base_(0), symbols_(nullptr),
-                          symbol_count_(0), strings_(nullptr), strings_size_(0) {}
-
-    ~MappedElfResolver() {
-        if (mapping_ != MAP_FAILED) munmap(mapping_, size_);
-    }
-
-    bool open(const char *path) {
-        FILE *maps = fopen("/proc/self/maps", "r");
-        char line[PATH_MAX + 160] = {};
-        while (maps != nullptr && fgets(line, sizeof(line), maps) != nullptr) {
-            unsigned long start = 0;
-            unsigned long offset = 1;
-            if (strstr(line, path) != nullptr &&
-                sscanf(line, "%lx-%*lx %*s %lx", &start, &offset) == 2 && offset == 0) {
-                if (static_cast<uintptr_t>(start) > base_) {
-                    base_ = static_cast<uintptr_t>(start);
-                }
-            }
-        }
-        if (maps != nullptr) fclose(maps);
-        int fd = ::open(path, O_RDONLY | O_CLOEXEC);
-        struct stat state = {};
-        if (base_ == 0 || fd < 0 || fstat(fd, &state) != 0 || state.st_size <= 0) {
-            if (fd >= 0) close(fd);
-            return false;
-        }
-        size_ = static_cast<size_t>(state.st_size);
-        mapping_ = mmap(nullptr, size_, PROT_READ, MAP_PRIVATE, fd, 0);
-        close(fd);
-        if (mapping_ == MAP_FAILED || size_ < sizeof(Elf64_Ehdr)) return false;
-        const Elf64_Ehdr *header = reinterpret_cast<const Elf64_Ehdr *>(mapping_);
-        if (memcmp(header->e_ident, ELFMAG, SELFMAG) != 0 ||
-            header->e_ident[EI_CLASS] != ELFCLASS64 || header->e_type != ET_DYN ||
-            header->e_shentsize != sizeof(Elf64_Shdr) || header->e_shnum == 0 ||
-            header->e_shoff > size_ ||
-            header->e_shnum > (size_ - header->e_shoff) / sizeof(Elf64_Shdr)) return false;
-        const Elf64_Shdr *sections = reinterpret_cast<const Elf64_Shdr *>(
-                reinterpret_cast<const unsigned char *>(mapping_) + header->e_shoff);
-        for (size_t i = 0; i < header->e_shnum; ++i) {
-            const Elf64_Shdr &section = sections[i];
-            if (section.sh_type != SHT_DYNSYM || section.sh_entsize != sizeof(Elf64_Sym) ||
-                section.sh_link >= header->e_shnum || section.sh_offset > size_ ||
-                section.sh_size > size_ - section.sh_offset) continue;
-            const Elf64_Shdr &strings = sections[section.sh_link];
-            if (strings.sh_type != SHT_STRTAB || strings.sh_offset > size_ ||
-                strings.sh_size > size_ - strings.sh_offset) continue;
-            symbols_ = reinterpret_cast<const Elf64_Sym *>(
-                    reinterpret_cast<const unsigned char *>(mapping_) + section.sh_offset);
-            symbol_count_ = section.sh_size / sizeof(Elf64_Sym);
-            strings_ = reinterpret_cast<const char *>(mapping_) + strings.sh_offset;
-            strings_size_ = strings.sh_size;
-            return true;
-        }
-        return false;
-    }
-
-    template <typename T>
-    T resolve(const char *name) const {
-        for (size_t i = 0; i < symbol_count_; ++i) {
-            const Elf64_Sym &symbol = symbols_[i];
-            if (symbol.st_name >= strings_size_ || symbol.st_shndx == SHN_UNDEF) continue;
-            if (strcmp(strings_ + symbol.st_name, name) == 0) {
-                return reinterpret_cast<T>(base_ + symbol.st_value);
-            }
-        }
-        return nullptr;
-    }
-
-    void **resolve_import_slot(const char *name) const {
-        if (mapping_ == MAP_FAILED) return nullptr;
-        const Elf64_Ehdr *header = reinterpret_cast<const Elf64_Ehdr *>(mapping_);
-        const Elf64_Shdr *sections = reinterpret_cast<const Elf64_Shdr *>(
-                reinterpret_cast<const unsigned char *>(mapping_) + header->e_shoff);
-        for (size_t i = 0; i < header->e_shnum; ++i) {
-            const Elf64_Shdr &relocations = sections[i];
-            if (relocations.sh_type != SHT_RELA || relocations.sh_entsize != sizeof(Elf64_Rela) ||
-                relocations.sh_link >= header->e_shnum || relocations.sh_offset > size_ ||
-                relocations.sh_size > size_ - relocations.sh_offset) continue;
-            const Elf64_Shdr &symbols = sections[relocations.sh_link];
-            if (symbols.sh_type != SHT_DYNSYM || symbols.sh_entsize != sizeof(Elf64_Sym) ||
-                symbols.sh_link >= header->e_shnum || symbols.sh_offset > size_ ||
-                symbols.sh_size > size_ - symbols.sh_offset) continue;
-            const Elf64_Shdr &strings = sections[symbols.sh_link];
-            if (strings.sh_type != SHT_STRTAB || strings.sh_offset > size_ ||
-                strings.sh_size > size_ - strings.sh_offset) continue;
-            const Elf64_Rela *entries = reinterpret_cast<const Elf64_Rela *>(
-                    reinterpret_cast<const unsigned char *>(mapping_) + relocations.sh_offset);
-            const Elf64_Sym *symbol_table = reinterpret_cast<const Elf64_Sym *>(
-                    reinterpret_cast<const unsigned char *>(mapping_) + symbols.sh_offset);
-            const char *string_table = reinterpret_cast<const char *>(mapping_) + strings.sh_offset;
-            size_t relocation_count = relocations.sh_size / sizeof(Elf64_Rela);
-            size_t symbol_count = symbols.sh_size / sizeof(Elf64_Sym);
-            for (size_t relocation = 0; relocation < relocation_count; ++relocation) {
-                uint32_t type = ELF64_R_TYPE(entries[relocation].r_info);
-                size_t symbol_index = ELF64_R_SYM(entries[relocation].r_info);
-                if ((type != R_AARCH64_JUMP_SLOT && type != R_AARCH64_GLOB_DAT) ||
-                    symbol_index >= symbol_count || symbol_table[symbol_index].st_name >= strings.sh_size) {
-                    continue;
-                }
-                if (strcmp(string_table + symbol_table[symbol_index].st_name, name) == 0) {
-                    return reinterpret_cast<void **>(base_ + entries[relocation].r_offset);
-                }
-            }
-        }
-        return nullptr;
-    }
-
-private:
-    void *mapping_;
-    size_t size_;
-    uintptr_t base_;
-    const Elf64_Sym *symbols_;
-    size_t symbol_count_;
-    const char *strings_;
-    size_t strings_size_;
-};
+bool locate_runtime_symbol(const void *symbol, limbus_runtime::ModuleOwner &owner) {
+    Dl_info info = {};
+    if (dladdr(symbol, &info) == 0) return false;
+    owner = {info.dli_fbase, info.dli_fname};
+    return true;
+}
 
 struct LanguageCodeWindow {
     runtime_page::Span pages = {};
@@ -2967,7 +2867,7 @@ bool install_language_getter(const char *name, void *pointer, uintptr_t next_met
 #endif
 }
 
-bool report_il2cpp_resolver(const MappedElfResolver &resolver, bool query_domain) {
+bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_domain) {
     typedef void *(*domain_get_fn)();
     typedef const void **(*domain_get_assemblies_fn)(const void *, size_t *);
     typedef const void *(*assembly_get_image_fn)(const void *);
@@ -3412,6 +3312,21 @@ bool report_il2cpp_resolver(const MappedElfResolver &resolver, bool query_domain
     const void *font_dynamic = find_method_by_signature(unity_font_class, "get_dynamic", "");
     const void *font_has_character = find_method_by_signature(unity_font_class, "HasCharacter", "System.Int32");
     const void *destroy_object = find_method_by_signature(unity_object_class, "Destroy", "UnityEngine.Object");
+    const void *current_thread_is_main = find_method_by_signature(unity_object_class, "CurrentThreadIsMainThread", "");
+    // Thread-safe Unity API. Validate its static ABI and exact declaring class;
+    // older players without it keep the previously used init-thread fallback.
+    if (current_thread_is_main) {
+        uint32_t implementation = 0;
+        char *return_name = method_get_return_type && type_get_name ?
+                type_get_name(method_get_return_type(current_thread_is_main)) : nullptr;
+        const bool valid = method_get_flags && method_get_class && method_is_generic &&
+                method_get_class(current_thread_is_main) == unity_object_class &&
+                !method_is_generic(current_thread_is_main) &&
+                (method_get_flags(current_thread_is_main, &implementation) & 0x0010u) != 0 &&
+                return_name && strcmp(return_name, "System.Boolean") == 0;
+        if (return_name && il2cpp_free) il2cpp_free(return_name);
+        if (!valid) current_thread_is_main = nullptr;
+    }
     LT_LOGI("TMP fallback getter class=%p method=%p", tmp_settings_class, get_fallback_fonts_method);
     LT_LOGI("TMP style methods material=%p fontAssetMaterial=%p fontMaterial=%p/%p shared=%p/%p spacing=%p/%p"
             " fontSize=%p/%p min=%p/%p max=%p/%p auto=%p/%p wrap=%p/%p overflow=%p/%p"
@@ -3485,6 +3400,9 @@ bool report_il2cpp_resolver(const MappedElfResolver &resolver, bool query_domain
         g_font_dynamic_info = font_dynamic;
         g_font_has_character_info = font_has_character;
         g_destroy_object_info = destroy_object;
+        g_current_thread_is_main_info = current_thread_is_main;
+        append_native_metadata("font-state.log", current_thread_is_main ?
+                "main_thread_check=unity-api" : "main_thread_check=init-thread-fallback");
         g_class_get_method = class_get_method_from_name;
         g_class_get_methods = class_get_methods;
         g_method_get_name = method_get_name;
@@ -3947,27 +3865,35 @@ bool report_il2cpp_resolver(const MappedElfResolver &resolver, bool query_domain
 }
 
 void *replacement_il2cpp_init(const char *domain_name) {
-    void *domain = g_original_il2cpp_init(domain_name);
+    pthread_mutex_lock(&g_lock);
+    const auto original = g_original_il2cpp_init;
+    const auto resolver = g_il2cpp_symbols;
+    pthread_mutex_unlock(&g_lock);
+    void *domain = original(domain_name);
     g_unity_init_thread = pthread_self();
-    MappedElfResolver resolver;
-    bool resolved = resolver.open(g_il2cpp_path) && report_il2cpp_resolver(resolver, true);
+    const bool resolved = resolver.ready() && report_il2cpp_resolver(resolver, true);
     pthread_mutex_lock(&g_lock);
     g_resolver_reported = resolved;
     write_runtime_receipt(g_index.empty() ? "no_index"
             : (resolved && g_hook_installed ? "hooks_installed" : "hook_setup_incomplete"));
     pthread_mutex_unlock(&g_lock);
-    LT_LOGI("IL2CPP init boundary domain=%p translationReady=%d path=%s",
-            domain, resolved, g_il2cpp_path);
+    LT_LOGI("IL2CPP init boundary domain=%p translationReady=%d resolver=loaded-handle", domain, resolved);
     return domain;
 }
 
 void *replacement_unity_dlsym(void *handle, const char *name) {
     void *resolved = g_original_unity_dlsym(handle, name);
-    if (name != nullptr && strcmp(name, "il2cpp_init") == 0 && resolved != nullptr) {
-        g_original_il2cpp_init = reinterpret_cast<il2cpp_init_fn>(resolved);
-        LT_LOGI("Unity requested il2cpp_init original=%p replacement=%p",
-                resolved, reinterpret_cast<void *>(replacement_il2cpp_init));
-        return reinterpret_cast<void *>(replacement_il2cpp_init);
+    if (name != nullptr && strcmp(name, "il2cpp_init") == 0 && resolved != nullptr &&
+        resolved != reinterpret_cast<void *>(replacement_il2cpp_init)) {
+        pthread_mutex_lock(&g_lock);
+        const bool bound = g_il2cpp_symbols.bind(handle, resolved, g_original_unity_dlsym, locate_runtime_symbol);
+        if (bound) g_original_il2cpp_init = reinterpret_cast<il2cpp_init_fn>(resolved);
+        pthread_mutex_unlock(&g_lock);
+        if (bound) {
+            LT_LOGI("Unity requested il2cpp_init original=%p resolver=loaded-handle", resolved);
+            return reinterpret_cast<void *>(replacement_il2cpp_init);
+        }
+        LT_LOGW("Reject il2cpp_init from an unverified or different module");
     }
     return resolved;
 }
@@ -3996,65 +3922,6 @@ bool install_global_dlsym_lifecycle_hook() {
     pthread_mutex_unlock(&g_lock);
     LT_LOGI("Hooked dlsym lifecycle target=%p trampoline=%p",
             target, reinterpret_cast<void *>(g_original_unity_dlsym));
-    return true;
-}
-
-int mapping_protection(void *address) {
-    FILE *maps = fopen("/proc/self/maps", "r");
-    char line[PATH_MAX + 160] = {};
-    uintptr_t target = reinterpret_cast<uintptr_t>(address);
-    int protection = PROT_READ;
-    while (maps != nullptr && fgets(line, sizeof(line), maps) != nullptr) {
-        unsigned long start = 0;
-        unsigned long end = 0;
-        char permissions[5] = {};
-        if (sscanf(line, "%lx-%lx %4s", &start, &end, permissions) == 3 &&
-            target >= start && target < end) {
-            protection = 0;
-            if (permissions[0] == 'r') protection |= PROT_READ;
-            if (permissions[1] == 'w') protection |= PROT_WRITE;
-            if (permissions[2] == 'x') protection |= PROT_EXEC;
-            break;
-        }
-    }
-    if (maps != nullptr) fclose(maps);
-    return protection;
-}
-
-bool install_unity_dlsym_redirect(const char *il2cpp_path) {
-    if (il2cpp_path == nullptr) return false;
-    pthread_mutex_lock(&g_lock);
-    if (g_probe_started) {
-        pthread_mutex_unlock(&g_lock);
-        return true;
-    }
-    pthread_mutex_unlock(&g_lock);
-    std::string unity_path(il2cpp_path);
-    size_t slash = unity_path.rfind('/');
-    if (slash == std::string::npos) return false;
-    unity_path.replace(slash + 1, std::string::npos, "libunity.so");
-    MappedElfResolver resolver;
-    if (!resolver.open(unity_path.c_str())) return false;
-    void **slot = resolver.resolve_import_slot("dlsym");
-    if (slot == nullptr || *slot == nullptr) return false;
-    long page_size = sysconf(_SC_PAGESIZE);
-    uintptr_t page = reinterpret_cast<uintptr_t>(slot) & ~(static_cast<uintptr_t>(page_size) - 1);
-    int original_protection = mapping_protection(slot);
-    if (mprotect(reinterpret_cast<void *>(page), static_cast<size_t>(page_size),
-                 original_protection | PROT_WRITE) != 0) {
-        LT_LOGW("Unable to write Unity dlsym import slot=%p errno=%d", slot, errno);
-        return false;
-    }
-    g_original_unity_dlsym = reinterpret_cast<dlsym_fn>(*slot);
-    __atomic_store_n(slot, reinterpret_cast<void *>(replacement_unity_dlsym), __ATOMIC_RELEASE);
-    mprotect(reinterpret_cast<void *>(page), static_cast<size_t>(page_size), original_protection);
-    pthread_mutex_lock(&g_lock);
-    g_probe_started = true;
-    snprintf(g_il2cpp_path, sizeof(g_il2cpp_path), "%s", il2cpp_path);
-    pthread_mutex_unlock(&g_lock);
-    LT_LOGI("Redirected Unity dlsym import slot=%p original=%p replacement=%p",
-            slot, reinterpret_cast<void *>(g_original_unity_dlsym),
-            reinterpret_cast<void *>(replacement_unity_dlsym));
     return true;
 }
 
