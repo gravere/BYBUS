@@ -1,0 +1,31 @@
+# 云端运行检查
+
+`Android runtime inspection` 工作流在公开仓库的标准 Ubuntu runner 上运行，使用 Android SDK 官方镜像和 KVM。每个环境最多 20 分钟；截图、页面结构和诊断只保留 1 天，不上传 APK 副本。
+
+在 GitHub Actions 中手动运行即可。工作流读取最新正式 Release，验证完整 APK 的大小、SHA-256 和固定 BYBUS 签名，再安装原始发行包。无需上传签名密钥、Google 账号或游戏资源。
+
+开发分支的推送检查使用源码版本对应的签名发行草稿，验证后再公开同一安装包。GitHub 仅向有推送资格的凭据开放草稿，因此任务的临时令牌需要 `contents: write`；检查脚本只发起 GET 请求，不写入仓库或发布 Release。令牌不会保存，也不会随下载跳转转发。
+
+检查内容：
+
+- Android 用户解锁和系统服务就绪。
+- 正式 APK 安装及首页前台状态。
+- 首页、翻译项目、设置三页的原始 PNG。
+- 游戏更新二级菜单返回设置页。
+- 内置容器 Google 设置入口，不添加账号或发起交易。
+- 平板竖屏单列、宽横屏双列的实际页面位置。
+- Android 15 Experimental 16 KB 镜像的 ABI、页大小及 ARM64 发行包运行条件。
+
+`report.json` 记录实际发行版本、APK 摘要、系统 ABI、页大小、Native Bridge 及已通过项目。失败会保留原因，不把模拟器启动标志当作应用运行成功。16 KB 镜像没有 ARM64 ABI 时只记录环境不支持，不安装 APK，也不记为应用测试通过。
+
+截图取自未改动的正式 APK。系统栏图标在模拟器中隐藏，直接保存原始 PNG，不修改应用像素或注入业务状态。截图必须经人工核对后才能放入 README，不会自动发布。
+
+Android 11 x86_64 的 ARM 翻译环境只用于运行基线，不代表 ARM64 原生设备或 16 KB 兼容性。该工作流不操作真实商品或付款，不证明 Google 登录、结算、扣款或到账成功。支付策略单元测试、Android 回调测试和真实购买应分别报告。
+
+Experimental 16 KB x86_64 镜像属于用户空间模拟，不能代替 ARM64 原生 16 KB 设备。Google Play Billing Lab 的响应模拟需要应用开发者配置与许可测试账号；启动器不能替游戏取得这些权限。
+
+## 已记录的运行结果
+
+[构建 54 的云端记录](https://github.com/gravere/BYBUS/actions/runs/40724375539)使用同一份签名 APK 检查了 Android 11 / 4 KB 和 Android 15 Experimental 16 KB。安装、首页、项目与设置页、二级返回以及平板横竖屏检查均通过；此前后台同步的精确闹钟权限异常未再出现。
+
+Google 容器入口仍未通过：Android 11 的错误栈位于 ARM 翻译层，16 KB 实验镜像仍有 Google 进程异常和 Binder 连接失败。因此工作流的成功状态仅表示运行基线完成，必须同时阅读 `google_component_ui`、`payment_runtime` 和崩溃记录，不能将其解释为登录或付款成功。
