@@ -38,6 +38,14 @@ BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeL
 - **零协项目动态** — 默认展示 GitHub 更新状态，可切换 ParaTranz 查看可用统计或前往项目页面。
 - **适应不同屏幕** — 竖屏单列，横屏在空间足够时使用双列，随分屏窗口和系统字体大小调整布局。
 
+## 应用截图
+
+| 启动与汉化 | 零协项目动态 | 设置与工具 |
+| :---: | :---: | :---: |
+| <img src="docs/assets/screenshots/home.png" width="240" alt="BYBUS 首页：启动游戏、本地汉化与项目状态"> | <img src="docs/assets/screenshots/project.png" width="240" alt="翻译项目：零协会 GitHub 发布与翻译进度入口"> | <img src="docs/assets/screenshots/settings.png" width="240" alt="设置与工具：更新、同步游戏、后台运行与 Google 账号入口"> |
+
+截图展示应用界面，版本、日期与项目状态以应用内实时信息为准。
+
 ## 开始使用
 
 需要 **Android 8.0 及以上、64 位 ARM（arm64-v8a）的手机或平板**，并先安装官方《边狱巴士》。详细条件见[兼容范围](#兼容范围)。
