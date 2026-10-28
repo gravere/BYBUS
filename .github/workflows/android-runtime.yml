@@ -29,14 +29,25 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p runtime-output
+          trap 'printf "Environment setup failed at line %s\n" "$LINENO" > runtime-output/setup-error.txt' ERR
           test -e /dev/kvm
           sudo setfacl -m "u:$(id -u):rw" /dev/kvm
+          sdk_bin="$ANDROID_HOME/cmdline-tools/latest/bin"
+          if [ ! -x "$sdk_bin/sdkmanager" ]; then
+            for sdk_candidate in "$ANDROID_HOME"/cmdline-tools/*/bin; do
+              if [ -x "$sdk_candidate/sdkmanager" ]; then sdk_bin="$sdk_candidate"; fi
+            done
+          fi
+          test -x "$sdk_bin/sdkmanager"
+          export PATH="$sdk_bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+          printf '%s\n' "$sdk_bin" "$ANDROID_HOME/platform-tools" "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
           export ANDROID_AVD_HOME="$RUNNER_TEMP/bybus-avd"
           mkdir -p "$ANDROID_AVD_HOME"
           printf 'ANDROID_AVD_HOME=%s\n' "$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
-          sdkmanager --install 'system-images;android-30;google_apis;x86_64'
+          sdkmanager --install 'emulator' 'system-images;android-30;google_apis;x86_64'
           printf 'no\n' | avdmanager create avd -n bybus-runtime -k 'system-images;android-30;google_apis;x86_64'
           printf '\nhw.lcd.width=720\nhw.lcd.height=1560\nhw.lcd.density=320\n' >> "$ANDROID_AVD_HOME/bybus-runtime.avd/config.ini"
+          "$ANDROID_HOME/emulator/emulator" -accel-check > runtime-output/acceleration.txt
           "$ANDROID_HOME/emulator/emulator" -avd bybus-runtime -accel on -memory 3072 -cores 2 -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect -camera-back none -camera-front none > "$RUNNER_TEMP/bybus-emulator.log" 2>&1 &
       - name: Inspect the published APK
         run: python3 scripts/cloud-runtime.py
