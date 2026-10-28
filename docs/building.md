@@ -80,13 +80,15 @@ c++ -std=c++17 scripts/native-integrity-tests.cpp -o /path/to/temp/native-integr
 
 在本地 `signing/keystore.properties` 配置 `storeFile`、`storePassword`、`keyAlias` 和 `keyPassword`，然后运行 `:app:assembleRelease`。同一应用的覆盖升级必须使用相同签名。
 
-更新 `app/build.gradle.kts` 中的版本和 `docs/release-notes.md` 后，生成发行文件：
+只有发布新 APK 时才需要在 `app/build.gradle.kts` 设置版本；普通源码提交和文档维护不升版。`docs/release-notes.md` 只填写本次更新内容、验证范围与兼容说明，版本标题、下载地址和补丁列表由脚本生成：
 
 ```powershell
 python scripts/prepare-release.py --apk app/build/outputs/apk/release/app-release.apk --output dist/release --aapt "$env:ANDROID_HOME/build-tools/35.0.0/aapt.exe"
 ```
 
-脚本检查 APK 版本、签名与安装器配置，输出带版本及架构的安装包、应用更新兼容包、更新元数据和校验文件。输出目录中有构建 48 及以上的旧正式 APK 时，会自动为最多三个较新版本生成并回放验证差异补丁；也可通过 `--base-apk /path/to/previous.apk` 指定基准。基准须与目标签名一致，补丁大于完整包的 80% 时不发布。上传元数据 `deltas` 中声明的全部文件，并在发行说明顶部链接完整 APK，避免首次安装用户误下载补丁。
+脚本检查 APK 版本、签名与安装器配置，输出带版本及架构的安装包、应用更新兼容包、更新元数据、校验文件和可直接粘贴到 GitHub Release 的 `release-notes.md`。上传元数据 `deltas` 中声明的全部补丁，发行正文使用生成的说明文件。
+
+输出目录中有支持差异协议的旧正式 APK 时，脚本自动为最多三个较新的基准生成并回放验证补丁；也可通过 `--base-apk /path/to/previous.apk` 指定。基准须与目标签名一致，补丁大于完整包的 80% 时不发布。固定协议门槛及文件约定见[应用更新与发布](app-updates.md)。
 
 更新器的局部回归：
 

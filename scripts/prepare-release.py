@@ -2,6 +2,7 @@
 from pathlib import Path
 import argparse, hashlib, json, re, shutil, subprocess
 from apk_delta import create_patch
+from release_notes import render_release_notes, update_summary
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--apk', required=True, type=Path)
@@ -95,7 +96,8 @@ for base_code, base in bases[:3]:
 notes = (root/'docs/release-notes.md').read_text(encoding='utf-8')
 manifest = dict(schemaVersion=1, packageName=identity[1], versionName=version, versionCode=code,
                 minSdk=min_sdk, apkName=compat_apk.name, size=apk.stat().st_size, sha256=sha,
-                deltas=deltas, notes='\n'.join(line.removeprefix('- ') for line in notes.splitlines() if line.startswith('- ')))
+                deltas=deltas, notes=update_summary(notes))
+(args.output/'release-notes.md').write_text(render_release_notes(manifest, notes), encoding='utf-8')
 (args.output/'bybus-update.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
 files = [apk, compat_apk, *patch_files, args.output/'bybus-update.json']
 (args.output/'SHA256SUMS.txt').write_text(''.join(digest(p)+'  '+p.name+'\n' for p in files), encoding='utf-8')

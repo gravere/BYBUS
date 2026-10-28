@@ -9,7 +9,7 @@ Current text-index revision is schema 9. The 2026-09-23 update adds sparse ident
 The app is an Android Chinese-localization companion for `com.ProjectMoon.LimbusCompany`.
 The production path is container mode:
 
-1. Import or synchronize the Google Play installed Limbus split APKs.
+1. Import or synchronize the officially signed Limbus APK/splits installed on the device, regardless of installation channel.
 2. Stop the previous guest, check the fixed LLC release source, and validate persistent translation files.
 3. Pair Japanese resource text with Chinese text and atomically activate a complete host-owned index.
 4. Launch the game inside VirtualApp. The native text layer reads that index; original game resource files remain unchanged.
@@ -31,7 +31,7 @@ It does not require a catalog entry or a rebuilt launcher for every same-family 
 - `gamefs`: `GameStorage` abstraction for container data access.
 - `update`: GitHub Releases discovery, hash checking, `.7z` extraction, and patch cache manifest generation.
 - `TranslationRepository`: download/cache ownership and retention; `TranslationJsonPairer`: pure identity and field matching; `TranslationIndexStore`: generation validation and activation.
-- `DeviceCompatibility`: the native profile's Android 16 / ARM64 / 4 KiB boundary, process architecture, low-RAM/background-policy inspection and verified OEM settings fallback.
+- `DeviceCompatibility`: Android API 26+ / ARM64 prerequisites, actual 4 KiB or 16 KiB page size, process architecture, low-RAM/background-policy inspection and OEM settings fallback. Native structure qualification remains separate; see [Android portability](android-runtime-portability.md).
 - `PersistentDiagnosticLog` / `DebugLogExporter`: per-process bounded logs, uncaught exception capture, redaction, exit reasons, and Issue ZIP generation.
 
 ## Startup latency and handoff (2026-10-12)
@@ -65,7 +65,7 @@ per phase in the bounded, redacted diagnostic log.
 
 ```mermaid
 flowchart LR
-    Installed["Installed Google Play game"] --> Sync["Sync base/split APK"]
+    Installed["Installed official game"] --> Sync["Sync base/split APK"]
     Sync --> Container["VirtualApp container"]
     Container --> Game["Containerized Limbus"]
     GitHub["Fixed LLC GitHub release"] --> Download["Download or validate cached 7z"]
@@ -83,13 +83,13 @@ game data/storage directories are treated as durable state. They may contain
 the downloaded Limbus resources, which are large enough that clearing the
 container forces a full re-download.
 
-Resynchronizing the Google Play install must therefore update only the imported
+Resynchronizing the installed official game must therefore update only the imported
 APK/split sources and native libraries. Do not uninstall
 `com.ProjectMoon.LimbusCompany`, clear its VirtualApp data directory, or remove
 its virtual external storage as part of routine sync or launch repair.
 
-Limbus typically updates from Google Play every Thursday. After the host game is
-updated, use the installed-game sync path to re-import the current host
+After the system-installed game is updated through its chosen channel, use the
+installed-game sync path to re-import the current host
 `base.apk` and split APKs into the container while preserving container data.
 
 Game launch should treat synchronization as an automatic guard rather than a
