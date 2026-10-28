@@ -20,6 +20,17 @@ jobs:
     if: github.repository == 'gravere/BYBUS' && github.event.repository.private == false
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: android11
+            image: system-images;android-30;google_apis;x86_64
+          - profile: experimental16k
+            image: system-images;android-35;google_apis_ps16k;x86_64
+    env:
+      RUNTIME_PROFILE: ${{ matrix.profile }}
+      ANDROID_IMAGE: ${{ matrix.image }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -44,8 +55,8 @@ jobs:
           export ANDROID_AVD_HOME="$RUNNER_TEMP/bybus-avd"
           mkdir -p "$ANDROID_AVD_HOME"
           printf 'ANDROID_AVD_HOME=%s\n' "$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
-          sdkmanager --install 'emulator' 'system-images;android-30;google_apis;x86_64'
-          printf 'no\n' | avdmanager create avd -n bybus-runtime -k 'system-images;android-30;google_apis;x86_64'
+          sdkmanager --install emulator "$ANDROID_IMAGE"
+          printf 'no\n' | avdmanager create avd -n bybus-runtime -k "$ANDROID_IMAGE"
           printf '\nhw.lcd.width=720\nhw.lcd.height=1560\nhw.lcd.density=320\n' >> "$ANDROID_AVD_HOME/bybus-runtime.avd/config.ini"
           "$ANDROID_HOME/emulator/emulator" -accel-check > runtime-output/acceleration.txt
           "$ANDROID_HOME/emulator/emulator" -avd bybus-runtime -accel on -memory 3072 -cores 2 -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect -camera-back none -camera-front none > "$RUNNER_TEMP/bybus-emulator.log" 2>&1 &
@@ -55,7 +66,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: bybus-runtime
+          name: bybus-runtime-${{ matrix.profile }}
           path: runtime-output/
           retention-days: 1
           if-no-files-found: error

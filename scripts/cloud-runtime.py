@@ -14,6 +14,7 @@ CERT = "d50bbcfb234692d5d5f90427499158608c5a4c13adb7f99a78d9b5f1af44d55b"
 OUT = Path("runtime-output")
 OUT.mkdir(exist_ok=True)
 REPORT = {"checks": [], "payment_runtime": "not tested", "native_arm64_16k": "not tested"}
+REPORT["profile"] = os.environ.get("RUNTIME_PROFILE", "android11")
 
 
 def command(*args, timeout=30, binary=False, check=True):
@@ -94,6 +95,46 @@ def capture(name):
     return tree
 
 
+def inspect_google(parent):
+    """Open the actual bundled container component, without an account or transaction."""
+    tap("Google 账号与付款", parent)
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        time.sleep(5)
+        tree = hierarchy("google-settings")
+        if any(n.get("package") == "com.google.android.gms" for n in tree.iter("node")):
+            capture("google-settings")
+            REPORT["google_component_ui"] = "container Google settings opened; no account or billing request"
+            return
+    capture("google-settings-blocked")
+    REPORT["google_component_ui"] = "did not reach container Google settings within 60 seconds"
+    logs = adb("logcat", "-d", "-t", "500", timeout=15, check=False)
+    (OUT / "google-component-log.txt").write_text(logs, encoding="utf-8")
+
+
+def inspect_tablet():
+    adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/.MainActivity", timeout=30)
+    tree = hierarchy("before-tablet")
+    try:
+        tap("关闭面板", tree)
+    except RuntimeError:
+        pass
+    adb("shell", "wm", "density", "240")
+    for name, size, landscape in [("tablet-portrait", "1600x2560", False),
+                                   ("tablet-landscape", "2560x1600", True)]:
+        adb("shell", "wm", "size", size)
+        time.sleep(3)
+        tree = capture(name)
+        launch = locate(tree, "检测游戏")
+        project = locate(tree, "都市零协会")
+        if landscape:
+            if project[0] <= launch[0]:
+                raise RuntimeError("Wide landscape did not put the project card in the right column")
+        elif project[1] <= launch[1]:
+            raise RuntimeError("Portrait did not place the project card below the game controls")
+        REPORT["checks"].append(f"{name} layout at {size}, 240 dpi")
+
+
 def main():
     release = json.loads(request("https://api.github.com/repos/gravere/BYBUS/releases/latest", 512 * 1024))
     assets = {asset["name"]: asset for asset in release["assets"]}
@@ -127,12 +168,17 @@ def main():
     REPORT["page_size"] = adb("shell", "getconf", "PAGE_SIZE").strip()
     REPORT["native_bridge"] = adb("shell", "getprop", "ro.dalvik.vm.native.bridge").strip()
     if "arm64-v8a" not in REPORT["abi"]:
+        if REPORT["profile"] == "experimental16k":
+            REPORT["result"] = "environment unsupported: no ARM64 ABI; release runtime not tested"
+            return
         raise RuntimeError("This Android image cannot install the ARM64 release")
     installed = adb("install", "--no-streaming", str(apk), timeout=150)
     if "Success" not in installed:
         raise RuntimeError("APK installation did not succeed: " + installed[-1000:])
     REPORT["checks"].append("published APK signature/hash and installation")
     adb("shell", "settings", "put", "global", "policy_control", f"immersive.full={PACKAGE}")
+    # Hide emulator system chrome before taking raw captures; never paint over app pixels.
+    adb("shell", "cmd", "statusbar", "send-disable-flag", "system-icons", "clock", "notification-icons")
     adb("logcat", "-c")
     adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/.MainActivity", timeout=90)
     time.sleep(15)
@@ -155,6 +201,8 @@ def main():
     locate(parent, "设置与工具")
     locate(parent, "版本与资源")
     REPORT["checks"].append("child back returns to parent settings")
+    inspect_google(parent)
+    inspect_tablet()
     REPORT["result"] = "runtime baseline completed; screenshots require visual review"
 
 
