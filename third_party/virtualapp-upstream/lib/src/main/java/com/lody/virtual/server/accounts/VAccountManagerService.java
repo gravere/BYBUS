@@ -34,6 +34,7 @@ import com.lody.virtual.client.core.VirtualCore;
 import com.lody.virtual.helper.compat.AccountManagerCompat;
 import com.lody.virtual.helper.compat.LimbusBillingDiagnostics;
 import com.lody.virtual.helper.compat.MicrogAuthenticatorClient;
+import com.lody.virtual.helper.compat.MicrogBillingIdentityPolicy;
 import com.lody.virtual.helper.utils.Singleton;
 import com.lody.virtual.helper.utils.VLog;
 import com.lody.virtual.os.VBinder;
@@ -225,6 +226,8 @@ public class VAccountManagerService extends IAccountManager.Stub {
         // Get the calling package. We will use it for the purpose of caching.
         final String callerPkg = loginOptions.getString(AccountManagerCompat.KEY_ANDROID_PACKAGE_NAME);
         final boolean customTokens = info.desc.customTokens;
+        final boolean billingAuthorization = MicrogBillingIdentityPolicy.isBillingAuthorization(
+                callerPkg, account.type, authTokenType);
 
         loginOptions.putInt(AccountManager.KEY_CALLER_UID, VBinder.getCallingUid());
         loginOptions.putInt(AccountManager.KEY_CALLER_PID, VBinder.getCallingPid());
@@ -249,6 +252,7 @@ public class VAccountManagerService extends IAccountManager.Stub {
         if (customTokens) {
             String authToken = getCustomAuthToken(userId, account, authTokenType, callerPkg);
             if (authToken != null) {
+                if (billingAuthorization) LimbusBillingDiagnostics.record("event=billing_auth cached=1");
                 Bundle result = new Bundle();
                 result.putString(AccountManager.KEY_AUTHTOKEN, authToken);
                 result.putString(AccountManager.KEY_ACCOUNT_NAME, account.name);
@@ -277,6 +281,11 @@ public class VAccountManagerService extends IAccountManager.Stub {
             public void onResult(Bundle result) throws RemoteException {
                 if (result != null) {
                     String authToken = result.getString(AccountManager.KEY_AUTHTOKEN);
+                    if (billingAuthorization) {
+                        LimbusBillingDiagnostics.record("event=billing_auth cached=0 token_present="
+                                + (TextUtils.isEmpty(authToken) ? 0 : 1) + " interaction_required="
+                                + (result.getParcelable(AccountManager.KEY_INTENT) != null ? 1 : 0));
+                    }
                     if (authToken != null) {
                         String name = result.getString(AccountManager.KEY_ACCOUNT_NAME);
                         String type = result.getString(AccountManager.KEY_ACCOUNT_TYPE);
@@ -317,6 +326,15 @@ public class VAccountManagerService extends IAccountManager.Stub {
                     }
                 }
                 super.onResult(result);
+            }
+
+            @Override
+            public void onError(int errorCode, String errorMessage) {
+                if (billingAuthorization) {
+                    LimbusBillingDiagnostics.record("event=billing_auth_failed code="
+                            + (errorCode >= 0 && errorCode <= 100 ? errorCode : -1));
+                }
+                super.onError(errorCode, errorMessage);
             }
         }.bind();
     }
@@ -753,8 +771,7 @@ public class VAccountManagerService extends IAccountManager.Stub {
                 boolean changed = false;
                 for (VAccount account : accounts) {
                     if (account.type.equals(accountType)) {
-                        account.authTokens.values().remove(authToken);
-                        changed = true;
+                        changed |= AccountManagerCompat.removeStoredToken(account.authTokens, authToken);
                     }
                 }
                 if (changed) {
@@ -765,8 +782,8 @@ public class VAccountManagerService extends IAccountManager.Stub {
                 Iterator<AuthTokenRecord> iterator = authTokenRecords.iterator();
                 while (iterator.hasNext()) {
                     AuthTokenRecord record = iterator.next();
-                    if (record.userId == userId && record.authTokenType.equals(accountType)
-                            && record.authToken.equals(authToken)) {
+                    if (AccountManagerCompat.matchesTokenInvalidation(record.userId,
+                            record.account.type, record.authToken, userId, accountType, authToken)) {
                         iterator.remove();
                     }
                 }

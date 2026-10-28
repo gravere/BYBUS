@@ -4,6 +4,12 @@ package com.lody.virtual.helper.compat;
 public final class MicrogBillingIdentityPolicy {
     private MicrogBillingIdentityPolicy() { }
 
+    public static boolean isBillingAuthorization(String caller, String accountType, String scope) {
+        return "com.android.vending".equals(caller) && "com.google".equals(accountType)
+                && ("oauth2:https://www.googleapis.com/auth/googleplay "
+                    + "https://www.googleapis.com/auth/accounts.reauth").equals(scope);
+    }
+
     public static boolean isGoogleComponent(String packageName) {
         return "com.google.android.gms".equals(packageName)
                 || "com.android.vending".equals(packageName);

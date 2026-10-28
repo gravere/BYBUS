@@ -2,11 +2,26 @@ package com.lody.virtual.helper.compat;
 
 import android.accounts.AccountManager;
 
+import java.util.Map;
+
 /**
  * @author Lody
  */
 
 public class AccountManagerCompat {
+
+    /** One credential can be cached under several scopes; revoke every matching value. */
+    public static boolean removeStoredToken(Map<String, String> tokens, String revokedToken) {
+        return revokedToken != null && tokens.values().removeIf(revokedToken::equals);
+    }
+
+    /** accountType identifies the authenticator, not an OAuth scope or token type. */
+    public static boolean matchesTokenInvalidation(int recordUserId, String recordAccountType,
+                                                   String recordToken, int userId,
+                                                   String accountType, String revokedToken) {
+        return recordUserId == userId && accountType != null && accountType.equals(recordAccountType)
+                && revokedToken != null && revokedToken.equals(recordToken);
+    }
 
     /**
      * Bundle key used for the {@code long} expiration time (in millis from the unix epoch) of the
