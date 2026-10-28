@@ -29,6 +29,16 @@
 
 BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeLimbusCompany)汉化资源，在独立容器中运行设备上已安装的官方游戏。配置完成后，每次从 BYBUS 启动，即可检查汉化更新并进入游戏。
 
+## 界面预览
+
+<p align="center">
+  <img src="docs/assets/screenshots/home.png" width="30%" alt="BYBUS 首页">
+  &nbsp;
+  <img src="docs/assets/screenshots/project.png" width="30%" alt="都市零协会项目动态">
+  &nbsp;
+  <img src="docs/assets/screenshots/settings.png" width="30%" alt="设置与工具">
+</p>
+
 ## 功能特点
 
 - **免 Root 使用** — 导入官方游戏，在容器内显示中文，保留原始 APK 与游戏文本文件。
@@ -105,6 +115,7 @@ BYBUS 面向 Android 手机和平板，不限定品牌。启动前会检查设�
 | [构建指南](docs/building.md) | 本地环境、编译与打包 |
 | [架构说明](docs/project-architecture.md) | 模块职责与运行流程 |
 | [Android 适配说明](docs/android-runtime-portability.md) | 设备条件与已知限制 |
+| [云端运行检查](docs/cloud-runtime.md) | 正式安装包、页面和容器入口验证 |
 | [第三方声明](THIRD_PARTY_NOTICES.md) | 组件来源、版权与许可 |
 
 欢迎提交建议、问题反馈和 Pull Request。遇到闪退、漏译或显示问题，请在 [Issues](https://github.com/gravere/BYBUS/issues/new/choose) 选择对应模板，提供设备型号、Android 版本、BYBUS 与游戏版本，以及复现步骤。运行问题可附上「设置与工具 → 导出诊断」生成的诊断包。

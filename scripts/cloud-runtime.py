@@ -8,6 +8,8 @@ import subprocess
 import struct
 import time
 import urllib.request
+import urllib.error
+import urllib.parse
 import xml.etree.ElementTree as ET
 
 PACKAGE = "com.example.limbuszhcn"
@@ -30,9 +32,31 @@ def adb(*args, **kwargs):
     return command("adb", "-s", "emulator-5554", *args, **kwargs)
 
 
-def request(url, maximum):
-    req = urllib.request.Request(url, headers={"User-Agent": "BYBUS-Runtime-Inspection"})
-    with urllib.request.urlopen(req, timeout=30) as response:
+def request(url, maximum, asset=False):
+    headers = {"User-Agent": "BYBUS-Runtime-Inspection"}
+    if url.startswith("https://api.github.com/repos/gravere/BYBUS/"):
+        token = os.environ.get("GITHUB_TOKEN")
+        if token:
+            headers["Authorization"] = "Bearer " + token
+        headers["Accept"] = "application/octet-stream" if asset else "application/vnd.github+json"
+
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, hdrs, newurl):
+            return None
+
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        response = urllib.request.build_opener(NoRedirect).open(req, timeout=30)
+    except urllib.error.HTTPError as redirect:
+        if redirect.code not in (301, 302, 303, 307, 308):
+            raise
+        destination = urllib.parse.urljoin(url, redirect.headers["Location"])
+        parsed = urllib.parse.urlparse(destination)
+        if parsed.scheme != "https" or parsed.hostname not in ("github.com", "release-assets.githubusercontent.com"):
+            raise RuntimeError("Unexpected release download redirect")
+        # The signed asset URL needs no bearer token. Never forward repository credentials.
+        return request(destination, maximum)
+    with response:
         body = response.read(maximum + 1)
     if len(body) > maximum:
         raise RuntimeError("Download exceeds the expected limit")
@@ -151,19 +175,26 @@ def inspect_tablet():
 
 
 def main():
-    release = json.loads(request("https://api.github.com/repos/gravere/BYBUS/releases/latest", 512 * 1024))
+    candidate = os.environ.get("RUNTIME_CANDIDATE") == "true"
+    endpoint = "latest"
+    if candidate:
+        source = Path("app/build.gradle.kts").read_text(encoding="utf-8")
+        version = re.search(r'versionName\s*=\s*"(v[0-9.]+)"', source).group(1)
+        code = re.search(r'versionCode\s*=\s*(\d+)', source).group(1)
+        endpoint = f"tags/{version}-build.{code}"
+    release = json.loads(request("https://api.github.com/repos/gravere/BYBUS/releases/" + endpoint, 512 * 1024))
     assets = {asset["name"]: asset for asset in release["assets"]}
     apk_asset = assets["BYBUS.apk"]
-    sums = request(assets["SHA256SUMS.txt"]["browser_download_url"], 32 * 1024).decode("utf-8")
+    sums = request(assets["SHA256SUMS.txt"]["url"], 32 * 1024, asset=True).decode("utf-8")
     matches = re.findall(r"^([a-fA-F0-9]{64})\s+\*?BYBUS\.apk\s*$", sums, re.M)
-    if len(matches) != 1 or release["draft"] or release["prerelease"]:
+    if len(matches) != 1 or (release["draft"] and not candidate) or release["prerelease"]:
         raise RuntimeError("Invalid formal release metadata")
     apk = Path(os.environ["RUNNER_TEMP"]) / "BYBUS.apk"
-    data = request(apk_asset["browser_download_url"], 200 * 1024 * 1024)
+    data = request(apk_asset["url"], 200 * 1024 * 1024, asset=True)
     digest = hashlib.sha256(data).hexdigest()
     if len(data) != apk_asset["size"] or digest != matches[0].lower():
         raise RuntimeError("Release APK size/hash mismatch")
-    REPORT.update(release=release["tag_name"], sha256=digest)
+    REPORT.update(release=release["tag_name"], sha256=digest, draft_candidate=release["draft"])
     apk.write_bytes(data)
     del data
     # Use the release toolchain version rather than whichever preview tool sorts last.

@@ -19,6 +19,7 @@ import android.content.SyncResult;
 import android.content.SyncStatusInfo;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
@@ -1944,13 +1945,28 @@ public class SyncManager {
                 Log.v(TAG, "requesting that the alarm manager wake us up at elapsed time "
                         + alarmTime + ", now is " + now + ", " + ((alarmTime - now) / 1000)
                         + " secs from now");
+                scheduleSyncAlarm(alarmTime);
                 mAlarmScheduleTime = alarmTime;
-                mAlarmService.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP, alarmTime,
-                        mSyncAlarmIntent);
             } else if (shouldCancel) {
                 mAlarmScheduleTime = null;
                 mAlarmService.cancel(mSyncAlarmIntent);
             }
+        }
+
+        private void scheduleSyncAlarm(long alarmTime) {
+            // Background account sync must not require the user's alarm-clock permission.
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S
+                    || mAlarmService.canScheduleExactAlarms()) {
+                try {
+                    mAlarmService.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP, alarmTime,
+                            mSyncAlarmIntent);
+                    return;
+                } catch (SecurityException denied) {
+                    Log.w(TAG, "Exact sync alarm denied; scheduling an inexact alarm", denied);
+                }
+            }
+            mAlarmService.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, alarmTime,
+                    mSyncAlarmIntent);
         }
 
         private void sendSyncStateIntent() {

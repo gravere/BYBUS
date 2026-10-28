@@ -1,0 +1,12 @@
+{
+  "release": "v1.0.10-build.53",
+  "apk_sha256": "c50df00e13309ed7119c02e79cb69c606ed70efb35a77020450bc1513dd4a36b",
+  "workflow_run": "https://github.com/gravere/BYBUS/actions/runs/40720235066",
+  "profile": "Android 11 x86_64, ARM native bridge, 4 KB",
+  "capture": "Original screencap PNG from the unmodified release; emulator status icons hidden; no image or app state edits",
+  "files": {
+    "home.png": "9a28b96e698f052f37d8f7827a974cf408ec177dc7708ec2ad6dac93ad40fddd",
+    "project.png": "e62c84d3f4b2a823d64892dc4acbac918ec82ea7c32bf73d62414d934fb435d5",
+    "settings.png": "1b2d5baf52295a71ca3ec50f18cebd964dae899f22fab567c0a5114c48c00288"
+  }
+}
