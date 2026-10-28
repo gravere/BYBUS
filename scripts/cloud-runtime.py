@@ -107,14 +107,18 @@ def main():
     digest = hashlib.sha256(data).hexdigest()
     if len(data) != apk_asset["size"] or digest != matches[0].lower():
         raise RuntimeError("Release APK size/hash mismatch")
+    REPORT.update(release=release["tag_name"], sha256=digest)
     apk.write_bytes(data)
     del data
-    candidates = list((Path(os.environ["ANDROID_HOME"]) / "build-tools").glob("*/apksigner"))
-    if not candidates:
-        raise RuntimeError("Android signature verifier is unavailable")
-    verifier = sorted(candidates, key=lambda p: tuple(map(int, re.findall(r"\d+", p.parent.name))))[-1]
+    # Use the release toolchain version rather than whichever preview tool sorts last.
+    verifier = Path(os.environ["ANDROID_HOME"]) / "build-tools/35.0.0/apksigner"
+    if not verifier.is_file():
+        raise RuntimeError("Android Build Tools 35.0.0 signature verifier is unavailable")
     signatures = command(str(verifier), "verify", "--print-certs", str(apk), timeout=60)
     certs = re.findall(r"Signer #\d+ certificate SHA-256 digest: ([a-fA-F0-9]+)", signatures)
+    REPORT["observed_certificate_sha256"] = certs
+    if not certs:
+        raise RuntimeError("APK verification succeeded but no signer digest could be parsed")
     if {c.lower() for c in certs} != {CERT}:
         raise RuntimeError("Released APK certificate differs from the BYBUS certificate")
     REPORT.update(release=release["tag_name"], sha256=digest, certificate_sha256=CERT)
