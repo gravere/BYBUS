@@ -5,7 +5,6 @@ import android.content.pm.ProviderInfo;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 
 import com.lody.virtual.client.VClient;
@@ -35,8 +34,7 @@ public final class MicrogRegistrationCompat {
 
     // Caller must already have resolved the exact installed virtual GServicesProvider.
     public static Object resolveMissingId(Object[] args, Object original) {
-        if (Build.VERSION.SDK_INT < 36
-                || !"com.android.vending".equals(VClient.get().getCurrentPackage())) return original;
+        if (!"com.android.vending".equals(VClient.get().getCurrentPackage())) return original;
         try {
             if (!isRegistrationIdQuery(args) || !isMissingId(original)) return original;
             Context context = VClient.get().getCurrentApplication();
