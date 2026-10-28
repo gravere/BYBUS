@@ -19,6 +19,7 @@ import java.util.Locale;
 public final class LimbusBillingDiagnostics {
     private static int records;
     private static boolean registrationIdRecorded;
+    private static String launchRequest;
 
     private LimbusBillingDiagnostics() { }
 
@@ -38,7 +39,7 @@ public final class LimbusBillingDiagnostics {
 
     /** Inspect only the registration query's shape and presence; never persist its value. */
     public static synchronized void recordRegistrationIdQuery(Object[] args, Object result) {
-        if (registrationIdRecorded || args == null) return;
+        if (args == null || refreshLaunchRequest() == null || registrationIdRecorded) return;
         if (!MicrogRegistrationCompat.isRegistrationIdQuery(args)) return;
         registrationIdRecorded = true;
         if (!(result instanceof Cursor)) {
@@ -86,41 +87,65 @@ public final class LimbusBillingDiagnostics {
             String message = ((Bundle) result).getString("DEBUG_MESSAGE");
             if (message != null && !message.isEmpty()) {
                 // Fixed categories only: never persist the service's message.
-                String lower = message.length() > 4096 ? "" : message.toLowerCase(Locale.ROOT);
-                reason = lower.contains("df-dferh-01") ? "play_backend" :
-                        lower.contains("uid") ? "uid" :
-                        lower.contains("package") ? "package" :
-                        lower.contains("signature") ? "signature" :
-                        lower.contains("permission") ? "permission" :
-                        lower.contains("account") ? "account" :
-                        lower.contains("owned") ? "ownership" :
-                        lower.contains("version") ? "version" :
-                        lower.contains("not supported") ? "unsupported" :
-                        lower.contains("internal") ? "internal" :
-                        lower.contains("network") ? "network" :
-                        lower.contains("product") || lower.contains("sku") ? "product" : "other";
+                reason = classifyFailure(message);
             }
         }
         return " api=" + api + " caller=" + caller + " type=" + productType +
                 " items=" + itemCount + " debug=" + reason;
     }
 
+    public static String classifyFailure(String message) {
+        if (message == null || message.isEmpty()) return "none";
+        if (message.length() > 4096) return "other";
+        String lower = message.toLowerCase(Locale.ROOT);
+        return lower.contains("billing is disabled") ? "billing_disabled" :
+                lower.contains("login token") || lower.contains("reauth") ? "authorization" :
+                lower.contains("device information") ? "registration" :
+                lower.contains("client information") ? "package" :
+                lower.contains("df-dferh-01") ? "play_backend" :
+                lower.contains("uid") ? "uid" :
+                lower.contains("package") ? "package" :
+                lower.contains("signature") ? "signature" :
+                lower.contains("permission") ? "permission" :
+                lower.contains("account") ? "account" :
+                lower.contains("owned") ? "ownership" :
+                lower.contains("version") ? "version" :
+                lower.contains("not supported") ? "unsupported" :
+                lower.contains("internal") ? "internal" :
+                lower.contains("network") ? "network" :
+                lower.contains("product") || lower.contains("sku") ? "product" : "other";
+    }
+
+    private static File directory() {
+        return new File(VirtualCore.get().getContext().getFilesDir(), "translation-cache/translation-index");
+    }
+
+    // Google services can outlive the game. Diagnostic quotas belong to a launch, not a process.
+    private static String refreshLaunchRequest() {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                new FileInputStream(new File(directory(), "launch.request")), StandardCharsets.UTF_8))) {
+            String request = reader.readLine();
+            if (request == null || !request.matches("[0-9a-f-]{36}")) return null;
+            if (!request.equals(launchRequest)) {
+                launchRequest = request;
+                records = 0;
+                registrationIdRecorded = false;
+            }
+            return request;
+        } catch (Exception unavailable) {
+            return null;
+        }
+    }
+
     // Callers supply fixed event names, method names, response codes and counts.
     // Never pass a service message, argument, account, product ID or receipt.
     public static synchronized void record(String metadata) {
-        if (records >= 72 || metadata == null ||
-                !metadata.matches("[A-Za-z0-9._= -]{1,256}")) return;
-        records++;
+        if (metadata == null || !metadata.matches("[A-Za-z0-9._= -]{1,256}")) return;
         try {
-            File directory = new File(VirtualCore.get().getContext().getFilesDir(),
-                    "translation-cache/translation-index");
-            String request;
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                    new FileInputStream(new File(directory, "launch.request")), StandardCharsets.UTF_8))) {
-                request = reader.readLine();
-            }
-            if (request == null || !request.matches("[0-9a-f-]{36}")) return;
-            File target = new File(directory, "billing-state.log");
+            String request = refreshLaunchRequest();
+            if (request == null || records >= 72) return;
+            records++;
+            File target = new File(directory(), "billing-state.log");
             if (target.length() >= 32 * 1024 - 512) return;
             String line = (target.length() == 0 ?
                     "request=" + request + " pid=" + android.os.Process.myPid() + "\n" : "")

@@ -44,7 +44,7 @@
   microG SettingsProvider 只在其主进程持有，UI 必须走同一 Provider 的 Binder，不能为
   绕过空客户端在 :ui 复制本地实例（SharedPreferences 缓存会分叉）。Android 16 宿主
   占位 Provider 的空 Binder 不代表目标虚拟 Provider 不可用；精确查询后再判断失败。
-  已实测 Companion 的 GServices android_id 查询为空而注册页已成功。只对 Android 16+
+  已实测 Companion 的 GServices android_id 查询为空而注册页已成功。只对支持的 Android 上
   容器 Companion 发给虚拟 GServicesProvider 的单键根 URI 查询，可在原结果为空/零时
   从同一虚拟 GMS 的 SettingsProvider 读取已启用且成功注册的真实 ID；保留 uint64 位模式。
   不生成标识，不读取宿主 GSF，不访问账号/Token，不替换已有有效值，不扩大到其他调用方。
