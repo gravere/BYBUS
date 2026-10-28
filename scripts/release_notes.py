@@ -62,8 +62,4 @@ def render_release_notes(manifest: dict, source: str) -> str:
 {chr(10).join(rows)}
 
 `.delta` 不能独立安装。增量更新减少下载量，合成与覆盖安装仍需完整 APK 的临时空间。发行文件保留最近三个正式构建。
-
-## 兼容性与验证范围
-
-{section(source, '兼容性与验证范围')}
 '''
