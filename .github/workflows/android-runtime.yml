@@ -18,6 +18,10 @@ concurrency:
 jobs:
   inspect:
     if: github.repository == 'gravere/BYBUS' && github.event.repository.private == false
+    # GitHub exposes draft releases only to credentials with push access.
+    # The inspection script uses GET requests only; checkout never persists this token.
+    permissions:
+      contents: write
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
