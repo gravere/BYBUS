@@ -29,8 +29,9 @@ body:
   - type: input
     id: app-version
     attributes:
-      label: 汉化器版本
-      placeholder: 例如：1.2（versionCode 3）
+      label: BYBUS 版本
+      description: 请填写设备上实际安装的版本，可在 BYBUS「关于」或系统应用信息中查看。
+      placeholder: 填写版本号；如知道构建号，也请一并填写
     validations:
       required: true
 
@@ -38,7 +39,7 @@ body:
     id: game-version
     attributes:
       label: Limbus Company 版本
-      placeholder: 例如：1.109.1 / versionCode 450
+      placeholder: 填写游戏显示的版本号；如知道构建号，也请一并填写
     validations:
       required: true
 
