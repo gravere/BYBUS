@@ -23,3 +23,9 @@
 Android 11 x86_64 的 ARM 翻译环境只用于运行基线，不代表 ARM64 原生设备或 16 KB 兼容性。该工作流不操作真实商品或付款，不证明 Google 登录、结算、扣款或到账成功。支付策略单元测试、Android 回调测试和真实购买应分别报告。
 
 Experimental 16 KB x86_64 镜像属于用户空间模拟，不能代替 ARM64 原生 16 KB 设备。Google Play Billing Lab 的响应模拟需要应用开发者配置与许可测试账号；启动器不能替游戏取得这些权限。
+
+## 已记录的运行结果
+
+[构建 54 的云端记录](https://github.com/gravere/BYBUS/actions/runs/40724375539)使用同一份签名 APK 检查了 Android 11 / 4 KB 和 Android 15 Experimental 16 KB。安装、首页、项目与设置页、二级返回以及平板横竖屏检查均通过；此前后台同步的精确闹钟权限异常未再出现。
+
+Google 容器入口仍未通过：Android 11 的错误栈位于 ARM 翻译层，16 KB 实验镜像仍有 Google 进程异常和 Binder 连接失败。因此工作流的成功状态仅表示运行基线完成，必须同时阅读 `google_component_ui`、`payment_runtime` 和崩溃记录，不能将其解释为登录或付款成功。
