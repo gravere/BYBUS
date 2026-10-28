@@ -423,10 +423,10 @@ cancellation removes the descriptor and archive. Invalid or missing descriptors
 report an error instead of silently producing an empty export. Only an owned
 diagnostic ZIP may be recovered; no arbitrary source path is accepted.
 
-The launcher may install on API 26+, but the current game compatibility profiles
-only authorize Android 16 (API 36), a 64-bit ARM process and 4 KiB memory pages.
-The device report and launch error state must describe that same boundary;
-unknown game structures continue to fail closed.
+The launcher requires API 26+, a 64-bit ARM process and a supported 4 KiB or
+16 KiB page size. Each game build must also pass its native compatibility profile;
+exact legacy profiles can impose narrower conditions. The device report and
+launch errors describe the applicable boundary. Unknown game structures fail closed.
 
 ## Notes
 

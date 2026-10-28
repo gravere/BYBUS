@@ -57,7 +57,7 @@ BYBUS 面向 Android 手机和平板，不限定品牌。启动前检查系统�
 
 同结构的游戏更新可自动适配，新的保护结构仍可能需要更新 BYBUS。汉化覆盖也取决于零协已发布的译文和设备上已下载的游戏资源；设备条件通过不等于所有页面或功能均已实测。
 
-内置 Google 组件仍有部分 4 KB 原生库，16 KB 设备上的 Google 登录和付款兼容性尚未确认。真机覆盖情况和技术边界见[Android 适配说明](docs/android-runtime-portability.md)。
+内置 Google 组件仍有部分 4 KB 原生库，16 KB 设备上的 Google 登录和付款兼容性尚未确认。设备条件和已知限制见[Android 适配说明](docs/android-runtime-portability.md)。
 
 ## 反馈与贡献
 
