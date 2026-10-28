@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import struct
 import time
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -106,10 +107,19 @@ def inspect_google(parent):
             capture("google-settings")
             REPORT["google_component_ui"] = "container Google settings opened; no account or billing request"
             return
+        if any("准备未完成" in n.get("text", "") for n in tree.iter("node")):
+            for node in tree.iter("node"):
+                if "准备未完成" in node.get("text", ""):
+                    tap(node.get("text"), tree)
+                    detail = capture("google-error-detail")
+                    REPORT["google_component_error"] = [n.get("text") for n in detail.iter("node") if n.get("text")]
+                    break
+            break
     capture("google-settings-blocked")
     REPORT["google_component_ui"] = "did not reach container Google settings within 60 seconds"
-    logs = adb("logcat", "-d", "-t", "500", timeout=15, check=False)
+    logs = adb("logcat", "-d", "-s", "LimbusContainer:V", "NativeEngine:V", "AndroidRuntime:V", "libc:V", timeout=15, check=False)
     (OUT / "google-component-log.txt").write_text(logs, encoding="utf-8")
+    print("::warning::Container Google settings did not open; payment runtime remains unverified")
 
 
 def inspect_tablet():
@@ -119,12 +129,17 @@ def inspect_tablet():
         tap("关闭面板", tree)
     except RuntimeError:
         pass
-    adb("shell", "wm", "density", "240")
-    for name, size, landscape in [("tablet-portrait", "1600x2560", False),
-                                   ("tablet-landscape", "2560x1600", True)]:
+    # Android 11 caps forced width at twice the AVD's initial width (720 * 2).
+    # Use 160 dpi to exercise tablet dp sizes without hitting that platform clamp.
+    adb("shell", "wm", "density", "160")
+    for name, size, landscape in [("tablet-portrait", "800x1280", False),
+                                   ("tablet-landscape", "1280x800", True)]:
         adb("shell", "wm", "size", size)
         time.sleep(3)
         tree = capture(name)
+        actual_size = struct.unpack(">II", (OUT / f"{name}.png").read_bytes()[16:24])
+        if actual_size != tuple(map(int, size.split("x"))):
+            raise RuntimeError(f"Android constrained requested display {size} to {actual_size}")
         launch = locate(tree, "检测游戏")
         project = locate(tree, "都市零协会")
         if landscape:
@@ -132,7 +147,7 @@ def inspect_tablet():
                 raise RuntimeError("Wide landscape did not put the project card in the right column")
         elif project[1] <= launch[1]:
             raise RuntimeError("Portrait did not place the project card below the game controls")
-        REPORT["checks"].append(f"{name} layout at {size}, 240 dpi")
+        REPORT["checks"].append(f"{name} layout at {size}, 160 dpi")
 
 
 def main():
