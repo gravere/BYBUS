@@ -181,8 +181,14 @@ def main():
         source = Path("app/build.gradle.kts").read_text(encoding="utf-8")
         version = re.search(r'versionName\s*=\s*"(v[0-9.]+)"', source).group(1)
         code = re.search(r'versionCode\s*=\s*(\d+)', source).group(1)
-        endpoint = f"tags/{version}-build.{code}"
-    release = json.loads(request("https://api.github.com/repos/gravere/BYBUS/releases/" + endpoint, 512 * 1024))
+        tag = f"{version}-build.{code}"
+        candidates = json.loads(request("https://api.github.com/repos/gravere/BYBUS/releases?per_page=10", 2 * 1024 * 1024))
+        matching = [r for r in candidates if r["tag_name"] == tag]
+        if len(matching) != 1:
+            raise RuntimeError("Source version must have exactly one staged release")
+        release = matching[0]
+    else:
+        release = json.loads(request("https://api.github.com/repos/gravere/BYBUS/releases/" + endpoint, 512 * 1024))
     assets = {asset["name"]: asset for asset in release["assets"]}
     apk_asset = assets["BYBUS.apk"]
     sums = request(assets["SHA256SUMS.txt"]["url"], 32 * 1024, asset=True).decode("utf-8")
