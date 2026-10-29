@@ -34,11 +34,11 @@
   容器 Companion，不回退宿主 Play Store，不改写游戏业务包名；宿主 Play 的真实 UID 校验
   已证明阻断旧直连方案。Google 组件使用固定签名版本、保留数据升级，不通过卸载清空账号。
   商品可见、购买初始化、结算页、实际到账分开验证，不伪造或隐藏服务错误，不自动付款。
-  Android 16 的 ACCOUNT_MANAGER 兼容仅可安装到容器 GoogleLoginService 的
+  Android 14+ 的 ACCOUNT_MANAGER 兼容仅可安装到容器 GoogleLoginService 的
   IAccountAuthenticator Binder，且只认可同宿主 UID、确切虚拟账号管理服务 PID。
   不给宿主或其他访客授予系统账号权限。容器 Google 组件保留业务包名；读取容器
   GServicesProvider 时可保留真实 Binder UID 与准确 Google 包名，宿主 Provider 不适用。
-  Android 16 的 authenticator 是 oneway 接口，调用 PID 为 0；不能因此放宽身份检查。
+  authenticator 是 oneway 接口，调用 PID 为 0；不能因此放宽身份检查。
   仅虚拟账号管理服务到上述 authenticator 的客户端 Binder 使用同步传输，并移到有界
   后台队列，保留原账号结果回调；其他 Binder 不改，异常必须返回而非等待超时。
   microG SettingsProvider 只在其主进程持有，UI 必须走同一 Provider 的 Binder，不能为

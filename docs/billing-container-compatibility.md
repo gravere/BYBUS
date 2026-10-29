@@ -13,6 +13,26 @@
 Token、商品或票据。修正这些问题不等于已经证明当前设备的报错根因；商品查询、结算与
 到账仍需各自的实际返回结果，不能以模拟器通过或代码检查代替。
 
+## 通用 Android 路径
+
+以系统接口差异划分，不按厂商或机型分支。AOSP 从 Android 14 开始已在
+`IAccountAuthenticator` 使用 `@EnforcePermission(ACCOUNT_MANAGER)`；Android 14、15、16
+都必须在同一确切虚拟 Google authenticator 上适配权限及 oneway 调用 PID，不能只处理
+API 36。原身份、接口和反射结构检查仍保留，Android 8–13 沿用旧权限入口。
+
+`broadcastIntent` 与 `broadcastIntentWithFeature` 共享相同的精确计费结果、注册通知路由。
+旧入口也要归一游戏 Application context 的宿主包名别名；不能改业务返回码、票据或
+广播权限。授权后台队列应能立即并发处理两项请求，避免一个慢授权串行阻塞另一个；
+空绑定或已失效绑定应立即返回错误并释放会话，关闭后排队的请求不得继续调用服务。
+绑定所有权独立于 authenticator Binder 记录：空 Binder、服务死亡和绑定期间会话关闭
+都要释放成功建立的连接，不能因 Binder 已为空而跳过 unbind。
+
+首次使用仍需在容器内登录账号，并在 Google 设置中开启设备注册和应用内购买。
+已登录游戏、已安装组件和计费就绪是不同状态；检查与更新不得覆盖用户主动关闭的设置。
+
+接口依据：[Android 14 authenticator AIDL](https://github.com/aosp-mirror/platform_frameworks_base/blob/android14-release/core/java/android/accounts/IAccountAuthenticator.aidl)、
+[Android 14 权限调用](https://github.com/aosp-mirror/platform_frameworks_base/blob/android14-release/core/java/android/accounts/AbstractAccountAuthenticator.java)。
+
 ## 当前结果（内部版本 33）
 
 签名 v1.0 / code33 已覆盖安装到 vivo X100 Ultra / Android 16。一次游戏启动保留
