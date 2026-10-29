@@ -70,6 +70,9 @@ import com.lody.virtual.client.stub.InstallerSetting;
 import com.lody.virtual.client.stub.StubManifest;
 import com.lody.virtual.helper.compat.ActivityManagerCompat;
 import com.lody.virtual.helper.compat.LimbusActivityCompat;
+import com.lody.virtual.helper.compat.LimbusBillingBroadcastPolicy;
+import com.lody.virtual.helper.compat.LimbusBillingDiagnostics;
+import com.lody.virtual.helper.compat.MicrogBillingIdentityPolicy;
 import com.lody.virtual.helper.compat.BuildCompat;
 import com.lody.virtual.helper.compat.BundleCompat;
 import com.lody.virtual.helper.compat.IntentCompat;
@@ -2566,6 +2569,36 @@ class MethodProxies {
     }
 
 
+    /** Shared by old and new framework entry points; no receipt/result changes. */
+    private static Intent routeGoogleBroadcast(Intent intent) {
+        if (intent == null) return null;
+        String caller = VClient.get().getCurrentPackage();
+        String host = VirtualCore.get().getHostPkg();
+        ComponentName component = intent.getComponent();
+        String target = LimbusBillingBroadcastPolicy.resolveSelfTarget(caller, intent.getPackage(),
+                host, component == null ? null : component.getClassName(), intent.getAction());
+        if (target != null) {
+            return ComponentUtils.redirectBroadcastIntent(new Intent(intent).setPackage(target),
+                    VUserHandle.myUserId()).setPackage(host).addFlags(intent.getFlags());
+        }
+        if (component != null && MicrogBillingIdentityPolicy.isGoogleRegistrationBroadcast(caller,
+                component.getPackageName(), component.getClassName(), intent.getAction())) {
+            return ComponentUtils.redirectBroadcastIntent(intent, VUserHandle.myUserId()).setPackage(host);
+        }
+        return null;
+    }
+
+    private static void recordGoogleBroadcastResult(Intent original, Object result) {
+        boolean sent = result instanceof Integer && ((Integer) result) == 0;
+        if (LimbusBillingBroadcastPolicy.isResultAction(original.getAction())) {
+            if (sent) LimbusBillingDiagnostics.recordResultBroadcast(false, original);
+            else LimbusBillingDiagnostics.record("event=billing_update_dispatch_failed");
+        } else {
+            LimbusBillingDiagnostics.record(sent ? "event=google_registration_broadcast_sent"
+                    : "event=google_registration_broadcast_failed");
+        }
+    }
+
     static class BroadcastIntentWithFeature extends MethodProxy {
         @Override
         public String getMethodName() {
@@ -2578,32 +2611,11 @@ class MethodProxies {
             // container paths narrow; do not redirect unrelated system broadcasts.
             if (args.length > 3 && args[2] instanceof Intent) {
                 Intent intent = (Intent) args[2];
-                ComponentName component = intent.getComponent();
-                String selfTarget = com.lody.virtual.helper.compat.LimbusBillingBroadcastPolicy.resolveSelfTarget(
-                        VClient.get().getCurrentPackage(), intent.getPackage(), getHostPkg(),
-                        component == null ? null : component.getClassName(), intent.getAction());
-                if (selfTarget != null) {
-                    Intent originalResult = new Intent(intent).setPackage(selfTarget);
-                    Intent routed = ComponentUtils.redirectBroadcastIntent(originalResult, VUserHandle.myUserId());
-                    routed.setPackage(getHostPkg());
-                    routed.addFlags(intent.getFlags());
+                Intent routed = routeGoogleBroadcast(intent);
+                if (routed != null) {
                     args[2] = routed;
                     Object result = method.invoke(who, args);
-                    if (result instanceof Integer && ((Integer) result) == 0) {
-                        com.lody.virtual.helper.compat.LimbusBillingDiagnostics.recordResultBroadcast(false, intent);
-                    } else {
-                        com.lody.virtual.helper.compat.LimbusBillingDiagnostics.record("event=billing_update_dispatch_failed");
-                    }
-                    return result;
-                }
-                if (component != null && com.lody.virtual.helper.compat.MicrogBillingIdentityPolicy
-                        .isGoogleRegistrationBroadcast(VClient.get().getCurrentPackage(),
-                                component.getPackageName(), component.getClassName(), intent.getAction())) {
-                    args[2] = ComponentUtils.redirectBroadcastIntent(intent, VUserHandle.myUserId())
-                            .setPackage(getHostPkg());
-                    Object result = method.invoke(who, args);
-                    com.lody.virtual.helper.compat.LimbusBillingDiagnostics.record(
-                            "event=google_registration_broadcast_sent");
+                    recordGoogleBroadcastResult(intent, result);
                     return result;
                 }
             }
@@ -2621,6 +2633,13 @@ class MethodProxies {
         @Override
         public Object call(Object who, Method method, Object... args) throws Throwable {
             Intent intent = (Intent) args[1];
+            Intent routed = routeGoogleBroadcast(intent);
+            if (routed != null) {
+                args[1] = routed;
+                Object result = method.invoke(who, args);
+                recordGoogleBroadcastResult(intent, result);
+                return result;
+            }
             String type = (String) args[2];
             intent.setDataAndType(intent.getData(), type);
             Intent newIntent = handleIntent(intent);

@@ -4,6 +4,11 @@ package com.lody.virtual.helper.compat;
 public final class MicrogBillingIdentityPolicy {
     private MicrogBillingIdentityPolicy() { }
 
+    /** AOSP introduced generated ACCOUNT_MANAGER enforcement in Android 14. */
+    public static boolean requiresAuthenticatorPermissionBridge(int sdk) {
+        return sdk >= 34;
+    }
+
     public static boolean isBillingAuthorization(String caller, String accountType, String scope) {
         return "com.android.vending".equals(caller) && "com.google".equals(accountType)
                 && ("oauth2:https://www.googleapis.com/auth/googleplay "

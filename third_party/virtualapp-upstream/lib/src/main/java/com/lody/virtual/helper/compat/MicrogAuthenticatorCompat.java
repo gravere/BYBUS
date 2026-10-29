@@ -23,7 +23,8 @@ public final class MicrogAuthenticatorCompat {
     private MicrogAuthenticatorCompat() { }
 
     public static void prepare(Context context, ServiceInfo info, Intent intent, IBinder binder) {
-        if (Build.VERSION.SDK_INT < 36 || binder == null || info == null || intent == null
+        if (!MicrogBillingIdentityPolicy.requiresAuthenticatorPermissionBridge(Build.VERSION.SDK_INT)
+                || binder == null || info == null || intent == null
                 || !MicrogBillingIdentityPolicy.isGoogleAuthenticator(info.packageName, info.name)
                 || !AccountManager.ACTION_AUTHENTICATOR_INTENT.equals(intent.getAction())
                 || !"com.google.android.gms".equals(VClient.get().getCurrentPackage())) return;

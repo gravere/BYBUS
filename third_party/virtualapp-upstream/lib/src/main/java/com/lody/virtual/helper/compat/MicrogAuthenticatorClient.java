@@ -18,16 +18,19 @@ import java.util.concurrent.TimeUnit;
 /** Keeps real caller PID available without blocking the account service's main thread. */
 public final class MicrogAuthenticatorClient {
     private static final ThreadPoolExecutor CALLS = new ThreadPoolExecutor(
-            0, 2, 30, TimeUnit.SECONDS, new ArrayBlockingQueue<>(8), runnable -> {
+            2, 2, 30, TimeUnit.SECONDS, new ArrayBlockingQueue<>(8), runnable -> {
                 Thread thread = new Thread(runnable, "bybus-google-auth");
                 thread.setDaemon(true);
                 return thread;
             });
 
+    static { CALLS.allowCoreThreadTimeOut(true); }
+
     private MicrogAuthenticatorClient() { }
 
     public static boolean isRequired(ServiceInfo info) {
-        return Build.VERSION.SDK_INT >= 36 && VirtualCore.get().isServerProcess()
+        return MicrogBillingIdentityPolicy.requiresAuthenticatorPermissionBridge(Build.VERSION.SDK_INT)
+                && VirtualCore.get().isServerProcess()
                 && info != null
                 && MicrogBillingIdentityPolicy.isGoogleAuthenticator(info.packageName, info.name);
     }

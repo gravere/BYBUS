@@ -1340,7 +1340,10 @@ public class VAccountManagerService extends IAccountManager.Stub {
         final AuthenticatorInfo mAuthenticatorInfo;
         private final boolean mStripAuthTokenFromResult;
         public int mNumResults;
-        IAccountAuthenticator mAuthenticator;
+        volatile IAccountAuthenticator mAuthenticator;
+        private final Object mBindingLock = new Object();
+        private boolean mBound;
+        private boolean mClosed;
         private IAccountManagerResponse mResponse;
         private boolean mExpectActivityLaunch;
         private long mCreationTime;
@@ -1408,6 +1411,7 @@ public class VAccountManagerService extends IAccountManager.Stub {
 
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
+            if (!isOpen()) return;
             if (MicrogAuthenticatorClient.isRequired(mAuthenticatorInfo.serviceInfo)) {
                 try {
                     mAuthenticator = IAccountAuthenticator.Stub.asInterface(
@@ -1417,6 +1421,7 @@ public class VAccountManagerService extends IAccountManager.Stub {
                     return;
                 }
                 if (!MicrogAuthenticatorClient.execute(() -> {
+                    if (!isOpen()) return;
                     try {
                         run();
                     } catch (RemoteException | RuntimeException error) {
@@ -1472,6 +1477,24 @@ public class VAccountManagerService extends IAccountManager.Stub {
                             + "caught RemoteException while responding", e);
                 }
             }
+        }
+
+        private boolean isOpen() {
+            synchronized (mSessions) {
+                return mSessions.get(toString()) == this;
+            }
+        }
+
+        @Override
+        public void onBindingDied(ComponentName name) {
+            mAuthenticator = null;
+            onError(AccountManager.ERROR_CODE_REMOTE_EXCEPTION, "authenticator binding died");
+        }
+
+        @Override
+        public void onNullBinding(ComponentName name) {
+            mAuthenticator = null;
+            onError(AccountManager.ERROR_CODE_REMOTE_EXCEPTION, "authenticator binding unavailable");
         }
 
         @Override
@@ -1557,13 +1580,25 @@ public class VAccountManagerService extends IAccountManager.Stub {
         public abstract void run() throws RemoteException;
 
         void bind() {
+            synchronized (mBindingLock) {
+                if (mClosed) return;
+            }
             Log.v(TAG, "initiating bind to authenticator type " + mAuthenticatorInfo.desc.type);
             Intent intent = new Intent();
             intent.setAction(AccountManager.ACTION_AUTHENTICATOR_INTENT);
             intent.setClassName(mAuthenticatorInfo.serviceInfo.packageName, mAuthenticatorInfo.serviceInfo.name);
             intent.putExtra("_VA_|_user_id_", mUserId);
 
-            if (!mContext.bindService(intent, this, Context.BIND_AUTO_CREATE)) {
+            boolean bound = mContext.bindService(intent, this, Context.BIND_AUTO_CREATE);
+            boolean release;
+            synchronized (mBindingLock) {
+                // A response can die while bindService is still in flight.
+                release = bound && mClosed;
+                mBound = bound && !mClosed;
+            }
+            if (release) {
+                mContext.unbindService(this);
+            } else if (!bound) {
                 Log.d(TAG, "bind attempt failed for " + toDebugString());
                 onError(AccountManager.ERROR_CODE_REMOTE_EXCEPTION, "bind failure");
             }
@@ -1582,10 +1617,15 @@ public class VAccountManagerService extends IAccountManager.Stub {
         }
 
         private void unbind() {
-            if (mAuthenticator != null) {
+            boolean bound;
+            synchronized (mBindingLock) {
+                mClosed = true;
                 mAuthenticator = null;
-                mContext.unbindService(this);
+                bound = mBound;
+                mBound = false;
             }
+            // A dead/null authenticator still owns a successful service binding.
+            if (bound) mContext.unbindService(this);
         }
 
         @Override
