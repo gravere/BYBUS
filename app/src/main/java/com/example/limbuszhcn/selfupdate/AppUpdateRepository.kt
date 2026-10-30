@@ -55,12 +55,14 @@ internal class AppUpdateRepository @JvmOverloads constructor(private val directo
 
     fun download(release: AppRelease, baseApk: File?, delta: AppDelta?, reuse: AppReusePlan?,
         progress: (AppUpdateProgress) -> Unit): File = synchronized(stagingLock) {
-        require(directory.isDirectory || directory.mkdirs()) { "无法创建更新缓存" }
+        AppUpdateStorage.run {
+            if (!directory.isDirectory && !directory.mkdirs()) throw java.io.IOException("Cannot create update cache")
+        }
         val pending = File(directory, "download.part")
         val patch = File(directory, "update.delta.part")
-        pending.delete(); patch.delete()
+        AppUpdateStorage.delete(pending); AppUpdateStorage.delete(patch)
         if (apk.isFile && apk.length() == release.apk.size && hash(apk) == release.sha256) return@synchronized apk
-        apk.delete()
+        AppUpdateStorage.delete(apk)
         try {
             var reconstructed = false
             var fallback = false
@@ -86,8 +88,9 @@ internal class AppUpdateRepository @JvmOverloads constructor(private val directo
                     reconstructed = true
                 } catch (error: Exception) {
                     if (error is CancellationException || Thread.currentThread().isInterrupted) throw CancellationException()
+                    if (error is AppUpdateStorageException) throw error
                     if (error is UpdateHttpException && error.retryAfterMillis > 0) throw error
-                    pending.delete(); patch.delete()
+                    AppUpdateStorage.delete(pending); AppUpdateStorage.delete(patch)
                     fallback = true
                     progress(AppUpdateProgress("增量更新不可用，改为下载完整包", null, null))
                 }
@@ -96,7 +99,7 @@ internal class AppUpdateRepository @JvmOverloads constructor(private val directo
                 progress(AppUpdateProgress(if (fallback) "已回退完整包 · 正在下载" else "正在下载完整安装包", it, null))
             }
             if (Thread.currentThread().isInterrupted) throw CancellationException()
-            AtomicFiles.move(pending.toPath(), apk.toPath(), replace = true)
+            AppUpdateStorage.run { AtomicFiles.move(pending.toPath(), apk.toPath(), replace = true) }
             apk
         } finally { pending.delete(); patch.delete() }
     }
@@ -108,7 +111,7 @@ internal class AppUpdateRepository @JvmOverloads constructor(private val directo
         progress(0)
         transport.read(asset.url, true) { input, length ->
             require(length <= 0 || length == asset.size) { "下载文件大小与发行信息不一致" }
-            target.outputStream().use { output ->
+            AppUpdateStorage.output(target).use { output ->
                 copy(input, asset.size) { bytes, count ->
                     output.write(bytes, 0, count)
                     digest.update(bytes, 0, count)
@@ -116,7 +119,7 @@ internal class AppUpdateRepository @JvmOverloads constructor(private val directo
                     val percent = (total * 100 / asset.size).toInt()
                     if (percent != last) { last = percent; progress(percent) }
                 }
-                output.fd.sync()
+                output.sync()
             }
         }
         require(total == asset.size && digest.digest().hex() == sha256) { "下载文件校验失败，请重新下载" }

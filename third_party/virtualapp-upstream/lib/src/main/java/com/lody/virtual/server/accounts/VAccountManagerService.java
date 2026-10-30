@@ -1372,7 +1372,6 @@ public class VAccountManagerService extends IAccountManager.Stub {
                 try {
                     response.asBinder().linkToDeath(this, 0 /* flags */);
                 } catch (RemoteException e) {
-                    mResponse = null;
                     binderDied();
                 }
             }
@@ -1383,31 +1382,26 @@ public class VAccountManagerService extends IAccountManager.Stub {
         }
 
         IAccountManagerResponse getResponseAndClose() {
-            if (mResponse == null) {
-                // this session has already been closed
-                return null;
+            final IAccountManagerResponse response;
+            synchronized (mSessions) {
+                if (mSessions.remove(toString()) == null) {
+                    return null;
+                }
+                // Claim the terminal response in the same critical section as session closure.
+                response = mResponse;
+                mResponse = null;
             }
-            IAccountManagerResponse response = mResponse;
-            close(); // this clears mResponse so we need to save the response before this call
+            try {
+                if (response != null) response.asBinder().unlinkToDeath(this, 0 /* flags */);
+            } catch (java.util.NoSuchElementException alreadyDead) {
+                // linkToDeath may itself have failed because the caller was already dead.
+            } finally {
+                unbind();
+            }
             return response;
         }
 
-        private void close() {
-            synchronized (mSessions) {
-                if (mSessions.remove(toString()) == null) {
-                    // the session was already closed, so bail out now
-                    return;
-                }
-            }
-            if (mResponse != null) {
-                // stop listening for response deaths
-                mResponse.asBinder().unlinkToDeath(this, 0 /* flags */);
-
-                // clear this so that we don't accidentally send any further results
-                mResponse = null;
-            }
-            unbind();
-        }
+        private void close() { getResponseAndClose(); }
 
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
@@ -1544,7 +1538,9 @@ public class VAccountManagerService extends IAccountManager.Stub {
             IAccountManagerResponse response;
             if (mExpectActivityLaunch && result != null
                     && result.containsKey(AccountManager.KEY_INTENT)) {
-                response = mResponse;
+                synchronized (mSessions) {
+                    response = mSessions.get(toString()) == this ? mResponse : null;
+                }
             } else {
                 response = getResponseAndClose();
             }
@@ -1630,7 +1626,6 @@ public class VAccountManagerService extends IAccountManager.Stub {
 
         @Override
         public void binderDied() {
-            mResponse = null;
             close();
         }
     }
