@@ -42,7 +42,7 @@ internal object AppUpdateDelta {
                     var total = 0L
                     var lastPercent = -1
                     RandomAccessFile(base, "r").use { source ->
-                        output.outputStream().use { target ->
+                        AppUpdateStorage.output(output).use { target ->
                             repeat(count) {
                                 checkpoint()
                                 val operation = input.readUnsignedByte()
@@ -70,7 +70,7 @@ internal object AppUpdateDelta {
                             require(total == release.apk.size && input.read() == -1) { "差异补丁不完整或有多余数据" }
                             require(digest.digest().hex() == release.sha256) { "合成安装包校验失败" }
                             checkpoint()
-                            target.fd.sync()
+                            target.sync()
                         }
                     }
                 }

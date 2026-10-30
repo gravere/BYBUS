@@ -148,4 +148,40 @@ class AppUpdateReuseTest {
             assertFalse(output.exists())
         }
     }
+
+    @Test fun localStorageFailuresNeverStartACompleteDownload() {
+        val target = archive(7000); val release = release(target); val base = archive(100)
+        val plan = requireNotNull(AppUpdateReuse.plan(base, release))
+        val cache = temporary.newFolder()
+        val blocked = File(cache, "download.part").apply { mkdir() }
+        File(blocked, "marker").writeText("nonempty directory cannot become an output file")
+        var network = 0
+        val repo = AppUpdateRepository(cache, AppUpdateTransport { _, _, _ -> network++ },
+            { AppRangeReader { _, _, _ -> network++ } })
+        assertThrows(AppUpdateStorageException::class.java) { repo.download(release, base, null, plan) {} }
+        assertEquals(0, network)
+
+        val writable = temporary.newFolder()
+        val failedWrite = AppUpdateStorageException(java.io.IOException("simulated output write failure"))
+        val duringTransfer = AppUpdateRepository(writable, AppUpdateTransport { _, _, _ -> fail("Unexpected full download") },
+            { AppRangeReader { _, _, _ -> throw failedWrite } })
+        assertSame(failedWrite, assertThrows(AppUpdateStorageException::class.java) {
+            duringTransfer.download(release, base, null, plan) {}
+        })
+        assertTrue(writable.list()!!.isEmpty())
+    }
+
+    @Test fun outputFailureIsClassifiedWithoutReclassifyingNetworkErrors() {
+        val file = temporary.newFile()
+        val failing = object : java.io.FileOutputStream(file) {
+            override fun write(bytes: ByteArray, offset: Int, count: Int) { throw java.io.IOException("simulated ENOSPC") }
+        }
+        AppUpdateStorage.Output(failing).use { output ->
+            assertThrows(AppUpdateStorageException::class.java) { output.write(byteArrayOf(1), 0, 1) }
+        }
+        val network = java.net.SocketTimeoutException("network")
+        assertSame(network, assertThrows(java.net.SocketTimeoutException::class.java) {
+            AppUpdateStorage.output(file).use { throw network }
+        })
+    }
 }

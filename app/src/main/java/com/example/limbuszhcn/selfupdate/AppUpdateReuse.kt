@@ -102,7 +102,7 @@ internal object AppUpdateReuse {
             }
             changed()
             RandomAccessFile(base, "r").use { source ->
-                output.outputStream().use { target ->
+                AppUpdateStorage.output(output).use { target ->
                     fun append(bytes: ByteArray, count: Int) {
                         checkpoint(deadline)
                         require(count.toLong() <= plan.targetSize-written)
@@ -132,7 +132,7 @@ internal object AppUpdateReuse {
                     }
                     missing(plan.targetSize-written)
                     require(written == plan.targetSize && digest.digest().hex() == release.sha256) { "合成安装包校验失败" }
-                    target.fd.sync()
+                    target.sync()
                 }
             }
             complete = true

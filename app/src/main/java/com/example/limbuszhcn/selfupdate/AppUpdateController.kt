@@ -137,6 +137,7 @@ internal class AppUpdateController(private val app: Application) {
         }
         checkPolicy.failed(error)
         val message = when (error) {
+            is AppUpdateStorageException -> error.message!!
             is java.net.SocketTimeoutException -> "连接超时，请重试或查看 GitHub 发行页面"
             is java.net.UnknownHostException -> "暂时无法连接 GitHub，请检查网络后重试"
             is IllegalArgumentException, is IllegalStateException, is UpdateHttpException -> error.message ?: "更新检查未完成"
