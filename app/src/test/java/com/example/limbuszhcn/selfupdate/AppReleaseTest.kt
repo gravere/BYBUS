@@ -88,4 +88,25 @@ class AppReleaseTest {
         }
         assertTrue(AppRelease.parse(remote, data.put("deltas", JSONArray().put(patch).put(patch))).deltas.isEmpty())
     }
+
+    @Test fun universalReuseHasNoBaseVersionAndInvalidMetadataKeepsFullUpdate() {
+        val size = 400_000L
+        val remote = release().apply { getJSONArray("assets").getJSONObject(0).put("size", size) }
+        val raw = JSONObject().put("name", "assets/common").put("offset", 1000L).put("length", 100_000L)
+            .put("sha256", "b".repeat(64))
+        val description = JSONObject().put("format", AppReleases.REUSE_FORMAT).put("entries", JSONArray().put(raw))
+        val data = manifest().put("size", size).put("reuse", description)
+        val parsed = AppRelease.parse(remote, data)
+        assertEquals(1, parsed.reuse.size); assertTrue(parsed.deltas.isEmpty())
+        for ((key, value) in listOf("offset" to -1L, "offset" to Long.MAX_VALUE, "length" to Long.MAX_VALUE,
+            "length" to 1L, "sha256" to "bad", "name" to "")) {
+            val invalid = JSONObject(description.toString()).put("entries", JSONArray().put(JSONObject(raw.toString()).put(key, value)))
+            val fallback = AppRelease.parse(remote, JSONObject(data.toString()).put("reuse", invalid))
+            assertTrue(fallback.reuse.isEmpty()); assertEquals(size, fallback.apk.size)
+        }
+        val duplicate = JSONObject(description.toString()).put("entries", JSONArray().put(raw).put(raw))
+        assertTrue(AppRelease.parse(remote, JSONObject(data.toString()).put("reuse", duplicate)).reuse.isEmpty())
+        val future = JSONObject(description.toString()).put("format", "future")
+        assertTrue(AppRelease.parse(remote, JSONObject(data.toString()).put("reuse", future)).reuse.isEmpty())
+    }
 }

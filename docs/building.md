@@ -88,7 +88,7 @@ python scripts/prepare-release.py --apk app/build/outputs/apk/release/app-releas
 
 脚本检查 APK 版本、签名与安装器配置，输出带版本及架构的安装包、应用更新兼容包、更新元数据、校验文件和可直接粘贴到 GitHub Release 的 `release-notes.md`。上传元数据 `deltas` 中声明的全部补丁，发行正文使用生成的说明文件。
 
-输出目录中有支持差异协议的旧正式 APK 时，脚本自动为最多三个较新的基准生成并回放验证补丁；也可通过 `--base-apk /path/to/previous.apk` 指定。基准须与目标签名一致，补丁大于完整包的 80% 时不发布。固定协议门槛及文件约定见[应用更新与发布](app-updates.md)。
+脚本仅从当前已签名 APK 生成通用内容复用描述，嵌入 `bybus-update.json`，不依赖旧 APK，也不再逐版本生成 `.delta`。发布前应使用现存的旧正式 APK 检查跨版本重建，再验证公开下载的 Range 响应。协议与文件约定见[应用更新与发布](app-updates.md)。
 
 更新器的局部回归：
 
@@ -96,4 +96,4 @@ python scripts/prepare-release.py --apk app/build/outputs/apk/release/app-releas
 ./gradlew :app:testDebugUnitTest --tests '*selfupdate.*'
 ```
 
-`scripts/apk_delta.py --base previous.apk --target current.apk --patch update.delta` 可单独测量补丁大小并验证逐字节还原。该命令不检查 Android 版本与签名，正式发行必须使用 `prepare-release.py`。文件约定与发布流程见[应用更新与发布](app-updates.md)。
+`scripts/apk_reuse.py --target current.apk --base previous.apk` 可查看通用描述在不同旧 APK 上的可复用内容与预计下载量，`--base` 可重复传入。该命令不检查 Android 签名，正式发行必须使用 `prepare-release.py`。历史 `apk_delta.py` 仅保留供旧格式回归。

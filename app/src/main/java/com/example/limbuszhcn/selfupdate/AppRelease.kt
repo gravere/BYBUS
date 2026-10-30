@@ -16,6 +16,9 @@ internal object AppReleases {
     const val DELTA_FORMAT = "bybus-copy-v1"
     const val FIRST_DELTA_BUILD = 48L
     const val MAX_DELTAS = 3
+    const val REUSE_FORMAT = "bybus-range-v1"
+    const val MAX_REUSE_ENTRIES = 32
+    const val MIN_REUSE_BYTES = 64L * 1024
 
     /** Redirects are restricted to HTTPS GitHub release storage, without credentials. */
     fun allowed(url: String): Boolean = runCatching {
@@ -37,9 +40,11 @@ internal data class ReleaseAsset(val id: Long, val name: String, val size: Long)
 internal data class AppDelta(val fromVersionCode: Long, val fromSize: Long, val fromSha256: String,
     val sha256: String, val asset: ReleaseAsset)
 
+internal data class ApkReuseEntry(val name: String, val offset: Long, val length: Long, val sha256: String)
+
 internal data class AppRelease(val tag: String, val versionName: String, val versionCode: Long,
     val minSdk: Int, val sha256: String, val apk: ReleaseAsset, val notes: String,
-    val deltas: List<AppDelta> = emptyList()) {
+    val deltas: List<AppDelta> = emptyList(), val reuse: List<ApkReuseEntry> = emptyList()) {
     fun newerThan(installed: Long) = versionCode > installed
 
     companion object {
@@ -73,8 +78,33 @@ internal data class AppRelease(val tag: String, val versionName: String, val ver
             val minSdk = manifest.getInt("minSdk")
             require(minSdk in 26..100) { "系统版本要求异常" }
             return AppRelease(tag, version, code, minSdk, sha, apk,
-                manifest.optString("notes").take(3000), parseDeltas(release, manifest, code, apk.size))
+                manifest.optString("notes").take(3000), parseDeltas(release, manifest, code, apk.size),
+                parseReuse(manifest, apk.size))
         }
+
+        private fun parseReuse(manifest: JSONObject, apkSize: Long): List<ApkReuseEntry> = try {
+            val raw = manifest.optJSONObject("reuse")
+            if (raw == null || raw.optString("format") != AppReleases.REUSE_FORMAT) emptyList()
+            else {
+                val list = raw.getJSONArray("entries")
+                require(list.length() in 1..AppReleases.MAX_REUSE_ENTRIES)
+                var end = 0L
+                val names = HashSet<String>()
+                (0 until list.length()).map { index ->
+                    val item = list.getJSONObject(index)
+                    val name = item.getString("name")
+                    val offset = item.getLong("offset")
+                    val length = item.getLong("length")
+                    val sha = item.getString("sha256").lowercase(java.util.Locale.ROOT)
+                    require(name.length in 1..512 && name.none { it < ' ' } && names.add(name))
+                    require(offset >= end && offset <= apkSize && length >= AppReleases.MIN_REUSE_BYTES && length <= apkSize-offset)
+                    require(sha.matches(Regex("[a-f0-9]{64}")))
+                    end = offset + length
+                    ApkReuseEntry(name, offset, length, sha)
+                }
+            }
+        } catch (_: org.json.JSONException) { emptyList() }
+          catch (_: IllegalArgumentException) { emptyList() }
 
         /** Optional or future patch metadata must never prevent a full APK update. */
         private fun parseDeltas(release: JSONObject, manifest: JSONObject, code: Long, apkSize: Long): List<AppDelta> {

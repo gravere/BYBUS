@@ -14,10 +14,11 @@ internal fun interface AppUpdateTransport {
     fun read(url: String, binary: Boolean, consume: (InputStream, Long) -> Unit)
 }
 
-internal data class AppUpdateProgress(val message: String, val percent: Int?, val delta: AppDelta?)
+internal data class AppUpdateProgress(val message: String, val percent: Int?, val delta: AppDelta?, val reuse: AppReusePlan? = null)
 
 internal class AppUpdateRepository @JvmOverloads constructor(private val directory: File,
-    private val transport: AppUpdateTransport = AppUpdateTransport { url, binary, consume -> fetch(url, binary, consume) }) {
+    private val transport: AppUpdateTransport = AppUpdateTransport { url, binary, consume -> fetch(url, binary, consume = consume) },
+    private val rangeFactory: (ReleaseAsset) -> AppRangeReader = { asset -> ranges(asset) }) {
     private val apk get() = File(directory, AppReleases.APK)
 
     fun check(): AppRelease {
@@ -42,7 +43,18 @@ internal class AppUpdateRepository @JvmOverloads constructor(private val directo
         catch (_: java.io.IOException) { null }
     }
 
-    fun download(release: AppRelease, baseApk: File?, delta: AppDelta?, progress: (AppUpdateProgress) -> Unit): File = synchronized(stagingLock) {
+    fun selectReuse(release: AppRelease, baseApk: File): AppReusePlan? = try {
+        AppUpdateReuse.plan(baseApk, release)
+    } catch (error: Exception) {
+        if (error is CancellationException || Thread.currentThread().isInterrupted) throw CancellationException()
+        null // Optional local reuse must never disable a complete update.
+    }
+
+    fun download(release: AppRelease, baseApk: File?, delta: AppDelta?, progress: (AppUpdateProgress) -> Unit): File =
+        download(release, baseApk, delta, null, progress)
+
+    fun download(release: AppRelease, baseApk: File?, delta: AppDelta?, reuse: AppReusePlan?,
+        progress: (AppUpdateProgress) -> Unit): File = synchronized(stagingLock) {
         require(directory.isDirectory || directory.mkdirs()) { "无法创建更新缓存" }
         val pending = File(directory, "download.part")
         val patch = File(directory, "update.delta.part")
@@ -52,16 +64,24 @@ internal class AppUpdateRepository @JvmOverloads constructor(private val directo
         try {
             var reconstructed = false
             var fallback = false
-            if (delta != null && baseApk != null) {
+            if ((reuse != null || delta != null) && baseApk != null) {
                 try {
-                    progress(AppUpdateProgress("正在校验已安装版本", null, delta))
-                    require(delta in release.deltas && AppUpdateDelta.matchesBase(baseApk, delta)) { "差异补丁与当前版本不匹配" }
-                    downloadAsset(delta.asset, delta.sha256, patch) {
-                        progress(AppUpdateProgress("正在下载差异补丁", it, delta))
-                    }
-                    progress(AppUpdateProgress("正在合成安装包", 0, delta))
-                    AppUpdateDelta.apply(baseApk, patch, pending, delta, release) {
-                        progress(AppUpdateProgress("正在合成安装包", it, delta))
+                    if (reuse != null) {
+                        progress(AppUpdateProgress("正在复用已安装内容", 0, null, reuse))
+                        AppUpdateReuse.apply(baseApk, pending, release, reuse, rangeFactory(release.apk)) {
+                            progress(AppUpdateProgress("正在下载差异内容", it, null, reuse))
+                        }
+                    } else {
+                        requireNotNull(delta)
+                        progress(AppUpdateProgress("正在校验已安装版本", null, delta))
+                        require(delta in release.deltas && AppUpdateDelta.matchesBase(baseApk, delta)) { "差异补丁与当前版本不匹配" }
+                        downloadAsset(delta.asset, delta.sha256, patch) {
+                            progress(AppUpdateProgress("正在下载差异补丁", it, delta))
+                        }
+                        progress(AppUpdateProgress("正在合成安装包", 0, delta))
+                        AppUpdateDelta.apply(baseApk, patch, pending, delta, release) {
+                            progress(AppUpdateProgress("正在合成安装包", it, delta))
+                        }
                     }
                     reconstructed = true
                 } catch (error: Exception) {
@@ -131,7 +151,16 @@ internal class AppUpdateRepository @JvmOverloads constructor(private val directo
             return size
         }
 
-        private fun <T> fetch(initial: String, binary: Boolean, consume: (InputStream, Long) -> T): T {
+        private fun ranges(asset: ReleaseAsset): AppRangeReader {
+            // Keep the signed CDN redirect only for this download session; no extra API hit per gap.
+            var endpoint = asset.url
+            return AppRangeReader { offset, length, consume ->
+                fetch(endpoint, true, AppByteRange(offset, length, asset.size), { endpoint = it }) { input, _ -> consume(input) }
+            }
+        }
+
+        private fun <T> fetch(initial: String, binary: Boolean, range: AppByteRange? = null,
+            resolved: (String) -> Unit = {}, consume: (InputStream, Long) -> T): T {
             var url = initial
             repeat(5) {
                 require(AppReleases.allowed(url)) { "更新下载地址不受信任" }
@@ -146,11 +175,13 @@ internal class AppUpdateRepository @JvmOverloads constructor(private val directo
                     connection.setRequestProperty("Accept", if (binary) "application/octet-stream" else "application/vnd.github+json")
                     connection.setRequestProperty("Accept-Encoding", "identity")
                     connection.setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+                    range?.let { connection.setRequestProperty("Range", it.header) }
                     val status = connection.responseCode
                     if (status in setOf(301, 302, 303, 307, 308)) {
                         url = URL(URL(url), requireNotNull(connection.getHeaderField("Location"))).toString()
                     } else {
-                        if (status != 200) {
+                        if (range != null && status == 200) error("服务器不支持分段更新")
+                        if (status != if (range == null) 200 else 206) {
                             val body = connection.errorStream?.use { input ->
                                 val bytes = ByteArray(8192)
                                 var used = 0
@@ -166,6 +197,9 @@ internal class AppUpdateRepository @JvmOverloads constructor(private val directo
                                 connection.getHeaderField("X-RateLimit-Reset"), connection.getHeaderField("Retry-After"),
                                 connection.getHeaderField("Date"), body, System.currentTimeMillis())
                         }
+                        range?.validate(status, connection.getHeaderField("Content-Range"), connection.contentLengthLong,
+                            connection.getHeaderField("Content-Encoding"))
+                        resolved(url)
                         return connection.inputStream.use { consume(it, connection.contentLengthLong) }
                     }
                 } finally { connection.disconnect() }
