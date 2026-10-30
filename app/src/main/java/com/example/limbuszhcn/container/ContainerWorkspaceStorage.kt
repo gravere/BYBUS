@@ -154,25 +154,31 @@ class LocalContainerRuntime(
     override fun importGame(request: GameImportRequest): GameImportResult = importGame(request) { }
 
     /** Metadata is the commit point. An external failure leaves old snapshots and a repair marker. */
-    internal fun importGame(request: GameImportRequest, install: (GameImportRequest) -> Unit): GameImportResult {
+    internal fun importGame(request: GameImportRequest, referencedApks: () -> List<String> = { emptyList() },
+                            install: (GameImportRequest) -> Unit): GameImportResult {
         require(request.splitApkPaths.isNotEmpty()) { "需要至少一个 APK" }
         val sources = request.splitApkPaths.map { Paths.get(it).toAbsolutePath().normalize() }
         require(sources.all { Files.isRegularFile(it) }) { "游戏 APK 集合不完整，请重试同步" }
         require(sources.map { it.fileName.toString() }.distinct().size == sources.size) { "APK 文件名重复" }
         val generations = workspaceRoot.resolve("imports").also { it.createDirectories() }
-        val id = UUID.randomUUID().toString()
-        val candidate = generations.resolve(id)
+        val committed = readMetadata()
+        val recovery = ImportSnapshotRecovery(workspaceRoot)
+        // Query first: an IPC error must not be interpreted as an unused snapshot.
+        val references = referencedApks()
+        val resumed = recovery.candidate(request, sources)
+        recovery.prune(committed, references, resumed?.first?.fileName?.toString())
+        val id = resumed?.first?.fileName?.toString() ?: UUID.randomUUID().toString()
+        val candidate = resumed?.first ?: generations.resolve(id)
         val splits = candidate.resolve("splits").also { it.createDirectories() }
-        val metadata = Properties().apply {
+        val metadata = resumed?.second ?: Properties().apply {
             setProperty("packageName", GAME_PACKAGE)
             setProperty("importedSplits", sources.size.toString())
             setProperty("source", request.source)
             setProperty("generation", id)
             request.versionCode?.let { setProperty("versionCode", it.toString()) }
         }
-        val committed = readMetadata()
         val reuse = ImportSnapshotReuse(workspaceRoot)
-        try {
+        if (resumed == null) try {
             sources.forEachIndexed { index, source ->
                 val before = source.sha256()
                 val target = splits.resolve(source.fileName)
@@ -186,7 +192,9 @@ class LocalContainerRuntime(
             AtomicFiles.deleteOwnedTree(generations, candidate)
             throw error
         }
-        val previous = readMetadata()?.getProperty("generation")
+        val previous = committed?.getProperty("generation")?.let {
+            if (it == id) committed.getProperty("previousGeneration") else it
+        }
         val prepared = request.copy(splitApkPaths = sources.map { splits.resolve(it.fileName).toString() })
         AtomicFiles.properties(repairFile, Properties().apply {
             setProperty("candidate", id)
@@ -199,10 +207,7 @@ class LocalContainerRuntime(
         Files.deleteIfExists(repairFile)
         // Only prune after a complete commit. Never touch legacy splits or game data here.
         runCatching {
-            Files.list(generations).use { paths ->
-                paths.filter { it.fileName.toString() !in setOf(id, previous) }
-                    .forEach { AtomicFiles.deleteOwnedTree(generations, it) }
-            }
+            recovery.prune(metadata, referencedApks())
         }
         return GameImportResult(sources.size, GAME_PACKAGE, request.versionCode, request.source)
     }

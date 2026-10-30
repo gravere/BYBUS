@@ -12,13 +12,9 @@ import com.lody.virtual.client.core.VirtualCore
 import com.lody.virtual.client.ipc.VPackageManager
 import com.lody.virtual.os.VEnvironment
 import com.lody.virtual.remote.InstallOptions
-import com.example.limbuszhcn.storage.AtomicFiles
 import com.example.limbuszhcn.measureStartup
-import java.nio.file.Files
-import java.util.UUID
 import com.lody.virtual.client.ipc.VActivityManager
 import java.io.File
-import java.util.zip.ZipFile
 import java.security.MessageDigest
 
 /**
@@ -71,7 +67,7 @@ class VirtualAppContainerRuntime(
         bridge.requireAvailable()
         require(request.source == "installed" || request.splitApkPaths.size == 1) { "手动导入不支持 split APK" }
         stopGame()
-        return fallback.importGame(request) { prepared ->
+        return fallback.importGame(request, bridge::referencedGameApkPaths) { prepared ->
             val result = bridge.installBaseApk(prepared.splitApkPaths.first(), prepared.source == "installed")
             require(result.success && result.packageName == LocalContainerRuntime.GAME_PACKAGE) {
                 "容器安装未完成，请重新同步游戏: ${result.error.orEmpty()}"
@@ -246,7 +242,11 @@ private class VirtualAppBridge(
         val changes = components.filter { (_, target) ->
             MicrogUpgradePolicy.needsInstall(target, previous[target.packageName]?.let(::readMicrogIdentity))
         }
-        if (changes.isNotEmpty()) {
+        val nativeRepairs = components.filter { (apk, identity) ->
+            identity.packageName !in changes.map { it.second.packageName } &&
+                !nativeDeployment(identity.packageName).isComplete(listOf(apk.toPath()))
+        }
+        if (changes.isNotEmpty() || nativeRepairs.isNotEmpty()) {
             stopExistingGameProcess(LocalContainerRuntime.GAME_PACKAGE)
             MicrogUpgradePolicy.packages.forEach(::stopExistingGameProcess)
             val rollback = File(context.filesDir, "microg-upgrade-rollback")
@@ -271,6 +271,7 @@ private class VirtualAppBridge(
                         ?: error("Google 组件升级后未找到安装记录")
                     check(readMicrogIdentity(File(installed.apkPath)) == target) { "Google 组件升级校验失败" }
                 }
+                nativeRepairs.forEach { (apk, target) -> installNativeLibraries(target.packageName, listOf(apk.absolutePath)) }
             } catch (error: Exception) {
                 // VirtualApp can replace an APK before reporting a failure. Restore every attempted
                 // existing component, including the one that failed; never uninstall or clear data.
@@ -379,45 +380,23 @@ private class VirtualAppBridge(
 
     fun installNativeLibraries(packageName: String, apkPaths: List<String>): Int {
         requireAvailable()
-        require(apkPaths.isNotEmpty() && apkPaths.all { File(it).isFile }) { "原生库来源 APK 不完整" }
-        val target = VEnvironment.getAppLibDirectory(packageName).toPath()
-        Files.createDirectories(target.parent)
-        val staged = target.resolveSibling(".${target.fileName}.staging-${UUID.randomUUID()}")
-        Files.createDirectories(staged)
-        var count = 0
-        try {
-            apkPaths.forEach { path ->
-                ZipFile(path).use { zip ->
-                    val entries = zip.entries().asSequence().filter { !it.isDirectory && it.name.startsWith("lib/") && it.name.endsWith(".so") }.toList()
-                    val abi = Build.SUPPORTED_ABIS.firstOrNull { abi -> entries.any { it.name.startsWith("lib/$abi/") } }
-                    require(entries.isEmpty() || abi != null) { "游戏组件没有设备支持的原生 ABI" }
-                    entries.filter { abi != null && it.name.startsWith("lib/$abi/") }.forEach { entry ->
-                        val file = staged.resolve(entry.name.substringAfterLast('/'))
-                        require(!Files.exists(file)) { "不同 APK 包含重复原生库，拒绝覆盖" }
-                        zip.getInputStream(entry).use { input ->
-                            java.io.FileOutputStream(file.toFile()).use { output ->
-                                val copied = input.copyTo(output)
-                                require(copied > 0 && (entry.size < 0 || copied == entry.size)) { "原生库复制不完整" }
-                                output.fd.sync()
-                            }
-                        }
-                        file.toFile().setReadable(true, false)
-                        file.toFile().setExecutable(true, false)
-                        count++
-                    }
-                }
-            }
-            if (packageName == LocalContainerRuntime.GAME_PACKAGE) {
-                require(Files.isRegularFile(staged.resolve("libil2cpp.so"))) { "缺少游戏核心原生库" }
-            }
-            AtomicFiles.replaceDirectory(staged, target)
-            return count
-        } finally {
-            if (Files.exists(staged)) AtomicFiles.deleteOwnedTree(target.parent, staged)
-        }
+        return nativeDeployment(packageName).install(apkPaths.map { File(it).toPath() })
     }
 
+    private fun nativeDeployment(packageName: String) = NativeLibraryDeployment(
+        VEnvironment.getAppLibDirectory(packageName).toPath(), Build.SUPPORTED_ABIS.toList(),
+        if (packageName == LocalContainerRuntime.GAME_PACKAGE) "libil2cpp.so" else null)
+
     fun isVirtualAppInstalled(packageName: String): Boolean = VirtualCore.get().isAppInstalled(packageName)
+
+    fun referencedGameApkPaths(): List<String> {
+        requireAvailable()
+        val installed = VirtualCore.get().getInstalledAppInfo(LocalContainerRuntime.GAME_PACKAGE, 0) ?: return emptyList()
+        val info = requireNotNull(VPackageManager.get().getApplicationInfo(LocalContainerRuntime.GAME_PACKAGE, 0, 0)) {
+            "无法确认容器安装包引用，已保留现有快照"
+        }
+        return (listOf(installed.apkPath, requireNotNull(info.sourceDir)) + info.splitSourceDirs.orEmpty()).distinct()
+    }
 
     /**
      * 判断 VirtualApp 的游戏记录是否仍引用旧的私有 APK，而不是当前系统安装源。
