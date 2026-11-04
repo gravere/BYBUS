@@ -16,7 +16,7 @@ def section(source: str, title: str) -> str:
 
 
 def update_summary(source: str) -> str:
-    return '\n'.join(line.removeprefix('- ') for line in section(source, '更新内容').splitlines()
+    return '\n'.join(line for line in section(source, '更新内容').splitlines()
                      if line.startswith('- '))
 
 

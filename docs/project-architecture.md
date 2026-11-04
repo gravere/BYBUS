@@ -25,13 +25,16 @@ It does not require a catalog entry or a rebuilt launcher for every same-family 
 ## Modules
 
 The launcher keeps device readiness in the installation/status area. The primary launch action
-is pinned in a compact bottom bar above safe insets, aligned to the right on wide windows; progress
+is pinned in a compact, centered bottom capsule above safe insets on all window sizes; progress
 appears above it so the tap target does not jump during preparation. Snackbars stay above this bar.
 Detail pages use a bottom-aligned fixed dialog on phones and a centered dialog on tablets, with a
-fixed header and per-page scroll state. They do not attach an outer draggable sheet: its spring
-can overshoot the expanded anchor on an upward fling and expose the scrim beneath the bottom edge.
-Their opaque scroll viewport is clipped and disables overscroll stretching. Child-page back
-continues to restore its parent, without predictive scaling.
+fixed header and per-page scroll state. A bounded downward drag restores pull-to-dismiss without
+an upward spring: header gestures move the panel, while body gestures move it only after the
+inner scroll reaches its top. An upward reversal returns the panel toward zero; short pulls
+settle back with a non-overshooting animation. Their opaque scroll viewport is clipped and
+disables overscroll stretching. Child-page back continues to restore its parent, without
+predictive scaling. Update notes use separate bullet rows and preserve legacy unmarked lines;
+release metadata retains list markers so older clients also show the points.
 App-version notices use the independent metadata-only foreground check described in
 [app-updates.md](app-updates.md); they do not enter the game preparation queue.
 
