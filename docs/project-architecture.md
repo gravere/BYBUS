@@ -24,6 +24,17 @@ It does not require a catalog entry or a rebuilt launcher for every same-family 
 
 ## Modules
 
+The launcher keeps device readiness in the installation/status area. The primary launch action
+is pinned in a compact bottom bar above safe insets, aligned to the right on wide windows; progress
+appears above it so the tap target does not jump during preparation. Snackbars stay above this bar.
+Detail pages use a bottom-aligned fixed dialog on phones and a centered dialog on tablets, with a
+fixed header and per-page scroll state. They do not attach an outer draggable sheet: its spring
+can overshoot the expanded anchor on an upward fling and expose the scrim beneath the bottom edge.
+Their opaque scroll viewport is clipped and disables overscroll stretching. Child-page back
+continues to restore its parent, without predictive scaling.
+App-version notices use the independent metadata-only foreground check described in
+[app-updates.md](app-updates.md); they do not enter the game preparation queue.
+
 - `:app`: Kotlin / Jetpack Compose UI and localization workflow.
 - `LaunchCoordinator`: application-owned state and work queue; `LauncherViewModel` is a UI facade. `OperationLock` covers UI, debug and other process writers.
 - `:virtualapp`: vendored VirtualApp Android 12 source under `third_party/virtualapp-upstream/lib`.

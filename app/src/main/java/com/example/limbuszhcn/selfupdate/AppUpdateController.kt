@@ -15,7 +15,10 @@ import java.util.concurrent.atomic.AtomicLong
 internal data class AppUpdateState(val installedCode: Long, val busy: Boolean = false,
     val checked: Boolean = false, val release: AppRelease? = null, val progress: Int? = null,
     val ready: Boolean = false, val message: String = "检查 BYBUS 的新版本", val error: String? = null,
-    val delta: AppDelta? = null, val retryAtElapsed: Long? = null, val reuse: AppReusePlan? = null)
+    val delta: AppDelta? = null, val retryAtElapsed: Long? = null, val reuse: AppReusePlan? = null,
+    val knownVersionCode: Long = 0, val downloadPlanned: Boolean = false) {
+    val updateAvailable: Boolean get() = maxOf(knownVersionCode, release?.versionCode ?: 0) > installedCode
+}
 
 /** A separate worker: app update requests never block the game preparation queue. */
 internal class AppUpdateController(private val app: Application) {
@@ -24,6 +27,8 @@ internal class AppUpdateController(private val app: Application) {
     private val main = Handler(Looper.getMainLooper())
     private val generation = AtomicLong()
     private val preferences = app.getSharedPreferences("bybus-app-update", 0)
+    private var notice = AppUpdateNotice(preferences.getLong("noticeVersion", 0),
+        preferences.getLong("noticeCheckedAt", 0), preferences.getLong("noticeAttemptedAt", 0))
     private val checkPolicy = AppUpdateCheckPolicy(SystemClock::elapsedRealtime, System::currentTimeMillis,
         if (preferences.getInt("retrySchema", 0) == 2)
             UpdateRateLimitWindow(preferences.getLong("rateRecordedAt", 0), preferences.getLong("rateRetryAt", 0)) else null
@@ -36,36 +41,50 @@ internal class AppUpdateController(private val app: Application) {
     private var task: Future<*>? = null
     private var readyFile: File? = null
     private var closed = false
-    var state by mutableStateOf(AppUpdateState(AppUpdatePackage.installedCode(app)))
+    var state by mutableStateOf(AppUpdateState(AppUpdatePackage.installedCode(app), knownVersionCode = notice.versionCode))
         private set
     var installRequest by mutableStateOf<File?>(null)
         private set
 
     init { preferences.edit().remove("retryAt").apply() }
 
-    fun check(force: Boolean = false) {
+    fun checkForNotice() {
+        if (state.ready || installRequest != null || !notice.shouldCheck(System.currentTimeMillis())) return
+        check(automatic = true)
+    }
+
+    private fun saveNotice(value: AppUpdateNotice) {
+        notice = value
+        preferences.edit().putLong("noticeVersion", value.versionCode).putLong("noticeCheckedAt", value.checkedAt)
+            .putLong("noticeAttemptedAt", value.attemptedAt).apply()
+    }
+
+    fun check(force: Boolean = false, automatic: Boolean = false) {
         if (closed || state.busy) return
         when (checkPolicy.beforeCheck(force)) {
             UpdateCheckDecision.Cached -> return
-            UpdateCheckDecision.Wait -> { showServerWait(); return }
+            UpdateCheckDecision.Wait -> { if (!automatic) showServerWait(); return }
             UpdateCheckDecision.Check -> Unit
         }
         readyFile = null
         installRequest = null
+        saveNotice(notice.attempted(System.currentTimeMillis()))
         val id = generation.incrementAndGet()
         state = state.copy(busy = true, ready = false, progress = null, message = "正在检查版本", error = null, retryAtElapsed = null)
         task = worker.submit {
             try {
                 val release = repository.check()
                 val installed = AppUpdatePackage.installedCode(app)
-                if (!release.newerThan(installed)) repository.clear()
-                val reuse = if (release.newerThan(installed))
+                if (!automatic && !release.newerThan(installed)) repository.clear()
+                val reuse = if (!automatic && release.newerThan(installed))
                     repository.selectReuse(release, File(app.applicationInfo.sourceDir)) else null
-                val delta = if (release.newerThan(installed) && reuse == null)
+                val delta = if (!automatic && release.newerThan(installed) && reuse == null)
                     repository.selectDelta(release, installed, File(app.applicationInfo.sourceDir)) else null
                 publish(id) {
                     checkPolicy.succeeded()
+                    saveNotice(notice.checked(release.versionCode, System.currentTimeMillis()))
                     state = AppUpdateState(installed, checked = true, release = release, delta = delta, reuse = reuse,
+                        knownVersionCode = notice.versionCode, downloadPlanned = !automatic,
                         message = if (release.newerThan(installed)) "有新版本可用" else "已是最新版本")
                 }
             } catch (error: Exception) {
@@ -83,12 +102,19 @@ internal class AppUpdateController(private val app: Application) {
             return
         }
         val id = generation.incrementAndGet()
-        val delta = state.delta
-        val reuse = state.reuse
+        val planned = state.downloadPlanned
+        val installedCode = state.installedCode
+        val selectedDelta = state.delta
+        val selectedReuse = state.reuse
         state = state.copy(busy = true, ready = false, progress = null, message = "正在准备更新", error = null, retryAtElapsed = null)
         task = worker.submit {
             try {
-                val file = repository.download(release, File(app.applicationInfo.sourceDir), delta, reuse) { transfer ->
+                val source = File(app.applicationInfo.sourceDir)
+                val reuse = if (planned) selectedReuse else repository.selectReuse(release, source)
+                val delta = if (planned) selectedDelta else if (reuse == null)
+                    repository.selectDelta(release, installedCode, source) else null
+                publish(id) { state = state.copy(reuse = reuse, delta = delta, downloadPlanned = true) }
+                val file = repository.download(release, source, delta, reuse) { transfer ->
                     publish(id) { state = state.copy(progress = transfer.percent, message = transfer.message, delta = transfer.delta, reuse = transfer.reuse) }
                 }
                 publish(id) { state = state.copy(progress = null, message = "正在校验安装包") }
