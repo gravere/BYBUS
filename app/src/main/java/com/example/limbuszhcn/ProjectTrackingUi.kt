@@ -36,58 +36,56 @@ import java.util.Locale
 import kotlinx.coroutines.delay
 
 @Composable
-internal fun ProjectCard(tracking: ProjectTrackingState, onClick: () -> Unit) {
+internal fun ProjectCard(tracking: ProjectTrackingState, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val state = tracking.paratranz
-    Surface(onClick = onClick, shape = RoundedCornerShape(20.dp), color = C.Panel, contentColor = C.Ink) {
-        Column(Modifier.fillMaxWidth().padding(20.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Text(tracking.source.title, color = C.Muted, style = MaterialTheme.typography.labelMedium)
-                    Text("都市零协会", style = MaterialTheme.typography.titleMedium)
-                }
-                LauncherGlyph(Glyph.Chevron, C.Accent, Modifier.size(18.dp))
+    HomeSummaryCard(onClick, modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(tracking.source.title, color = C.Muted, style = MaterialTheme.typography.labelMedium)
+                Text("都市零协会", style = MaterialTheme.typography.titleMedium)
             }
-            Spacer(Modifier.height(22.dp))
-            val snapshot = state.snapshot
-            if (tracking.source == ProjectSource.GitHub) {
-                val github = tracking.github
-                github.snapshot?.let { release ->
-                    Text(release.tag, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Medium)
-                    Spacer(Modifier.height(8.dp))
-                    Text("正式发布 · ${time(release.publishedAtMillis, full = true)}",
-                        color = C.Muted, style = MaterialTheme.typography.bodySmall)
-                    if (github.issue != null) Text("上次同步记录 · 暂未刷新", color = C.Muted,
-                        style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
-                } ?: Text(if (github.loading) "正在读取最新发布…" else "暂时无法连接 GitHub",
+            LauncherGlyph(Glyph.Chevron, C.Accent, Modifier.size(18.dp))
+        }
+        Spacer(Modifier.height(22.dp))
+        val snapshot = state.snapshot
+        if (tracking.source == ProjectSource.GitHub) {
+            val github = tracking.github
+            github.snapshot?.let { release ->
+                Text(release.tag, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.height(8.dp))
+                Text("正式发布 · ${time(release.publishedAtMillis, full = true)}",
                     color = C.Muted, style = MaterialTheme.typography.bodySmall)
-            } else if (snapshot != null) {
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Text(percent(snapshot.translatedFraction), style = MaterialTheme.typography.headlineLarge,
-                        fontWeight = FontWeight.Medium)
-                    Text("已翻译", color = C.Muted, style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(start = 10.dp, bottom = 5.dp))
+                if (github.issue != null) Text("上次同步记录 · 暂未刷新", color = C.Muted,
+                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
+            } ?: Text(if (github.loading) "正在读取最新发布…" else "暂时无法连接 GitHub",
+                color = C.Muted, style = MaterialTheme.typography.bodySmall)
+        } else if (snapshot != null) {
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(percent(snapshot.translatedFraction), style = MaterialTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.Medium)
+                Text("已翻译", color = C.Muted, style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(start = 10.dp, bottom = 5.dp))
+            }
+            snapshot.translatedFraction?.let { progress ->
+                val animated by animateFloatAsState(progress, tween(350), label = "project progress")
+                LinearProgressIndicator(progress = { animated }, modifier = Modifier.fillMaxWidth()
+                    .padding(top = 12.dp).height(5.dp).clip(RoundedCornerShape(4.dp)),
+                    color = C.Accent, trackColor = C.AccentSoft)
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(if (state.loading) "正在刷新…" else
+                "${if (state.issue != null) "上次记录" else "同步于"} ${time(snapshot.fetchedAtMillis)}",
+                color = C.Muted, style = MaterialTheme.typography.bodySmall)
+        } else {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                if (state.loading) {
+                    CircularProgressIndicator(Modifier.size(14.dp), color = C.Muted, strokeWidth = 1.5.dp)
+                    Spacer(Modifier.width(10.dp))
                 }
-                snapshot.translatedFraction?.let { progress ->
-                    val animated by animateFloatAsState(progress, tween(350), label = "project progress")
-                    LinearProgressIndicator(progress = { animated }, modifier = Modifier.fillMaxWidth()
-                        .padding(top = 12.dp).height(5.dp).clip(RoundedCornerShape(4.dp)),
-                        color = C.Accent, trackColor = C.AccentSoft)
-                }
-                Spacer(Modifier.height(12.dp))
-                Text(if (state.loading) "正在刷新…" else
-                    "${if (state.issue != null) "上次记录" else "同步于"} ${time(snapshot.fetchedAtMillis)}",
-                    color = C.Muted, style = MaterialTheme.typography.bodySmall)
-            } else {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    if (state.loading) {
-                        CircularProgressIndicator(Modifier.size(14.dp), color = C.Muted, strokeWidth = 1.5.dp)
-                        Spacer(Modifier.width(10.dp))
-                    }
-                    Text(if (state.loading) "正在读取项目进度" else "暂时无法获取进度",
-                        color = C.Muted, style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.weight(1f).padding(end = 12.dp))
-                    Text("ParaTranz", color = C.Muted, style = MaterialTheme.typography.labelSmall)
-                }
+                Text(if (state.loading) "正在读取项目进度" else "暂时无法获取进度",
+                    color = C.Muted, style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f).padding(end = 12.dp))
+                Text("ParaTranz", color = C.Muted, style = MaterialTheme.typography.labelSmall)
             }
         }
     }
