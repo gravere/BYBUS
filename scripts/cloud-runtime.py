@@ -329,6 +329,61 @@ def inspect_tablet():
     REPORT["checks"].append("tablet status/project/settings use matching dialog geometry")
 
 
+def inspect_system_navigation():
+    """Exercise real system navigation modes; never replace system chrome in screenshots."""
+    overlays = adb("shell", "cmd", "overlay", "list")
+    original = re.search(r"\[x\]\s+(com\.android\.internal\.systemui\.navbar\.\S+)", overlays)
+    prefix = "com.android.internal.systemui.navbar."
+    for mode in ("gestural", "threebutton"):
+        if prefix + mode not in overlays:
+            raise RuntimeError("Emulator navigation overlay is unavailable: " + mode)
+    home = hierarchy("before-system-navigation")
+    tap("设置与工具", home)
+    tap("更新", hierarchy("tools-system-navigation"))
+    tap("更新类别：汉化资源", hierarchy("update-system-navigation"))
+    cases = [("nav-gesture", "gestural", "no", "720x1560"),
+             ("nav-three-button", "threebutton", "no", "720x1560"),
+             ("nav-three-button-dark", "threebutton", "yes", "720x1560"),
+             ("nav-three-button-landscape", "threebutton", "no", "1280x720")]
+    try:
+        for name, mode, night, size in cases:
+            adb("shell", "cmd", "overlay", "enable-exclusive", "--category", prefix + mode)
+            adb("shell", "cmd", "uimode", "night", night)
+            adb("shell", "wm", "size", size)
+            time.sleep(3)
+            tree = capture(name)
+            windows = adb("shell", "dumpsys", "window", "windows")
+            (OUT / f"{name}-window.txt").write_text(windows, encoding="utf-8")
+            nav_frames = []
+            for line in windows.splitlines():
+                if "type=navigationBars" not in line or not re.search(r"(?:mVisible|visible)=true", line):
+                    continue
+                match = re.search(r"(?:mFrame|frame)=\[(\d+),(\d+)\]\[(\d+),(\d+)\]", line)
+                if match:
+                    frame = tuple(map(int, match.groups()))
+                    if frame[2] > frame[0] and frame[3] > frame[1]:
+                        nav_frames.append(frame)
+            if not nav_frames:
+                raise RuntimeError("Could not observe visible navigation bar bounds: " + name)
+            nav = max(nav_frames, key=lambda f: (f[2] - f[0]) * (f[3] - f[1]))
+            controls = {}
+            for label in ("关闭面板", "返回上一页", "检查汉化更新"):
+                bounds = element_bounds(tree, label)
+                if bounds[0] < nav[2] and bounds[2] > nav[0] and bounds[1] < nav[3] and bounds[3] > nav[1]:
+                    raise RuntimeError("Panel control overlaps system navigation: " + label)
+                controls[label] = bounds
+            REPORT.setdefault("system_navigation", []).append(dict(name=name, mode=mode, night=night,
+                size=size, navigation_bounds=nav, controls=controls))
+    finally:
+        adb("shell", "cmd", "uimode", "night", "no", check=False)
+        adb("shell", "wm", "size", "720x1560", check=False)
+        adb("shell", "cmd", "overlay", "enable-exclusive", "--category",
+            original[1] if original else prefix + "gestural", check=False)
+        time.sleep(2)
+        tap("关闭面板", hierarchy("navigation-restored"))
+    REPORT["checks"].append("gesture and three-button navigation: light/dark/landscape controls avoid actual system bar bounds")
+
+
 def inspect_detail_scroll(parent):
     """Record real edge gestures on the release, preserving frames for visual review."""
     # Settings is deliberately scrollable on a compact phone. Find its lower entry first.
@@ -456,7 +511,7 @@ def main():
     if "Success" not in installed:
         raise RuntimeError("APK installation did not succeed: " + installed[-1000:])
     REPORT["checks"].append("published APK signature/hash and installation")
-    adb("shell", "settings", "put", "global", "policy_control", f"immersive.full={PACKAGE}")
+    adb("shell", "settings", "delete", "global", "policy_control")
     # Hide emulator system chrome before taking raw captures; never paint over app pixels.
     adb("shell", "cmd", "statusbar", "send-disable-flag", "system-icons", "clock", "notification-icons")
     adb("logcat", "-c")
@@ -490,6 +545,7 @@ def main():
     if os.environ.get("RUNTIME_MODE") == "ui":
         inspect_detail_scroll(parent)
         inspect_update_progress()
+        inspect_system_navigation()
     else:
         inspect_google(parent)
     inspect_tablet()

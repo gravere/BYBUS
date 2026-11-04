@@ -30,6 +30,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
@@ -50,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowCompat
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
 /** Fixed header and a bounded scrolling body on both tablets and compact windows. */
@@ -126,18 +128,35 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
         }
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(
-        dismissOnBackPress = false, usePlatformDefaultWidth = false)) {
+        dismissOnBackPress = false, usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         val window = (LocalView.current.parent as? DialogWindowProvider)?.window
+        val lightNavigation = C.Panel.luminance() > .5f
         SideEffect {
             window?.setGravity(if (layout.centeredDetails) Gravity.CENTER else Gravity.BOTTOM)
             window?.setDimAmount(.36f)
+            window?.let {
+                @Suppress("DEPRECATION")
+                it.navigationBarColor = android.graphics.Color.TRANSPARENT
+                if (Build.VERSION.SDK_INT >= 28) {
+                    @Suppress("DEPRECATION")
+                    it.navigationBarDividerColor = android.graphics.Color.TRANSPARENT
+                }
+                if (Build.VERSION.SDK_INT >= 29) it.isNavigationBarContrastEnforced = false
+                WindowCompat.getInsetsController(it, it.decorView).isAppearanceLightNavigationBars = lightNavigation
+            }
         }
         val panel = if (layout.centeredDetails) Modifier.padding(horizontal = 24.dp, vertical = 16.dp)
             .widthIn(max = layout.panelWidth.dp).fillMaxWidth() else Modifier.fillMaxWidth()
         Surface(panel.graphicsLayer { translationY = drag.offset }.semantics { dismiss { onDismiss(); true } },
             shape = if (layout.centeredDetails) RoundedCornerShape(28.dp)
             else RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-            color = C.Panel, contentColor = C.Ink, tonalElevation = 0.dp) { body() }
+            color = C.Panel, contentColor = C.Ink, tonalElevation = 0.dp) {
+            // Paint the bar area with the panel, but keep every control above it.
+            // A centered dialog does not touch the bar and must not add a phantom footer.
+            val safeInsets = if (layout.centeredDetails) Modifier else Modifier.windowInsetsPadding(
+                WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
+            Column(safeInsets) { body() }
+        }
     }
 }
 

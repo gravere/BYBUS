@@ -39,7 +39,15 @@ Installation rows use the known card width rather than subcomposition so the lan
 can safely measure its intrinsic height at larger text sizes. Local translation uses the
 shared language/translation vector rather than a readiness checkmark.
 Detail pages use a bottom-aligned fixed dialog on phones and a centered dialog on tablets, with a
-fixed header and per-page scroll state. A bounded downward drag restores pull-to-dismiss without
+fixed header and per-page scroll state. Their own dialog window opts into edge-to-edge and
+sets navigation icon contrast from the current theme. Phone panels paint behind the navigation
+bar and apply horizontal/bottom safe drawing insets inside their surface, outside the fixed
+content height. Centered tablet panels leave the system bar over the dimmed background. Insets
+come from the system rather than a fixed gesture-bar height, including three-button navigation.
+Navigation-bar contrast scrims are disabled where the app supplies the background; actual
+controls remain above the inset. See [Android system bars](https://developer.android.com/develop/ui/compose/system/system-bars)
+and [Compose inset padding](https://developer.android.com/develop/ui/compose/system/insets-ui).
+A bounded downward drag restores pull-to-dismiss without
 an upward spring: header gestures move the panel, while body gestures move it only after the
 inner scroll reaches its top. An upward reversal returns the panel toward zero; short pulls
 settle back with a non-overshooting animation. Their opaque scroll viewport is clipped and
