@@ -1,7 +1,6 @@
 package com.example.limbuszhcn
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -16,8 +15,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -44,7 +43,6 @@ internal fun LauncherScreen(
     onRefresh: () -> Unit,
     onUpdate: () -> Unit,
     onCheckGameUpdate: () -> Unit,
-    onGameStore: () -> Unit,
     onSelectGameSource: (GameUpdateSource) -> Unit,
     onOpenGamePage: (String) -> Unit,
     onOpenInstallSource: () -> Unit,
@@ -71,6 +69,7 @@ internal fun LauncherScreen(
         }
     }
     val snackbar = remember { SnackbarHostState() }
+    var launchBarHeight by remember { mutableIntStateOf(0) }
     var wasBusy by remember { mutableStateOf(false) }
     LaunchedEffect(state.busy) {
         val finished = wasBusy && !state.busy
@@ -127,8 +126,6 @@ internal fun LauncherScreen(
                             horizontalArrangement = Arrangement.spacedBy(layout.columnGap.dp),
                             verticalAlignment = Alignment.Top) {
                             Column(Modifier.weight(1f)) {
-                                LaunchPanel(state, onLaunch, onRefresh, onGameStore) { open(if (state.failed) "error" else "status") }
-                                Spacer(Modifier.height(16.dp))
                                 InstallationCard(state) { open("status") }
                                 Spacer(Modifier.height(8.dp))
                                 AboutLink { open("about") }
@@ -141,9 +138,7 @@ internal fun LauncherScreen(
                         }
                     } else {
                         Column(Modifier.fillMaxWidth().verticalScroll(homeScroll)) {
-                            Spacer(Modifier.height(if (layout.compactHeight) 12.dp else if (layout.centeredDetails) 20.dp else 36.dp))
-                            LaunchPanel(state, onLaunch, onRefresh, onGameStore) { open(if (state.failed) "error" else "status") }
-                            Spacer(Modifier.height(20.dp))
+                            Spacer(Modifier.height(if (layout.compactHeight) 8.dp else 16.dp))
                             InstallationCard(state) { open("status") }
                             Spacer(Modifier.height(if (layout.centeredDetails) 16.dp else 28.dp))
                             if (layout.centeredDetails) {
@@ -162,8 +157,12 @@ internal fun LauncherScreen(
                         }
                     }
                 }
+                BottomLaunchBar(state, layout.centeredDetails, onLaunch, onRefresh,
+                    onDetails = { open(if (state.failed) "error" else "status") },
+                    modifier = Modifier.onSizeChanged { launchBarHeight = it.height })
             }
-            SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(16.dp)) {
+            SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp)
+                .padding(bottom = with(LocalDensity.current) { launchBarHeight.toDp() } + 12.dp)) {
                 Snackbar(it, shape = RoundedCornerShape(20.dp), containerColor = C.Ink,
                     contentColor = C.OnPrimary, actionColor = C.OnPrimary)
             }
@@ -194,20 +193,14 @@ internal fun LauncherScreen(
 }
 
 @Composable
-private fun LaunchPanel(state: LauncherUiState, onLaunch: () -> Unit, onRefresh: () -> Unit,
-    onGameStore: () -> Unit, onDetails: () -> Unit) {
-    Surface(color = C.AccentSoft, shape = RoundedCornerShape(28.dp)) {
-        Column(Modifier.fillMaxWidth().padding(24.dp)) {
-            PrimaryAction(state, onLaunch, onRefresh, onDetails)
-            if (state.gameUpdate.newerSources(state.installedVersionName).isNotEmpty() && !state.busy) {
-                HorizontalDivider(Modifier.padding(vertical = 10.dp), color = C.Line)
-                Row(Modifier.fillMaxWidth().clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
-                    .clickable(role = Role.Button, onClick = onGameStore).heightIn(min = 48.dp).padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("渠道有较新版本",
-                        style = MaterialTheme.typography.bodySmall, color = C.OnAccentSoft, modifier = Modifier.weight(1f))
-                    LauncherGlyph(Glyph.Chevron, C.Accent, Modifier.size(16.dp))
-                }
+private fun BottomLaunchBar(state: LauncherUiState, wide: Boolean, onLaunch: () -> Unit,
+    onRefresh: () -> Unit, onDetails: () -> Unit, modifier: Modifier = Modifier) {
+    Column(modifier.fillMaxWidth().background(C.Background)) {
+        HorizontalDivider(color = C.Line)
+        Box(Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 12.dp),
+            contentAlignment = if (wide) Alignment.CenterEnd else Alignment.Center) {
+            Column(Modifier.widthIn(max = if (wide) 360.dp else 640.dp).fillMaxWidth()) {
+                PrimaryAction(state, onLaunch, onRefresh, onDetails)
             }
         }
     }
@@ -280,8 +273,6 @@ private fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefres
         state.failed -> "重新启动"
         else -> "启动游戏"
     }
-    LaunchButton(title, state.busy, enabled = state.container != null || state.failed,
-        onClick = { when { needsDetection -> onRefresh(); canLaunch -> onLaunch(); else -> onDetails() } })
     if (state.busy && state.launchStep >= 0) PreparationSteps(state.launchStep)
     val caption = when {
         state.busy -> state.stage
@@ -293,12 +284,14 @@ private fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefres
             Text(caption, color = C.Error, style = MaterialTheme.typography.bodySmall)
         }
     } else if (caption.isNotBlank()) {
-        Box(Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 6.dp).semantics { liveRegion = LiveRegionMode.Polite },
+        Box(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 12.dp).semantics { liveRegion = LiveRegionMode.Polite },
             contentAlignment = Alignment.Center) {
             Text(caption, color = C.Muted, style = MaterialTheme.typography.bodySmall,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
     }
+    LaunchButton(title, state.busy, enabled = state.container != null || state.failed,
+        onClick = { when { needsDetection -> onRefresh(); canLaunch -> onLaunch(); else -> onDetails() } })
 }
 
 @Composable

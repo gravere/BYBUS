@@ -24,10 +24,14 @@ It does not require a catalog entry or a rebuilt launcher for every same-family 
 
 ## Modules
 
-The launcher keeps device readiness in the installation/status area, separate from the launch
-action. Detail pages retain a fixed header and per-page scroll state. Their opaque scroll viewport
-is clipped and disables overscroll stretching; scrolling must not expose a blank layer or change
-the panel's height. Child-page back continues to restore its parent, without predictive scaling.
+The launcher keeps device readiness in the installation/status area. The primary launch action
+is pinned in a compact bottom bar above safe insets, aligned to the right on wide windows; progress
+appears above it so the tap target does not jump during preparation. Snackbars stay above this bar.
+Detail pages use a bottom-aligned fixed dialog on phones and a centered dialog on tablets, with a
+fixed header and per-page scroll state. They do not attach an outer draggable sheet: its spring
+can overshoot the expanded anchor on an upward fling and expose the scrim beneath the bottom edge.
+Their opaque scroll viewport is clipped and disables overscroll stretching. Child-page back
+continues to restore its parent, without predictive scaling.
 App-version notices use the independent metadata-only foreground check described in
 [app-updates.md](app-updates.md); they do not enter the game preparation queue.
 

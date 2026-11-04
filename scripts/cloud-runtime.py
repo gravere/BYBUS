@@ -165,11 +165,14 @@ def inspect_tablet():
         if actual_size != tuple(map(int, size.split("x"))):
             raise RuntimeError(f"Android constrained requested display {size} to {actual_size}")
         launch = locate(tree, "检测游戏")
+        game = locate(tree, "本地汉化")
         project = locate(tree, "都市零协会")
+        if launch[1] < actual_size[1] * .8:
+            raise RuntimeError("Primary action is not pinned near the bottom")
         if landscape:
-            if project[0] <= launch[0]:
+            if project[0] <= game[0]:
                 raise RuntimeError("Wide landscape did not put the project card in the right column")
-        elif project[1] <= launch[1]:
+        elif project[1] <= game[1]:
             raise RuntimeError("Portrait did not place the project card below the game controls")
         REPORT["checks"].append(f"{name} layout at {size}, 160 dpi")
 
@@ -276,6 +279,8 @@ def main():
     adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/.MainActivity", timeout=90)
     time.sleep(15)
     home = capture("home")
+    if os.environ.get("RUNTIME_MODE") == "ui" and locate(home, "检测游戏")[1] < 1560 * .8:
+        raise RuntimeError("Phone primary action is not pinned near the bottom")
     REPORT["checks"].append("main activity resumed")
     tap("都市零协会", home)
     project = capture("project")

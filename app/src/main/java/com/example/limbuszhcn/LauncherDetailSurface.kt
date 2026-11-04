@@ -2,6 +2,7 @@ package com.example.limbuszhcn
 
 import android.os.Build
 import android.view.View
+import android.view.Gravity
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import androidx.annotation.RequiresApi
@@ -33,6 +34,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
 /** Fixed header and a bounded scrolling body on both tablets and compact windows. */
@@ -73,19 +75,18 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
             }
         }
     }
-    if (layout.centeredDetails) {
-        Dialog(onDismissRequest = onDismiss, properties = DialogProperties(
-            dismissOnBackPress = false, usePlatformDefaultWidth = false)) {
-            Surface(Modifier.padding(horizontal = 24.dp, vertical = 16.dp).widthIn(max = layout.panelWidth.dp).fillMaxWidth(),
-                shape = RoundedCornerShape(28.dp), color = C.Panel, contentColor = C.Ink) { body() }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(
+        dismissOnBackPress = false, usePlatformDefaultWidth = false)) {
+        val window = (LocalView.current.parent as? DialogWindowProvider)?.window
+        SideEffect {
+            window?.setGravity(if (layout.centeredDetails) Gravity.CENTER else Gravity.BOTTOM)
+            window?.setDimAmount(.36f)
         }
-    } else {
-        ModalBottomSheet(onDismissRequest = onDismiss,
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-            properties = ModalBottomSheetDefaults.properties(shouldDismissOnBackPress = false),
-            containerColor = C.Panel, contentColor = C.Ink, tonalElevation = 0.dp,
-            scrimColor = MaterialTheme.colorScheme.scrim.copy(alpha = .36f),
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)) { body() }
+        val panel = if (layout.centeredDetails) Modifier.padding(horizontal = 24.dp, vertical = 16.dp)
+            .widthIn(max = layout.panelWidth.dp).fillMaxWidth() else Modifier.fillMaxWidth()
+        Surface(panel, shape = if (layout.centeredDetails) RoundedCornerShape(28.dp)
+            else RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            color = C.Panel, contentColor = C.Ink, tonalElevation = 0.dp) { body() }
     }
 }
 
