@@ -56,7 +56,8 @@ import com.example.limbuszhcn.ui.theme.LauncherColors as C
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
-    onDismiss: () -> Unit, onBack: (() -> Unit)? = null, content: @Composable (String) -> Unit) {
+    onDismiss: () -> Unit, onBack: (() -> Unit)? = null,
+    footer: @Composable (String) -> Unit = {}, content: @Composable (String) -> Unit) {
     // Keep every detail page at the same height; long menus scroll within the panel.
     val panelHeight = layout.panelHeight.dp
     val pageStates = rememberSaveableStateHolder()
@@ -119,6 +120,7 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
                     }
                 }
             }
+            footer(page)
         }
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(

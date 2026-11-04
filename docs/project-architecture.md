@@ -27,10 +27,11 @@ It does not require a catalog entry or a rebuilt launcher for every same-family 
 The launcher keeps device readiness in the installation/status area. Phone and tablet home pages
 share the same summary cards; wide landscape gives them equal widths and a shared intrinsic height,
 surface, corner radius and padding. Project controls remain in the common detail dialog rather
-than expanding one home column. The content viewport wraps short content and scrolls when space
-is constrained, leaving a bounded gap before the centered launch action instead of stretching
-empty space to the screen bottom. The usage link follows the action; snackbars clear the actual
-action position. Installation rows use the known card width rather than subcomposition so the
+than expanding one home column. Cards and the launch action form one vertically centered group
+between the fixed header and usage footer. The card viewport wraps short content and scrolls
+when space is constrained; the action remains visible with a bounded 24dp gap. Spare height is
+distributed around this group rather than below it or between cards and their action. Snackbars
+clear the measured action position. Installation rows use the known card width rather than subcomposition so the
 two-card row can safely measure its intrinsic height at larger text sizes.
 Detail pages use a bottom-aligned fixed dialog on phones and a centered dialog on tablets, with a
 fixed header and per-page scroll state. A bounded downward drag restores pull-to-dismiss without
@@ -39,7 +40,9 @@ inner scroll reaches its top. An upward reversal returns the panel toward zero; 
 settle back with a non-overshooting animation. Their opaque scroll viewport is clipped and
 disables overscroll stretching. Child-page back continues to restore its parent, without
 predictive scaling. Update notes use separate bullet rows and preserve legacy unmarked lines;
-release metadata retains list markers so older clients also show the points.
+release metadata retains list markers so older clients also show the points. The app-update page
+has a fixed footer for its current stage, progress, download/install and cancel controls, outside
+the scrolling release notes. Closing and reopening the page preserves the active operation.
 App-version notices use the independent metadata-only foreground check described in
 [app-updates.md](app-updates.md); they do not enter the game preparation queue.
 

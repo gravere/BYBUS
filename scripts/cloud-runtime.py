@@ -123,6 +123,8 @@ def inspect_home_alignment(tree, width, height, density=1, landscape=False):
     action = clickable_bounds(tree, "检测游戏")
     status = clickable_bounds(tree, "本地汉化")
     project = clickable_bounds(tree, "都市零协会")
+    header = clickable_bounds(tree, "设置与工具")
+    footer = clickable_bounds(tree, "使用说明")
     if abs((action[0] + action[2]) / 2 - width / 2) > 2 or action[3] > height:
         raise RuntimeError("Primary action is not centered and fully visible")
     if action[2] - action[0] >= width * .9:
@@ -137,8 +139,72 @@ def inspect_home_alignment(tree, width, height, density=1, landscape=False):
             raise RuntimeError("Landscape summary cards do not share top and bottom edges")
     elif project[1] <= status[3]:
         raise RuntimeError("Portrait summary cards overlap or are not stacked")
+    above = (status[1] - header[3]) / density
+    below = (footer[1] - action[3]) / density
+    if min(above, below) < 0 or abs(above - below) > 64:
+        raise RuntimeError(f"Home group is not vertically balanced: {above=} {below=}")
     REPORT.setdefault("home_layouts", []).append(dict(width=width, height=height, gap_dp=gap,
-        status_bounds=status, project_bounds=project, action_bounds=action))
+        status_bounds=status, project_bounds=project, action_bounds=action,
+        above_group_dp=above, below_group_dp=below, usage_bounds=footer))
+
+
+def inspect_automatic_notice():
+    # Run before opening the update page. Two real responses prove foreground polling,
+    # independently of the explicit check button and without inventing a future release.
+    deadline = time.monotonic() + 75
+    while True:
+        logs = adb("logcat", "-d", "-s", "BYBUSUpdate:I", "*:S")
+        codes = re.findall(r"Notice checked: (\d+)", logs)
+        if len(codes) >= 2:
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Automatic notice did not refresh while remaining in the foreground")
+        time.sleep(5)
+    (OUT / "automatic-update-log.txt").write_text(logs, encoding="utf-8")
+    REPORT["automatic_notice"] = dict(successful_checks=len(codes), version_codes=codes,
+                                     manual_check_triggered=False)
+    REPORT["checks"].append("automatic public metadata check on entry and during foreground stay")
+
+
+def element_bounds(tree, label):
+    node = next(n for n in tree.iter("node") if any(label in n.get(k, "").splitlines()
+                for k in ("text", "content-desc")))
+    return tuple(map(int, re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", node.get("bounds", "")).groups()))
+
+
+def inspect_update_progress():
+    home = hierarchy("before-update-controls")
+    tap("设置与工具", home)
+    parent = hierarchy("tools-before-update-controls")
+    # Emulator-only cellular shaping keeps the real check busy long enough to inspect
+    # the shared busy/progress footer. No production hooks or fake download percentages.
+    try:
+        adb("shell", "svc", "wifi", "disable")
+        adb("shell", "svc", "data", "enable")
+        adb("emu", "network", "speed", "gsm")
+        adb("emu", "network", "delay", "3000")
+        time.sleep(2)
+        tap("更新", parent)
+        before = capture("update-progress")
+        locate(before, "应用更新进度")
+        first = element_bounds(before, "应用更新操作")
+        adb("shell", "input", "swipe", "360", str(first[1] - 30), "360", "600", "500")
+        after = capture("update-progress-scrolled")
+        locate(after, "应用更新进度")
+        if element_bounds(after, "应用更新操作") != first:
+            raise RuntimeError("Update progress footer moved with the scrolling content")
+        tap("取消更新", after)
+        cancelled = capture("update-cancelled")
+        locate(cancelled, "已取消，可重试")
+        REPORT["checks"].append("real check progress/cancel remain fixed while content scrolls; no APK download performed")
+    finally:
+        adb("emu", "network", "speed", "full", check=False)
+        adb("emu", "network", "delay", "none", check=False)
+        adb("shell", "svc", "wifi", "enable", check=False)
+    adb("shell", "input", "keyevent", "KEYCODE_BACK")
+    time.sleep(.5)
+    adb("shell", "input", "keyevent", "KEYCODE_BACK")
+    time.sleep(.5)
 
 
 def capture(name):
@@ -388,6 +454,8 @@ def main():
     REPORT["checks"].append("child back returns to parent settings")
     if os.environ.get("RUNTIME_MODE") == "ui":
         inspect_detail_scroll(parent)
+        inspect_automatic_notice()
+        inspect_update_progress()
     else:
         inspect_google(parent)
     inspect_tablet()

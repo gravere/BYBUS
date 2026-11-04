@@ -7,9 +7,11 @@ internal data class AppUpdateNotice(val versionCode: Long = 0, val checkedAt: Lo
 
     fun shouldCheck(now: Long): Boolean {
         fun recent(at: Long, interval: Long) = at > 0 && now >= at && now - at < interval
-        return !recent(checkedAt, 6 * 60 * 60_000L) && !recent(attemptedAt, 15 * 60_000L)
+        return !recent(checkedAt, INTERVAL) && !recent(attemptedAt, INTERVAL)
     }
 
     fun attempted(now: Long) = copy(attemptedAt = now)
     fun checked(code: Long, now: Long) = AppUpdateNotice(code.coerceAtLeast(0), now, now)
+
+    companion object { const val INTERVAL = 60_000L }
 }

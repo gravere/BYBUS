@@ -37,6 +37,8 @@ class AppReleaseTest {
         rejects { AppRelease.parse(release(), manifest().put("sha256", "bad")) }
     }
     @Test fun onlyTrustsExactGitHubHostsAndRepositoryEndpoints() {
+        assertTrue(AppReleases.allowed(AppReleases.NOTICE))
+        assertTrue(AppReleases.allowed("https://github.com/gravere/BYBUS/releases/download/v1.0.19-build.62/bybus-update.json"))
         assertTrue(AppReleases.allowed("${AppReleases.API}/latest"))
         assertTrue(AppReleases.allowed("${AppReleases.API}/assets/123"))
         assertTrue(AppReleases.allowed("https://release-assets.githubusercontent.com/github-production-release-asset/a?token=signed"))
@@ -47,10 +49,32 @@ class AppReleaseTest {
             "https://api.github.com/repositories/${AppReleases.REPOSITORY_ID}/releases/assets/0",
             "https://api.github.com/repos/${AppReleases.REPOSITORY}/releases/latest",
             "https://api.github.com/repos/other/app/releases/latest", "https://api.github.com/user",
+            "https://github.com/other/BYBUS/releases/latest/download/bybus-update.json",
+            "https://github.com/gravere/BYBUS/releases/latest/download/BYBUS.apk",
+            "https://github.com/gravere/BYBUS/releases/download/untagged/bybus-update.json",
             "https://release-assets.githubusercontent.com@evil.test/a", "https://name:secret@objects.githubusercontent.com/a",
             "https://objects.githubusercontent.com:4433/a", "file:///data/local/tmp/app.apk").forEach { assertFalse(it, AppReleases.allowed(it)) }
         assertEquals("https://api.github.com/repositories/${AppReleases.REPOSITORY_ID}/releases/assets/123",
             ReleaseAsset(123, "BYBUS.apk", 1000).url)
+    }
+    @Test fun automaticNoticeUsesOnlyBoundedPublicMetadata() {
+        val calls = mutableListOf<String>()
+        val repository = AppUpdateRepository(java.io.File("unused-notice-cache"), AppUpdateTransport { url, binary, consume ->
+            calls += url
+            assertTrue(binary)
+            val bytes = manifest().toString().toByteArray()
+            consume(ByteArrayInputStream(bytes), bytes.size.toLong())
+        })
+        assertEquals(41L, repository.checkNotice())
+        assertEquals(listOf(AppReleases.NOTICE), calls)
+        for ((key, value) in listOf("packageName" to "other.app", "versionCode" to 0, "schemaVersion" to 2,
+            "versionName" to "future", "size" to -1, "sha256" to "invalid")) {
+            rejects { AppRelease.noticeVersion(manifest().put(key, value)) }
+        }
+        val oversized = AppUpdateRepository(java.io.File("unused-notice-cache"), AppUpdateTransport { _, _, consume ->
+            consume(ByteArrayInputStream(ByteArray(32 * 1024 + 1)), -1)
+        })
+        rejects { oversized.checkNotice() }
     }
     @Test fun boundedCopyRejectsOversizeAndCancellation() {
         rejects { AppUpdateRepository.copy(ByteArrayInputStream(ByteArray(5)), 4) { _, _ -> } }
