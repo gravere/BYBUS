@@ -30,6 +30,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
@@ -50,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowCompat
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
 /** Fixed header and a bounded scrolling body on both tablets and compact windows. */
@@ -57,9 +59,13 @@ import com.example.limbuszhcn.ui.theme.LauncherColors as C
 @Composable
 internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
     onDismiss: () -> Unit, onBack: (() -> Unit)? = null,
+    navigation: @Composable (String) -> Unit = {},
     footer: @Composable (String) -> Unit = {}, content: @Composable (String) -> Unit) {
     // Keep every detail page at the same height; long menus scroll within the panel.
     val panelHeight = layout.panelHeight.dp
+    // Read the host's live insets: older floating dialogs dispatch zero bar insets.
+    val systemPadding = WindowInsets.safeDrawing
+        .only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom).asPaddingValues()
     val pageStates = rememberSaveableStateHolder()
     val density = LocalDensity.current.density
     val scope = rememberCoroutineScope()
@@ -88,11 +94,12 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
             Column(Modifier.fillMaxWidth().draggable(rememberDraggableState { drag.drag(it) },
                 Orientation.Vertical, startDragImmediately = drag.offset > 0,
                 onDragStarted = { drag.stop() }, onDragStopped = { drag.settle(it) })) {
-                Box(Modifier.fillMaxWidth().height(22.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxWidth().height(if (layout.compactHeight) 12.dp else 22.dp), contentAlignment = Alignment.Center) {
                     Box(Modifier.size(width = 32.dp, height = 4.dp).clip(CircleShape).background(C.Line)
                         .semantics { contentDescription = "下拉关闭面板" })
                 }
-                Row(Modifier.fillMaxWidth().padding(horizontal = layout.detailPadding.dp, vertical = 6.dp),
+                Row(Modifier.fillMaxWidth().padding(horizontal = layout.detailPadding.dp,
+                    vertical = if (layout.compactHeight) 0.dp else 6.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 if (onBack != null) IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
                     LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(21.dp).rotate(180f), "返回上一页")
@@ -109,6 +116,7 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
                 }
             }
             HorizontalDivider(color = C.Line)
+            if (!layout.compactHeight) navigation(page)
             // A child page starts at its top; returning restores its parent's scroll and disclosure state.
             Crossfade(page, animationSpec = tween(180), modifier = Modifier.weight(1f).fillMaxWidth()
                 .nestedScroll(bodyDrag), label = "detail page") { active ->
@@ -116,26 +124,52 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
                     pageStates.SaveableStateProvider(active) {
                         // Keep edge drags inside an opaque viewport; do not stretch the scrolling layer.
                         Column(Modifier.fillMaxSize().background(C.Panel).clipToBounds()
-                            .verticalScroll(rememberScrollState()).padding(layout.detailPadding.dp)) { content(active) }
+                            .verticalScroll(rememberScrollState())) {
+                            // A short window must keep the body reachable even with tall actions.
+                            if (layout.compactHeight) navigation(active)
+                            Column(Modifier.padding(layout.detailPadding.dp)) { content(active) }
+                            if (layout.compactHeight) footer(active)
+                        }
                     }
                 }
             }
-            footer(page)
+            if (!layout.compactHeight) footer(page)
         }
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(
-        dismissOnBackPress = false, usePlatformDefaultWidth = false)) {
+        dismissOnBackPress = false, usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         val window = (LocalView.current.parent as? DialogWindowProvider)?.window
+        val lightNavigation = C.Panel.luminance() > .5f
         SideEffect {
             window?.setGravity(if (layout.centeredDetails) Gravity.CENTER else Gravity.BOTTOM)
             window?.setDimAmount(.36f)
+            window?.let {
+                // Older Compose floating themes retain the native fit-inset mask.
+                // Let this window paint to its edge; the Surface below pads controls.
+                if (Build.VERSION.SDK_INT >= 30 && it.attributes.fitInsetsTypes != 0) {
+                    it.attributes = it.attributes.apply { setFitInsetsTypes(0) }
+                }
+                @Suppress("DEPRECATION")
+                it.navigationBarColor = android.graphics.Color.TRANSPARENT
+                if (Build.VERSION.SDK_INT >= 28) {
+                    @Suppress("DEPRECATION")
+                    it.navigationBarDividerColor = android.graphics.Color.TRANSPARENT
+                }
+                if (Build.VERSION.SDK_INT >= 29) it.isNavigationBarContrastEnforced = false
+                WindowCompat.getInsetsController(it, it.decorView).isAppearanceLightNavigationBars = lightNavigation
+            }
         }
         val panel = if (layout.centeredDetails) Modifier.padding(horizontal = 24.dp, vertical = 16.dp)
             .widthIn(max = layout.panelWidth.dp).fillMaxWidth() else Modifier.fillMaxWidth()
         Surface(panel.graphicsLayer { translationY = drag.offset }.semantics { dismiss { onDismiss(); true } },
             shape = if (layout.centeredDetails) RoundedCornerShape(28.dp)
             else RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-            color = C.Panel, contentColor = C.Ink, tonalElevation = 0.dp) { body() }
+            color = C.Panel, contentColor = C.Ink, tonalElevation = 0.dp) {
+            // Paint the bar area with the panel, but keep every control above it.
+            // A centered dialog does not touch the bar and must not add a phantom footer.
+            val safeInsets = if (layout.centeredDetails) Modifier else Modifier.padding(systemPadding)
+            Column(safeInsets) { body() }
+        }
     }
 }
 

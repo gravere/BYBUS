@@ -35,6 +35,7 @@ internal fun LauncherScreen(
     state: LauncherUiState,
     projectState: ProjectTrackingState,
     appUpdateState: com.example.limbuszhcn.selfupdate.AppUpdateState,
+    resumed: Boolean,
     onCheckAppUpdate: () -> Unit,
     onDownloadAppUpdate: () -> Unit,
     onInstallAppUpdate: () -> Unit,
@@ -61,6 +62,7 @@ internal fun LauncherScreen(
 ) {
     var sheet by rememberSaveable { mutableStateOf<String?>(null) }
     var parentSheet by rememberSaveable { mutableStateOf<String?>(null) }
+    var updateTab by rememberSaveable { mutableStateOf(UpdateTab.App) }
     var handledUpdatesRequest by rememberSaveable { mutableLongStateOf(0L) }
     LaunchedEffect(state.updatesRequest) {
         if (state.updatesRequest > 0 && state.updatesRequest != handledUpdatesRequest) {
@@ -105,7 +107,7 @@ internal fun LauncherScreen(
             // Large text needs a wider column, not a smaller font.
             val layout = LauncherLayout.calculate(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale)
             val contentWidth = minOf(maxWidth.value, layout.contentMaxWidth) - layout.margin * 2
-            val cardWidth = if (layout.twoColumns) (contentWidth - layout.columnGap) / 2 else contentWidth
+            val cardWidth = if (layout.twoColumns) (contentWidth - layout.columnGap * 2 - layout.actionWidth) / 2 else contentWidth
             val homeScroll = rememberScrollState()
             Column(Modifier.widthIn(max = layout.contentMaxWidth.dp).fillMaxSize().align(Alignment.TopCenter)
                 .padding(horizontal = layout.margin.dp)) {
@@ -124,28 +126,33 @@ internal fun LauncherScreen(
                         if (appUpdateState.updateAvailable) UpdateDot(Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 6.dp))
                     }
                 }
-                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Column(Modifier.fillMaxWidth()) {
-                        Box(Modifier.weight(1f, fill = false).fillMaxWidth()) {
-                            Column(Modifier.fillMaxWidth().verticalScroll(homeScroll)
-                                .padding(top = if (layout.compactHeight) 8.dp else 16.dp)) {
-                                if (layout.twoColumns) {
-                                    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min),
-                                        horizontalArrangement = Arrangement.spacedBy(layout.columnGap.dp)) {
-                                        InstallationCard(state, cardWidth, Modifier.weight(1f).fillMaxHeight()) { open("status") }
-                                        ProjectCard(projectState, Modifier.weight(1f).fillMaxHeight()) { open("project") }
-                                    }
-                                } else {
-                                    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                        InstallationCard(state, cardWidth) { open("status") }
-                                        ProjectCard(projectState) { open("project") }
-                                    }
-                                }
+                BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                    val bodyHeight = maxHeight
+                    val actionModifier = Modifier.onGloballyPositioned { actionTop = it.positionInRoot().y }
+                    if (layout.twoColumns) {
+                        Column(Modifier.fillMaxWidth().verticalScroll(homeScroll).heightIn(min = bodyHeight)
+                            .padding(vertical = 8.dp), verticalArrangement = Arrangement.Center) {
+                            Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min),
+                                horizontalArrangement = Arrangement.spacedBy(layout.columnGap.dp),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                InstallationCard(state, cardWidth, Modifier.weight(1f).fillMaxHeight()) { open("status") }
+                                LaunchActions(state, onLaunch, onRefresh, resumed && sheet == null,
+                                    onDetails = { open(if (state.failed) "error" else "status") },
+                                    modifier = actionModifier.width(layout.actionWidth.dp))
+                                ProjectCard(projectState, Modifier.weight(1f).fillMaxHeight()) { open("project") }
                             }
                         }
-                        LaunchActions(state, onLaunch, onRefresh,
-                            onDetails = { open(if (state.failed) "error" else "status") },
-                            modifier = Modifier.onGloballyPositioned { actionTop = it.positionInRoot().y })
+                    } else {
+                        Column(Modifier.fillMaxWidth().heightIn(max = 760.dp).align(Alignment.Center)
+                            .verticalScroll(homeScroll).heightIn(min = minOf(bodyHeight, 760.dp))
+                            .padding(vertical = 8.dp), verticalArrangement = Arrangement.SpaceBetween,
+                            horizontalAlignment = Alignment.CenterHorizontally) {
+                            InstallationCard(state, cardWidth) { open("status") }
+                            LaunchActions(state, onLaunch, onRefresh, resumed && sheet == null,
+                                onDetails = { open(if (state.failed) "error" else "status") },
+                                modifier = actionModifier.widthIn(max = layout.actionWidth.dp).fillMaxWidth())
+                            ProjectCard(projectState) { open("project") }
+                        }
                     }
                 }
                 Box(Modifier.fillMaxWidth().padding(bottom = 12.dp), contentAlignment = Alignment.Center) {
@@ -160,8 +167,12 @@ internal fun LauncherScreen(
             sheet?.let { page ->
                 LauncherDetailSurface(layout, page, onDismiss = ::close,
                     onBack = parentSheet?.let { parent -> { sheet = parent; parentSheet = null } },
+                    navigation = { active -> if (active == "app-update") {
+                        UpdateTabs(updateTab, appUpdateState.busy, state.busy && state.stage == "检查零协更新并校验汉化文件") { updateTab = it }
+                    } },
                     footer = { active -> if (active == "app-update") {
-                        AppUpdateControls(appUpdateState, state, onDownloadAppUpdate, onInstallAppUpdate, onCancelAppUpdate)
+                        if (updateTab == UpdateTab.App) AppUpdateControls(appUpdateState, state, onDownloadAppUpdate, onInstallAppUpdate, onCancelAppUpdate)
+                        else TranslationUpdateControls(state, onUpdate)
                     } }) { active ->
                     if (active == "project") {
                         ProjectDetails(projectState, onRefreshProject, onSelectProjectSource, onOpenLink)
@@ -169,11 +180,12 @@ internal fun LauncherScreen(
                         GameUpdatesPane(state, onCheckGameUpdate, onSelectGameSource, onOpenGamePage,
                             onOpenInstallSource, onImportGame, onInstallGame, onCancelGameInstall)
                     } else if (active == "app-update") {
-                        AppUpdatesPane(appUpdateState, state, onCheckAppUpdate, onOpenAppRelease, onUpdate)
+                        if (updateTab == UpdateTab.App) AppUpdatesPane(appUpdateState, onCheckAppUpdate, onOpenAppRelease)
+                        else TranslationUpdatesPane(state)
                     } else {
                         LauncherDetails(active, state, onGameStore = { openChild("updates") },
                             appUpdateAvailable = appUpdateState.updateAvailable,
-                            onAppUpdate = { openChild("app-update"); onCheckAppUpdate() },
+                            onAppUpdate = { updateTab = UpdateTab.App; openChild("app-update"); onCheckAppUpdate() },
                             onSync = { close(); onSync() }, onRestore = { close(); onRestore() },
                             onExport = { close(); onExport() }, onSettings = { close(); onSettings() },
                             onGoogleSettings = { close(); onGoogleSettings() },
@@ -187,11 +199,11 @@ internal fun LauncherScreen(
 
 @Composable
 private fun LaunchActions(state: LauncherUiState, onLaunch: () -> Unit,
-    onRefresh: () -> Unit, onDetails: () -> Unit, modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxWidth().padding(top = 24.dp, bottom = 12.dp),
+    onRefresh: () -> Unit, animated: Boolean, onDetails: () -> Unit, modifier: Modifier = Modifier) {
+    Box(modifier.padding(vertical = 8.dp),
         contentAlignment = Alignment.Center) {
-        Column(Modifier.widthIn(max = 360.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            PrimaryAction(state, onLaunch, onRefresh, onDetails)
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            PrimaryAction(state, onLaunch, onRefresh, onDetails, animated)
         }
     }
 }
@@ -221,7 +233,7 @@ private fun InstallationCard(state: LauncherUiState, width: Float, modifier: Mod
                 state.gameUpdate.newerSources(state.installedVersionName).isNotEmpty() -> "有新版";
                 state.installedVersion == null -> "查看"; else -> state.gameUpdate.label }, state.installedVersion != null, width - 40f)
         HorizontalDivider(color = C.Line)
-        InstallationRow(Glyph.Check, "本地汉化", state.translation?.version ?: "首次启动时准备",
+        InstallationRow(Glyph.Translation, "本地汉化", state.translation?.version ?: "首次启动时准备",
             if (state.translation != null) "已保存" else "待准备", state.translation != null, width - 40f)
     }
 }
@@ -245,7 +257,7 @@ private fun InstallationRow(icon: Glyph, title: String, subtitle: String, value:
 }
 
 @Composable
-private fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefresh: () -> Unit, onDetails: () -> Unit) {
+private fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefresh: () -> Unit, onDetails: () -> Unit, animated: Boolean) {
     val missing = state.container != null && state.installedVersion == null
     val canLaunch = state.container?.available == true && state.installedVersion != null &&
         state.compatibility?.isSupported == true && state.nativeCompatibilityIssue == null
@@ -276,8 +288,10 @@ private fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefres
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
     }
-    LaunchButton(title, state.busy, enabled = state.container != null || state.failed,
-        onClick = { when { needsDetection -> onRefresh(); canLaunch -> onLaunch(); else -> onDetails() } })
+    LaunchRipple(animated) {
+        LaunchButton(title, state.busy, enabled = state.container != null || state.failed,
+            onClick = { when { needsDetection -> onRefresh(); canLaunch -> onLaunch(); else -> onDetails() } })
+    }
 }
 
 @Composable

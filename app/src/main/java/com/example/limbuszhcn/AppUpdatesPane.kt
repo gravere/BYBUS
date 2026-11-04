@@ -1,6 +1,7 @@
 package com.example.limbuszhcn
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -18,27 +19,51 @@ import kotlinx.coroutines.delay
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
 @Composable
-internal fun AppUpdatesPane(state: AppUpdateState, launcher: LauncherUiState, onCheck: () -> Unit,
-    onOpenPage: () -> Unit, onTranslationUpdate: () -> Unit) {
+internal fun UpdateTabs(selected: UpdateTab, appBusy: Boolean, translationBusy: Boolean, onSelect: (UpdateTab) -> Unit) {
+    Box(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp)) {
+        SourceTabs(UpdateTab.entries, selected, label = {
+            when (it) {
+                UpdateTab.App -> if (appBusy) "BYBUS · 更新中" else "BYBUS"
+                UpdateTab.Translation -> if (translationBusy) "汉化资源 · 检查中" else "汉化资源"
+            }
+        }, description = "更新类别", onSelect = onSelect)
+    }
+}
+
+internal enum class UpdateTab { App, Translation }
+
+@Composable
+internal fun AppUpdatesPane(state: AppUpdateState, onCheck: () -> Unit, onOpenPage: () -> Unit) {
     val release = state.release
     val available = release?.newerThan(state.installedCode) == true
     val retryAt = state.retryAtElapsed
     val retryRemaining = updateRetryRemaining(retryAt)
-    Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("BYBUS", style = MaterialTheme.typography.titleLarge)
-            Text("${androidx.compose.ui.res.stringResource(R.string.app_version_name)} · 构建 ${state.installedCode}",
-                color = C.Muted, style = MaterialTheme.typography.bodySmall)
+    Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            LauncherGlyph(Glyph.Mark, C.Accent, Modifier.size(36.dp))
+            Column(Modifier.weight(1f).padding(start = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("BYBUS", style = MaterialTheme.typography.titleLarge)
+                Text("当前 ${androidx.compose.ui.res.stringResource(R.string.app_version_name)}",
+                    color = C.Muted, style = MaterialTheme.typography.bodySmall)
+            }
+            IconButton(onClick = onCheck, enabled = !state.busy && retryRemaining == 0L) {
+                LauncherGlyph(Glyph.Refresh, if (state.busy || retryRemaining > 0) C.Muted else C.Ink,
+                    Modifier.size(21.dp), "检查应用更新")
+            }
+            IconButton(onClick = onOpenPage) {
+                LauncherGlyph(Glyph.External, C.Muted, Modifier.size(20.dp), "GitHub 发行页面")
+            }
         }
         if (available) {
-            DetailSection("新版本") {
-                Column(Modifier.padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    DetailRow("版本", "${release.versionName} · 构建 ${release.versionCode}")
+            Surface(color = C.AccentSoft, contentColor = C.OnAccentSoft, shape = RoundedCornerShape(20.dp)) {
+                Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("可更新至 ${release.versionName}", style = MaterialTheme.typography.titleMedium)
                     val delta = state.delta
                     val reuse = state.reuse
-                    DetailRow("更新方式", if (!state.downloadPlanned) "自动选择" else if (reuse != null || delta != null) "增量更新" else "完整安装包")
-                    DetailRow("预计下载", if (!state.downloadPlanned) "下载前计算" else String.format(java.util.Locale.ROOT, "%.1f MB", (reuse?.downloadBytes ?: delta?.asset?.size ?: release.apk.size) / 1_000_000.0))
-                    if (reuse != null || delta != null) Text("自动复用已有内容；不可用时改为完整下载。", color = C.Muted,
+                    val size = String.format(java.util.Locale.ROOT, "%.1f MB",
+                        (reuse?.downloadBytes ?: delta?.asset?.size ?: release.apk.size) / 1_000_000.0)
+                    Text(if (!state.downloadPlanned) "下载前自动计算更新大小"
+                        else "${if (reuse != null || delta != null) "增量更新" else "完整安装包"} · $size",
                         style = MaterialTheme.typography.bodySmall)
                 }
             }
@@ -68,20 +93,46 @@ internal fun AppUpdatesPane(state: AppUpdateState, launcher: LauncherUiState, on
             Text(error, color = if (retryAt != null && seconds == 0L) C.Muted else MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodyMedium)
         }
-        DetailSection("应用版本") {
-            SheetAction(Glyph.Apps, "检查应用更新", !state.busy && retryRemaining == 0L, onClick = onCheck)
-            HorizontalDivider(color = C.Line)
-            SheetAction(Glyph.ReleaseTag, "GitHub 发行页面", external = true, onClick = onOpenPage)
+    }
+}
+
+@Composable
+internal fun TranslationUpdatesPane(state: LauncherUiState) {
+    Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            IconTile(Glyph.Translation, accent = true)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("都市零协会", style = MaterialTheme.typography.titleMedium)
+                Text("边狱巴士 · 简体中文", color = C.Muted, style = MaterialTheme.typography.bodySmall)
+            }
         }
-        DetailSection("汉化资源") {
-            SheetAction(Glyph.Translation, "检查汉化更新", !launcher.busy && launcher.container?.gameImported == true,
-                subtitle = if (launcher.busy && launcher.stage == "检查零协更新并校验汉化文件") launcher.message
-                    else launcher.translation?.let { "已安装 · ${it.version}" } ?: "都市零协会",
-                onClick = onTranslationUpdate)
+        Surface(color = C.Background, shape = RoundedCornerShape(20.dp)) {
+            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("本地汉化", color = C.Muted, style = MaterialTheme.typography.labelMedium)
+                Text(state.translation?.version ?: "尚未准备", style = MaterialTheme.typography.headlineSmall)
+                Text(if (state.translation != null) "已保存，下次启动继续使用"
+                    else if (state.container?.gameImported == true) "检查更新后下载汉化资源"
+                    else "先在首页准备游戏，再检查汉化资源", color = C.Muted, style = MaterialTheme.typography.bodySmall)
+            }
         }
-        if (!launcher.busy && launcher.stage == "检查零协更新并校验汉化文件") {
-            Text(launcher.message, color = if (launcher.failed) MaterialTheme.colorScheme.error else C.Muted,
-                style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
+internal fun TranslationUpdateControls(state: LauncherUiState, onCheck: () -> Unit) {
+    val checking = state.busy && state.stage == "检查零协更新并校验汉化文件"
+    Column(Modifier.fillMaxWidth()) {
+        HorizontalDivider(color = C.Line)
+        Column(Modifier.padding(horizontal = 24.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (state.stage == "检查零协更新并校验汉化文件") {
+                Text(state.message, color = if (state.failed) C.Error else C.Muted,
+                    style = MaterialTheme.typography.bodySmall)
+            }
+            if (checking) LinearProgressIndicator(Modifier.fillMaxWidth(), color = C.Accent, trackColor = C.Line)
+            Button(onClick = onCheck, enabled = !state.busy && state.container?.gameImported == true,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = RoundedCornerShape(16.dp)) {
+                Text(if (checking) "正在检查汉化" else "检查汉化更新")
+            }
         }
     }
 }
