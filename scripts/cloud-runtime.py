@@ -107,6 +107,21 @@ def tap(value, tree):
     time.sleep(1)
 
 
+def inspect_primary_action(tree, width, height):
+    parents = {child: parent for parent in tree.iter() for child in parent}
+    target = next(n for n in tree.iter("node") if n.get("text") == "检测游戏")
+    while target.get("clickable") != "true" and target in parents:
+        target = parents[target]
+    bounds = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", target.get("bounds", ""))
+    if not bounds or target.get("clickable") != "true":
+        raise RuntimeError("Primary action has no clickable bounds")
+    left, top, right, bottom = map(int, bounds.groups())
+    if abs((left + right) / 2 - width / 2) > 2 or (top + bottom) / 2 < height * .8:
+        raise RuntimeError("Primary action is not centered near the bottom")
+    if right - left >= width * .9:
+        raise RuntimeError("Primary action still spans the entire screen")
+
+
 def capture(name):
     foreground = adb("shell", "dumpsys", "activity", "activities")
     focused = [line for line in foreground.splitlines() if "mResumedActivity" in line or "topResumedActivity" in line]
@@ -164,11 +179,9 @@ def inspect_tablet():
         actual_size = struct.unpack(">II", (OUT / f"{name}.png").read_bytes()[16:24])
         if actual_size != tuple(map(int, size.split("x"))):
             raise RuntimeError(f"Android constrained requested display {size} to {actual_size}")
-        launch = locate(tree, "检测游戏")
+        inspect_primary_action(tree, *actual_size)
         game = locate(tree, "本地汉化")
         project = locate(tree, "都市零协会")
-        if launch[1] < actual_size[1] * .8:
-            raise RuntimeError("Primary action is not pinned near the bottom")
         if landscape:
             if project[0] <= game[0]:
                 raise RuntimeError("Wide landscape did not put the project card in the right column")
@@ -216,6 +229,38 @@ def inspect_detail_scroll(parent):
     restored = hierarchy("settings-after-scroll")
     locate(restored, "使用说明与版本")
     REPORT["checks"].append("five upward detail gestures, footer visible, back restores parent; video requires visual review")
+    tap("使用说明与版本", restored)
+    child = hierarchy("about-before-pull")
+    x, y = locate(child, "下拉关闭面板")
+    # Upward header drags cannot lift the whole panel, and a short pull must settle back.
+    for name, distance in [("header-up", -100), ("header-short-pull", 48)]:
+        adb("shell", "input", "swipe", str(x), str(y), str(x), str(y + distance), "450")
+        time.sleep(.5)
+        current = hierarchy(name)
+        if locate(current, "下拉关闭面板") != (x, y):
+            raise RuntimeError("Header drag did not return to its expanded position")
+        locate(current, "关于")
+    # At a lower scroll position, pulling the body scrolls it rather than dismissing.
+    adb("shell", "input", "swipe", "580", "1000", "580", "1100", "500")
+    time.sleep(.5)
+    current = hierarchy("body-scroll-back")
+    if locate(current, "下拉关闭面板") != (x, y):
+        raise RuntimeError("Body drag moved the panel before reaching the top")
+    adb("shell", "input", "swipe", str(x), str(y), str(x), str(y + 500), "500")
+    time.sleep(.5)
+    home = hierarchy("home-after-header-pull")
+    locate(home, "检测游戏")
+    if any(n.get("content-desc") == "下拉关闭面板" for n in home.iter("node")):
+        raise RuntimeError("Header pull did not dismiss the detail panel")
+    # A fresh detail page starts at the top, where the body can pull the panel closed.
+    tap("使用说明", home)
+    adb("shell", "input", "swipe", "580", "850", "580", "1320", "500")
+    time.sleep(.5)
+    home = hierarchy("home-after-body-pull")
+    locate(home, "检测游戏")
+    if any(n.get("content-desc") == "下拉关闭面板" for n in home.iter("node")):
+        raise RuntimeError("Body pull from the top did not dismiss the detail panel")
+    REPORT["checks"].append("short pull restores, upward pull stays fixed, scrolled body stays inside, header and top-body pulls dismiss")
 
 
 def main():
@@ -279,8 +324,8 @@ def main():
     adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/.MainActivity", timeout=90)
     time.sleep(15)
     home = capture("home")
-    if os.environ.get("RUNTIME_MODE") == "ui" and locate(home, "检测游戏")[1] < 1560 * .8:
-        raise RuntimeError("Phone primary action is not pinned near the bottom")
+    if os.environ.get("RUNTIME_MODE") == "ui":
+        inspect_primary_action(home, 720, 1560)
     REPORT["checks"].append("main activity resumed")
     tap("都市零协会", home)
     project = capture("project")
