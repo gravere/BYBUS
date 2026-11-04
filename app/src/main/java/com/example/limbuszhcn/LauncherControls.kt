@@ -46,16 +46,16 @@ internal fun LaunchButton(title: String, busy: Boolean, enabled: Boolean, onClic
         onClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onClick() },
         enabled = enabled && !busy,
         interactionSource = interaction,
-        modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp)
+        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale },
         shape = RoundedCornerShape(18.dp),
-        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 18.dp),
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp),
         colors = ButtonDefaults.buttonColors(disabledContainerColor = if (busy) MaterialTheme.colorScheme.primary else C.Line,
             disabledContentColor = if (busy) C.OnPrimary else C.Muted)
     ) {
-        if (busy) CircularProgressIndicator(Modifier.size(21.dp), color = C.OnPrimary, strokeWidth = 2.dp)
-        else LauncherGlyph(Glyph.Play, if (enabled) C.OnPrimary else C.Muted, Modifier.size(22.dp))
-        Spacer(Modifier.width(12.dp))
+        if (busy) CircularProgressIndicator(Modifier.size(18.dp), color = C.OnPrimary, strokeWidth = 2.dp)
+        else LauncherGlyph(Glyph.Play, if (enabled) C.OnPrimary else C.Muted, Modifier.size(18.dp))
+        Spacer(Modifier.width(10.dp))
         AnimatedContent(title, transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(90)) }, label = "launch title") {
             Text(it, style = MaterialTheme.typography.labelLarge)
         }

@@ -44,8 +44,8 @@ internal fun AppUpdatesPane(state: AppUpdateState, launcher: LauncherUiState, on
                     DetailRow("版本", "${release.versionName} · 构建 ${release.versionCode}")
                     val delta = state.delta
                     val reuse = state.reuse
-                    DetailRow("更新方式", if (reuse != null || delta != null) "增量更新" else "完整安装包")
-                    DetailRow("预计下载", String.format(java.util.Locale.ROOT, "%.1f MB", (reuse?.downloadBytes ?: delta?.asset?.size ?: release.apk.size) / 1_000_000.0))
+                    DetailRow("更新方式", if (!state.downloadPlanned) "自动选择" else if (reuse != null || delta != null) "增量更新" else "完整安装包")
+                    DetailRow("预计下载", if (!state.downloadPlanned) "下载前计算" else String.format(java.util.Locale.ROOT, "%.1f MB", (reuse?.downloadBytes ?: delta?.asset?.size ?: release.apk.size) / 1_000_000.0))
                     if (reuse != null || delta != null) Text("自动复用已有内容；不可用时改为完整下载。", color = C.Muted,
                         style = MaterialTheme.typography.bodySmall)
                     if (release.notes.isNotBlank()) Text(release.notes, color = C.Muted, style = MaterialTheme.typography.bodyMedium)

@@ -113,7 +113,6 @@ class MainActivity : ComponentActivity() {
                     onRefresh = model::refresh,
                     onUpdate = model::updateTranslation,
                     onCheckGameUpdate = model::checkGameUpdate,
-                    onGameStore = model::requestGameUpdates,
                     onSelectGameSource = model::selectGameSource,
                     onOpenGamePage = { url -> runCatching { com.example.limbuszhcn.update.GameStores.openPage(this, url) }.onFailure(model::showError) },
                     onOpenInstallSource = { runCatching { com.example.limbuszhcn.update.GameStores.openSource(this, state.installSource) }.onFailure(model::showError) },

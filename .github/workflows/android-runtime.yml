@@ -2,11 +2,16 @@ name: Android runtime inspection
 
 on:
   workflow_dispatch:
-  push:
-    branches: [codex/cloud-runtime]
-    paths:
-      - .github/workflows/android-runtime.yml
-      - scripts/cloud-runtime.py
+    inputs:
+      mode:
+        description: Inspection scope
+        type: choice
+        options: [ui, runtime]
+        default: ui
+      candidate:
+        description: Inspect the staged release matching this branch
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -27,14 +32,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - profile: android11
-            image: system-images;android-30;google_apis;x86_64
-          - profile: experimental16k
-            image: system-images;android-35;google_apis_ps16k;x86_64
+        profile: ${{ fromJSON(inputs.mode == 'ui' && '["android15"]' || '["android11","experimental16k"]') }}
     env:
       RUNTIME_PROFILE: ${{ matrix.profile }}
-      ANDROID_IMAGE: ${{ matrix.image }}
+      ANDROID_IMAGE: ${{ matrix.profile == 'android15' && 'system-images;android-35;google_apis;x86_64' || matrix.profile == 'android11' && 'system-images;android-30;google_apis;x86_64' || 'system-images;android-35;google_apis_ps16k;x86_64' }}
+      RUNTIME_MODE: ${{ inputs.mode }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -67,7 +69,7 @@ jobs:
       - name: Inspect the published APK
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          RUNTIME_CANDIDATE: ${{ github.event_name == 'push' }}
+          RUNTIME_CANDIDATE: ${{ inputs.candidate }}
         run: python3 scripts/cloud-runtime.py
       - name: Save runtime evidence
         if: always()

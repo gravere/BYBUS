@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/gravere/BYBUS/releases/latest"><img src="https://img.shields.io/github/v/release/gravere/BYBUS?style=flat&amp;label=release&amp;color=254B40" alt="最新发行版"></a>
-  <a href="#兼容范围"><img src="https://img.shields.io/badge/Android-8.0%2B-254B40?style=flat&amp;logo=android&amp;logoColor=white" alt="最低系统要求：Android 8.0"></a>
+  <a href="#开始使用"><img src="https://img.shields.io/badge/Android-8.0%2B-254B40?style=flat&amp;logo=android&amp;logoColor=white" alt="最低系统要求：Android 8.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-254B40?style=flat" alt="原创代码许可证：GPL v3"></a>
 </p>
 
@@ -44,13 +44,14 @@ BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeL
 - **免 Root 使用** — 导入官方游戏，在容器内显示中文，保留原始 APK 与游戏文本文件。
 - **汉化持续同步** — 启动前检查零协更新，复用已校验的缓存；汉化索引与配置持久保存，无需每次重新设置。
 - **减少下载负担** — 大型游戏资源可只在 BYBUS 内下载；应用更新自动复用已安装内容，只下载缺少的部分，无需逐个匹配旧版本补丁。
+- **应用更新提醒** — 自动检查 BYBUS 正式发行版，发现新版时在设置与更新入口显示红点，覆盖升级后自动消除。
 - **多渠道游戏更新** — 支持 Google Play、Uptodown 等更新入口与本地安装包，更新安装文件时保留容器资源和账号数据。
 - **零协项目动态** — 默认展示 GitHub 更新状态，可切换 ParaTranz 查看可用统计或前往项目页面。
 - **适应不同屏幕** — 竖屏单列，横屏在空间足够时使用双列，随分屏窗口和系统字体大小调整布局。
 
 ## 开始使用
 
-需要 **Android 8.0 及以上、64 位 ARM（arm64-v8a）的手机或平板**，并先安装官方《边狱巴士》。详细条件见[兼容范围](#兼容范围)。
+需要 **Android 8.0 及以上、64 位 ARM（arm64-v8a）的手机或平板**，并先安装官方《边狱巴士》。设备与 Google 组件的具体条件见 [Android 适配说明](docs/android-runtime-portability.md)。
 
 1. **安装 BYBUS** — [下载完整 APK](https://github.com/gravere/BYBUS/releases/latest/download/BYBUS.apk) 并安装。
 2. **导入游戏** — 打开 BYBUS，点击「启动游戏」，按提示导入已安装的官方游戏。
@@ -95,19 +96,6 @@ BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeL
 </details>
 
 各版本变化见[发行说明](https://github.com/gravere/BYBUS/releases)。Releases 保留最近三个正式构建的发行文件。
-
-## 兼容范围
-
-BYBUS 面向 Android 手机和平板，不限定品牌。启动前会检查设备条件、官方游戏签名及原生结构。
-
-| 项目 | 要求或说明 |
-| --- | --- |
-| 系统与处理器 | Android 8.0 及以上、arm64-v8a；不支持 32 位系统或 x86 |
-| 内存页大小 | 按设备实际的 4 KB / 16 KB 页大小检查运行条件 |
-| 游戏版本 | 同结构更新可自动适配；新的保护结构可能需要更新 BYBUS，未识别结构不支持 |
-| 汉化覆盖 | 取决于零协已发布的译文，以及设备上已下载的游戏资源 |
-
-内置 Google 组件仍有部分 4 KB 原生库，**16 KB 设备上的 Google 登录和付款兼容性尚未确认**。通过启动前检查不代表所有设备、页面和功能均已实测，详见[Android 适配说明](docs/android-runtime-portability.md)。
 
 ## 文档与贡献
 
