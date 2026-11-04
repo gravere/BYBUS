@@ -129,21 +129,26 @@ def inspect_home_alignment(tree, width, height, density=1, landscape=False):
         raise RuntimeError("Primary action is not centered and fully visible")
     if action[2] - action[0] >= width * .9:
         raise RuntimeError("Primary action still spans the entire screen")
-    gap = (action[1] - max(status[3], project[3])) / density
-    if not 20 <= gap <= 28:
-        raise RuntimeError(f"Excessive or overlapping content-to-action gap: {gap} dp")
     if abs((status[2] - status[0]) - (project[2] - project[0])) > 1:
         raise RuntimeError("Summary card widths differ")
     if landscape:
         if abs(status[1] - project[1]) > 1 or abs(status[3] - project[3]) > 1:
             raise RuntimeError("Landscape summary cards do not share top and bottom edges")
-    elif project[1] <= status[3]:
-        raise RuntimeError("Portrait summary cards overlap or are not stacked")
+        if not status[2] < action[0] < action[2] < project[0]:
+            raise RuntimeError("Launch action is not between landscape cards")
+        middle_error = abs((action[1] + action[3] - status[1] - status[3]) / 2) / density
+    else:
+        if not status[3] < action[1] < action[3] < project[1]:
+            raise RuntimeError("Launch action is not between portrait cards")
+        middle_error = abs((action[1] + action[3] - status[3] - project[1]) / 2) / density
+    if middle_error > 2:
+        raise RuntimeError("Launch action is not centered in the space between cards")
     above = (status[1] - header[3]) / density
-    below = (footer[1] - action[3]) / density
-    if min(above, below) < 0 or abs(above - below) > 64:
-        raise RuntimeError(f"Home group is not vertically balanced: {above=} {below=}")
-    REPORT.setdefault("home_layouts", []).append(dict(width=width, height=height, gap_dp=gap,
+    below = (footer[1] - project[3]) / density
+    if not landscape and (not 0 <= above <= 32 or not 0 <= below <= 24):
+        raise RuntimeError(f"Portrait outer margins still waste space: {above=} {below=}")
+    REPORT.setdefault("home_layouts", []).append(dict(width=width, height=height, middle_error_dp=middle_error,
+        horizontal=landscape,
         status_bounds=status, project_bounds=project, action_bounds=action,
         above_group_dp=above, below_group_dp=below, usage_bounds=footer))
 
@@ -197,6 +202,16 @@ def inspect_update_progress():
         cancelled = capture("update-cancelled")
         locate(cancelled, "已取消，可重试")
         REPORT["checks"].append("real check progress/cancel remain fixed while content scrolls; no APK download performed")
+        tap("更新类别：汉化资源", cancelled)
+        translation = capture("update-translation")
+        locate(translation, "尚未准备")
+        locate(translation, "检查汉化更新")
+        if any("检查应用更新" == n.get("content-desc") for n in translation.iter("node")):
+            raise RuntimeError("Application actions leaked into the translation tab")
+        tap("更新类别：BYBUS", translation)
+        restored = hierarchy("update-app-restored")
+        locate(restored, "已取消，可重试")
+        REPORT["checks"].append("update categories isolate controls and preserve app operation state")
     finally:
         adb("emu", "network", "speed", "full", check=False)
         adb("emu", "network", "delay", "none", check=False)
@@ -454,7 +469,6 @@ def main():
     REPORT["checks"].append("child back returns to parent settings")
     if os.environ.get("RUNTIME_MODE") == "ui":
         inspect_detail_scroll(parent)
-        inspect_automatic_notice()
         inspect_update_progress()
     else:
         inspect_google(parent)

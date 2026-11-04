@@ -101,6 +101,7 @@ class MainActivity : ComponentActivity() {
                     state = state,
                     projectState = model.projectState,
                     appUpdateState = appUpdater.state,
+                    resumed = resumed.value,
                     onCheckAppUpdate = { appUpdater.check(force = true) },
                     onDownloadAppUpdate = appUpdater::download,
                     onCancelAppUpdate = appUpdater::cancel,

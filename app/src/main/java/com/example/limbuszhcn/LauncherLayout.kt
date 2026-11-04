@@ -8,6 +8,7 @@ internal data class LauncherLayout(
     val contentMaxWidth: Float,
     val margin: Float,
     val columnGap: Float,
+    val actionWidth: Float,
     val panelWidth: Float,
     val panelHeight: Float,
     val detailPadding: Float
@@ -16,14 +17,15 @@ internal data class LauncherLayout(
         fun calculate(width: Float, height: Float, fontScale: Float): LauncherLayout {
             val scale = fontScale.coerceAtLeast(1f)
             val margin = if (width < 360) 16f else if (width < 1200) 24f else 32f
-            val gap = if (width < 1200) 24f else 32f
-            val availableColumns = (minOf(width, 1320f) - margin * 2 - gap) / 2
-            val twoColumns = width > height && width >= 760 && availableColumns >= 320 * scale
+            val gap = 16f
+            val actionWidth = (232f * scale).coerceAtMost(360f) + 64f
+            val availableColumns = (minOf(width, 1320f) - margin * 2 - gap * 2 - actionWidth) / 2
+            val twoColumns = width > height && availableColumns >= 256 * scale
             val centered = width >= 600
             val compactHeight = height < 480
             return LauncherLayout(
                 twoColumns, centered, compactHeight,
-                if (twoColumns) 1320f else if (centered) 800f else 640f, margin, gap,
+                if (twoColumns) 1320f else if (centered) 800f else 640f, margin, gap, actionWidth,
                 minOf(560f * scale, 680f, (width - 48f).coerceAtLeast(0f)),
                 minOf(height * (if (compactHeight) .84f else .78f), if (centered) 720f else 640f),
                 if (width < 360) 16f else 24f

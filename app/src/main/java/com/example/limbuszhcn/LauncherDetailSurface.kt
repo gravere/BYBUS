@@ -57,6 +57,7 @@ import com.example.limbuszhcn.ui.theme.LauncherColors as C
 @Composable
 internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
     onDismiss: () -> Unit, onBack: (() -> Unit)? = null,
+    navigation: @Composable (String) -> Unit = {},
     footer: @Composable (String) -> Unit = {}, content: @Composable (String) -> Unit) {
     // Keep every detail page at the same height; long menus scroll within the panel.
     val panelHeight = layout.panelHeight.dp
@@ -109,6 +110,7 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
                 }
             }
             HorizontalDivider(color = C.Line)
+            navigation(page)
             // A child page starts at its top; returning restores its parent's scroll and disclosure state.
             Crossfade(page, animationSpec = tween(180), modifier = Modifier.weight(1f).fillMaxWidth()
                 .nestedScroll(bodyDrag), label = "detail page") { active ->

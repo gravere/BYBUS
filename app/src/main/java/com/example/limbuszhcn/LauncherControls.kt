@@ -3,6 +3,10 @@ package com.example.limbuszhcn
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -42,6 +46,40 @@ internal fun HomeSummaryCard(onClick: () -> Unit, modifier: Modifier = Modifier,
     Surface(onClick = onClick, modifier = modifier, color = C.Panel, contentColor = C.Ink,
         shape = RoundedCornerShape(24.dp)) {
         Column(Modifier.fillMaxWidth().padding(20.dp), content = content)
+    }
+}
+
+@Composable
+internal fun LaunchRipple(animated: Boolean, content: @Composable () -> Unit) {
+    // Read phase only in the draw pass: the home tree does not recompose each frame.
+    // Removing the transition when covered/backgrounded also stops its frame clock.
+    val phase = if (animated) rememberInfiniteTransition(label = "launch ripple").animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(4800, easing = LinearEasing)), label = "ripple phase")
+    else rememberUpdatedState(.35f)
+    val accent = C.Accent
+    val soft = C.AccentSoft
+    val buttonWidth = (232.dp * LocalDensity.current.fontScale.coerceAtLeast(1f)).coerceAtMost(360.dp)
+    Box(Modifier.fillMaxWidth().heightIn(min = 176.dp), contentAlignment = Alignment.Center) {
+        Canvas(Modifier.matchParentSize()) {
+            val innerWidth = buttonWidth.toPx().coerceAtMost(size.width - 8.dp.toPx())
+            val innerHeight = 56.dp.toPx()
+            drawOval(Brush.radialGradient(listOf(accent.copy(alpha = .13f), soft.copy(alpha = .06f),
+                accent.copy(alpha = 0f)), center, size.width / 2),
+                topLeft = Offset(0f, size.height * .07f), size = Size(size.width, size.height * .86f))
+            repeat(3) { layer ->
+                val progress = (phase.value + layer / 3f) % 1f
+                val width = innerWidth + (size.width - innerWidth) * progress
+                val height = innerHeight + (size.height - innerHeight - 8.dp.toPx()) * progress
+                val origin = Offset((size.width - width) / 2, (size.height - height) / 2)
+                val gradient = Brush.linearGradient(listOf(accent.copy(alpha = .05f),
+                    accent.copy(alpha = .28f), accent.copy(alpha = .07f)),
+                    start = origin, end = origin + Offset(width, height))
+                drawRoundRect(gradient, origin, Size(width, height), CornerRadius(height / 2),
+                    alpha = 1f - progress, style = Stroke(1.dp.toPx()))
+            }
+        }
+        content()
     }
 }
 
