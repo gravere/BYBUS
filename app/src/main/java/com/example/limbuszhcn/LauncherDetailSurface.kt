@@ -83,7 +83,7 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
         ModalBottomSheet(onDismissRequest = onDismiss,
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             properties = ModalBottomSheetDefaults.properties(shouldDismissOnBackPress = false),
-            containerColor = C.Panel, contentColor = C.Ink,
+            containerColor = C.Panel, contentColor = C.Ink, tonalElevation = 0.dp,
             scrimColor = MaterialTheme.colorScheme.scrim.copy(alpha = .36f),
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)) { body() }
     }

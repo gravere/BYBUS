@@ -176,6 +176,17 @@ def inspect_tablet():
 
 def inspect_detail_scroll(parent):
     """Record real edge gestures on the release, preserving frames for visual review."""
+    # Settings is deliberately scrollable on a compact phone. Find its lower entry first.
+    for attempt in range(3):
+        try:
+            locate(parent, "使用说明与版本")
+            break
+        except RuntimeError:
+            if attempt == 2:
+                raise
+            adb("shell", "input", "swipe", "580", "1320", "580", "800", "400")
+            time.sleep(1)
+            parent = hierarchy("settings-scrolled")
     tap("使用说明与版本", parent)
     before = capture("about-before-scroll")
     locate(before, "关于")
@@ -200,8 +211,7 @@ def inspect_detail_scroll(parent):
     adb("shell", "input", "keyevent", "KEYCODE_BACK")
     time.sleep(1)
     restored = hierarchy("settings-after-scroll")
-    locate(restored, "版本与资源")
-    locate(restored, "更新")
+    locate(restored, "使用说明与版本")
     REPORT["checks"].append("five upward detail gestures, footer visible, back restores parent; video requires visual review")
 
 
