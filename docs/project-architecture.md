@@ -49,6 +49,9 @@ Compose floating-window theme otherwise retains system-bar fitting even with dec
 disabled. Safe padding is read from the host composition before entering the dialog: older
 floating dialogs may dispatch zero insets even while their window overlaps the navigation bar.
 This preserves the host's live system measurements across navigation-mode and orientation changes.
+On short windows, the header stays fixed while tabs, content and actions share the scrolling
+body. This prevents fixed update controls from squeezing the body to zero height in phone
+landscape or a short split-screen window; regular-height panels retain the fixed action footer.
 Navigation-bar contrast scrims are disabled where the app supplies the background; actual
 controls remain above the inset. See [Android system bars](https://developer.android.com/develop/ui/compose/system/system-bars)
 and [Compose inset padding](https://developer.android.com/develop/ui/compose/system/insets-ui).

@@ -94,11 +94,12 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
             Column(Modifier.fillMaxWidth().draggable(rememberDraggableState { drag.drag(it) },
                 Orientation.Vertical, startDragImmediately = drag.offset > 0,
                 onDragStarted = { drag.stop() }, onDragStopped = { drag.settle(it) })) {
-                Box(Modifier.fillMaxWidth().height(22.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxWidth().height(if (layout.compactHeight) 12.dp else 22.dp), contentAlignment = Alignment.Center) {
                     Box(Modifier.size(width = 32.dp, height = 4.dp).clip(CircleShape).background(C.Line)
                         .semantics { contentDescription = "下拉关闭面板" })
                 }
-                Row(Modifier.fillMaxWidth().padding(horizontal = layout.detailPadding.dp, vertical = 6.dp),
+                Row(Modifier.fillMaxWidth().padding(horizontal = layout.detailPadding.dp,
+                    vertical = if (layout.compactHeight) 0.dp else 6.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 if (onBack != null) IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
                     LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(21.dp).rotate(180f), "返回上一页")
@@ -115,7 +116,7 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
                 }
             }
             HorizontalDivider(color = C.Line)
-            navigation(page)
+            if (!layout.compactHeight) navigation(page)
             // A child page starts at its top; returning restores its parent's scroll and disclosure state.
             Crossfade(page, animationSpec = tween(180), modifier = Modifier.weight(1f).fillMaxWidth()
                 .nestedScroll(bodyDrag), label = "detail page") { active ->
@@ -123,11 +124,16 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
                     pageStates.SaveableStateProvider(active) {
                         // Keep edge drags inside an opaque viewport; do not stretch the scrolling layer.
                         Column(Modifier.fillMaxSize().background(C.Panel).clipToBounds()
-                            .verticalScroll(rememberScrollState()).padding(layout.detailPadding.dp)) { content(active) }
+                            .verticalScroll(rememberScrollState())) {
+                            // A short window must keep the body reachable even with tall actions.
+                            if (layout.compactHeight) navigation(active)
+                            Column(Modifier.padding(layout.detailPadding.dp)) { content(active) }
+                            if (layout.compactHeight) footer(active)
+                        }
                     }
                 }
             }
-            footer(page)
+            if (!layout.compactHeight) footer(page)
         }
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(

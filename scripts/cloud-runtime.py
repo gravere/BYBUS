@@ -357,6 +357,9 @@ def inspect_system_navigation():
     """Exercise real system navigation modes; never replace system chrome in screenshots."""
     overlays = adb("shell", "cmd", "overlay", "list")
     original = re.search(r"\[x\]\s+(com\.android\.internal\.systemui\.navbar\.\S+)", overlays)
+    original_rotation = adb("shell", "wm", "user-rotation").strip().split()
+    if not original_rotation or original_rotation[0] not in ("free", "lock"):
+        raise RuntimeError("Could not read emulator rotation mode")
     prefix = "com.android.internal.systemui.navbar."
     for mode in ("gestural", "threebutton"):
         if prefix + mode not in overlays:
@@ -368,13 +371,39 @@ def inspect_system_navigation():
     cases = [("nav-gesture", "gestural", "no", "720x1560"),
              ("nav-three-button", "threebutton", "no", "720x1560"),
              ("nav-three-button-dark", "threebutton", "yes", "720x1560"),
-             ("nav-three-button-landscape", "threebutton", "no", "1280x720")]
+             ("nav-three-button-landscape", "threebutton", "no", "720x1280")]
     try:
         for name, mode, night, size in cases:
             adb("shell", "cmd", "overlay", "enable-exclusive", "--category", prefix + mode)
             adb("shell", "cmd", "uimode", "night", night)
             adb("shell", "wm", "size", size)
+            landscape = name.endswith("landscape")
+            adb("shell", "wm", "user-rotation", "lock", "1" if landscape else "0")
             time.sleep(3)
+            if landscape:
+                content_tree = capture(name + "-content")
+                locate(content_tree, "都市零协会")
+                # Compact panels scroll their tabs and actions with the body, keeping
+                # the header fixed. Reach the real footer without hiding missing text.
+                tree = content_tree
+                for _ in range(5):
+                    try:
+                        action = clickable_bounds(tree, "检查汉化更新", allow_disabled=True)
+                        if action[3] - action[1] >= 96:  # 48dp at this profile's 320dpi.
+                            break
+                    except (RuntimeError, StopIteration):
+                        pass
+                    scroll = next(n for n in tree.iter("node") if n.get("scrollable") == "true")
+                    bounds = tuple(map(int, re.findall(r"\d+", scroll.get("bounds", ""))))
+                    x = (bounds[0] + bounds[2]) // 2
+                    adb("shell", "input", "swipe", str(x), str(bounds[3] - 16),
+                        str(x), str(bounds[1] + 16), "400")
+                    time.sleep(1)
+                    tree = hierarchy(name + "-scroll")
+                locate(tree, "检查汉化更新")
+                action = clickable_bounds(tree, "检查汉化更新", allow_disabled=True)
+                if action[3] - action[1] < 96:
+                    raise RuntimeError("Compact update action remains clipped after scrolling")
             tree = capture(name)
             width, height = struct.unpack(">II", (OUT / f"{name}.png").read_bytes()[16:24])
             windows = adb("shell", "dumpsys", "window", "windows")
@@ -390,10 +419,12 @@ def inspect_system_navigation():
                     raise RuntimeError("Panel control overlaps system navigation: " + label)
                 controls[label] = bounds
             REPORT.setdefault("system_navigation", []).append(dict(name=name, mode=mode, night=night,
-                size=size, navigation_bounds=nav, controls=controls))
+                size=f"{width}x{height}", navigation_bounds=nav, controls=controls,
+                compact_content_visible=landscape))
     finally:
         adb("shell", "cmd", "uimode", "night", "no", check=False)
         adb("shell", "wm", "size", "720x1560", check=False)
+        adb("shell", "wm", "user-rotation", *original_rotation, check=False)
         adb("shell", "cmd", "overlay", "enable-exclusive", "--category",
             original[1] if original else prefix + "gestural", check=False)
         time.sleep(2)
