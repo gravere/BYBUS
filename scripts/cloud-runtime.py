@@ -354,6 +354,7 @@ def inspect_system_navigation():
             adb("shell", "wm", "size", size)
             time.sleep(3)
             tree = capture(name)
+            width, height = struct.unpack(">II", (OUT / f"{name}.png").read_bytes()[16:24])
             windows = adb("shell", "dumpsys", "window", "windows")
             (OUT / f"{name}-window.txt").write_text(windows, encoding="utf-8")
             nav_frames = []
@@ -366,7 +367,7 @@ def inspect_system_navigation():
                     match = re.search(r"(?:mFrame|frame)=Rect\(\s*(\d+),\s*(\d+)\s*-\s*(\d+),\s*(\d+)\)", source[1])
                 if match:
                     frame = tuple(map(int, match.groups()))
-                    if frame[2] > frame[0] and frame[3] > frame[1]:
+                    if 0 <= frame[0] < frame[2] <= width and 0 <= frame[1] < frame[3] <= height:
                         nav_frames.append(frame)
             if not nav_frames:
                 raise RuntimeError("Could not observe visible navigation bar bounds: " + name)
