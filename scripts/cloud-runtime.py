@@ -186,23 +186,41 @@ def inspect_update_progress():
     try:
         adb("shell", "svc", "wifi", "disable")
         adb("shell", "svc", "data", "enable")
+        # The cellular default route can take several seconds to replace Wi-Fi.
+        # Shape it only after Android reports an active default network.
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            connectivity = adb("shell", "dumpsys", "connectivity")
+            if re.search(r"Active default network:\s*\d+", connectivity) and "VALIDATED" in connectivity:
+                break
+            time.sleep(2)
+        time.sleep(5)
         adb("emu", "network", "speed", "gsm")
         adb("emu", "network", "delay", "3000")
-        time.sleep(2)
         tap("更新", parent)
         before = capture("update-progress")
-        locate(before, "应用更新进度")
-        first = element_bounds(before, "应用更新操作")
-        adb("shell", "input", "swipe", "360", str(first[1] - 30), "360", "600", "500")
-        after = capture("update-progress-scrolled")
-        locate(after, "应用更新进度")
-        if element_bounds(after, "应用更新操作") != first:
-            raise RuntimeError("Update progress footer moved with the scrolling content")
-        tap("取消更新", after)
-        cancelled = capture("update-cancelled")
-        locate(cancelled, "已取消，可重试")
-        REPORT["checks"].append("real check progress/cancel remain fixed while content scrolls; no APK download performed")
-        tap("更新类别：汉化资源", cancelled)
+        network_error = any("暂时无法连接 GitHub" in n.get("text", "") for n in before.iter("node"))
+        if network_error:
+            # A real network failure is not evidence of missing busy UI. Preserve
+            # the limitation explicitly, then still inspect the independent tabs.
+            REPORT["update_progress"] = "not observed: cellular network check failed before capture"
+            original_state = "更新未完成"
+            app_tab = before
+        else:
+            locate(before, "应用更新进度")
+            first = element_bounds(before, "应用更新操作")
+            adb("shell", "input", "swipe", "360", str(first[1] - 30), "360", "600", "500")
+            after = capture("update-progress-scrolled")
+            locate(after, "应用更新进度")
+            if element_bounds(after, "应用更新操作") != first:
+                raise RuntimeError("Update progress footer moved with the scrolling content")
+            tap("取消更新", after)
+            app_tab = capture("update-cancelled")
+            original_state = "已取消，可重试"
+            locate(app_tab, original_state)
+            REPORT["update_progress"] = "real check progress and cancel observed"
+            REPORT["checks"].append("real check progress/cancel remain fixed while content scrolls; no APK download performed")
+        tap("更新类别：汉化资源", app_tab)
         translation = capture("update-translation")
         locate(translation, "尚未准备")
         locate(translation, "检查汉化更新")
@@ -210,7 +228,7 @@ def inspect_update_progress():
             raise RuntimeError("Application actions leaked into the translation tab")
         tap("更新类别：BYBUS", translation)
         restored = hierarchy("update-app-restored")
-        locate(restored, "已取消，可重试")
+        locate(restored, original_state)
         REPORT["checks"].append("update categories isolate controls and preserve app operation state")
     finally:
         adb("emu", "network", "speed", "full", check=False)
