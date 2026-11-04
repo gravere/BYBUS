@@ -16,7 +16,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -71,6 +71,7 @@ internal fun LauncherScreen(
     }
     val snackbar = remember { SnackbarHostState() }
     var actionTop by remember { mutableFloatStateOf(0f) }
+    var homeTop by remember { mutableFloatStateOf(0f) }
     var wasBusy by remember { mutableStateOf(false) }
     LaunchedEffect(state.busy) {
         val finished = wasBusy && !state.busy
@@ -98,7 +99,8 @@ internal fun LauncherScreen(
     fun close() { parentSheet = null; sheet = null }
 
     Surface(Modifier.fillMaxSize(), color = C.Background) {
-        BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
+        BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()
+            .onGloballyPositioned { homeTop = it.positionInRoot().y }) {
             // Use the space allocated to this window, including split screen.
             // Large text needs a wider column, not a smaller font.
             val layout = LauncherLayout.calculate(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale)
@@ -122,43 +124,52 @@ internal fun LauncherScreen(
                         if (appUpdateState.updateAvailable) UpdateDot(Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 6.dp))
                     }
                 }
-                Box(Modifier.weight(1f, fill = false).fillMaxWidth()) {
-                    Column(Modifier.fillMaxWidth().verticalScroll(homeScroll)
-                        .padding(top = if (layout.compactHeight) 8.dp else 16.dp)) {
-                        if (layout.twoColumns) {
-                            Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min),
-                                horizontalArrangement = Arrangement.spacedBy(layout.columnGap.dp)) {
-                                InstallationCard(state, cardWidth, Modifier.weight(1f).fillMaxHeight()) { open("status") }
-                                ProjectCard(projectState, Modifier.weight(1f).fillMaxHeight()) { open("project") }
-                            }
-                        } else {
-                            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                InstallationCard(state, cardWidth) { open("status") }
-                                ProjectCard(projectState) { open("project") }
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Column(Modifier.fillMaxWidth()) {
+                        Box(Modifier.weight(1f, fill = false).fillMaxWidth()) {
+                            Column(Modifier.fillMaxWidth().verticalScroll(homeScroll)
+                                .padding(top = if (layout.compactHeight) 8.dp else 16.dp)) {
+                                if (layout.twoColumns) {
+                                    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min),
+                                        horizontalArrangement = Arrangement.spacedBy(layout.columnGap.dp)) {
+                                        InstallationCard(state, cardWidth, Modifier.weight(1f).fillMaxHeight()) { open("status") }
+                                        ProjectCard(projectState, Modifier.weight(1f).fillMaxHeight()) { open("project") }
+                                    }
+                                } else {
+                                    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                        InstallationCard(state, cardWidth) { open("status") }
+                                        ProjectCard(projectState) { open("project") }
+                                    }
+                                }
                             }
                         }
+                        LaunchActions(state, onLaunch, onRefresh,
+                            onDetails = { open(if (state.failed) "error" else "status") },
+                            modifier = Modifier.onGloballyPositioned { actionTop = it.positionInRoot().y })
                     }
                 }
-                LaunchActions(state, onLaunch, onRefresh, onAbout = { open("about") },
-                    onDetails = { open(if (state.failed) "error" else "status") },
-                    modifier = Modifier.onGloballyPositioned { actionTop = it.positionInParent().y })
+                Box(Modifier.fillMaxWidth().padding(bottom = 12.dp), contentAlignment = Alignment.Center) {
+                    AboutLink { open("about") }
+                }
             }
             SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp)
-                .padding(bottom = (maxHeight - with(LocalDensity.current) { actionTop.toDp() }).coerceAtLeast(0.dp) + 12.dp)) {
+                .padding(bottom = (maxHeight - with(LocalDensity.current) { (actionTop - homeTop).toDp() }).coerceAtLeast(0.dp) + 12.dp)) {
                 Snackbar(it, shape = RoundedCornerShape(20.dp), containerColor = C.Ink,
                     contentColor = C.OnPrimary, actionColor = C.OnPrimary)
             }
             sheet?.let { page ->
                 LauncherDetailSurface(layout, page, onDismiss = ::close,
-                    onBack = parentSheet?.let { parent -> { sheet = parent; parentSheet = null } }) { active ->
+                    onBack = parentSheet?.let { parent -> { sheet = parent; parentSheet = null } },
+                    footer = { active -> if (active == "app-update") {
+                        AppUpdateControls(appUpdateState, state, onDownloadAppUpdate, onInstallAppUpdate, onCancelAppUpdate)
+                    } }) { active ->
                     if (active == "project") {
                         ProjectDetails(projectState, onRefreshProject, onSelectProjectSource, onOpenLink)
                     } else if (active == "updates") {
                         GameUpdatesPane(state, onCheckGameUpdate, onSelectGameSource, onOpenGamePage,
                             onOpenInstallSource, onImportGame, onInstallGame, onCancelGameInstall)
                     } else if (active == "app-update") {
-                        AppUpdatesPane(appUpdateState, state, onCheckAppUpdate, onDownloadAppUpdate,
-                            onInstallAppUpdate, onCancelAppUpdate, onOpenAppRelease, onUpdate)
+                        AppUpdatesPane(appUpdateState, state, onCheckAppUpdate, onOpenAppRelease, onUpdate)
                     } else {
                         LauncherDetails(active, state, onGameStore = { openChild("updates") },
                             appUpdateAvailable = appUpdateState.updateAvailable,
@@ -176,13 +187,11 @@ internal fun LauncherScreen(
 
 @Composable
 private fun LaunchActions(state: LauncherUiState, onLaunch: () -> Unit,
-    onRefresh: () -> Unit, onDetails: () -> Unit, onAbout: () -> Unit, modifier: Modifier = Modifier) {
+    onRefresh: () -> Unit, onDetails: () -> Unit, modifier: Modifier = Modifier) {
     Box(modifier.fillMaxWidth().padding(top = 24.dp, bottom = 12.dp),
         contentAlignment = Alignment.Center) {
         Column(Modifier.widthIn(max = 360.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
             PrimaryAction(state, onLaunch, onRefresh, onDetails)
-            Spacer(Modifier.height(8.dp))
-            AboutLink(onAbout)
         }
     }
 }

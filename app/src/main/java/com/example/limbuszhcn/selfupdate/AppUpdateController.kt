@@ -39,6 +39,8 @@ internal class AppUpdateController(private val app: Application) {
         }.apply()
     }
     private var task: Future<*>? = null
+    private var noticeTask: Future<*>? = null
+    private var checkingNotice = false
     private var readyFile: File? = null
     private var closed = false
     var state by mutableStateOf(AppUpdateState(AppUpdatePackage.installedCode(app), knownVersionCode = notice.versionCode))
@@ -49,8 +51,31 @@ internal class AppUpdateController(private val app: Application) {
     init { preferences.edit().remove("retryAt").apply() }
 
     fun checkForNotice() {
-        if (state.ready || installRequest != null || !notice.shouldCheck(System.currentTimeMillis())) return
-        check(automatic = true)
+        if (closed || checkingNotice || state.busy || state.ready || installRequest != null ||
+            !notice.shouldCheck(System.currentTimeMillis())) return
+        if (checkPolicy.beforeCheck(force = true) == UpdateCheckDecision.Wait) return
+        saveNotice(notice.attempted(System.currentTimeMillis()))
+        checkingNotice = true
+        val id = generation.get()
+        noticeTask = worker.submit {
+            val result = try { Result.success(repository.checkNotice()) } catch (error: Exception) { Result.failure(error) }
+            main.post {
+                checkingNotice = false
+                // A user request started meanwhile owns the state. Never replace its progress or result.
+                if (!closed && id == generation.get() && !state.busy) result.fold(onSuccess = { code ->
+                    checkPolicy.succeeded()
+                    saveNotice(notice.checked(code, System.currentTimeMillis()))
+                    android.util.Log.i("BYBUSUpdate", "Notice checked: $code")
+                    val retained = state.release?.takeIf { it.versionCode == code }
+                    state = state.copy(knownVersionCode = code, release = retained,
+                        checked = state.checked && retained != null,
+                        delta = state.delta.takeIf { retained != null }, reuse = state.reuse.takeIf { retained != null },
+                        downloadPlanned = state.downloadPlanned && retained != null,
+                        message = if (retained == null && state.error == null)
+                            if (code > state.installedCode) "有新版本可用" else "已是最新版本" else state.message)
+                }, onFailure = { if (it is Exception) checkPolicy.failed(it) })
+            }
+        }
     }
 
     private fun saveNotice(value: AppUpdateNotice) {
@@ -59,11 +84,11 @@ internal class AppUpdateController(private val app: Application) {
             .putLong("noticeAttemptedAt", value.attemptedAt).apply()
     }
 
-    fun check(force: Boolean = false, automatic: Boolean = false) {
+    fun check(force: Boolean = false) {
         if (closed || state.busy) return
         when (checkPolicy.beforeCheck(force)) {
             UpdateCheckDecision.Cached -> return
-            UpdateCheckDecision.Wait -> { if (!automatic) showServerWait(); return }
+            UpdateCheckDecision.Wait -> { showServerWait(); return }
             UpdateCheckDecision.Check -> Unit
         }
         readyFile = null
@@ -75,16 +100,16 @@ internal class AppUpdateController(private val app: Application) {
             try {
                 val release = repository.check()
                 val installed = AppUpdatePackage.installedCode(app)
-                if (!automatic && !release.newerThan(installed)) repository.clear()
-                val reuse = if (!automatic && release.newerThan(installed))
+                if (!release.newerThan(installed)) repository.clear()
+                val reuse = if (release.newerThan(installed))
                     repository.selectReuse(release, File(app.applicationInfo.sourceDir)) else null
-                val delta = if (!automatic && release.newerThan(installed) && reuse == null)
+                val delta = if (release.newerThan(installed) && reuse == null)
                     repository.selectDelta(release, installed, File(app.applicationInfo.sourceDir)) else null
                 publish(id) {
                     checkPolicy.succeeded()
                     saveNotice(notice.checked(release.versionCode, System.currentTimeMillis()))
                     state = AppUpdateState(installed, checked = true, release = release, delta = delta, reuse = reuse,
-                        knownVersionCode = notice.versionCode, downloadPlanned = !automatic,
+                        knownVersionCode = notice.versionCode, downloadPlanned = true,
                         message = if (release.newerThan(installed)) "有新版本可用" else "已是最新版本")
                 }
             } catch (error: Exception) {
@@ -175,5 +200,5 @@ internal class AppUpdateController(private val app: Application) {
     private fun showServerWait() {
         state = state.copy(error = "GitHub 暂时限制了请求", message = "等待 GitHub 恢复请求", retryAtElapsed = checkPolicy.retryAtElapsed)
     }
-    fun close() { closed = true; generation.incrementAndGet(); task?.cancel(true); worker.shutdownNow() }
+    fun close() { closed = true; generation.incrementAndGet(); task?.cancel(true); noticeTask?.cancel(true); worker.shutdownNow() }
 }

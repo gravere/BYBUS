@@ -10,6 +10,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.dp
 import com.example.limbuszhcn.selfupdate.AppUpdateState
 import com.example.limbuszhcn.selfupdate.releaseNoteItems
@@ -18,29 +19,16 @@ import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
 @Composable
 internal fun AppUpdatesPane(state: AppUpdateState, launcher: LauncherUiState, onCheck: () -> Unit,
-    onDownload: () -> Unit, onInstall: () -> Unit, onCancel: () -> Unit, onOpenPage: () -> Unit,
-    onTranslationUpdate: () -> Unit) {
+    onOpenPage: () -> Unit, onTranslationUpdate: () -> Unit) {
     val release = state.release
     val available = release?.newerThan(state.installedCode) == true
     val retryAt = state.retryAtElapsed
-    fun remaining() = retryAt?.let { (it - android.os.SystemClock.elapsedRealtime()).coerceAtLeast(0) } ?: 0L
-    val retryRemaining by produceState(remaining(), retryAt) {
-        value = remaining()
-        while (value > 0) { delay(minOf(value, 1000)); value = remaining() }
-    }
+    val retryRemaining = updateRetryRemaining(retryAt)
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("BYBUS", style = MaterialTheme.typography.titleLarge)
             Text("${androidx.compose.ui.res.stringResource(R.string.app_version_name)} · 构建 ${state.installedCode}",
                 color = C.Muted, style = MaterialTheme.typography.bodySmall)
-        }
-        Text(if (retryAt != null && retryRemaining == 0L) "可以重新检查更新" else state.message,
-            style = MaterialTheme.typography.titleMedium)
-        if (state.busy) {
-            state.progress?.let {
-                LinearProgressIndicator(progress = { it / 100f }, modifier = Modifier.fillMaxWidth(), color = C.Accent, trackColor = C.Line)
-                Text("$it%", color = C.Muted, style = MaterialTheme.typography.bodySmall)
-            } ?: LinearProgressIndicator(Modifier.fillMaxWidth(), color = C.Accent, trackColor = C.Line)
         }
         if (available) {
             DetailSection("新版本") {
@@ -80,21 +68,11 @@ internal fun AppUpdatesPane(state: AppUpdateState, launcher: LauncherUiState, on
             Text(error, color = if (retryAt != null && seconds == 0L) C.Muted else MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodyMedium)
         }
-        if (available) {
-            Button(onClick = if (state.ready) onInstall else onDownload,
-                enabled = !state.busy && (state.ready || retryRemaining == 0L) && (!state.ready || !launcher.busy),
-                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)) {
-                Text(if (state.ready) "安装更新" else "下载更新")
-            }
-            Text("覆盖安装会保留游戏资源、登录和设置。", color = C.Muted, style = MaterialTheme.typography.bodySmall)
-        }
         DetailSection("应用版本") {
             SheetAction(Glyph.Apps, "检查应用更新", !state.busy && retryRemaining == 0L, onClick = onCheck)
             HorizontalDivider(color = C.Line)
             SheetAction(Glyph.ReleaseTag, "GitHub 发行页面", external = true, onClick = onOpenPage)
         }
-        if (state.busy) TextButton(onClick = onCancel, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("取消") }
         DetailSection("汉化资源") {
             SheetAction(Glyph.Translation, "检查汉化更新", !launcher.busy && launcher.container?.gameImported == true,
                 subtitle = if (launcher.busy && launcher.stage == "检查零协更新并校验汉化文件") launcher.message
@@ -106,4 +84,48 @@ internal fun AppUpdatesPane(state: AppUpdateState, launcher: LauncherUiState, on
                 style = MaterialTheme.typography.bodySmall)
         }
     }
+}
+
+/** Keep transfer feedback beside its action, outside long release notes. */
+@Composable
+internal fun AppUpdateControls(state: AppUpdateState, launcher: LauncherUiState,
+    onDownload: () -> Unit, onInstall: () -> Unit, onCancel: () -> Unit) {
+    val retryRemaining = updateRetryRemaining(state.retryAtElapsed)
+    Column(Modifier.fillMaxWidth().semantics { contentDescription = "应用更新操作" }) {
+        HorizontalDivider(color = C.Line)
+        Column(Modifier.padding(horizontal = 24.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(if (state.retryAtElapsed != null && retryRemaining == 0L) "可以重新检查更新" else state.message,
+                    style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                if (state.busy) state.progress?.let {
+                    Text("${it.coerceIn(0, 100)}%", color = C.Accent, style = MaterialTheme.typography.labelLarge)
+                }
+            }
+            if (state.busy) {
+                val progressModifier = Modifier.fillMaxWidth().semantics { contentDescription = "应用更新进度" }
+                state.progress?.let {
+                    LinearProgressIndicator(progress = { it.coerceIn(0, 100) / 100f }, modifier = progressModifier,
+                        color = C.Accent, trackColor = C.Line)
+                } ?: LinearProgressIndicator(progressModifier, color = C.Accent, trackColor = C.Line)
+                TextButton(onClick = onCancel, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("取消更新") }
+            } else if (state.release?.newerThan(state.installedCode) == true) {
+                Button(onClick = if (state.ready) onInstall else onDownload,
+                    enabled = (state.ready || retryRemaining == 0L) && (!state.ready || !launcher.busy),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)) {
+                    Text(if (state.ready) "安装更新" else "下载更新")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun updateRetryRemaining(retryAt: Long?): Long {
+    fun remaining() = retryAt?.let { (it - android.os.SystemClock.elapsedRealtime()).coerceAtLeast(0) } ?: 0L
+    val value by produceState(remaining(), retryAt) {
+        value = remaining()
+        while (value > 0) { delay(minOf(value, 1000)); value = remaining() }
+    }
+    return value
 }
