@@ -107,14 +107,16 @@ def tap(value, tree):
     time.sleep(1)
 
 
-def clickable_bounds(tree, label):
+def clickable_bounds(tree, label, allow_disabled=False):
     parents = {child: parent for parent in tree.iter() for child in parent}
     target = next(n for n in tree.iter("node") if any(label in n.get(key, "").splitlines()
                   for key in ("text", "content-desc")))
-    while target.get("clickable") != "true" and target in parents:
+    def is_control(node):
+        return node.get("clickable") == "true" or (allow_disabled and node.get("class") == "android.widget.Button")
+    while not is_control(target) and target in parents:
         target = parents[target]
     bounds = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", target.get("bounds", ""))
-    if not bounds or target.get("clickable") != "true":
+    if not bounds or not is_control(target):
         raise RuntimeError("Missing clickable bounds: " + label)
     return tuple(map(int, bounds.groups()))
 
@@ -356,9 +358,12 @@ def inspect_system_navigation():
             (OUT / f"{name}-window.txt").write_text(windows, encoding="utf-8")
             nav_frames = []
             for line in windows.splitlines():
-                if "type=navigationBars" not in line or not re.search(r"(?:mVisible|visible)=true", line):
+                source = re.search(r"(?:mType|type)=navigationBars\b([^}\n]*)", line)
+                if not source or not re.search(r"(?:mVisible|visible)=true", source[1]):
                     continue
-                match = re.search(r"(?:mFrame|frame)=\[(\d+),(\d+)\]\[(\d+),(\d+)\]", line)
+                match = re.search(r"(?:mFrame|frame)=\[\s*(\d+),\s*(\d+)\]\[\s*(\d+),\s*(\d+)\]", source[1])
+                if not match:
+                    match = re.search(r"(?:mFrame|frame)=Rect\(\s*(\d+),\s*(\d+)\s*-\s*(\d+),\s*(\d+)\)", source[1])
                 if match:
                     frame = tuple(map(int, match.groups()))
                     if frame[2] > frame[0] and frame[3] > frame[1]:
@@ -368,7 +373,7 @@ def inspect_system_navigation():
             nav = max(nav_frames, key=lambda f: (f[2] - f[0]) * (f[3] - f[1]))
             controls = {}
             for label in ("关闭面板", "返回上一页", "检查汉化更新"):
-                bounds = element_bounds(tree, label)
+                bounds = clickable_bounds(tree, label, allow_disabled=True)
                 if bounds[0] < nav[2] and bounds[2] > nav[0] and bounds[1] < nav[3] and bounds[3] > nav[1]:
                     raise RuntimeError("Panel control overlaps system navigation: " + label)
                 controls[label] = bounds
