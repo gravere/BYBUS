@@ -46,7 +46,9 @@ content height. Centered tablet panels leave the system bar over the dimmed back
 come from the system rather than a fixed gesture-bar height, including three-button navigation.
 On API 30+, the dialog also explicitly clears the window's fitted inset types: the pinned
 Compose floating-window theme otherwise retains system-bar fitting even with decor fitting
-disabled. The panel itself still consumes the safe insets for its controls.
+disabled. Safe padding is read from the host composition before entering the dialog: older
+floating dialogs may dispatch zero insets even while their window overlaps the navigation bar.
+This preserves the host's live system measurements across navigation-mode and orientation changes.
 Navigation-bar contrast scrims are disabled where the app supplies the background; actual
 controls remain above the inset. See [Android system bars](https://developer.android.com/develop/ui/compose/system/system-bars)
 and [Compose inset padding](https://developer.android.com/develop/ui/compose/system/insets-ui).

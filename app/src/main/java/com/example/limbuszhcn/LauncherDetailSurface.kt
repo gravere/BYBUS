@@ -63,6 +63,9 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
     footer: @Composable (String) -> Unit = {}, content: @Composable (String) -> Unit) {
     // Keep every detail page at the same height; long menus scroll within the panel.
     val panelHeight = layout.panelHeight.dp
+    // Read the host's live insets: older floating dialogs dispatch zero bar insets.
+    val systemPadding = WindowInsets.safeDrawing
+        .only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom).asPaddingValues()
     val pageStates = rememberSaveableStateHolder()
     val density = LocalDensity.current.density
     val scope = rememberCoroutineScope()
@@ -158,8 +161,7 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
             color = C.Panel, contentColor = C.Ink, tonalElevation = 0.dp) {
             // Paint the bar area with the panel, but keep every control above it.
             // A centered dialog does not touch the bar and must not add a phantom footer.
-            val safeInsets = if (layout.centeredDetails) Modifier else Modifier.windowInsetsPadding(
-                WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
+            val safeInsets = if (layout.centeredDetails) Modifier else Modifier.padding(systemPadding)
             Column(safeInsets) { body() }
         }
     }
