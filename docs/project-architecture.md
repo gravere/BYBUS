@@ -24,9 +24,14 @@ It does not require a catalog entry or a rebuilt launcher for every same-family 
 
 ## Modules
 
-The launcher keeps device readiness in the installation/status area. The primary launch action
-is pinned in a compact, centered bottom capsule above safe insets on all window sizes; progress
-appears above it so the tap target does not jump during preparation. Snackbars stay above this bar.
+The launcher keeps device readiness in the installation/status area. Phone and tablet home pages
+share the same summary cards; wide landscape gives them equal widths and a shared intrinsic height,
+surface, corner radius and padding. Project controls remain in the common detail dialog rather
+than expanding one home column. The content viewport wraps short content and scrolls when space
+is constrained, leaving a bounded gap before the centered launch action instead of stretching
+empty space to the screen bottom. The usage link follows the action; snackbars clear the actual
+action position. Installation rows use the known card width rather than subcomposition so the
+two-card row can safely measure its intrinsic height at larger text sizes.
 Detail pages use a bottom-aligned fixed dialog on phones and a centered dialog on tablets, with a
 fixed header and per-page scroll state. A bounded downward drag restores pull-to-dismiss without
 an upward spring: header gestures move the panel, while body gestures move it only after the

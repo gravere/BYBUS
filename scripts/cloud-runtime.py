@@ -107,19 +107,38 @@ def tap(value, tree):
     time.sleep(1)
 
 
-def inspect_primary_action(tree, width, height):
+def clickable_bounds(tree, label):
     parents = {child: parent for parent in tree.iter() for child in parent}
-    target = next(n for n in tree.iter("node") if n.get("text") == "检测游戏")
+    target = next(n for n in tree.iter("node") if any(label in n.get(key, "").splitlines()
+                  for key in ("text", "content-desc")))
     while target.get("clickable") != "true" and target in parents:
         target = parents[target]
     bounds = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", target.get("bounds", ""))
     if not bounds or target.get("clickable") != "true":
-        raise RuntimeError("Primary action has no clickable bounds")
-    left, top, right, bottom = map(int, bounds.groups())
-    if abs((left + right) / 2 - width / 2) > 2 or (top + bottom) / 2 < height * .8:
-        raise RuntimeError("Primary action is not centered near the bottom")
-    if right - left >= width * .9:
+        raise RuntimeError("Missing clickable bounds: " + label)
+    return tuple(map(int, bounds.groups()))
+
+
+def inspect_home_alignment(tree, width, height, density=1, landscape=False):
+    action = clickable_bounds(tree, "检测游戏")
+    status = clickable_bounds(tree, "本地汉化")
+    project = clickable_bounds(tree, "都市零协会")
+    if abs((action[0] + action[2]) / 2 - width / 2) > 2 or action[3] > height:
+        raise RuntimeError("Primary action is not centered and fully visible")
+    if action[2] - action[0] >= width * .9:
         raise RuntimeError("Primary action still spans the entire screen")
+    gap = (action[1] - max(status[3], project[3])) / density
+    if not 20 <= gap <= 28:
+        raise RuntimeError(f"Excessive or overlapping content-to-action gap: {gap} dp")
+    if abs((status[2] - status[0]) - (project[2] - project[0])) > 1:
+        raise RuntimeError("Summary card widths differ")
+    if landscape:
+        if abs(status[1] - project[1]) > 1 or abs(status[3] - project[3]) > 1:
+            raise RuntimeError("Landscape summary cards do not share top and bottom edges")
+    elif project[1] <= status[3]:
+        raise RuntimeError("Portrait summary cards overlap or are not stacked")
+    REPORT.setdefault("home_layouts", []).append(dict(width=width, height=height, gap_dp=gap,
+        status_bounds=status, project_bounds=project, action_bounds=action))
 
 
 def capture(name):
@@ -171,15 +190,18 @@ def inspect_tablet():
     # Android 11 caps forced width at twice the AVD's initial width (720 * 2).
     # Use 160 dpi to exercise tablet dp sizes without hitting that platform clamp.
     adb("shell", "wm", "density", "160")
-    for name, size, landscape in [("tablet-portrait", "800x1280", False),
-                                   ("tablet-landscape", "1280x800", True)]:
+    for name, size, landscape, font_scale in [("tablet-small", "600x960", False, "1.0"),
+                                   ("tablet-portrait", "800x1280", False, "1.0"),
+                                   ("tablet-landscape", "1280x800", True, "1.0"),
+                                   ("tablet-large-text", "1280x800", True, "1.5")]:
         adb("shell", "wm", "size", size)
+        adb("shell", "settings", "put", "system", "font_scale", font_scale)
         time.sleep(3)
         tree = capture(name)
         actual_size = struct.unpack(">II", (OUT / f"{name}.png").read_bytes()[16:24])
         if actual_size != tuple(map(int, size.split("x"))):
             raise RuntimeError(f"Android constrained requested display {size} to {actual_size}")
-        inspect_primary_action(tree, *actual_size)
+        inspect_home_alignment(tree, *actual_size, landscape=landscape)
         game = locate(tree, "本地汉化")
         project = locate(tree, "都市零协会")
         if landscape:
@@ -187,7 +209,23 @@ def inspect_tablet():
                 raise RuntimeError("Wide landscape did not put the project card in the right column")
         elif project[1] <= game[1]:
             raise RuntimeError("Portrait did not place the project card below the game controls")
-        REPORT["checks"].append(f"{name} layout at {size}, 160 dpi")
+        REPORT["checks"].append(f"{name} layout at {size}, 160 dpi, font scale {font_scale}")
+    adb("shell", "settings", "put", "system", "font_scale", "1.0")
+    time.sleep(2)
+    home = hierarchy("tablet-before-details")
+    header_position = None
+    for label, name in [("运行状态", "tablet-status"), ("都市零协会", "tablet-project"),
+                        ("设置与工具", "tablet-settings")]:
+        tap(label, home)
+        detail = capture(name)
+        current = (locate(detail, "关闭面板"), locate(detail, "下拉关闭面板"))
+        if header_position is not None and current != header_position:
+            raise RuntimeError("Tablet detail panels have inconsistent header geometry")
+        header_position = current
+        adb("shell", "input", "keyevent", "KEYCODE_BACK")
+        time.sleep(.5)
+        home = hierarchy("tablet-detail-return")
+    REPORT["checks"].append("tablet status/project/settings use matching dialog geometry")
 
 
 def inspect_detail_scroll(parent):
@@ -325,7 +363,7 @@ def main():
     time.sleep(15)
     home = capture("home")
     if os.environ.get("RUNTIME_MODE") == "ui":
-        inspect_primary_action(home, 720, 1560)
+        inspect_home_alignment(home, 720, 1560, density=2)
     REPORT["checks"].append("main activity resumed")
     tap("都市零协会", home)
     project = capture("project")
