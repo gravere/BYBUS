@@ -12,6 +12,7 @@ internal object AppReleases {
     const val PACKAGE = "com.example.limbuszhcn"
     const val APK = "BYBUS.apk"
     const val MANIFEST = "bybus-update.json"
+    const val NOTICE = "$PAGE/download/$MANIFEST"
     const val MAX_APK_BYTES = 256L * 1024 * 1024
     const val DELTA_FORMAT = "bybus-copy-v1"
     const val FIRST_DELTA_BUILD = 48L
@@ -27,6 +28,8 @@ internal object AppReleases {
         when (uri.host) {
             "api.github.com" -> uri.path == "$API_PATH/latest" ||
                 uri.path.matches(Regex("$API_PATH/assets/[1-9][0-9]*"))
+            "github.com" -> uri.rawQuery == null && (uri.path == "/$REPOSITORY/releases/latest/download/$MANIFEST" ||
+                uri.path.matches(Regex("/$REPOSITORY/releases/download/v[0-9]+(?:\\.[0-9]+){1,2}-build\\.[1-9][0-9]*/$MANIFEST")))
             "release-assets.githubusercontent.com", "objects.githubusercontent.com", "github-releases.githubusercontent.com" -> true
             else -> false
         }
@@ -61,10 +64,7 @@ internal data class AppRelease(val tag: String, val versionName: String, val ver
 
         fun parse(release: JSONObject, manifest: JSONObject): AppRelease {
             require(!release.getBoolean("draft") && !release.getBoolean("prerelease")) { "此发行版尚未正式发布" }
-            require(manifest.getInt("schemaVersion") == 1 && manifest.getString("packageName") == AppReleases.PACKAGE) {
-                "更新描述不属于 BYBUS"
-            }
-            val code = manifest.getLong("versionCode")
+            val code = noticeVersion(manifest)
             val version = manifest.getString("versionName")
             val tag = release.getString("tag_name")
             require(code > 0 && version.matches(Regex("v[0-9]+(?:\\.[0-9]+){1,2}")) && tag == "$version-build.$code") {
@@ -80,6 +80,21 @@ internal data class AppRelease(val tag: String, val versionName: String, val ver
             return AppRelease(tag, version, code, minSdk, sha, apk,
                 manifest.optString("notes").take(3000), parseDeltas(release, manifest, code, apk.size),
                 parseReuse(manifest, apk.size))
+        }
+
+        /** Public metadata can inform a notice; it never authorizes an APK installation. */
+        fun noticeVersion(manifest: JSONObject): Long {
+            require(manifest.getInt("schemaVersion") == 1 && manifest.getString("packageName") == AppReleases.PACKAGE) {
+                "更新描述不属于 BYBUS"
+            }
+            val code = manifest.getLong("versionCode")
+            require(code > 0 && manifest.getString("versionName").matches(Regex("v[0-9]+(?:\\.[0-9]+){1,2}"))) {
+                "更新版本信息不一致"
+            }
+            require(manifest.getString("apkName") == AppReleases.APK &&
+                manifest.getLong("size") in 1..AppReleases.MAX_APK_BYTES && manifest.getInt("minSdk") in 26..100 &&
+                manifest.getString("sha256").matches(Regex("[a-fA-F0-9]{64}"))) { "更新描述不完整" }
+            return code
         }
 
         private fun parseReuse(manifest: JSONObject, apkSize: Long): List<ApkReuseEntry> = try {

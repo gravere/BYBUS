@@ -21,6 +21,8 @@ internal class AppUpdateRepository @JvmOverloads constructor(private val directo
     private val rangeFactory: (ReleaseAsset) -> AppRangeReader = { asset -> ranges(asset) }) {
     private val apk get() = File(directory, AppReleases.APK)
 
+    fun checkNotice(): Long = AppRelease.noticeVersion(JSONObject(readJson(AppReleases.NOTICE, 32 * 1024, binary = true)))
+
     fun check(): AppRelease {
         val release = JSONObject(readJson("${AppReleases.API}/latest", 512 * 1024))
         require(!release.getBoolean("draft") && !release.getBoolean("prerelease")) { "尚无正式版本" }
@@ -174,6 +176,7 @@ internal class AppUpdateRepository @JvmOverloads constructor(private val directo
                     connection.connectTimeout = 12_000
                     connection.readTimeout = 15_000
                     connection.useCaches = false
+                    if (initial == AppReleases.NOTICE) connection.setRequestProperty("Cache-Control", "no-cache")
                     connection.setRequestProperty("User-Agent", "BYBUS-App-Update")
                     connection.setRequestProperty("Accept", if (binary) "application/octet-stream" else "application/vnd.github+json")
                     connection.setRequestProperty("Accept-Encoding", "identity")

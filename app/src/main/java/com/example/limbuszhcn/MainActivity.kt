@@ -64,6 +64,12 @@ class MainActivity : ComponentActivity() {
                 lifecycle.addObserver(observer)
                 onDispose { lifecycle.removeObserver(observer) }
             }
+            androidx.compose.runtime.LaunchedEffect(resumed.value) {
+                if (resumed.value) while (true) {
+                    appUpdater.checkForNotice()
+                    kotlinx.coroutines.delay(com.example.limbuszhcn.selfupdate.AppUpdateNotice.INTERVAL)
+                }
+            }
             androidx.compose.runtime.LaunchedEffect(state.gameInstallConfirmation, resumed.value) {
                 if (resumed.value) state.gameInstallConfirmation?.let { confirmation ->
                     model.installConfirmationOpened()
