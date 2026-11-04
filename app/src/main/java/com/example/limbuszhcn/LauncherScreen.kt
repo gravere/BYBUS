@@ -20,6 +20,7 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -110,9 +111,13 @@ internal fun LauncherScreen(
                     Text(androidx.compose.ui.res.stringResource(R.string.app_name), fontSize = 20.sp,
                         fontWeight = FontWeight.SemiBold, letterSpacing = 2.6.sp, color = C.Ink,
                         modifier = Modifier.padding(start = 11.dp).weight(1f))
-                    FilledIconButton(onClick = { open("tools") }, modifier = Modifier.size(48.dp),
-                        colors = IconButtonDefaults.filledIconButtonColors(containerColor = C.Background)) {
-                        LauncherGlyph(Glyph.Settings, C.Ink, Modifier.size(22.dp), "设置与工具")
+                    Box {
+                        FilledIconButton(onClick = { open("tools") }, modifier = Modifier.size(48.dp).semantics {
+                            if (appUpdateState.updateAvailable) stateDescription = "有 BYBUS 新版本"
+                        }, colors = IconButtonDefaults.filledIconButtonColors(containerColor = C.Background)) {
+                            LauncherGlyph(Glyph.Settings, C.Ink, Modifier.size(22.dp), "设置与工具")
+                        }
+                        if (appUpdateState.updateAvailable) UpdateDot(Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 6.dp))
                     }
                 }
                 Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -175,6 +180,7 @@ internal fun LauncherScreen(
                             onInstallAppUpdate, onCancelAppUpdate, onOpenAppRelease, onUpdate)
                     } else {
                         LauncherDetails(active, state, onGameStore = { openChild("updates") },
+                            appUpdateAvailable = appUpdateState.updateAvailable,
                             onAppUpdate = { openChild("app-update"); onCheckAppUpdate() },
                             onSync = { close(); onSync() }, onRestore = { close(); onRestore() },
                             onExport = { close(); onExport() }, onSettings = { close(); onSettings() },
@@ -190,17 +196,8 @@ internal fun LauncherScreen(
 @Composable
 private fun LaunchPanel(state: LauncherUiState, onLaunch: () -> Unit, onRefresh: () -> Unit,
     onGameStore: () -> Unit, onDetails: () -> Unit) {
-    val ready = state.container?.available == true && state.installedVersion != null &&
-        state.compatibility?.isSupported == true && state.nativeCompatibilityIssue == null
     Surface(color = C.AccentSoft, shape = RoundedCornerShape(28.dp)) {
         Column(Modifier.fillMaxWidth().padding(24.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(6.dp).clip(CircleShape).background(if (ready) C.Accent else C.Muted))
-                Text(if (state.busy) "正在准备" else if (ready) "设备已就绪" else "设备状态",
-                    color = C.OnAccentSoft, style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.padding(start = 8.dp))
-            }
-            Spacer(Modifier.height(28.dp))
             PrimaryAction(state, onLaunch, onRefresh, onDetails)
             if (state.gameUpdate.newerSources(state.installedVersionName).isNotEmpty() && !state.busy) {
                 HorizontalDivider(Modifier.padding(vertical = 10.dp), color = C.Line)
@@ -218,8 +215,23 @@ private fun LaunchPanel(state: LauncherUiState, onLaunch: () -> Unit, onRefresh:
 
 @Composable
 private fun InstallationCard(state: LauncherUiState, onClick: () -> Unit) {
+    val ready = state.container?.available == true && state.installedVersion != null &&
+        state.compatibility?.isSupported == true && state.nativeCompatibilityIssue == null
     Surface(onClick = onClick, color = C.Background, contentColor = C.Ink, shape = RoundedCornerShape(18.dp)) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp)) {
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("运行状态", color = C.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+                Box(Modifier.size(6.dp).clip(CircleShape).background(if (ready) C.Accent else C.Muted))
+                Text(when {
+                    state.busy -> "正在准备"
+                    state.failed -> "需要检查"
+                    ready -> "设备已就绪"
+                    state.container == null -> "检测中"
+                    state.installedVersion == null -> "等待安装"
+                    else -> "需要检查"
+                }, color = C.Muted, style = MaterialTheme.typography.labelMedium)
+            }
             InstallationRow(Glyph.Bus, "游戏",
                 when { state.container == null -> "正在检测"; state.installedVersion == null -> "等待安装";
                     else -> "已安装 · ${state.installedVersionName ?: state.installedVersion}" },
@@ -274,18 +286,13 @@ private fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefres
     val caption = when {
         state.busy -> state.stage
         state.failed -> "准备未完成 · 查看详情"
-        missing -> "从更新渠道安装，或选择完整安装包"
-        state.container == null -> "正在检测已安装游戏"
-        state.compatibility?.isSupported == false -> state.compatibility.blockingReason.orEmpty()
-        state.nativeCompatibilityIssue != null -> "当前游戏版本需要兼容更新"
-        !canLaunch -> "轻触查看设备与游戏状态"
-        else -> "启动前检查游戏与汉化更新"
+        else -> ""
     }
     if (state.failed && !state.busy) {
         TextButton(onClick = onDetails, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(10.dp)) {
             Text(caption, color = C.Error, style = MaterialTheme.typography.bodySmall)
         }
-    } else {
+    } else if (caption.isNotBlank()) {
         Box(Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 6.dp).semantics { liveRegion = LiveRegionMode.Polite },
             contentAlignment = Alignment.Center) {
             Text(caption, color = C.Muted, style = MaterialTheme.typography.bodySmall,

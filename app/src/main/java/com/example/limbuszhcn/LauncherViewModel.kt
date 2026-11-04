@@ -31,6 +31,7 @@ internal class LauncherViewModel(application: Application) : AndroidViewModel(ap
     val state: LauncherUiState get() = coordinator.state
     fun launch() = coordinator.launch()
     fun refresh() {
+        appUpdater.checkForNotice()
         coordinator.refresh()
         coordinator.checkGameUpdate()
         refreshProject()

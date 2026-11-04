@@ -174,6 +174,37 @@ def inspect_tablet():
         REPORT["checks"].append(f"{name} layout at {size}, 160 dpi")
 
 
+def inspect_detail_scroll(parent):
+    """Record real edge gestures on the release, preserving frames for visual review."""
+    tap("使用说明与版本", parent)
+    before = capture("about-before-scroll")
+    locate(before, "关于")
+    recording = subprocess.Popen(["adb", "-s", "emulator-5554", "shell", "screenrecord",
+                                  "--time-limit", "10", "/sdcard/bybus-scroll.mp4"],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        time.sleep(1)
+        for _ in range(5):
+            adb("shell", "input", "swipe", "580", "1320", "580", "640", "300")
+        recording.wait(timeout=15)
+    finally:
+        if recording.poll() is None:
+            recording.terminate()
+            recording.wait(timeout=5)
+    if recording.returncode != 0:
+        raise RuntimeError("Detail scroll video recording failed")
+    adb("pull", "/sdcard/bybus-scroll.mp4", str(OUT / "detail-scroll.mp4"))
+    after = capture("about-after-scroll")
+    locate(after, "关于")
+    locate(after, "非官方社区启动器 · LocalizeLimbusCompany")
+    adb("shell", "input", "keyevent", "KEYCODE_BACK")
+    time.sleep(1)
+    restored = hierarchy("settings-after-scroll")
+    locate(restored, "版本与资源")
+    locate(restored, "更新")
+    REPORT["checks"].append("five upward detail gestures, footer visible, back restores parent; video requires visual review")
+
+
 def main():
     candidate = os.environ.get("RUNTIME_CANDIDATE") == "true"
     endpoint = "latest"
@@ -244,6 +275,10 @@ def main():
     home = hierarchy("home-return")
     tap("设置与工具", home)
     settings = capture("settings")
+    if os.environ.get("RUNTIME_MODE") == "ui":
+        texts = {n.get("text", "") for n in settings.iter("node")}
+        if texts & {"应用与汉化资源", "保留已下载的游戏资源", "管理容器账号与应用内购买", "保留资源，下次启动会重新准备"}:
+            raise RuntimeError("Removed tools subtitles are still present")
     tap("游戏更新", settings)
     child = hierarchy("game-update")
     locate(child, "返回上一页")
@@ -253,7 +288,10 @@ def main():
     locate(parent, "设置与工具")
     locate(parent, "版本与资源")
     REPORT["checks"].append("child back returns to parent settings")
-    inspect_google(parent)
+    if os.environ.get("RUNTIME_MODE") == "ui":
+        inspect_detail_scroll(parent)
+    else:
+        inspect_google(parent)
     inspect_tablet()
     REPORT["result"] = "runtime baseline completed; screenshots require visual review"
 

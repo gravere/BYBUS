@@ -1,6 +1,7 @@
 package com.example.limbuszhcn
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -11,11 +12,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
 @Composable
 internal fun LauncherDetails(page: String, state: LauncherUiState,
+    appUpdateAvailable: Boolean = false,
     onGameStore: () -> Unit,
     onAppUpdate: () -> Unit,
     onSync: () -> Unit, onRestore: () -> Unit, onExport: () -> Unit, onSettings: () -> Unit,
@@ -26,18 +30,18 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
         when (page) {
             "tools" -> {
                 DetailSection("版本与资源") {
-                    SheetAction(Glyph.Upgrade, "更新", subtitle = "应用与汉化资源", navigation = true, onClick = onAppUpdate)
+                    SheetAction(Glyph.Upgrade, "更新", showUpdate = appUpdateAvailable, navigation = true, onClick = onAppUpdate)
                     HorizontalDivider(color = C.Line)
                     SheetAction(Glyph.Gamepad, "游戏更新", navigation = true, onClick = onGameStore)
                 }
                 DetailSection("管理") {
                     SheetAction(Glyph.Sync, "同步游戏", enabled && state.installedVersion != null,
-                        subtitle = "保留已下载的游戏资源", onClick = onSync)
+                        onClick = onSync)
                     HorizontalDivider(color = C.Line)
                     SheetAction(Glyph.Battery, "后台运行", enabled, navigation = true, onClick = onSettings)
                     HorizontalDivider(color = C.Line)
                     SheetAction(Glyph.Account, "Google 账号与付款", enabled, navigation = true,
-                        subtitle = "管理容器账号与应用内购买", onClick = onGoogleSettings)
+                        onClick = onGoogleSettings)
                     HorizontalDivider(color = C.Line)
                     SheetAction(Glyph.File, "导出诊断", enabled, onClick = onExport)
                     HorizontalDivider(color = C.Line)
@@ -45,7 +49,7 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
                 }
                 DetailSection("汉化设置") {
                     SheetAction(Glyph.Stop, "停用汉化", enabled && state.translation != null,
-                        subtitle = "保留资源，下次启动会重新准备", onClick = onRestore)
+                        onClick = onRestore)
                 }
             }
             "status" -> RuntimeStatusPane(state, onGameStore, onRefresh)
@@ -78,17 +82,26 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
 
 @Composable
 internal fun SheetAction(icon: Glyph, title: String, enabled: Boolean = true, subtitle: String? = null,
-    external: Boolean = false, navigation: Boolean = false, onClick: () -> Unit) {
+    external: Boolean = false, navigation: Boolean = false, showUpdate: Boolean = false, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+        .semantics { if (showUpdate) stateDescription = "有 BYBUS 新版本" }
         .heightIn(min = 56.dp).padding(vertical = 10.dp).graphicsLayer { alpha = if (enabled) 1f else .4f },
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         IconTile(icon)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f, fill = false))
+                if (showUpdate) UpdateDot()
+            }
             subtitle?.let { Text(it, color = C.Muted, style = MaterialTheme.typography.bodySmall) }
         }
         if (external || navigation) LauncherGlyph(if (external) Glyph.External else Glyph.Chevron, C.Muted, Modifier.size(17.dp))
     }
+}
+
+@Composable
+internal fun UpdateDot(modifier: Modifier = Modifier) {
+    Box(modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(C.Error))
 }
 
 @Composable

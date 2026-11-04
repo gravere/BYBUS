@@ -8,6 +8,9 @@ import androidx.annotation.RequiresApi
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.LocalOverscrollConfiguration
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -18,6 +21,7 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
@@ -32,7 +36,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
 /** Fixed header and a bounded scrolling body on both tablets and compact windows. */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
     onDismiss: () -> Unit, onBack: (() -> Unit)? = null, content: @Composable (String) -> Unit) {
@@ -59,9 +63,12 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
             HorizontalDivider(color = C.Line)
             // A child page starts at its top; returning restores its parent's scroll and disclosure state.
             Crossfade(page, animationSpec = tween(180), modifier = Modifier.weight(1f).fillMaxWidth(), label = "detail page") { active ->
-                pageStates.SaveableStateProvider(active) {
-                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-                        .padding(layout.detailPadding.dp)) { content(active) }
+                CompositionLocalProvider(LocalOverscrollConfiguration provides null) {
+                    pageStates.SaveableStateProvider(active) {
+                        // Keep edge drags inside an opaque viewport; do not stretch the scrolling layer.
+                        Column(Modifier.fillMaxSize().background(C.Panel).clipToBounds()
+                            .verticalScroll(rememberScrollState()).padding(layout.detailPadding.dp)) { content(active) }
+                    }
                 }
             }
         }

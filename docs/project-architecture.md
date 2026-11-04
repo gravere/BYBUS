@@ -24,6 +24,13 @@ It does not require a catalog entry or a rebuilt launcher for every same-family 
 
 ## Modules
 
+The launcher keeps device readiness in the installation/status area, separate from the launch
+action. Detail pages retain a fixed header and per-page scroll state. Their opaque scroll viewport
+is clipped and disables overscroll stretching; scrolling must not expose a blank layer or change
+the panel's height. Child-page back continues to restore its parent, without predictive scaling.
+App-version notices use the independent metadata-only foreground check described in
+[app-updates.md](app-updates.md); they do not enter the game preparation queue.
+
 - `:app`: Kotlin / Jetpack Compose UI and localization workflow.
 - `LaunchCoordinator`: application-owned state and work queue; `LauncherViewModel` is a UI facade. `OperationLock` covers UI, debug and other process writers.
 - `:virtualapp`: vendored VirtualApp Android 12 source under `third_party/virtualapp-upstream/lib`.
