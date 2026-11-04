@@ -5,10 +5,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.example.limbuszhcn.selfupdate.AppUpdateState
+import com.example.limbuszhcn.selfupdate.releaseNoteItems
 import kotlinx.coroutines.delay
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
@@ -48,7 +52,23 @@ internal fun AppUpdatesPane(state: AppUpdateState, launcher: LauncherUiState, on
                     DetailRow("预计下载", if (!state.downloadPlanned) "下载前计算" else String.format(java.util.Locale.ROOT, "%.1f MB", (reuse?.downloadBytes ?: delta?.asset?.size ?: release.apk.size) / 1_000_000.0))
                     if (reuse != null || delta != null) Text("自动复用已有内容；不可用时改为完整下载。", color = C.Muted,
                         style = MaterialTheme.typography.bodySmall)
-                    if (release.notes.isNotBlank()) Text(release.notes, color = C.Muted, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+        if (release != null && release.versionCode >= state.installedCode) {
+            val points = remember(release.notes) { releaseNoteItems(release.notes) }
+            if (points.isNotEmpty()) {
+                Text("更新内容", style = MaterialTheme.typography.titleSmall)
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    points.forEach { point ->
+                        Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {},
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("•", color = C.Accent, style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.width(12.dp).clearAndSetSemantics {})
+                            Text(point, color = C.Muted, style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f))
+                        }
+                    }
                 }
             }
         }

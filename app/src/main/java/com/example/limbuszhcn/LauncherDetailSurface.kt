@@ -12,9 +12,13 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.LocalOverscrollConfiguration
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,6 +27,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
@@ -31,6 +38,14 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.dismiss
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -45,9 +60,38 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
     // Keep every detail page at the same height; long menus scroll within the panel.
     val panelHeight = layout.panelHeight.dp
     val pageStates = rememberSaveableStateHolder()
+    val density = LocalDensity.current.density
+    val scope = rememberCoroutineScope()
+    val currentDismiss by rememberUpdatedState(onDismiss)
+    val drag = remember(panelHeight, density) { DetailPanelDrag(panelHeight.value * density, density, scope) { currentDismiss() } }
+    LaunchedEffect(page, drag) { drag.reset() }
+    val bodyDrag = remember(drag) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset =
+                if (source == NestedScrollSource.Drag && available.y < 0 && drag.offset > 0)
+                    Offset(0f, drag.drag(available.y)) else Offset.Zero
+
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset =
+                if (source == NestedScrollSource.Drag && available.y > 0)
+                    Offset(0f, drag.drag(available.y)) else Offset.Zero
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                if (drag.offset == 0f) return Velocity.Zero
+                drag.settle(available.y)
+                return Velocity(0f, available.y)
+            }
+        }
+    }
     val body: @Composable () -> Unit = {
         Column(Modifier.panelBackHandler(onBack ?: onDismiss).fillMaxWidth().height(panelHeight)) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = layout.detailPadding.dp, vertical = 12.dp),
+            Column(Modifier.fillMaxWidth().draggable(rememberDraggableState { drag.drag(it) },
+                Orientation.Vertical, startDragImmediately = drag.offset > 0,
+                onDragStarted = { drag.stop() }, onDragStopped = { drag.settle(it) })) {
+                Box(Modifier.fillMaxWidth().height(22.dp), contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(width = 32.dp, height = 4.dp).clip(CircleShape).background(C.Line)
+                        .semantics { contentDescription = "下拉关闭面板" })
+                }
+                Row(Modifier.fillMaxWidth().padding(horizontal = layout.detailPadding.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 if (onBack != null) IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
                     LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(21.dp).rotate(180f), "返回上一页")
@@ -61,10 +105,12 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
                 IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {
                     LauncherGlyph(Glyph.Close, C.Muted, Modifier.size(21.dp), "关闭面板")
                 }
+                }
             }
             HorizontalDivider(color = C.Line)
             // A child page starts at its top; returning restores its parent's scroll and disclosure state.
-            Crossfade(page, animationSpec = tween(180), modifier = Modifier.weight(1f).fillMaxWidth(), label = "detail page") { active ->
+            Crossfade(page, animationSpec = tween(180), modifier = Modifier.weight(1f).fillMaxWidth()
+                .nestedScroll(bodyDrag), label = "detail page") { active ->
                 CompositionLocalProvider(LocalOverscrollConfiguration provides null) {
                     pageStates.SaveableStateProvider(active) {
                         // Keep edge drags inside an opaque viewport; do not stretch the scrolling layer.
@@ -84,7 +130,8 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
         }
         val panel = if (layout.centeredDetails) Modifier.padding(horizontal = 24.dp, vertical = 16.dp)
             .widthIn(max = layout.panelWidth.dp).fillMaxWidth() else Modifier.fillMaxWidth()
-        Surface(panel, shape = if (layout.centeredDetails) RoundedCornerShape(28.dp)
+        Surface(panel.graphicsLayer { translationY = drag.offset }.semantics { dismiss { onDismiss(); true } },
+            shape = if (layout.centeredDetails) RoundedCornerShape(28.dp)
             else RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
             color = C.Panel, contentColor = C.Ink, tonalElevation = 0.dp) { body() }
     }

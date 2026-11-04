@@ -157,7 +157,7 @@ internal fun LauncherScreen(
                         }
                     }
                 }
-                BottomLaunchBar(state, layout.centeredDetails, onLaunch, onRefresh,
+                BottomLaunchBar(state, onLaunch, onRefresh,
                     onDetails = { open(if (state.failed) "error" else "status") },
                     modifier = Modifier.onSizeChanged { launchBarHeight = it.height })
             }
@@ -193,15 +193,12 @@ internal fun LauncherScreen(
 }
 
 @Composable
-private fun BottomLaunchBar(state: LauncherUiState, wide: Boolean, onLaunch: () -> Unit,
+private fun BottomLaunchBar(state: LauncherUiState, onLaunch: () -> Unit,
     onRefresh: () -> Unit, onDetails: () -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxWidth().background(C.Background)) {
-        HorizontalDivider(color = C.Line)
-        Box(Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 12.dp),
-            contentAlignment = if (wide) Alignment.CenterEnd else Alignment.Center) {
-            Column(Modifier.widthIn(max = if (wide) 360.dp else 640.dp).fillMaxWidth()) {
-                PrimaryAction(state, onLaunch, onRefresh, onDetails)
-            }
+    Box(modifier.fillMaxWidth().background(C.Background).padding(top = 12.dp, bottom = 16.dp),
+        contentAlignment = Alignment.Center) {
+        Column(Modifier.widthIn(max = 360.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            PrimaryAction(state, onLaunch, onRefresh, onDetails)
         }
     }
 }

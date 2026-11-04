@@ -3,12 +3,12 @@ package com.example.limbuszhcn
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -39,23 +40,31 @@ import com.example.limbuszhcn.ui.theme.LauncherColors as C
 internal fun LaunchButton(title: String, busy: Boolean, enabled: Boolean, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) .98f else 1f,
-        spring(dampingRatio = .8f, stiffness = 450f), label = "launch press")
+    val scale by animateFloatAsState(if (pressed) .985f else 1f,
+        tween(130), label = "launch press")
     val haptic = LocalHapticFeedback.current
+    val active = enabled || busy
+    val buttonWidth = (232.dp * LocalDensity.current.fontScale.coerceAtLeast(1f)).coerceAtMost(360.dp)
     Button(
-        onClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onClick() },
+        onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onClick() },
         enabled = enabled && !busy,
         interactionSource = interaction,
-        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)
+        modifier = Modifier.widthIn(max = buttonWidth).fillMaxWidth().heightIn(min = 56.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale },
-        shape = RoundedCornerShape(18.dp),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp),
-        colors = ButtonDefaults.buttonColors(disabledContainerColor = if (busy) MaterialTheme.colorScheme.primary else C.Line,
-            disabledContentColor = if (busy) C.OnPrimary else C.Muted)
+        shape = CircleShape,
+        border = BorderStroke(1.dp, C.Accent.copy(alpha = if (active) .22f else .1f)),
+        elevation = ButtonDefaults.buttonElevation(defaultElevation = 1.dp, pressedElevation = 0.dp,
+            disabledElevation = if (busy) 1.dp else 0.dp),
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
+        colors = ButtonDefaults.buttonColors(containerColor = C.Panel, contentColor = C.Ink,
+            disabledContainerColor = C.Panel, disabledContentColor = if (busy) C.Ink else C.Muted)
     ) {
-        if (busy) CircularProgressIndicator(Modifier.size(18.dp), color = C.OnPrimary, strokeWidth = 2.dp)
-        else LauncherGlyph(Glyph.Play, if (enabled) C.OnPrimary else C.Muted, Modifier.size(18.dp))
-        Spacer(Modifier.width(10.dp))
+        Box(Modifier.size(30.dp).clip(CircleShape).background(if (active) C.Accent else C.Line),
+            contentAlignment = Alignment.Center) {
+            if (busy) CircularProgressIndicator(Modifier.size(16.dp), color = C.OnPrimary, strokeWidth = 2.dp)
+            else LauncherGlyph(Glyph.Play, if (enabled) C.OnPrimary else C.Muted, Modifier.size(17.dp))
+        }
+        Spacer(Modifier.width(12.dp))
         AnimatedContent(title, transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(90)) }, label = "launch title") {
             Text(it, style = MaterialTheme.typography.labelLarge)
         }
