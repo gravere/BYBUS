@@ -331,6 +331,28 @@ def inspect_tablet():
     REPORT["checks"].append("tablet status/project/settings use matching dialog geometry")
 
 
+def visible_navigation_frames(windows, width, height):
+    frames = []
+    for line in windows.splitlines():
+        source = re.search(r"(?:mType|type)=navigationBars\b([^}\n]*)", line)
+        if not source or not re.search(r"(?:mVisible|visible)=true", source[1]):
+            continue
+        match = re.search(r"(?:mFrame|frame)=\[\s*(\d+),\s*(\d+)\]\[\s*(\d+),\s*(\d+)\]", source[1])
+        if not match:
+            match = re.search(r"(?:mFrame|frame)=Rect\(\s*(\d+),\s*(\d+)\s*-\s*(\d+),\s*(\d+)\)", source[1])
+        if match:
+            frames.append(tuple(map(int, match.groups())))
+    # Android 15's normal window dump exposes the visible bar window and its
+    # provided-inset types rather than the expanded InsetsState sources.
+    for block in re.split(r"(?m)^  Window #\d+ ", windows):
+        if "type=navigationBars" not in block or not re.search(r"(?m)^\s+isVisible=true\s*$", block):
+            continue
+        match = re.search(r"(?m)^\s+Frames:.*?\bframe=\[(\d+),(\d+)\]\[(\d+),(\d+)\]", block)
+        if match:
+            frames.append(tuple(map(int, match.groups())))
+    return [f for f in frames if 0 <= f[0] < f[2] <= width and 0 <= f[1] < f[3] <= height]
+
+
 def inspect_system_navigation():
     """Exercise real system navigation modes; never replace system chrome in screenshots."""
     overlays = adb("shell", "cmd", "overlay", "list")
@@ -357,18 +379,7 @@ def inspect_system_navigation():
             width, height = struct.unpack(">II", (OUT / f"{name}.png").read_bytes()[16:24])
             windows = adb("shell", "dumpsys", "window", "windows")
             (OUT / f"{name}-window.txt").write_text(windows, encoding="utf-8")
-            nav_frames = []
-            for line in windows.splitlines():
-                source = re.search(r"(?:mType|type)=navigationBars\b([^}\n]*)", line)
-                if not source or not re.search(r"(?:mVisible|visible)=true", source[1]):
-                    continue
-                match = re.search(r"(?:mFrame|frame)=\[\s*(\d+),\s*(\d+)\]\[\s*(\d+),\s*(\d+)\]", source[1])
-                if not match:
-                    match = re.search(r"(?:mFrame|frame)=Rect\(\s*(\d+),\s*(\d+)\s*-\s*(\d+),\s*(\d+)\)", source[1])
-                if match:
-                    frame = tuple(map(int, match.groups()))
-                    if 0 <= frame[0] < frame[2] <= width and 0 <= frame[1] < frame[3] <= height:
-                        nav_frames.append(frame)
+            nav_frames = visible_navigation_frames(windows, width, height)
             if not nav_frames:
                 raise RuntimeError("Could not observe visible navigation bar bounds: " + name)
             nav = max(nav_frames, key=lambda f: (f[2] - f[0]) * (f[3] - f[1]))

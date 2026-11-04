@@ -44,6 +44,9 @@ sets navigation icon contrast from the current theme. Phone panels paint behind 
 bar and apply horizontal/bottom safe drawing insets inside their surface, outside the fixed
 content height. Centered tablet panels leave the system bar over the dimmed background. Insets
 come from the system rather than a fixed gesture-bar height, including three-button navigation.
+On API 30+, the dialog also explicitly clears the window's fitted inset types: the pinned
+Compose floating-window theme otherwise retains system-bar fitting even with decor fitting
+disabled. The panel itself still consumes the safe insets for its controls.
 Navigation-bar contrast scrims are disabled where the app supplies the background; actual
 controls remain above the inset. See [Android system bars](https://developer.android.com/develop/ui/compose/system/system-bars)
 and [Compose inset padding](https://developer.android.com/develop/ui/compose/system/insets-ui).

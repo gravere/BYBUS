@@ -135,6 +135,11 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
             window?.setGravity(if (layout.centeredDetails) Gravity.CENTER else Gravity.BOTTOM)
             window?.setDimAmount(.36f)
             window?.let {
+                // Older Compose floating themes retain the native fit-inset mask.
+                // Let this window paint to its edge; the Surface below pads controls.
+                if (Build.VERSION.SDK_INT >= 30 && it.attributes.fitInsetsTypes != 0) {
+                    it.attributes = it.attributes.apply { setFitInsetsTypes(0) }
+                }
                 @Suppress("DEPRECATION")
                 it.navigationBarColor = android.graphics.Color.TRANSPARENT
                 if (Build.VERSION.SDK_INT >= 28) {
