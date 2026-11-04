@@ -40,6 +40,7 @@ class MainActivity : ComponentActivity() {
             splashScreen.setOnExitAnimationListener { it.remove() }
         }
         enableEdgeToEdge()
+        if (android.os.Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = false
         getSharedPreferences("limbus_zhcn", MODE_PRIVATE).edit()
             .remove(LEGACY_KEY_RELAY_BASE_URL).remove(LEGACY_KEY_TOKEN)
             .remove(LEGACY_KEY_TRANSLATION_CHANNEL).remove(KEY_GITHUB_RELEASE_URL).apply()
@@ -101,6 +102,7 @@ class MainActivity : ComponentActivity() {
                     state = state,
                     projectState = model.projectState,
                     appUpdateState = appUpdater.state,
+                    resumed = resumed.value,
                     onCheckAppUpdate = { appUpdater.check(force = true) },
                     onDownloadAppUpdate = appUpdater::download,
                     onCancelAppUpdate = appUpdater::cancel,

@@ -25,24 +25,47 @@ It does not require a catalog entry or a rebuilt launcher for every same-family 
 ## Modules
 
 The launcher keeps device readiness in the installation/status area. Phone and tablet home pages
-share the same summary cards; wide landscape gives them equal widths and a shared intrinsic height,
-surface, corner radius and padding. Project controls remain in the common detail dialog rather
-than expanding one home column. Cards and the launch action form one vertically centered group
-between the fixed header and usage footer. The card viewport wraps short content and scrolls
-when space is constrained; the action remains visible with a bounded 24dp gap. Spare height is
-distributed around this group rather than below it or between cards and their action. Snackbars
-clear the measured action position. Installation rows use the known card width rather than subcomposition so the
-two-card row can safely measure its intrinsic height at larger text sizes.
+share the same summary cards, surface, corner radius and padding. Portrait places the launch
+action between the status and project cards, with the cards close to the header and usage footer.
+The body fills the available height up to 760dp, keeping a centered, bounded group on tall
+tablets instead of stretching the card-to-action gaps indefinitely. Portrait content is capped
+at 680dp wide; the body scrolls as a whole when content no longer fits. Wide
+landscape reserves a middle action lane between equal-width, equal-height cards; text scaling
+and the action lane both participate in the breakpoint calculation. The launch capsule has a
+subtle radial gradient and three expanding oval outlines, drawn without bitmap assets. Motion
+runs only while the home is visible and resumed, and follows the platform animation scale.
+Project controls remain in the common detail dialog. Snackbars clear the measured action.
+Installation rows use the known card width rather than subcomposition so the landscape row
+can safely measure its intrinsic height at larger text sizes. Local translation uses the
+shared language/translation vector rather than a readiness checkmark.
 Detail pages use a bottom-aligned fixed dialog on phones and a centered dialog on tablets, with a
-fixed header and per-page scroll state. A bounded downward drag restores pull-to-dismiss without
+fixed header and per-page scroll state. Their own dialog window opts into edge-to-edge and
+sets navigation icon contrast from the current theme. Phone panels paint behind the navigation
+bar and apply horizontal/bottom safe drawing insets inside their surface, outside the fixed
+content height. Centered tablet panels leave the system bar over the dimmed background. Insets
+come from the system rather than a fixed gesture-bar height, including three-button navigation.
+On API 30+, the dialog also explicitly clears the window's fitted inset types: the pinned
+Compose floating-window theme otherwise retains system-bar fitting even with decor fitting
+disabled. Safe padding is read from the host composition before entering the dialog: older
+floating dialogs may dispatch zero insets even while their window overlaps the navigation bar.
+This preserves the host's live system measurements across navigation-mode and orientation changes.
+On short windows, the header stays fixed while tabs, content and actions share the scrolling
+body. This prevents fixed update controls from squeezing the body to zero height in phone
+landscape or a short split-screen window; regular-height panels retain the fixed action footer.
+Navigation-bar contrast scrims are disabled where the app supplies the background; actual
+controls remain above the inset. See [Android system bars](https://developer.android.com/develop/ui/compose/system/system-bars)
+and [Compose inset padding](https://developer.android.com/develop/ui/compose/system/insets-ui).
+A bounded downward drag restores pull-to-dismiss without
 an upward spring: header gestures move the panel, while body gestures move it only after the
 inner scroll reaches its top. An upward reversal returns the panel toward zero; short pulls
 settle back with a non-overshooting animation. Their opaque scroll viewport is clipped and
 disables overscroll stretching. Child-page back continues to restore its parent, without
 predictive scaling. Update notes use separate bullet rows and preserve legacy unmarked lines;
 release metadata retains list markers so older clients also show the points. The app-update page
-has a fixed footer for its current stage, progress, download/install and cancel controls, outside
-the scrolling release notes. Closing and reopening the page preserves the active operation.
+separates application and translation resources with fixed tabs. Each tab has its own version
+summary and fixed action footer; release notes remain a simple bullet list. Application progress,
+download/install and cancel controls stay outside the scrolling notes; an active transfer is
+also indicated on its tab. Switching tabs or closing the page does not cancel either operation.
 App-version notices use the independent metadata-only foreground check described in
 [app-updates.md](app-updates.md); they do not enter the game preparation queue.
 

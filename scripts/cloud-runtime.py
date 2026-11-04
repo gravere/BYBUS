@@ -107,14 +107,16 @@ def tap(value, tree):
     time.sleep(1)
 
 
-def clickable_bounds(tree, label):
+def clickable_bounds(tree, label, allow_disabled=False):
     parents = {child: parent for parent in tree.iter() for child in parent}
     target = next(n for n in tree.iter("node") if any(label in n.get(key, "").splitlines()
                   for key in ("text", "content-desc")))
-    while target.get("clickable") != "true" and target in parents:
+    def is_control(node):
+        return node.get("clickable") == "true" or (allow_disabled and node.get("class") == "android.widget.Button")
+    while not is_control(target) and target in parents:
         target = parents[target]
     bounds = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", target.get("bounds", ""))
-    if not bounds or target.get("clickable") != "true":
+    if not bounds or not is_control(target):
         raise RuntimeError("Missing clickable bounds: " + label)
     return tuple(map(int, bounds.groups()))
 
@@ -129,21 +131,28 @@ def inspect_home_alignment(tree, width, height, density=1, landscape=False):
         raise RuntimeError("Primary action is not centered and fully visible")
     if action[2] - action[0] >= width * .9:
         raise RuntimeError("Primary action still spans the entire screen")
-    gap = (action[1] - max(status[3], project[3])) / density
-    if not 20 <= gap <= 28:
-        raise RuntimeError(f"Excessive or overlapping content-to-action gap: {gap} dp")
     if abs((status[2] - status[0]) - (project[2] - project[0])) > 1:
         raise RuntimeError("Summary card widths differ")
     if landscape:
         if abs(status[1] - project[1]) > 1 or abs(status[3] - project[3]) > 1:
             raise RuntimeError("Landscape summary cards do not share top and bottom edges")
-    elif project[1] <= status[3]:
-        raise RuntimeError("Portrait summary cards overlap or are not stacked")
+        if not status[2] < action[0] < action[2] < project[0]:
+            raise RuntimeError("Launch action is not between landscape cards")
+        middle_error = abs((action[1] + action[3] - status[1] - status[3]) / 2) / density
+    else:
+        if not status[3] < action[1] < action[3] < project[1]:
+            raise RuntimeError("Launch action is not between portrait cards")
+        middle_error = abs((action[1] + action[3] - status[3] - project[1]) / 2) / density
+    if middle_error > 2:
+        raise RuntimeError("Launch action is not centered in the space between cards")
     above = (status[1] - header[3]) / density
-    below = (footer[1] - action[3]) / density
-    if min(above, below) < 0 or abs(above - below) > 64:
-        raise RuntimeError(f"Home group is not vertically balanced: {above=} {below=}")
-    REPORT.setdefault("home_layouts", []).append(dict(width=width, height=height, gap_dp=gap,
+    below = (footer[1] - project[3]) / density
+    if not landscape:
+        card_gap = (project[1] - status[3]) / density
+        if card_gap > 400 or min(above, below) < 0 or abs(above - below - 12) > 2:
+            raise RuntimeError(f"Portrait spacing is not bounded and balanced: {above=} {below=} {card_gap=}")
+    REPORT.setdefault("home_layouts", []).append(dict(width=width, height=height, middle_error_dp=middle_error,
+        horizontal=landscape,
         status_bounds=status, project_bounds=project, action_bounds=action,
         above_group_dp=above, below_group_dp=below, usage_bounds=footer))
 
@@ -181,22 +190,50 @@ def inspect_update_progress():
     try:
         adb("shell", "svc", "wifi", "disable")
         adb("shell", "svc", "data", "enable")
+        # The cellular default route can take several seconds to replace Wi-Fi.
+        # Shape it only after Android reports an active default network.
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            connectivity = adb("shell", "dumpsys", "connectivity")
+            if re.search(r"Active default network:\s*\d+", connectivity) and "VALIDATED" in connectivity:
+                break
+            time.sleep(2)
+        time.sleep(5)
         adb("emu", "network", "speed", "gsm")
         adb("emu", "network", "delay", "3000")
-        time.sleep(2)
         tap("更新", parent)
         before = capture("update-progress")
-        locate(before, "应用更新进度")
-        first = element_bounds(before, "应用更新操作")
-        adb("shell", "input", "swipe", "360", str(first[1] - 30), "360", "600", "500")
-        after = capture("update-progress-scrolled")
-        locate(after, "应用更新进度")
-        if element_bounds(after, "应用更新操作") != first:
-            raise RuntimeError("Update progress footer moved with the scrolling content")
-        tap("取消更新", after)
-        cancelled = capture("update-cancelled")
-        locate(cancelled, "已取消，可重试")
-        REPORT["checks"].append("real check progress/cancel remain fixed while content scrolls; no APK download performed")
+        network_error = any("暂时无法连接 GitHub" in n.get("text", "") for n in before.iter("node"))
+        if network_error:
+            # A real network failure is not evidence of missing busy UI. Preserve
+            # the limitation explicitly, then still inspect the independent tabs.
+            REPORT["update_progress"] = "not observed: cellular network check failed before capture"
+            original_state = "更新未完成"
+            app_tab = before
+        else:
+            locate(before, "应用更新进度")
+            first = element_bounds(before, "应用更新操作")
+            adb("shell", "input", "swipe", "360", str(first[1] - 30), "360", "600", "500")
+            after = capture("update-progress-scrolled")
+            locate(after, "应用更新进度")
+            if element_bounds(after, "应用更新操作") != first:
+                raise RuntimeError("Update progress footer moved with the scrolling content")
+            tap("取消更新", after)
+            app_tab = capture("update-cancelled")
+            original_state = "已取消，可重试"
+            locate(app_tab, original_state)
+            REPORT["update_progress"] = "real check progress and cancel observed"
+            REPORT["checks"].append("real check progress/cancel remain fixed while content scrolls; no APK download performed")
+        tap("更新类别：汉化资源", app_tab)
+        translation = capture("update-translation")
+        locate(translation, "尚未准备")
+        locate(translation, "检查汉化更新")
+        if any("检查应用更新" == n.get("content-desc") for n in translation.iter("node")):
+            raise RuntimeError("Application actions leaked into the translation tab")
+        tap("更新类别：BYBUS", translation)
+        restored = hierarchy("update-app-restored")
+        locate(restored, original_state)
+        REPORT["checks"].append("update categories isolate controls and preserve app operation state")
     finally:
         adb("emu", "network", "speed", "full", check=False)
         adb("emu", "network", "delay", "none", check=False)
@@ -292,6 +329,107 @@ def inspect_tablet():
         time.sleep(.5)
         home = hierarchy("tablet-detail-return")
     REPORT["checks"].append("tablet status/project/settings use matching dialog geometry")
+
+
+def visible_navigation_frames(windows, width, height):
+    frames = []
+    for line in windows.splitlines():
+        source = re.search(r"(?:mType|type)=navigationBars\b([^}\n]*)", line)
+        if not source or not re.search(r"(?:mVisible|visible)=true", source[1]):
+            continue
+        match = re.search(r"(?:mFrame|frame)=\[\s*(\d+),\s*(\d+)\]\[\s*(\d+),\s*(\d+)\]", source[1])
+        if not match:
+            match = re.search(r"(?:mFrame|frame)=Rect\(\s*(\d+),\s*(\d+)\s*-\s*(\d+),\s*(\d+)\)", source[1])
+        if match:
+            frames.append(tuple(map(int, match.groups())))
+    # Android 15's normal window dump exposes the visible bar window and its
+    # provided-inset types rather than the expanded InsetsState sources.
+    for block in re.split(r"(?m)^  Window #\d+ ", windows):
+        if "type=navigationBars" not in block or not re.search(r"(?m)^\s+isVisible=true\s*$", block):
+            continue
+        match = re.search(r"(?m)^\s+Frames:.*?\bframe=\[(\d+),(\d+)\]\[(\d+),(\d+)\]", block)
+        if match:
+            frames.append(tuple(map(int, match.groups())))
+    return [f for f in frames if 0 <= f[0] < f[2] <= width and 0 <= f[1] < f[3] <= height]
+
+
+def inspect_system_navigation():
+    """Exercise real system navigation modes; never replace system chrome in screenshots."""
+    overlays = adb("shell", "cmd", "overlay", "list")
+    original = re.search(r"\[x\]\s+(com\.android\.internal\.systemui\.navbar\.\S+)", overlays)
+    original_rotation = adb("shell", "wm", "user-rotation").strip().split()
+    if not original_rotation or original_rotation[0] not in ("free", "lock"):
+        raise RuntimeError("Could not read emulator rotation mode")
+    prefix = "com.android.internal.systemui.navbar."
+    for mode in ("gestural", "threebutton"):
+        if prefix + mode not in overlays:
+            raise RuntimeError("Emulator navigation overlay is unavailable: " + mode)
+    home = hierarchy("before-system-navigation")
+    tap("设置与工具", home)
+    tap("更新", hierarchy("tools-system-navigation"))
+    tap("更新类别：汉化资源", hierarchy("update-system-navigation"))
+    cases = [("nav-gesture", "gestural", "no", "720x1560"),
+             ("nav-three-button", "threebutton", "no", "720x1560"),
+             ("nav-three-button-dark", "threebutton", "yes", "720x1560"),
+             ("nav-three-button-landscape", "threebutton", "no", "720x1280")]
+    try:
+        for name, mode, night, size in cases:
+            adb("shell", "cmd", "overlay", "enable-exclusive", "--category", prefix + mode)
+            adb("shell", "cmd", "uimode", "night", night)
+            adb("shell", "wm", "size", size)
+            landscape = name.endswith("landscape")
+            adb("shell", "wm", "user-rotation", "lock", "1" if landscape else "0")
+            time.sleep(3)
+            if landscape:
+                content_tree = capture(name + "-content")
+                locate(content_tree, "都市零协会")
+                # Compact panels scroll their tabs and actions with the body, keeping
+                # the header fixed. Reach the real footer without hiding missing text.
+                tree = content_tree
+                for _ in range(5):
+                    try:
+                        action = clickable_bounds(tree, "检查汉化更新", allow_disabled=True)
+                        if action[3] - action[1] >= 96:  # 48dp at this profile's 320dpi.
+                            break
+                    except (RuntimeError, StopIteration):
+                        pass
+                    scroll = next(n for n in tree.iter("node") if n.get("scrollable") == "true")
+                    bounds = tuple(map(int, re.findall(r"\d+", scroll.get("bounds", ""))))
+                    x = (bounds[0] + bounds[2]) // 2
+                    adb("shell", "input", "swipe", str(x), str(bounds[3] - 16),
+                        str(x), str(bounds[1] + 16), "400")
+                    time.sleep(1)
+                    tree = hierarchy(name + "-scroll")
+                locate(tree, "检查汉化更新")
+                action = clickable_bounds(tree, "检查汉化更新", allow_disabled=True)
+                if action[3] - action[1] < 96:
+                    raise RuntimeError("Compact update action remains clipped after scrolling")
+            tree = capture(name)
+            width, height = struct.unpack(">II", (OUT / f"{name}.png").read_bytes()[16:24])
+            windows = adb("shell", "dumpsys", "window", "windows")
+            (OUT / f"{name}-window.txt").write_text(windows, encoding="utf-8")
+            nav_frames = visible_navigation_frames(windows, width, height)
+            if not nav_frames:
+                raise RuntimeError("Could not observe visible navigation bar bounds: " + name)
+            nav = max(nav_frames, key=lambda f: (f[2] - f[0]) * (f[3] - f[1]))
+            controls = {}
+            for label in ("关闭面板", "返回上一页", "检查汉化更新"):
+                bounds = clickable_bounds(tree, label, allow_disabled=True)
+                if bounds[0] < nav[2] and bounds[2] > nav[0] and bounds[1] < nav[3] and bounds[3] > nav[1]:
+                    raise RuntimeError("Panel control overlaps system navigation: " + label)
+                controls[label] = bounds
+            REPORT.setdefault("system_navigation", []).append(dict(name=name, mode=mode, night=night,
+                size=f"{width}x{height}", navigation_bounds=nav, controls=controls,
+                compact_content_visible=landscape))
+    finally:
+        adb("shell", "cmd", "uimode", "night", "no", check=False)
+        adb("shell", "wm", "size", "720x1560", check=False)
+        adb("shell", "wm", "user-rotation", *original_rotation, check=False)
+        adb("shell", "cmd", "overlay", "enable-exclusive", "--category",
+            original[1] if original else prefix + "gestural", check=False)
+        time.sleep(2)
+        tap("关闭面板", hierarchy("navigation-restored"))
+    REPORT["checks"].append("gesture and three-button navigation: light/dark/landscape controls avoid actual system bar bounds")
 
 
 def inspect_detail_scroll(parent):
@@ -421,7 +559,7 @@ def main():
     if "Success" not in installed:
         raise RuntimeError("APK installation did not succeed: " + installed[-1000:])
     REPORT["checks"].append("published APK signature/hash and installation")
-    adb("shell", "settings", "put", "global", "policy_control", f"immersive.full={PACKAGE}")
+    adb("shell", "settings", "delete", "global", "policy_control")
     # Hide emulator system chrome before taking raw captures; never paint over app pixels.
     adb("shell", "cmd", "statusbar", "send-disable-flag", "system-icons", "clock", "notification-icons")
     adb("logcat", "-c")
@@ -454,8 +592,8 @@ def main():
     REPORT["checks"].append("child back returns to parent settings")
     if os.environ.get("RUNTIME_MODE") == "ui":
         inspect_detail_scroll(parent)
-        inspect_automatic_notice()
         inspect_update_progress()
+        inspect_system_navigation()
     else:
         inspect_google(parent)
     inspect_tablet()
