@@ -37,6 +37,15 @@ import androidx.compose.ui.unit.dp
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
 @Composable
+internal fun HomeSummaryCard(onClick: () -> Unit, modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit) {
+    Surface(onClick = onClick, modifier = modifier, color = C.Panel, contentColor = C.Ink,
+        shape = RoundedCornerShape(24.dp)) {
+        Column(Modifier.fillMaxWidth().padding(20.dp), content = content)
+    }
+}
+
+@Composable
 internal fun LaunchButton(title: String, busy: Boolean, enabled: Boolean, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()

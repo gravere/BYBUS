@@ -15,7 +15,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -69,7 +70,7 @@ internal fun LauncherScreen(
         }
     }
     val snackbar = remember { SnackbarHostState() }
-    var launchBarHeight by remember { mutableIntStateOf(0) }
+    var actionTop by remember { mutableFloatStateOf(0f) }
     var wasBusy by remember { mutableStateOf(false) }
     LaunchedEffect(state.busy) {
         val finished = wasBusy && !state.busy
@@ -101,6 +102,8 @@ internal fun LauncherScreen(
             // Use the space allocated to this window, including split screen.
             // Large text needs a wider column, not a smaller font.
             val layout = LauncherLayout.calculate(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale)
+            val contentWidth = minOf(maxWidth.value, layout.contentMaxWidth) - layout.margin * 2
+            val cardWidth = if (layout.twoColumns) (contentWidth - layout.columnGap) / 2 else contentWidth
             val homeScroll = rememberScrollState()
             Column(Modifier.widthIn(max = layout.contentMaxWidth.dp).fillMaxSize().align(Alignment.TopCenter)
                 .padding(horizontal = layout.margin.dp)) {
@@ -119,50 +122,29 @@ internal fun LauncherScreen(
                         if (appUpdateState.updateAvailable) UpdateDot(Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 6.dp))
                     }
                 }
-                Box(Modifier.weight(1f).fillMaxWidth()) {
-                    if (layout.twoColumns) {
-                        Row(Modifier.fillMaxWidth().align(Alignment.TopCenter).verticalScroll(homeScroll)
-                            .padding(top = if (layout.compactHeight) 8.dp else 20.dp, bottom = 24.dp),
-                            horizontalArrangement = Arrangement.spacedBy(layout.columnGap.dp),
-                            verticalAlignment = Alignment.Top) {
-                            Column(Modifier.weight(1f)) {
-                                InstallationCard(state) { open("status") }
-                                Spacer(Modifier.height(8.dp))
-                                AboutLink { open("about") }
+                Box(Modifier.weight(1f, fill = false).fillMaxWidth()) {
+                    Column(Modifier.fillMaxWidth().verticalScroll(homeScroll)
+                        .padding(top = if (layout.compactHeight) 8.dp else 16.dp)) {
+                        if (layout.twoColumns) {
+                            Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min),
+                                horizontalArrangement = Arrangement.spacedBy(layout.columnGap.dp)) {
+                                InstallationCard(state, cardWidth, Modifier.weight(1f).fillMaxHeight()) { open("status") }
+                                ProjectCard(projectState, Modifier.weight(1f).fillMaxHeight()) { open("project") }
                             }
-                            Surface(Modifier.weight(1f), color = C.Panel, contentColor = C.Ink, shape = RoundedCornerShape(24.dp)) {
-                                Box(Modifier.padding(20.dp)) {
-                                    ProjectDetails(projectState, onRefreshProject, onSelectProjectSource, onOpenLink)
-                                }
-                            }
-                        }
-                    } else {
-                        Column(Modifier.fillMaxWidth().verticalScroll(homeScroll)) {
-                            Spacer(Modifier.height(if (layout.compactHeight) 8.dp else 16.dp))
-                            InstallationCard(state) { open("status") }
-                            Spacer(Modifier.height(if (layout.centeredDetails) 16.dp else 28.dp))
-                            if (layout.centeredDetails) {
-                                Surface(Modifier.fillMaxWidth(), color = C.Panel, contentColor = C.Ink,
-                                    shape = RoundedCornerShape(24.dp)) {
-                                    Box(Modifier.padding(20.dp)) {
-                                        ProjectDetails(projectState, onRefreshProject, onSelectProjectSource, onOpenLink)
-                                    }
-                                }
-                            } else {
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                InstallationCard(state, cardWidth) { open("status") }
                                 ProjectCard(projectState) { open("project") }
                             }
-                            Spacer(Modifier.height(10.dp))
-                            AboutLink { open("about") }
-                            Spacer(Modifier.height(24.dp))
                         }
                     }
                 }
-                BottomLaunchBar(state, onLaunch, onRefresh,
+                LaunchActions(state, onLaunch, onRefresh, onAbout = { open("about") },
                     onDetails = { open(if (state.failed) "error" else "status") },
-                    modifier = Modifier.onSizeChanged { launchBarHeight = it.height })
+                    modifier = Modifier.onGloballyPositioned { actionTop = it.positionInParent().y })
             }
             SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp)
-                .padding(bottom = with(LocalDensity.current) { launchBarHeight.toDp() } + 12.dp)) {
+                .padding(bottom = (maxHeight - with(LocalDensity.current) { actionTop.toDp() }).coerceAtLeast(0.dp) + 12.dp)) {
                 Snackbar(it, shape = RoundedCornerShape(20.dp), containerColor = C.Ink,
                     contentColor = C.OnPrimary, actionColor = C.OnPrimary)
             }
@@ -193,65 +175,63 @@ internal fun LauncherScreen(
 }
 
 @Composable
-private fun BottomLaunchBar(state: LauncherUiState, onLaunch: () -> Unit,
-    onRefresh: () -> Unit, onDetails: () -> Unit, modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxWidth().background(C.Background).padding(top = 12.dp, bottom = 16.dp),
+private fun LaunchActions(state: LauncherUiState, onLaunch: () -> Unit,
+    onRefresh: () -> Unit, onDetails: () -> Unit, onAbout: () -> Unit, modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxWidth().padding(top = 24.dp, bottom = 12.dp),
         contentAlignment = Alignment.Center) {
         Column(Modifier.widthIn(max = 360.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
             PrimaryAction(state, onLaunch, onRefresh, onDetails)
+            Spacer(Modifier.height(8.dp))
+            AboutLink(onAbout)
         }
     }
 }
 
 @Composable
-private fun InstallationCard(state: LauncherUiState, onClick: () -> Unit) {
+private fun InstallationCard(state: LauncherUiState, width: Float, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val ready = state.container?.available == true && state.installedVersion != null &&
         state.compatibility?.isSupported == true && state.nativeCompatibilityIssue == null
-    Surface(onClick = onClick, color = C.Background, contentColor = C.Ink, shape = RoundedCornerShape(18.dp)) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp)) {
-            Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("运行状态", color = C.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
-                Box(Modifier.size(6.dp).clip(CircleShape).background(if (ready) C.Accent else C.Muted))
-                Text(when {
-                    state.busy -> "正在准备"
-                    state.failed -> "需要检查"
-                    ready -> "设备已就绪"
-                    state.container == null -> "检测中"
-                    state.installedVersion == null -> "等待安装"
-                    else -> "需要检查"
-                }, color = C.Muted, style = MaterialTheme.typography.labelMedium)
-            }
-            InstallationRow(Glyph.Bus, "游戏",
-                when { state.container == null -> "正在检测"; state.installedVersion == null -> "等待安装";
-                    else -> "已安装 · ${state.installedVersionName ?: state.installedVersion}" },
-                when { state.gameUpdate.loading -> "检查中";
-                    state.gameUpdate.newerSources(state.installedVersionName).isNotEmpty() -> "有新版";
-                    state.installedVersion == null -> "查看"; else -> state.gameUpdate.label }, state.installedVersion != null)
-            HorizontalDivider(color = C.Line)
-            InstallationRow(Glyph.Check, "本地汉化", state.translation?.version ?: "首次启动时准备",
-                if (state.translation != null) "已保存" else "待准备", state.translation != null)
+    HomeSummaryCard(onClick, modifier) {
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("运行状态", color = C.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+            Box(Modifier.size(6.dp).clip(CircleShape).background(if (ready) C.Accent else C.Muted))
+            Text(when {
+                state.busy -> "正在准备"
+                state.failed -> "需要检查"
+                ready -> "设备已就绪"
+                state.container == null -> "检测中"
+                state.installedVersion == null -> "等待安装"
+                else -> "需要检查"
+            }, color = C.Muted, style = MaterialTheme.typography.labelMedium)
         }
+        InstallationRow(Glyph.Bus, "游戏",
+            when { state.container == null -> "正在检测"; state.installedVersion == null -> "等待安装";
+                else -> "已安装 · ${state.installedVersionName ?: state.installedVersion}" },
+            when { state.gameUpdate.loading -> "检查中";
+                state.gameUpdate.newerSources(state.installedVersionName).isNotEmpty() -> "有新版";
+                state.installedVersion == null -> "查看"; else -> state.gameUpdate.label }, state.installedVersion != null, width - 40f)
+        HorizontalDivider(color = C.Line)
+        InstallationRow(Glyph.Check, "本地汉化", state.translation?.version ?: "首次启动时准备",
+            if (state.translation != null) "已保存" else "待准备", state.translation != null, width - 40f)
     }
 }
 
 @Composable
-private fun InstallationRow(icon: Glyph, title: String, subtitle: String, value: String, ready: Boolean) {
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val stacked = maxWidth < 300.dp * LocalDensity.current.fontScale
-        val statusWidth = maxWidth * .32f
-        Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            LauncherGlyph(icon, C.Muted, Modifier.size(20.dp))
-            Column(Modifier.weight(1f).padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(title, style = MaterialTheme.typography.titleSmall)
-                Text(subtitle, color = C.Muted, style = MaterialTheme.typography.bodySmall)
-                if (stacked) Text(value, color = if (ready) C.Ink else C.Muted, style = MaterialTheme.typography.labelMedium)
-            }
-            if (!stacked) Text(value, color = if (ready) C.Ink else C.Muted, style = MaterialTheme.typography.labelMedium,
-                modifier = Modifier.widthIn(max = statusWidth))
-            Spacer(Modifier.width(9.dp))
-            LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(14.dp))
+private fun InstallationRow(icon: Glyph, title: String, subtitle: String, value: String, ready: Boolean, width: Float) {
+    val stacked = width < 260f * LocalDensity.current.fontScale
+    val statusWidth = (width * .32f).dp
+    Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        LauncherGlyph(icon, C.Muted, Modifier.size(20.dp))
+        Column(Modifier.weight(1f).padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            Text(subtitle, color = C.Muted, style = MaterialTheme.typography.bodySmall)
+            if (stacked) Text(value, color = if (ready) C.Ink else C.Muted, style = MaterialTheme.typography.labelMedium)
         }
+        if (!stacked) Text(value, color = if (ready) C.Ink else C.Muted, style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.widthIn(max = statusWidth))
+        Spacer(Modifier.width(9.dp))
+        LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(14.dp))
     }
 }
 
