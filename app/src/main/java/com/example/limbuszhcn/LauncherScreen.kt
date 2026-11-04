@@ -271,7 +271,6 @@ private fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefres
         state.failed -> "重新启动"
         else -> "启动游戏"
     }
-    if (state.busy && state.launchStep >= 0) PreparationSteps(state.launchStep)
     val caption = when {
         state.busy -> state.stage
         state.failed -> "准备未完成 · 查看详情"
@@ -288,10 +287,9 @@ private fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefres
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
     }
-    LaunchRipple(animated) {
-        LaunchButton(title, state.busy, enabled = state.container != null || state.failed,
-            onClick = { when { needsDetection -> onRefresh(); canLaunch -> onLaunch(); else -> onDetails() } })
-    }
+    LaunchButton(title, state.busy, enabled = state.container != null || state.failed,
+        step = state.launchStep, animated = animated,
+        onClick = { when { needsDetection -> onRefresh(); canLaunch -> onLaunch(); else -> onDetails() } })
 }
 
 @Composable

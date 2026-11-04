@@ -353,6 +353,66 @@ def visible_navigation_frames(windows, width, height):
     return [f for f in frames if 0 <= f[0] < f[2] <= width and 0 <= f[1] < f[3] <= height]
 
 
+def inspect_launch_control(release, verifier):
+    """Render production controls with debug-only fixtures after all release screenshots."""
+    if not release["draft"] or os.environ.get("RUNTIME_CANDIDATE") != "true":
+        raise RuntimeError("Component rendering requires a private-to-collaborators release draft")
+    asset = next(a for a in release["assets"] if a["name"] == "bybus-ui-probe.apk")
+    data = request(asset["url"], 200 * 1024 * 1024, asset=True)
+    digest = hashlib.sha256(data).hexdigest()
+    if len(data) != asset["size"] or asset.get("digest") != "sha256:" + digest:
+        raise RuntimeError("Component rendering APK does not match the draft asset digest")
+    probe = Path(os.environ["RUNNER_TEMP"]) / "bybus-ui-probe.apk"
+    probe.write_bytes(data)
+    del data
+    signatures = command(str(verifier), "verify", "--print-certs", str(probe), timeout=60)
+    certs = re.findall(r"Signer #\d+ certificate SHA-256 digest: ([a-fA-F0-9]+)", signatures)
+    if {c.lower() for c in certs} != {CERT}:
+        raise RuntimeError("Component rendering APK signature mismatch")
+    if "Success" not in adb("install", "--no-streaming", "-r", str(probe), timeout=150):
+        raise RuntimeError("Component rendering APK installation failed")
+    adb("shell", "wm", "size", "720x1560")
+    adb("shell", "wm", "density", "320")
+    cases = [("launch-stage-0", 0, "no", "1.0"), ("launch-stage-1", 1, "no", "1.0"),
+             ("launch-stage-2", 2, "no", "1.0"), ("launch-dark", 1, "yes", "1.0"),
+             ("launch-large-text", 1, "no", "2.0"), ("launch-idle", -1, "no", "1.0"),
+             ("launch-generic-busy", -2, "no", "1.0")]
+    rendered = []
+    try:
+        for name, step, night, font in cases:
+            adb("shell", "am", "force-stop", PACKAGE)
+            adb("shell", "cmd", "uimode", "night", night)
+            adb("shell", "settings", "put", "system", "font_scale", font)
+            adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/.LaunchControlProbeActivity",
+                "--ei", "step", str(step), timeout=40)
+            time.sleep(2)
+            tree = capture(name)
+            title = {0: "准备游戏", 1: "检查汉化", 2: "正在启动", -1: "启动游戏", -2: "正在处理"}[step]
+            button = clickable_bounds(tree, title, allow_disabled=True)
+            if button[3] - button[1] < 112:
+                raise RuntimeError("Launch control clips its minimum touch height: " + name)
+            progress = [n for n in tree.iter("node") if n.get("content-desc") == "启动进度"]
+            if bool(progress) != (step in (0, 1, 2)):
+                raise RuntimeError("Stage progress appears outside real launch stages: " + name)
+            rendered.append(dict(name=name, step=step, night=night, font_scale=font, button_bounds=button))
+        # Observe real frame changes, separately from the frozen stage references.
+        adb("shell", "am", "force-stop", PACKAGE)
+        adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/.LaunchControlProbeActivity",
+            "--ei", "step", "1", "--ez", "animate", "true", timeout=40)
+        time.sleep(2)
+        capture("launch-motion-a")
+        time.sleep(.6)
+        capture("launch-motion-b")
+        if (OUT / "launch-motion-a.png").read_bytes() == (OUT / "launch-motion-b.png").read_bytes():
+            raise RuntimeError("Animated launch control produced identical frames")
+    finally:
+        adb("shell", "settings", "put", "system", "font_scale", "1.0", check=False)
+        adb("shell", "cmd", "uimode", "night", "no", check=False)
+    REPORT["launch_component"] = dict(apk_sha256=digest, fixtures=rendered, animated_frames_differ=True,
+        real_startup=False, readme_uses_component_fixtures=False)
+    REPORT["checks"].append("production launch control: 3 stage fixtures, dark/large text/idle/generic busy and moving highlight")
+
+
 def inspect_system_navigation():
     """Exercise real system navigation modes; never replace system chrome in screenshots."""
     overlays = adb("shell", "cmd", "overlay", "list")
@@ -566,7 +626,7 @@ def main():
     adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/.MainActivity", timeout=90)
     time.sleep(15)
     home = capture("home")
-    if os.environ.get("RUNTIME_MODE") == "ui":
+    if os.environ.get("RUNTIME_MODE") in ("ui", "launch"):
         inspect_home_alignment(home, 720, 1560, density=2)
     REPORT["checks"].append("main activity resumed")
     tap("都市零协会", home)
@@ -594,9 +654,11 @@ def main():
         inspect_detail_scroll(parent)
         inspect_update_progress()
         inspect_system_navigation()
-    else:
+    elif os.environ.get("RUNTIME_MODE") == "runtime":
         inspect_google(parent)
     inspect_tablet()
+    if os.environ.get("RUNTIME_MODE") == "launch":
+        inspect_launch_control(release, verifier)
     REPORT["result"] = "runtime baseline completed; screenshots require visual review"
 
 
