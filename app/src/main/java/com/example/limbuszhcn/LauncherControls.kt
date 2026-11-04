@@ -1,21 +1,9 @@
 package com.example.limbuszhcn
 
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -32,9 +20,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -46,90 +31,6 @@ internal fun HomeSummaryCard(onClick: () -> Unit, modifier: Modifier = Modifier,
     Surface(onClick = onClick, modifier = modifier, color = C.Panel, contentColor = C.Ink,
         shape = RoundedCornerShape(24.dp)) {
         Column(Modifier.fillMaxWidth().padding(20.dp), content = content)
-    }
-}
-
-@Composable
-internal fun LaunchRipple(animated: Boolean, content: @Composable () -> Unit) {
-    // Read phase only in the draw pass: the home tree does not recompose each frame.
-    // Removing the transition when covered/backgrounded also stops its frame clock.
-    val phase = if (animated) rememberInfiniteTransition(label = "launch ripple").animateFloat(
-        initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(4800, easing = LinearEasing)), label = "ripple phase")
-    else rememberUpdatedState(.35f)
-    val accent = C.Accent
-    val soft = C.AccentSoft
-    val buttonWidth = (232.dp * LocalDensity.current.fontScale.coerceAtLeast(1f)).coerceAtMost(360.dp)
-    Box(Modifier.fillMaxWidth().heightIn(min = 176.dp), contentAlignment = Alignment.Center) {
-        Canvas(Modifier.matchParentSize()) {
-            val innerWidth = buttonWidth.toPx().coerceAtMost(size.width - 8.dp.toPx())
-            val innerHeight = 56.dp.toPx()
-            drawOval(Brush.radialGradient(listOf(accent.copy(alpha = .13f), soft.copy(alpha = .06f),
-                accent.copy(alpha = 0f)), center, size.width / 2),
-                topLeft = Offset(0f, size.height * .07f), size = Size(size.width, size.height * .86f))
-            repeat(3) { layer ->
-                val progress = (phase.value + layer / 3f) % 1f
-                val width = innerWidth + (size.width - innerWidth) * progress
-                val height = innerHeight + (size.height - innerHeight - 8.dp.toPx()) * progress
-                val origin = Offset((size.width - width) / 2, (size.height - height) / 2)
-                val gradient = Brush.linearGradient(listOf(accent.copy(alpha = .05f),
-                    accent.copy(alpha = .28f), accent.copy(alpha = .07f)),
-                    start = origin, end = origin + Offset(width, height))
-                drawRoundRect(gradient, origin, Size(width, height), CornerRadius(height / 2),
-                    alpha = 1f - progress, style = Stroke(1.dp.toPx()))
-            }
-        }
-        content()
-    }
-}
-
-@Composable
-internal fun LaunchButton(title: String, busy: Boolean, enabled: Boolean, onClick: () -> Unit) {
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) .985f else 1f,
-        tween(130), label = "launch press")
-    val haptic = LocalHapticFeedback.current
-    val active = enabled || busy
-    val buttonWidth = (232.dp * LocalDensity.current.fontScale.coerceAtLeast(1f)).coerceAtMost(360.dp)
-    Button(
-        onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onClick() },
-        enabled = enabled && !busy,
-        interactionSource = interaction,
-        modifier = Modifier.widthIn(max = buttonWidth).fillMaxWidth().heightIn(min = 56.dp)
-            .graphicsLayer { scaleX = scale; scaleY = scale },
-        shape = CircleShape,
-        border = BorderStroke(1.dp, C.Accent.copy(alpha = if (active) .22f else .1f)),
-        elevation = ButtonDefaults.buttonElevation(defaultElevation = 1.dp, pressedElevation = 0.dp,
-            disabledElevation = if (busy) 1.dp else 0.dp),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = C.Panel, contentColor = C.Ink,
-            disabledContainerColor = C.Panel, disabledContentColor = if (busy) C.Ink else C.Muted)
-    ) {
-        Box(Modifier.size(30.dp).clip(CircleShape).background(if (active) C.Accent else C.Line),
-            contentAlignment = Alignment.Center) {
-            if (busy) CircularProgressIndicator(Modifier.size(16.dp), color = C.OnPrimary, strokeWidth = 2.dp)
-            else LauncherGlyph(Glyph.Play, if (enabled) C.OnPrimary else C.Muted, Modifier.size(17.dp))
-        }
-        Spacer(Modifier.width(12.dp))
-        AnimatedContent(title, transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(90)) }, label = "launch title") {
-            Text(it, style = MaterialTheme.typography.labelLarge)
-        }
-    }
-}
-
-@Composable
-internal fun PreparationSteps(step: Int) {
-    val accent = C.Accent
-    val line = C.Line
-    Row(Modifier.fillMaxWidth().padding(top = 12.dp).semantics {
-        progressBarRangeInfo = ProgressBarRangeInfo(step.coerceIn(0, 2).toFloat(), 0f..2f, 1)
-        stateDescription = "准备步骤 ${step.coerceIn(0, 2) + 1}，共 3 步"
-    }, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        repeat(3) { index ->
-            val color by animateColorAsState(if (index <= step) accent else line, tween(200), label = "step $index")
-            Box(Modifier.weight(1f).height(3.dp).clip(CircleShape).background(color))
-        }
     }
 }
 

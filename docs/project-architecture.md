@@ -32,8 +32,14 @@ tablets instead of stretching the card-to-action gaps indefinitely. Portrait con
 at 680dp wide; the body scrolls as a whole when content no longer fits. Wide
 landscape reserves a middle action lane between equal-width, equal-height cards; text scaling
 and the action lane both participate in the breakpoint calculation. The launch capsule has a
-subtle radial gradient and three expanding oval outlines, drawn without bitmap assets. Motion
-runs only while the home is visible and resumed, and follows the platform animation scale.
+subtle glow and three concentric capsule outlines, drawn without bitmap assets. Each outline
+is an equal-distance offset of the measured button bounds, so its straight edges and semicircle
+ends remain parallel to the button even when text scaling changes its height. During launch,
+three separated paths around the button replace the horizontal step bar: completed phases stay
+lit, the current phase has a moving highlight and later phases remain muted. The phases use
+the coordinator's existing 0/1/2 preparation, translation and handoff states; no timed completion
+or synthetic percentage is introduced. Motion runs only while the home is visible and resumed,
+follows the platform animation scale, and reads its frame state only during drawing.
 Project controls remain in the common detail dialog. Snackbars clear the measured action.
 Installation rows use the known card width rather than subcomposition so the landscape row
 can safely measure its intrinsic height at larger text sizes. Local translation uses the
