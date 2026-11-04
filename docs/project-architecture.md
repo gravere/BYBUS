@@ -27,7 +27,9 @@ It does not require a catalog entry or a rebuilt launcher for every same-family 
 The launcher keeps device readiness in the installation/status area. Phone and tablet home pages
 share the same summary cards, surface, corner radius and padding. Portrait places the launch
 action between the status and project cards, with the cards close to the header and usage footer.
-The body fills the available height and scrolls as a whole when content no longer fits. Wide
+The body fills the available height up to 760dp, keeping a centered, bounded group on tall
+tablets instead of stretching the card-to-action gaps indefinitely. Portrait content is capped
+at 680dp wide; the body scrolls as a whole when content no longer fits. Wide
 landscape reserves a middle action lane between equal-width, equal-height cards; text scaling
 and the action lane both participate in the breakpoint calculation. The launch capsule has a
 subtle radial gradient and three expanding oval outlines, drawn without bitmap assets. Motion

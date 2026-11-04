@@ -143,7 +143,8 @@ internal fun LauncherScreen(
                             }
                         }
                     } else {
-                        Column(Modifier.fillMaxWidth().verticalScroll(homeScroll).heightIn(min = bodyHeight)
+                        Column(Modifier.fillMaxWidth().heightIn(max = 760.dp).align(Alignment.Center)
+                            .verticalScroll(homeScroll).heightIn(min = minOf(bodyHeight, 760.dp))
                             .padding(vertical = 8.dp), verticalArrangement = Arrangement.SpaceBetween,
                             horizontalAlignment = Alignment.CenterHorizontally) {
                             InstallationCard(state, cardWidth) { open("status") }

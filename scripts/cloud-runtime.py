@@ -145,8 +145,10 @@ def inspect_home_alignment(tree, width, height, density=1, landscape=False):
         raise RuntimeError("Launch action is not centered in the space between cards")
     above = (status[1] - header[3]) / density
     below = (footer[1] - project[3]) / density
-    if not landscape and (not 0 <= above <= 32 or not 0 <= below <= 24):
-        raise RuntimeError(f"Portrait outer margins still waste space: {above=} {below=}")
+    if not landscape:
+        card_gap = (project[1] - status[3]) / density
+        if card_gap > 400 or min(above, below) < 0 or abs(above - below - 12) > 2:
+            raise RuntimeError(f"Portrait spacing is not bounded and balanced: {above=} {below=} {card_gap=}")
     REPORT.setdefault("home_layouts", []).append(dict(width=width, height=height, middle_error_dp=middle_error,
         horizontal=landscape,
         status_bounds=status, project_bounds=project, action_bounds=action,

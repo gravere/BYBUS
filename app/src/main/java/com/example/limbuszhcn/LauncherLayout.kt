@@ -25,7 +25,7 @@ internal data class LauncherLayout(
             val compactHeight = height < 480
             return LauncherLayout(
                 twoColumns, centered, compactHeight,
-                if (twoColumns) 1320f else if (centered) 800f else 640f, margin, gap, actionWidth,
+                if (twoColumns) 1320f else if (centered) 680f else 640f, margin, gap, actionWidth,
                 minOf(560f * scale, 680f, (width - 48f).coerceAtLeast(0f)),
                 minOf(height * (if (compactHeight) .84f else .78f), if (centered) 720f else 640f),
                 if (width < 360) 16f else 24f
