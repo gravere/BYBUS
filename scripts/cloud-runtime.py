@@ -152,7 +152,7 @@ def inspect_home_alignment(tree, width, height, density=1, landscape=False):
         card_gap = (project[1] - status[3]) / density
         if card_gap > 400 or min(above, below) < 0 or abs(above - below - 12) > 2:
             raise RuntimeError(f"Portrait spacing is not bounded and balanced: {above=} {below=} {card_gap=}")
-        if os.environ.get("RUNTIME_MODE") == "button-ui" and not 120 <= card_gap <= 320:
+        if os.environ.get("RUNTIME_MODE") in ("button-ui", "detail-rest") and not 120 <= card_gap <= 320:
             raise RuntimeError(f"Compact portrait cards leave an excessive launch gap: {card_gap=}")
     REPORT.setdefault("home_layouts", []).append(dict(width=width, height=height, middle_error_dp=middle_error,
         horizontal=landscape,
@@ -316,7 +316,7 @@ def inspect_tablet(focused=False):
         elif project[1] <= game[1]:
             raise RuntimeError("Portrait did not place the project card below the game controls")
         REPORT["checks"].append(f"{name} layout at {size}, 160 dpi, font scale {font_scale}")
-    if os.environ.get("RUNTIME_MODE") == "button-ui":
+    if os.environ.get("RUNTIME_MODE") in ("button-ui", "detail-rest"):
         tap("设置与工具", tree)
         tap("游戏更新", hierarchy("tablet-detail-parent"))
         detail = capture("tablet-game-update")
@@ -541,9 +541,18 @@ def inspect_detail_redesign(parent):
     tap("返回上一页", migration)
     migration_parent = hierarchy("migration-parent")
     locate(migration_parent, "设置与工具")
-    locate(migration_parent, "版本与资源")
+    locate(migration_parent, "关闭面板")
+    if not any(n.get("text") == "设置与工具" for n in migration_parent.iter("node")):
+        raise RuntimeError("Migration did not restore the settings panel")
     adb("shell", "input", "keyevent", "KEYCODE_BACK")
     home = hierarchy("details-home")
+    REPORT["detail_pages"] = pages
+    REPORT["checks"].append("release update/about subpages and migration return preserve the settings parent")
+    inspect_remaining_details(home)
+
+
+def inspect_remaining_details(home):
+    pages = REPORT.setdefault("detail_pages", [])
     tap("运行状态", home)
     capture("runtime-detail")
     pages.append("runtime-detail")
@@ -557,7 +566,10 @@ def inspect_detail_redesign(parent):
     tap("这些统计代表什么？", project)
     capture("project-explanation")
     pages.append("project-explanation")
-    tap("项目来源：GitHub 更新", scroll_to_control(hierarchy("project-restore"), "项目来源：GitHub 更新", down=False))
+    # Reopen at the top rather than overscrolling the body into its pull-to-dismiss gesture.
+    tap("关闭面板", hierarchy("project-restore"))
+    tap("都市零协会", hierarchy("project-reopen"))
+    tap("项目来源：GitHub 更新", hierarchy("project-source-restore"))
     adb("shell", "input", "keyevent", "KEYCODE_BACK")
     for name, night, font in [("about-dark", "yes", "1.0"), ("about-large-text", "no", "1.6")]:
         adb("shell", "cmd", "uimode", "night", night)
@@ -726,7 +738,7 @@ def inspect_launch_control(release, verifier, probe_digest=None, feedback_only=F
             button = clickable_bounds(tree, title, allow_disabled=True)
             if button[3] - button[1] < 112:
                 raise RuntimeError("Launch control clips its minimum touch height: " + name)
-            if os.environ.get("RUNTIME_MODE") == "button-ui":
+            if os.environ.get("RUNTIME_MODE") in ("button-ui", "detail-rest"):
                 text = element_bounds(tree, title)
                 # The 22dp symbol and 10dp gap belong to the centered content group.
                 if abs((text[0] - 64 + text[2]) - (button[0] + button[2])) > 4 or abs((text[1] + text[3]) - (button[1] + button[3])) > 4:
@@ -744,7 +756,7 @@ def inspect_launch_control(release, verifier, probe_digest=None, feedback_only=F
             rendered.append(dict(name=name, step=step, state=fixture, night=night, font_scale=font, button_bounds=button))
         # Observe each real stage, separately from the frozen references.
         motion_stages = []
-        for stage in ([0, 1, 2] if os.environ.get("RUNTIME_MODE") == "button-ui" else [1]):
+        for stage in ([0, 1, 2] if os.environ.get("RUNTIME_MODE") in ("button-ui", "detail-rest") else [1]):
             adb("shell", "am", "force-stop", PACKAGE)
             adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.LaunchControlProbeActivity",
                 "--ei", "step", str(stage), "--ez", "animate", "true", timeout=40)
@@ -1021,6 +1033,19 @@ def inspect_detail_scroll(parent):
     REPORT["checks"].append("short pull restores, upward pull stays fixed, scrolled body stays inside, header and top-body pulls dismiss")
 
 
+def inspect_detail_controls(release, verifier):
+    inspect_tablet(focused=True)
+    inspect_launch_control(release, verifier)
+    # Only the notes layout needs a fixture; the draft is not publicly offered as an update yet.
+    adb("shell", "am", "force-stop", PACKAGE)
+    adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.UpdateControlProbeActivity",
+        "--es", "case", "available", timeout=40)
+    notes = capture("update-notes-layout")
+    locate(notes, "更新内容")
+    locate(notes, "下载更新")
+    REPORT["detail_fixture_pages"] = ["update-notes-layout"]
+
+
 def main():
     candidate = os.environ.get("RUNTIME_CANDIDATE") == "true"
     endpoint = "latest"
@@ -1101,6 +1126,11 @@ def main():
     adb("logcat", "-c")
     adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
     time.sleep(15)
+    if os.environ.get("RUNTIME_MODE") == "detail-rest":
+        inspect_remaining_details(hierarchy("remaining-home"))
+        inspect_detail_controls(release, verifier)
+        REPORT["result"] = "detail continuation completed; combine with the same APK's retained first pages"
+        return
     home = capture("home")
     if os.environ.get("RUNTIME_MODE") in ("ui", "launch", "button-ui", "interaction-ui"):
         inspect_home_alignment(home, 720, 1560, density=2)
@@ -1141,16 +1171,7 @@ def main():
         REPORT["checks"].append("release migration menu and document picker cancellation return safely")
     if os.environ.get("RUNTIME_MODE") == "button-ui":
         inspect_detail_redesign(parent)
-        inspect_tablet(focused=True)
-        inspect_launch_control(release, verifier)
-        # Only the notes layout needs a fixture; the draft is not publicly offered as an update yet.
-        adb("shell", "am", "force-stop", PACKAGE)
-        adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.UpdateControlProbeActivity",
-            "--es", "case", "available", timeout=40)
-        notes = capture("update-notes-layout")
-        locate(notes, "更新内容")
-        locate(notes, "下载更新")
-        REPORT["detail_fixture_pages"] = ["update-notes-layout"]
+        inspect_detail_controls(release, verifier)
         REPORT["result"] = "button inspection completed; screenshots require visual review"
         return
     if os.environ.get("RUNTIME_MODE") == "interaction-ui":
