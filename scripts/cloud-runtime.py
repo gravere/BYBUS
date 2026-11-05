@@ -422,7 +422,7 @@ def inspect_migration(release, verifier):
     adb("shell", "am", "force-stop", PACKAGE)
     adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
     time.sleep(3)
-    tap("暂不导入", hierarchy("migration-defer"))
+    tap("返回上一页", hierarchy("migration-defer"))
     # Return through the old app, then enter migration from the new app's persistent menu.
     adb("shell", "am", "start", "-W", "-n", f"{legacy}/{legacy}.MainActivity", timeout=30)
     time.sleep(2); tap("打开新版 BYBUS", hierarchy("migration-helper"))
@@ -433,7 +433,7 @@ def inspect_migration(release, verifier):
     adb("shell", "am", "force-stop", PACKAGE)
     adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MigrationProbeActivity", timeout=90)
     time.sleep(3)
-    tap("一键迁移旧 BYBUS", hierarchy("migration-ready"))
+    tap("开始迁移", hierarchy("migration-ready"))
     deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
         view = hierarchy("migration-progress")
@@ -479,6 +479,84 @@ def inspect_migration(release, verifier):
         target_preparation="fixture skips official game installation; real accounts not tested")
     REPORT["coexistence"] = dict(packages=[PACKAGE, legacy], upstream="v1.5.2", upstream_sha256=upstream_sha)
     REPORT["checks"].append("signed helper update retains synthetic files; private import hashes match; actual upstream APK coexists")
+
+
+def inspect_migration_screen(release, verifier):
+    """Presentation fixtures only; real release navigation was checked before installing them."""
+    digest = install_component_probe(release, verifier)
+    cases = [("migration-ready", "ready", "720x1560", "1.0", "no"),
+             ("migration-update", "update", "720x1560", "1.0", "no"),
+             ("migration-copy", "copy", "720x1560", "1.0", "no"),
+             ("migration-merge", "merge", "720x1560", "1.0", "no"),
+             ("migration-done", "complete", "720x1560", "1.0", "no"),
+             ("migration-error", "error", "720x1560", "1.0", "no"),
+             ("migration-dark", "ready", "720x1560", "1.0", "yes"),
+             ("migration-large-text", "ready", "640x1136", "1.6", "no"),
+             ("migration-landscape", "ready", "1920x1200", "1.0", "no"),
+             ("migration-portrait", "ready", "1200x1920", "1.0", "no")]
+    rendered = []
+    try:
+        for name, fixture, size, font, night in cases:
+            adb("shell", "am", "force-stop", PACKAGE)
+            adb("shell", "wm", "size", size)
+            adb("shell", "wm", "density", "320")
+            adb("shell", "settings", "put", "system", "font_scale", font)
+            adb("shell", "cmd", "uimode", "night", night)
+            adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MigrationScreenProbeActivity",
+                "--es", "state", fixture, timeout=40)
+            time.sleep(1)
+            tree = capture(name)
+            locate(tree, "数据迁移")
+            if fixture in ("copy", "merge"):
+                locate(tree, "50%")
+                if fixture == "merge":
+                    locate(tree, "16 / 32 个文件")
+                back = next(n for n in tree.iter("node") if n.get("content-desc") == "返回上一页")
+                parents = {child: parent for parent in tree.iter() for child in parent}
+                while back.get("clickable") != "true" and back in parents:
+                    back = parents[back]
+                if back.get("enabled") != "false":
+                    raise RuntimeError("Active migration permits leaving the page")
+            elif fixture == "error":
+                locate(tree, "迁移尚未完成")
+                locate(tree, "继续迁移")
+                if any(n.get("text") == "选择资源文件" for n in tree.iter("node")):
+                    raise RuntimeError("Interrupted migration exposes a second import")
+            elif fixture == "complete":
+                locate(tree, "数据已就位")
+                clickable_bounds(tree, "进入 BYBUS")
+            elif fixture == "update":
+                clickable_bounds(tree, "打开旧版 BYBUS")
+            elif fixture == "ready" and font == "1.0":
+                button = clickable_bounds(tree, "开始迁移")
+                if button[3] - button[1] < 112:
+                    raise RuntimeError("Migration primary action lost its minimum touch height")
+            if name == "migration-large-text":
+                # The fixed header remains reachable while a short enlarged window scrolls.
+                adb("shell", "input", "swipe", "320", "900", "320", "260", "500")
+                scrolled = capture("migration-large-text-scrolled")
+                locate(scrolled, "返回上一页")
+                clickable_bounds(scrolled, "选择资源文件")
+            if name in ("migration-landscape", "migration-portrait"):
+                left = element_bounds(tree, "旧版 BYBUS")
+                right = element_bounds(tree, "资源文件")
+                if name.endswith("landscape") and abs(left[1] - right[1]) > 4:
+                    raise RuntimeError("Landscape source cards do not align")
+                if name.endswith("portrait") and right[1] <= left[3]:
+                    raise RuntimeError("Portrait migration should use one column")
+            rendered.append(dict(name=name, state=fixture, size=size, font_scale=font, night=night))
+        # A single callback check uses the production button with a synthetic model.
+        tap("开始迁移", tree)
+        started = hierarchy("migration-action")
+        locate(started, "正在迁移数据")
+        locate(started, "正在准备游戏…")
+    finally:
+        adb("shell", "wm", "size", "720x1560", check=False)
+        adb("shell", "settings", "put", "system", "font_scale", "1.0", check=False)
+        adb("shell", "cmd", "uimode", "night", "no", check=False)
+    REPORT["migration_screen"] = dict(apk_sha256=digest, fixtures=rendered, start_callback=True,
+        progress_units=True, pending_guard=True, portrait_single_column=True,
+        landscape_aligned=True, large_text_scroll=True, real_data_transfer=False)
 
 
 def inspect_launch_control(release, verifier):
@@ -866,17 +944,23 @@ def main():
     locate(parent, "设置与工具")
     locate(parent, "版本与资源")
     REPORT["checks"].append("child back returns to parent settings")
-    if os.environ.get("RUNTIME_MODE") in ("launch", "resources"):
+    if os.environ.get("RUNTIME_MODE") in ("launch", "resources", "migration-ui"):
         tap("数据迁移", parent)
         migration = capture("migration-menu")
-        locate(migration, "导入资源包")
-        tap("导入资源包", migration)
+        locate(migration, "选择资源文件")
+        tap("选择资源文件", migration)
         time.sleep(1)
         adb("shell", "input", "keyevent", "KEYCODE_BACK")
         time.sleep(1)
         locate(hierarchy("migration-picker-cancel"), "数据迁移")
-        tap("暂不导入", hierarchy("migration-exit"))
+        tap("返回上一页", hierarchy("migration-exit"))
+        time.sleep(.5)
+        locate(hierarchy("migration-parent"), "设置与工具")
         REPORT["checks"].append("release migration menu and document picker cancellation return safely")
+    if os.environ.get("RUNTIME_MODE") == "migration-ui":
+        inspect_migration_screen(release, verifier)
+        REPORT["result"] = "migration screen inspection completed; screenshots require visual review"
+        return
     if os.environ.get("RUNTIME_MODE") == "resources":
         install_component_probe(release, verifier)
         inspect_resource_import()
