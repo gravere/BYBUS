@@ -120,9 +120,9 @@ internal fun LauncherScreen(
                             }
                         }
                     } else {
-                        Column(Modifier.fillMaxWidth().heightIn(max = 760.dp).align(Alignment.Center)
-                            .verticalScroll(homeScroll).heightIn(min = minOf(bodyHeight, 760.dp))
-                            .padding(vertical = 8.dp), verticalArrangement = Arrangement.SpaceBetween,
+                        Column(Modifier.fillMaxWidth().align(Alignment.Center)
+                            .verticalScroll(homeScroll).padding(vertical = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
                             horizontalAlignment = Alignment.CenterHorizontally) {
                             InstallationCard(state, cardWidth) { open("status") }
                             LaunchActions(state, onLaunch, onRefresh, resumed && sheet == null,
@@ -173,11 +173,8 @@ internal fun LauncherScreen(
 @Composable
 private fun LaunchActions(state: LauncherUiState, onLaunch: () -> Unit,
     onRefresh: () -> Unit, animated: Boolean, onDetails: () -> Unit, modifier: Modifier = Modifier) {
-    Box(modifier.padding(vertical = 8.dp),
-        contentAlignment = Alignment.Center) {
-        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            PrimaryAction(state, onLaunch, onRefresh, onDetails, animated)
-        }
+    Box(modifier, contentAlignment = Alignment.Center) {
+        PrimaryAction(state, onLaunch, onRefresh, onDetails, animated)
     }
 }
 
@@ -283,7 +280,7 @@ private fun rememberOperationFeedback(state: LauncherUiState): String? {
             }
             if (feedback != null) {
                 delay(accessibility?.calculateRecommendedTimeoutMillis(4000L,
-                    containsIcons = true, containsText = true, containsControls = false) ?: 4000L)
+                    containsIcons = false, containsText = true, containsControls = false) ?: 4000L)
                 feedback = null
             }
         }

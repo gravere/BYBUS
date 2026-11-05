@@ -152,6 +152,8 @@ def inspect_home_alignment(tree, width, height, density=1, landscape=False):
         card_gap = (project[1] - status[3]) / density
         if card_gap > 400 or min(above, below) < 0 or abs(above - below - 12) > 2:
             raise RuntimeError(f"Portrait spacing is not bounded and balanced: {above=} {below=} {card_gap=}")
+        if os.environ.get("RUNTIME_MODE") == "button-ui" and not 126 <= card_gap <= 130:
+            raise RuntimeError(f"Compact portrait card spacing was not applied: {card_gap=}")
     REPORT.setdefault("home_layouts", []).append(dict(width=width, height=height, middle_error_dp=middle_error,
         horizontal=landscape,
         status_bounds=status, project_bounds=project, action_bounds=action,
@@ -645,6 +647,12 @@ def inspect_launch_control(release, verifier, probe_digest=None):
             button = clickable_bounds(tree, title, allow_disabled=True)
             if button[3] - button[1] < 112:
                 raise RuntimeError("Launch control clips its minimum touch height: " + name)
+            if os.environ.get("RUNTIME_MODE") == "button-ui":
+                text = element_bounds(tree, title)
+                if abs((text[0] + text[2]) - (button[0] + button[2])) > 4 or abs((text[1] + text[3]) - (button[1] + button[3])) > 4:
+                    raise RuntimeError("Launch title is not centered: " + name)
+                if font == "1.0" and (abs(button[2] - button[0] - 464) > 4 or abs(button[3] - button[1] - 112) > 4):
+                    raise RuntimeError("Launch control did not restore its compact size: " + name)
             progress = [n for n in tree.iter("node") if n.get("content-desc") == "启动进度"]
             if bool(progress) != (step in (0, 1, 2)):
                 raise RuntimeError("Stage progress appears outside real launch stages: " + name)
@@ -994,7 +1002,7 @@ def main():
     adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
     time.sleep(15)
     home = capture("home")
-    if os.environ.get("RUNTIME_MODE") in ("ui", "launch", "interaction-ui"):
+    if os.environ.get("RUNTIME_MODE") in ("ui", "launch", "button-ui", "interaction-ui"):
         inspect_home_alignment(home, 720, 1560, density=2)
     REPORT["checks"].append("main activity resumed")
     tap("都市零协会", home)
@@ -1031,6 +1039,11 @@ def main():
         time.sleep(.5)
         locate(hierarchy("migration-parent"), "设置与工具")
         REPORT["checks"].append("release migration menu and document picker cancellation return safely")
+    if os.environ.get("RUNTIME_MODE") == "button-ui":
+        inspect_tablet(focused=True)
+        inspect_launch_control(release, verifier)
+        REPORT["result"] = "button inspection completed; screenshots require visual review"
+        return
     if os.environ.get("RUNTIME_MODE") == "interaction-ui":
         inspect_tablet(focused=True)
         digest = install_component_probe(release, verifier)
