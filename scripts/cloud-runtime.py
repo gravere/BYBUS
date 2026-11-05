@@ -12,7 +12,8 @@ import urllib.error
 import urllib.parse
 import xml.etree.ElementTree as ET
 
-PACKAGE = "com.example.limbuszhcn"
+PACKAGE = "io.github.gravere.bybus"
+NAMESPACE = "com.example.limbuszhcn"
 CERT = "d50bbcfb234692d5d5f90427499158608c5a4c13adb7f99a78d9b5f1af44d55b"
 OUT = Path("runtime-output")
 OUT.mkdir(exist_ok=True)
@@ -284,7 +285,7 @@ def inspect_google(parent):
 
 
 def inspect_tablet():
-    adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/.MainActivity", timeout=30)
+    adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=30)
     tree = hierarchy("before-tablet")
     try:
         tap("关闭面板", tree)
@@ -353,16 +354,35 @@ def visible_navigation_frames(windows, width, height):
     return [f for f in frames if 0 <= f[0] < f[2] <= width and 0 <= f[1] < f[3] <= height]
 
 
-def install_component_probe(release, verifier):
+def inspect_account_registry(release, verifier):
+    digest = install_component_probe(release, verifier)
+    adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.AccountRegistryProbeActivity", timeout=90)
+    deadline = time.monotonic() + 180
+    while time.monotonic() < deadline:
+        tree = hierarchy("account-registry")
+        labels = [node.get("text", "") for node in tree.iter("node")]
+        if "ACCOUNT_REGISTRY_PASS" in labels:
+            REPORT["account_registry"] = dict(first_silent_install=True, fresh_cache=True,
+                server_restart=False, account_access=False, probe_sha256=digest)
+            REPORT["checks"].append("Google authenticator registered on first silent install without server restart")
+            return
+        failures = [text for text in labels if text.startswith("ACCOUNT_REGISTRY_FAIL")]
+        if failures:
+            raise RuntimeError(failures[0])
+        time.sleep(3)
+    raise RuntimeError("First-install account registry probe timed out")
+
+
+def install_component_probe(release, verifier, name="bybus-ui-probe.apk"):
     """Only used after the signed release screenshots have been saved."""
     if not release["draft"] or os.environ.get("RUNTIME_CANDIDATE") != "true":
         raise RuntimeError("Component rendering requires a private-to-collaborators release draft")
-    asset = next(a for a in release["assets"] if a["name"] == "bybus-ui-probe.apk")
+    asset = next(a for a in release["assets"] if a["name"] == name)
     data = request(asset["url"], 200 * 1024 * 1024, asset=True)
     digest = hashlib.sha256(data).hexdigest()
     if len(data) != asset["size"] or asset.get("digest") != "sha256:" + digest:
         raise RuntimeError("Component rendering APK does not match the draft asset digest")
-    probe = Path(os.environ["RUNNER_TEMP"]) / "bybus-ui-probe.apk"
+    probe = Path(os.environ["RUNNER_TEMP"]) / name
     probe.write_bytes(data)
     del data
     signatures = command(str(verifier), "verify", "--print-certs", str(probe), timeout=60)
@@ -372,6 +392,91 @@ def install_component_probe(release, verifier):
     if "Success" not in adb("install", "--no-streaming", "-r", str(probe), timeout=150):
         raise RuntimeError("Component rendering APK installation failed")
     return digest
+
+
+def inspect_migration(release, verifier):
+    """Exercise the production provider/decoder with synthetic data, then install upstream beside BYBUS."""
+    legacy = "com.example.limbuszhcn"
+    install_component_probe(release, verifier, "bybus-migration-probe.apk")
+    relative = "virtual/data/user/0/com.ProjectMoon.LimbusCompany/files/bybus-migration-fixture.bin"
+    fixture = bytes(range(256)) * 16385
+    expected = hashlib.sha256(fixture).hexdigest()
+    fixtures = {relative: fixture, "files/translation-cache/fixture.json": b'{"migration":true}',
+                "virtual/storage/emulated/0/Android/data/com.ProjectMoon.LimbusCompany/cache/UnityCache/Shared/fixture/__data": b"portable-game-cache",
+                "virtual/data/app/system/bybus-migration-fixture.secret": b"not portable",
+                "files/translation-cache/redirect-gate.pid": b"12345"}
+    for path, body in fixtures.items():
+        adb("shell", "run-as", legacy, "mkdir", "-p", str(Path(path).parent))
+        # These are fixed, synthetic paths; no private device data or arbitrary shell input.
+        result = subprocess.run(["adb", "-s", "emulator-5554", "shell", "run-as", legacy,
+                                 "sh", "-c", "'cat > " + path + "'"], input=body, capture_output=True, timeout=30)
+        if result.returncode:
+            raise RuntimeError("Cannot seed synthetic legacy files")
+    # Cover a real signed release upgrade over populated old-package data.
+    install_component_probe(release, verifier, "BYBUS.apk")
+    denied = subprocess.run(["adb", "-s", "emulator-5554", "shell", "content", "call", "--uri",
+        f"content://{legacy}.bybus.migration", "--method", "summary"], capture_output=True, timeout=30)
+    denial = (denied.stdout + denied.stderr).decode("utf-8", "replace")
+    if not any(word in denial for word in ("SecurityException", "Permission Denial", "not authorized")):
+        raise RuntimeError("Migration provider did not reject the shell UID")
+    adb("shell", "am", "force-stop", PACKAGE)
+    adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
+    time.sleep(3)
+    tap("暂不导入", hierarchy("migration-defer"))
+    # The user's next entry through the helper must reopen migration even with an existing home task.
+    adb("shell", "am", "start", "-W", "-n", f"{legacy}/{legacy}.MainActivity", timeout=30)
+    time.sleep(2); tap("打开独立版并迁移", hierarchy("migration-helper"))
+    locate(hierarchy("migration-reopened"), "导入旧版数据")
+    capture("migration-reopened")
+    adb("shell", "am", "force-stop", PACKAGE)
+    adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MigrationProbeActivity", timeout=90)
+    time.sleep(3)
+    tap("开始导入", hierarchy("migration-ready"))
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        view = hierarchy("migration-progress")
+        if any(node.get("text") == "旧数据已就位" for node in view.iter("node")):
+            capture("migration-complete")
+            break
+        time.sleep(2)
+    else:
+        raise RuntimeError("Synthetic migration did not complete")
+    adb("shell", "am", "force-stop", PACKAGE)
+    adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MigrationProbeActivity",
+        "--ez", "verify_fixture", "true", timeout=90)
+    time.sleep(2)
+    view = hierarchy("migration-verified")
+    if not any(node.get("text") == "MIGRATION_PASS " + expected for node in view.iter("node")):
+        raise RuntimeError("Imported fixture differs, completion marker missing, or excluded data copied")
+    install_component_probe(release, verifier, "bybus-migration-probe.apk")
+    original = adb("exec-out", "run-as", legacy, "cat", relative, binary=True)
+    if hashlib.sha256(original).hexdigest() != expected:
+        raise RuntimeError("Legacy data changed during migration")
+    if "Success" not in adb("uninstall", legacy):
+        raise RuntimeError("Cannot remove synthetic legacy helper")
+    upstream_sha = "4233a4ad131dcc5f898e007ad787cdbcb3231bb506c28b0a3d4988a459b24200"
+    upstream = json.loads(request("https://api.github.com/repos/BBBEANNN/limbusZhCN/releases/tags/v1.5.2", 512*1024))
+    asset = next(a for a in upstream["assets"] if a.get("digest") == "sha256:" + upstream_sha)
+    data = request(asset["browser_download_url"], 200*1024*1024)
+    if hashlib.sha256(data).hexdigest() != upstream_sha:
+        raise RuntimeError("Upstream release hash changed")
+    apk = Path(os.environ["RUNNER_TEMP"])/"upstream.apk"; apk.write_bytes(data)
+    certs = command(str(verifier), "verify", "--print-certs", str(apk), timeout=60)
+    if "df648cd25ec9661b06a6c2d8ddf6ef8e7c3864b6b02c94a258a82c871e18705b" not in certs:
+        raise RuntimeError("Unexpected upstream signer")
+    if "Success" not in adb("install", "--no-streaming", str(apk), timeout=150):
+        raise RuntimeError("Upstream cannot be installed alongside BYBUS")
+    for package in (PACKAGE, legacy):
+        if not adb("shell", "pm", "path", package).startswith("package:"):
+            raise RuntimeError("Coexisting package missing: " + package)
+    adb("shell", "am", "force-stop", PACKAGE)
+    adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
+    time.sleep(3); locate(hierarchy("coexisting-home"), "设置与工具")
+    REPORT["migration"] = dict(synthetic_bytes=len(fixture), sha256=expected, source_preserved=True, reopen_after_defer=True, game_cache_preserved=True,
+        provider_rejects_shell=True, skipped_install_registry=True, stale_pid_excluded=True,
+        target_preparation="fixture skips official game installation; real accounts not tested")
+    REPORT["coexistence"] = dict(packages=[PACKAGE, legacy], upstream="v1.5.2", upstream_sha256=upstream_sha)
+    REPORT["checks"].append("signed helper update retains synthetic files; private import hashes match; actual upstream APK coexists")
 
 
 def inspect_launch_control(release, verifier):
@@ -389,7 +494,7 @@ def inspect_launch_control(release, verifier):
             adb("shell", "am", "force-stop", PACKAGE)
             adb("shell", "cmd", "uimode", "night", night)
             adb("shell", "settings", "put", "system", "font_scale", font)
-            adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/.LaunchControlProbeActivity",
+            adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.LaunchControlProbeActivity",
                 "--ei", "step", str(step), timeout=40)
             time.sleep(2)
             tree = capture(name)
@@ -403,7 +508,7 @@ def inspect_launch_control(release, verifier):
             rendered.append(dict(name=name, step=step, night=night, font_scale=font, button_bounds=button))
         # Observe real frame changes, separately from the frozen stage references.
         adb("shell", "am", "force-stop", PACKAGE)
-        adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/.LaunchControlProbeActivity",
+        adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.LaunchControlProbeActivity",
             "--ei", "step", "1", "--ez", "animate", "true", timeout=40)
         time.sleep(2)
         capture("launch-motion-a")
@@ -438,7 +543,7 @@ def inspect_update_controls(release, verifier):
             adb("shell", "wm", "density", str(density))
             adb("shell", "cmd", "uimode", "night", night)
             adb("shell", "settings", "put", "system", "font_scale", font)
-            adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/.UpdateControlProbeActivity",
+            adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.UpdateControlProbeActivity",
                 "--es", "case", case, timeout=40)
             time.sleep(2)
             tree = capture(name)
@@ -641,12 +746,12 @@ def main():
     else:
         release = json.loads(request("https://api.github.com/repos/gravere/BYBUS/releases/" + endpoint, 512 * 1024))
     assets = {asset["name"]: asset for asset in release["assets"]}
-    apk_asset = assets["BYBUS.apk"]
+    apk_asset = assets["BYBUS-Android.apk"]
     sums = request(assets["SHA256SUMS.txt"]["url"], 32 * 1024, asset=True).decode("utf-8")
-    matches = re.findall(r"^([a-fA-F0-9]{64})\s+\*?BYBUS\.apk\s*$", sums, re.M)
+    matches = re.findall(r"^([a-fA-F0-9]{64})\s+\*?BYBUS-Android\.apk\s*$", sums, re.M)
     if len(matches) != 1 or (release["draft"] and not candidate) or release["prerelease"]:
         raise RuntimeError("Invalid formal release metadata")
-    apk = Path(os.environ["RUNNER_TEMP"]) / "BYBUS.apk"
+    apk = Path(os.environ["RUNNER_TEMP"]) / "BYBUS-Android.apk"
     data = request(apk_asset["url"], 200 * 1024 * 1024, asset=True)
     digest = hashlib.sha256(data).hexdigest()
     if len(data) != apk_asset["size"] or digest != matches[0].lower():
@@ -679,11 +784,19 @@ def main():
     if "Success" not in installed:
         raise RuntimeError("APK installation did not succeed: " + installed[-1000:])
     REPORT["checks"].append("published APK signature/hash and installation")
+    if os.environ.get("RUNTIME_MODE") == "repairs":
+        adb("logcat", "-c")
+        adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
+        time.sleep(3)
+        inspect_account_registry(release, verifier)
+        inspect_migration(release, verifier)
+        REPORT["result"] = "container repair regression completed; no account or purchase attempted"
+        return
     adb("shell", "settings", "delete", "global", "policy_control")
     # Hide emulator system chrome before taking raw captures; never paint over app pixels.
     adb("shell", "cmd", "statusbar", "send-disable-flag", "system-icons", "clock", "notification-icons")
     adb("logcat", "-c")
-    adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/.MainActivity", timeout=90)
+    adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
     time.sleep(15)
     home = capture("home")
     if os.environ.get("RUNTIME_MODE") in ("ui", "launch"):

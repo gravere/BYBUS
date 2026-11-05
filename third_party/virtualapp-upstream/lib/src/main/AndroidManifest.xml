@@ -373,7 +373,7 @@
             android:name="com.lody.virtual.client.stub.ShortcutHandleActivity"
             android:exported="true"
             android:process="@string/engine_process_name"
-            android:taskAffinity="virtual.shortcut.task"
+            android:taskAffinity="${applicationId}.virtual.shortcut.task"
             android:theme="@android:style/Theme.Translucent.NoTitleBar">
             <intent-filter>
                 <action android:name="${applicationId}.virtual.action.shortcut" />
@@ -390,7 +390,7 @@
             android:exported="true"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process="@string/engine_process_name"
-            android:taskAffinity="com.lody.virtual.pending" />
+            android:taskAffinity="${applicationId}.com.lody.virtual.pending" />
 
         <!--
             游戏内 Firebase Auth Activity 只存在于虚拟 manifest，系统浏览器无法直接回到容器。
@@ -465,7 +465,7 @@
             android:configChanges="keyboard|keyboardHidden|orientation"
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
-            android:taskAffinity="com.lody.virtual.choose"
+            android:taskAffinity="${applicationId}.com.lody.virtual.choose"
             android:process="@string/engine_process_name"
             android:exported="true">
             <intent-filter>
@@ -483,7 +483,7 @@
             android:finishOnCloseSystemDialogs="true"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process="@string/engine_process_name"
-            android:taskAffinity="com.lody.virtual.choose"
+            android:taskAffinity="${applicationId}.com.lody.virtual.choose"
             android:theme="@style/VAAlertTheme" />
 
         <activity
@@ -494,7 +494,7 @@
             android:finishOnCloseSystemDialogs="true"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process="@string/engine_process_name"
-            android:taskAffinity="com.lody.virtual.choose"
+            android:taskAffinity="${applicationId}.com.lody.virtual.choose"
             android:theme="@style/VAAlertTheme" />
 
         <activity
@@ -505,7 +505,7 @@
             android:finishOnCloseSystemDialogs="true"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process="@string/engine_process_name"
-            android:taskAffinity="com.lody.virtual.choose"
+            android:taskAffinity="${applicationId}.com.lody.virtual.choose"
             android:theme="@style/VAAlertTheme" />
 
         <!--xdja-->
@@ -515,7 +515,7 @@
             android:exported="true"
             android:finishOnCloseSystemDialogs="true"
             android:process="@string/engine_process_name"
-            android:taskAffinity="com.xdja.safety.Installer"
+            android:taskAffinity="${applicationId}.com.xdja.safety.Installer"
             android:theme="@style/InstallerTheme" >
             <intent-filter>
                 <category android:name="android.intent.category.DEFAULT" />
@@ -527,7 +527,7 @@
             android:exported="true"
             android:finishOnCloseSystemDialogs="true"
             android:process="@string/engine_process_name"
-            android:taskAffinity="com.xdja.safety.Installer"
+            android:taskAffinity="${applicationId}.com.xdja.safety.Installer"
             android:theme="@style/InstallerTheme" >
             <intent-filter>
                 <category android:name="android.intent.category.DEFAULT" />
@@ -547,7 +547,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p0"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -555,7 +555,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p1"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -563,7 +563,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p2"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -571,7 +571,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p3"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -579,7 +579,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p4"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -587,7 +587,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p5"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -595,7 +595,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p6"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -603,7 +603,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p7"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -611,7 +611,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p8"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -619,7 +619,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p9"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -627,7 +627,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p10"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -635,7 +635,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p11"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -643,7 +643,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p12"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -651,7 +651,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p13"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -659,7 +659,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p14"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -667,7 +667,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p15"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -675,7 +675,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p16"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -683,7 +683,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p17"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -691,7 +691,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p18"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -699,7 +699,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p19"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -707,7 +707,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p20"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -715,7 +715,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p21"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -723,7 +723,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p22"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -731,7 +731,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p23"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -739,7 +739,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p24"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -747,7 +747,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p25"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -755,7 +755,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p26"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -763,7 +763,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p27"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -771,7 +771,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p28"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -779,7 +779,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p29"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -787,7 +787,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p30"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -795,7 +795,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p31"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -803,7 +803,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p32"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -811,7 +811,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p33"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -819,7 +819,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p34"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -827,7 +827,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p35"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -835,7 +835,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p36"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -843,7 +843,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p37"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -851,7 +851,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p38"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -859,7 +859,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p39"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -867,7 +867,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p40"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -875,7 +875,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p41"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -883,7 +883,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p42"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -891,7 +891,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p43"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -899,7 +899,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p44"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -907,7 +907,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p45"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -915,7 +915,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p46"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -923,7 +923,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p47"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -931,7 +931,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p48"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -939,7 +939,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p49"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -947,7 +947,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p50"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -955,7 +955,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p51"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -963,7 +963,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p52"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -971,7 +971,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p53"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -979,7 +979,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p54"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -987,7 +987,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p55"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -995,7 +995,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p56"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1003,7 +1003,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p57"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1011,7 +1011,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p58"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1019,7 +1019,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p59"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1027,7 +1027,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p60"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1035,7 +1035,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p61"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1043,7 +1043,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p62"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1051,7 +1051,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p63"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1059,7 +1059,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p64"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1067,7 +1067,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p65"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1075,7 +1075,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p66"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1083,7 +1083,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p67"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1091,7 +1091,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p68"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1099,7 +1099,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p69"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1107,7 +1107,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p70"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1115,7 +1115,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p71"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1123,7 +1123,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p72"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1131,7 +1131,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p73"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1139,7 +1139,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p74"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1147,7 +1147,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p75"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1155,7 +1155,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p76"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1163,7 +1163,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p77"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1171,7 +1171,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p78"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1179,7 +1179,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p79"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1187,7 +1187,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p80"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1195,7 +1195,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p81"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1203,7 +1203,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p82"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1211,7 +1211,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p83"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1219,7 +1219,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p84"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1227,7 +1227,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p85"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1235,7 +1235,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p86"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1243,7 +1243,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p87"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1251,7 +1251,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p88"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1259,7 +1259,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p89"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1267,7 +1267,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p90"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1275,7 +1275,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p91"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1283,7 +1283,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p92"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1291,7 +1291,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p93"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1299,7 +1299,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p94"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1307,7 +1307,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p95"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1315,7 +1315,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p96"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1323,7 +1323,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p97"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1331,7 +1331,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p98"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1339,7 +1339,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p99"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@style/VATheme" />
 
         <activity
@@ -1347,7 +1347,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p0"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1355,7 +1355,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p1"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1363,7 +1363,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p2"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1371,7 +1371,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p3"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1379,7 +1379,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p4"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1387,7 +1387,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p5"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1395,7 +1395,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p6"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1403,7 +1403,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p7"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1411,7 +1411,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p8"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1419,7 +1419,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p9"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1427,7 +1427,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p10"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1435,7 +1435,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p11"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1443,7 +1443,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p12"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1451,7 +1451,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p13"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1459,7 +1459,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p14"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1467,7 +1467,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p15"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1475,7 +1475,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p16"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1483,7 +1483,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p17"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1491,7 +1491,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p18"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1499,7 +1499,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p19"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1507,7 +1507,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p20"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1515,7 +1515,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p21"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1523,7 +1523,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p22"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1531,7 +1531,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p23"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1539,7 +1539,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p24"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1547,7 +1547,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p25"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1555,7 +1555,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p26"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1563,7 +1563,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p27"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1571,7 +1571,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p28"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1579,7 +1579,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p29"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1587,7 +1587,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p30"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1595,7 +1595,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p31"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1603,7 +1603,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p32"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1611,7 +1611,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p33"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1619,7 +1619,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p34"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1627,7 +1627,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p35"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1635,7 +1635,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p36"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1643,7 +1643,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p37"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1651,7 +1651,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p38"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1659,7 +1659,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p39"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1667,7 +1667,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p40"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1675,7 +1675,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p41"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1683,7 +1683,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p42"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1691,7 +1691,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p43"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1699,7 +1699,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p44"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1707,7 +1707,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p45"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1715,7 +1715,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p46"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1723,7 +1723,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p47"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1731,7 +1731,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p48"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1739,7 +1739,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p49"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1747,7 +1747,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p50"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1755,7 +1755,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p51"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1763,7 +1763,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p52"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1771,7 +1771,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p53"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1779,7 +1779,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p54"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1787,7 +1787,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p55"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1795,7 +1795,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p56"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1803,7 +1803,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p57"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1811,7 +1811,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p58"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1819,7 +1819,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p59"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1827,7 +1827,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p60"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1835,7 +1835,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p61"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1843,7 +1843,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p62"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1851,7 +1851,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p63"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1859,7 +1859,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p64"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1867,7 +1867,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p65"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1875,7 +1875,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p66"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1883,7 +1883,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p67"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1891,7 +1891,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p68"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1899,7 +1899,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p69"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1907,7 +1907,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p70"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1915,7 +1915,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p71"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1923,7 +1923,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p72"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1931,7 +1931,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p73"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1939,7 +1939,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p74"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1947,7 +1947,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p75"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1955,7 +1955,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p76"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1963,7 +1963,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p77"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1971,7 +1971,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p78"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1979,7 +1979,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p79"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1987,7 +1987,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p80"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -1995,7 +1995,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p81"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -2003,7 +2003,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p82"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -2011,7 +2011,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p83"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -2019,7 +2019,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p84"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -2027,7 +2027,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p85"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -2035,7 +2035,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p86"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -2043,7 +2043,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p87"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -2051,7 +2051,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p88"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -2059,7 +2059,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p89"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -2067,7 +2067,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p90"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -2075,7 +2075,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p91"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -2083,7 +2083,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p92"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -2091,7 +2091,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p93"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -2099,7 +2099,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p94"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -2107,7 +2107,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p95"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -2115,7 +2115,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p96"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -2123,7 +2123,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p97"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -2131,7 +2131,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p98"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <activity
@@ -2139,7 +2139,7 @@
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|fontScale"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process=":p99"
-            android:taskAffinity="com.lody.virtual.virtual_task"
+            android:taskAffinity="${applicationId}.com.lody.virtual.virtual_task"
             android:theme="@android:style/Theme.Dialog" />
 
         <service
@@ -3461,7 +3461,7 @@
             android:excludeFromRecents="true"
             android:launchMode="singleTop"
             android:process=":x"
-            android:taskAffinity="com.lody.virtual.window_preview"
+            android:taskAffinity="${applicationId}.com.lody.virtual.window_preview"
             android:theme="@style/WindowBackgroundTheme" />
 
         <activity
@@ -3469,7 +3469,7 @@
             android:excludeFromRecents="true"
             android:exported="true"
             android:launchMode="singleInstance"
-            android:taskAffinity="com.lody.virtual.request_permission"
+            android:taskAffinity="${applicationId}.com.lody.virtual.request_permission"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <service
@@ -3606,7 +3606,7 @@
             android:configChanges="locale|keyboardHidden|orientation|screenSize|fontScale"
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
-            android:taskAffinity="com.lody.virtual.choose"
+            android:taskAffinity="${applicationId}.com.lody.virtual.choose"
             android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
@@ -3629,7 +3629,7 @@
             android:finishOnCloseSystemDialogs="true"
             android:permission="${PERMISSION_PREFIX}.permission.SAFE_ACCESS"
             android:process="@string/engine_process_name"
-            android:taskAffinity="com.lody.virtual.choose"
+            android:taskAffinity="${applicationId}.com.lody.virtual.choose"
             android:theme="@style/VAAlertTheme" />
 
         <meta-data android:name="android.vivo_nightmode_support" android:value="false"/>

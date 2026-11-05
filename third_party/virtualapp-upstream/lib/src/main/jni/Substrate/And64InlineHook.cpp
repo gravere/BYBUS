@@ -28,21 +28,40 @@
  */
 #define  __STDC_FORMAT_MACROS
 
-#if defined(__aarch64__)
+#if defined(__aarch64__) || defined(A64_RELOCATOR_TEST)
 
 #include <cassert>
 #include <string.h>
 #include <stdlib.h>
+#if !defined(A64_RELOCATOR_TEST)
 #include <sys/mman.h>
 #include <pthread.h>
 #include <errno.h>
-#include "And64InlineHook.hpp"
 #include "../Foundation/RuntimePage.h"
+#endif
+#include "And64InlineHook.hpp"
 #define   A64_MAX_INSTRUCTIONS 5
 #define   A64_MAX_REFERENCES   (A64_MAX_INSTRUCTIONS * 2)
 #define   A64_NOP              0xd503201fu
 #define   A64_JNIEXPORT        __attribute__((visibility("default")))
+#if defined(A64_RELOCATOR_TEST)
+#define __flush_cache(c, n) ((void) 0)
+#else
 #define __flush_cache(c, n)        __builtin___clear_cache(reinterpret_cast<char *>(c), reinterpret_cast<char *>(c) + n)
+#endif
+
+// Adapted from limbusZhCN PR #17. Decode signed ISA immediates before arithmetic.
+static inline int64_t __signed_immediate(uint32_t value, unsigned bits) {
+    const int64_t sign = int64_t(1) << (bits - 1u);
+    return (static_cast<int64_t>(value) ^ sign) - sign;
+}
+static inline int64_t __address_immediate(uint32_t instruction) {
+    return __signed_immediate(((instruction >> 5u) & 0x7ffffu) << 2u
+                                      | ((instruction >> 29u) & 3u), 21u);
+}
+static inline size_t __trampoline_capacity_bytes(size_t count) {
+    return (count * 10u + 6u) * sizeof(uint32_t);
+}
 
 
 typedef uint32_t *__restrict *__restrict instruction;
@@ -198,7 +217,9 @@ static bool __fix_cond_comp_test_branch(instruction inpp, instruction outpp, con
     } //if
 
     intptr_t current_idx  = ctxp->get_and_set_current_index(*inpp, *outpp);
-    int64_t absolute_addr = reinterpret_cast<int64_t>(*inpp) + ((ins & ~lmask) >> (lsb - 2u));
+    unsigned immediate_bits = lmask == lmask2 ? 14u : 19u;
+    int64_t absolute_addr = reinterpret_cast<int64_t>(*inpp)
+            + __signed_immediate((ins & ~lmask) >> lsb, immediate_bits) * 4;
     int64_t new_pc_offset = static_cast<int64_t>(absolute_addr - reinterpret_cast<int64_t>(*outpp)) >> 2; // shifted
     bool special_fix_type = ctxp->is_in_fixing_range(absolute_addr);
     if (!special_fix_type && llabs(new_pc_offset) >= (~lmask >> (lsb + 1))) {
@@ -223,7 +244,7 @@ static bool __fix_cond_comp_test_branch(instruction inpp, instruction outpp, con
             } //if
         } //if
 
-        (*outpp)[0] = (static_cast<uint32_t>(new_pc_offset << lsb) & ~lmask) | (ins & lmask);
+        (*outpp)[0] = ((static_cast<uint32_t>(new_pc_offset) << lsb) & ~lmask) | (ins & lmask);
         ++(*outpp);
     } //if
 
@@ -245,7 +266,6 @@ static bool __fix_loadlit(instruction inpp, instruction outpp, context *ctxp)
         return true;
     } //if
 
-    static constexpr uint32_t msb        = 8u;
     static constexpr uint32_t lsb        = 5u;
     static constexpr uint32_t mask_30    = 0x40000000u; // 0b01000000000000000000000000000000
     static constexpr uint32_t mask_31    = 0x80000000u; // 0b10000000000000000000000000000000
@@ -277,18 +297,17 @@ static bool __fix_loadlit(instruction inpp, instruction outpp, context *ctxp)
     } //if
 
     intptr_t current_idx  = ctxp->get_and_set_current_index(*inpp, *outpp);
-    int64_t absolute_addr = reinterpret_cast<int64_t>(*inpp) + ((static_cast<int32_t>(ins << msb) >> (msb + lsb - 2u)) & ~3u);
+    int64_t absolute_addr = reinterpret_cast<int64_t>(*inpp)
+            + __signed_immediate((ins >> lsb) & 0x7ffffu, 19u) * 4;
     int64_t new_pc_offset = static_cast<int64_t>(absolute_addr - reinterpret_cast<int64_t>(*outpp)) >> 2; // shifted
     bool special_fix_type = ctxp->is_in_fixing_range(absolute_addr);
-    // special_fix_type may encounter issue when there are mixed data and code
-    if (special_fix_type || (llabs(new_pc_offset) + (faligned + 1u - 4u) / 4u) >= (~lmask >> (lsb + 1))) { // inaccurate, but it works
+    // literal 与原前导指令重叠，或超过 imm19 范围时，沿用已有数据快照语义。
+    if (special_fix_type || (llabs(new_pc_offset) + (faligned + 1u - 4u) / 4u) >= (~lmask >> (lsb + 1))) {
         while ((reinterpret_cast<uint64_t>(*outpp + 2) & faligned) != 0u) {
             *(*outpp)++ = A64_NOP;
         }
         ctxp->reset_current_ins(current_idx, *outpp);
 
-        // Note that if memory at absolute_addr is writeable (non-const), we will fail to fetch it.
-        // And what's worse, we may unexpectedly overwrite something if special_fix_type is true...
         uint32_t ns = static_cast<uint32_t>((faligned + 1) / sizeof(uint32_t));
         (*outpp)[0] = (((8u >> 2u) << lsb) & ~mask) | (ins & lmask); // LDR #0x8
         (*outpp)[1] = 0x14000001u + ns; // B #0xc
@@ -302,7 +321,7 @@ static bool __fix_loadlit(instruction inpp, instruction outpp, context *ctxp)
         }
         ctxp->reset_current_ins(current_idx, *outpp);
 
-        (*outpp)[0] = (static_cast<uint32_t>(new_pc_offset << lsb) & ~mask) | (ins & lmask);
+        (*outpp)[0] = ((static_cast<uint32_t>(new_pc_offset) << lsb) & ~mask) | (ins & lmask);
         ++(*outpp);
     } //if
 
@@ -316,7 +335,6 @@ static bool __fix_pcreladdr(instruction inpp, instruction outpp, context *ctxp)
 {
     // Load a PC-relative address into a register
     // http://infocenter.arm.com/help/topic/com.arm.doc.100069_0608_00_en/pge1427897645644.html
-    static constexpr uint32_t msb     = 8u;
     static constexpr uint32_t lsb     = 5u;
     static constexpr uint32_t mask    = 0x9f000000u; // 0b10011111000000000000000000000000
     static constexpr uint32_t rmask   = 0x0000001fu; // 0b00000000000000000000000000011111
@@ -332,8 +350,7 @@ static bool __fix_pcreladdr(instruction inpp, instruction outpp, context *ctxp)
         case op_adr:
         {
             current_idx           = ctxp->get_and_set_current_index(*inpp, *outpp);
-            int64_t lsb_bytes     = static_cast<uint32_t>(ins << 1u) >> 30u;
-            int64_t absolute_addr = reinterpret_cast<int64_t>(*inpp) + (((static_cast<int32_t>(ins << msb) >> (msb + lsb - 2u)) & ~3u) | lsb_bytes);
+            int64_t absolute_addr = reinterpret_cast<int64_t>(*inpp) + __address_immediate(ins);
             int64_t new_pc_offset = static_cast<int64_t>(absolute_addr - reinterpret_cast<int64_t>(*outpp));
             bool special_fix_type = ctxp->is_in_fixing_range(absolute_addr);
             if (!special_fix_type && llabs(new_pc_offset) >= (max_val >> 1)) {
@@ -358,7 +375,7 @@ static bool __fix_pcreladdr(instruction inpp, instruction outpp, context *ctxp)
                 } //if
 
                 // the lsb_bytes will never be changed, so we can use lmask to keep it
-                (*outpp)[0] = (static_cast<uint32_t>(new_pc_offset << (lsb - 2u)) & fmask) | (ins & lmask);
+                (*outpp)[0] = ((static_cast<uint32_t>(new_pc_offset) << (lsb - 2u)) & fmask) | (ins & lmask);
                 ++(*outpp);
             } //if
         }
@@ -366,28 +383,17 @@ static bool __fix_pcreladdr(instruction inpp, instruction outpp, context *ctxp)
         case op_adrp:
         {
             current_idx           = ctxp->get_and_set_current_index(*inpp, *outpp);
-            int32_t lsb_bytes     = static_cast<uint32_t>(ins << 1u) >> 30u;
-            int64_t absolute_addr = (reinterpret_cast<int64_t>(*inpp) & ~0xfffll) + ((((static_cast<int32_t>(ins << msb) >> (msb + lsb - 2u)) & ~3u) | lsb_bytes) << 12);
-            if (ctxp->is_in_fixing_range(absolute_addr)) {
-                intptr_t ref_idx = ctxp->get_ref_ins_index(absolute_addr/* & ~3ull*/);
-                if (ref_idx > current_idx) {
-                    // the bottom 12 bits of absolute_addr are masked out,
-                    // so ref_idx must be less than or equal to current_idx!
-                } //if
-
-                // *absolute_addr may be changed due to relocation fixing
-                *(*outpp)++ = ins; // 0x90000000u;
-            } else {
-                if ((reinterpret_cast<uint64_t>(*outpp + 2) & 7u) != 0u) {
-                    (*outpp)[0] = A64_NOP;
-                    ctxp->reset_current_ins(current_idx, ++(*outpp));
-                } //if
-
-                (*outpp)[0] = 0x58000000u | (((8u >> 2u) << lsb) & ~mask) | (ins & rmask); // LDR #0x8
-                (*outpp)[1] = 0x14000003u; // B #0xc
-                memcpy(*outpp + 2, &absolute_addr, sizeof(absolute_addr)); // potential overflow?
-                *outpp += 4;
-            } //if
+            int64_t absolute_addr = (reinterpret_cast<int64_t>(*inpp) & ~0xfffll)
+                    + __address_immediate(ins) * 4096;
+            // ADRP 的结果是原代码页地址，即使落在被搬运窗口内也不能相对跳板重算。
+            if ((reinterpret_cast<uint64_t>(*outpp + 2) & 7u) != 0u) {
+                (*outpp)[0] = A64_NOP;
+                ctxp->reset_current_ins(current_idx, ++(*outpp));
+            }
+            (*outpp)[0] = 0x58000000u | (((8u >> 2u) << lsb) & ~mask) | (ins & rmask);
+            (*outpp)[1] = 0x14000003u;
+            memcpy(*outpp + 2, &absolute_addr, sizeof(absolute_addr));
+            *outpp += 4;
         }
             break;
         default:
@@ -446,6 +452,7 @@ static void __fix_instructions(uint32_t *__restrict inp, int32_t count, uint32_t
 
 //-------------------------------------------------------------------------
 
+#if !defined(A64_RELOCATOR_TEST)
 extern "C" {
 #define __attribute                __attribute__
 #define aligned(x)                 __aligned__(x)
@@ -469,8 +476,9 @@ static int __make_rwx(void *address, size_t length) {
 
 // Both ends are page-isolated on 4 KB and 16 KB kernels. Padding belongs to
 // the pool, so mprotect never changes unrelated adjacent data permissions.
+static constexpr size_t kTrampolineWords = A64_MAX_INSTRUCTIONS * 10u + 6u;
 struct alignas(runtime_page::kMaxSupported) TrampolinePool {
-    uint32_t instructions[A64_MAX_BACKUPS][A64_MAX_INSTRUCTIONS * 10];
+    uint32_t instructions[A64_MAX_BACKUPS][kTrampolineWords];
 };
 static TrampolinePool __insns_pool;
 static bool __pool_ready = false;
@@ -486,7 +494,7 @@ static void initialize_pool() {
 
 static uint32_t *FastAllocateTrampoline()
 {
-    static_assert((A64_MAX_INSTRUCTIONS * 10 * sizeof(uint32_t)) % 8 == 0, "8-byte align");
+    static_assert((kTrampolineWords * sizeof(uint32_t)) % 8 == 0, "8-byte align");
     static volatile int32_t __index = -1;
 
     if (pthread_once(&__pool_once, initialize_pool) != 0 || !__pool_ready) return NULL;
@@ -514,13 +522,13 @@ A64_JNIEXPORT void *A64HookFunctionV(void *const symbol, void *const replace,
     if (llabs(pc_offset) >= (mask >>1)) {
         int32_t count = (reinterpret_cast<uint64_t>(original + 2) & 7u) != 0u ? 5 : 4;
         if (trampoline) {
-            if (rwx_size < count * 10u * sizeof(uint32_t)) {
+            if (rwx_size < __trampoline_capacity_bytes(count)) {
                 return NULL;
             } //if
-            __fix_instructions(original, count, trampoline);
         } //if
 
         if (__make_rwx(original, count * sizeof(uint32_t)) == 0) {
+            if (trampoline) __fix_instructions(original, count, trampoline);
             if (count == 5) {
                 original[0] = A64_NOP;
                 ++original;
@@ -535,13 +543,13 @@ A64_JNIEXPORT void *A64HookFunctionV(void *const symbol, void *const replace,
         } //if
     } else {
         if (trampoline) {
-            if (rwx_size < 10u * sizeof(uint32_t)) {
+            if (rwx_size < __trampoline_capacity_bytes(1)) {
                 return NULL;
             } //if
-            __fix_instructions(original, 1, trampoline);
         } //if
 
         if (__make_rwx(original, 1 * sizeof(uint32_t)) == 0) {
+            if (trampoline) __fix_instructions(original, 1, trampoline);
             __sync_cmpswap(original, *original, 0x14000000u | (pc_offset & mask)); // "B" ADDR_PCREL26
             __flush_cache(symbol, 1 * sizeof(uint32_t));
 
@@ -564,11 +572,12 @@ A64_JNIEXPORT void A64HookFunction(void *const symbol, void *const replace, void
         if (trampoline == NULL) return;
     } //if
     trampoline = A64HookFunctionV(symbol, replace, trampoline,
-                                 A64_MAX_INSTRUCTIONS * 10u * sizeof(uint32_t));
+                                 sizeof(__insns_pool.instructions[0]));
     if (trampoline == NULL && result != NULL) {
         *result = NULL;
     } //if
 }
 }
 
-#endif // defined(__aarch64__)
+#endif // !defined(A64_RELOCATOR_TEST)
+#endif // defined(__aarch64__) || defined(A64_RELOCATOR_TEST)

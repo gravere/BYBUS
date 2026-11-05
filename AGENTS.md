@@ -12,7 +12,8 @@
 ## 项目边界
 
 - 目标游戏包名: `com.ProjectMoon.LimbusCompany`
-- 汉化器包名: `com.example.limbuszhcn`
+- 汉化器独立包名: `io.github.gravere.bybus`；Java/Kotlin namespace 保留 `com.example.limbuszhcn`。
+- 旧包 `com.example.limbuszhcn` 只用于同签名的数据迁移助手。迁移边界见 `docs/package-migration.md`；不得自动卸载或清空旧应用，不复制容器安装注册表和绝对路径缓存。独立安装、更新清单与旧版升级入口必须一起验证。
 - 主路径: VirtualApp 容器模式。同步系统已安装的官方游戏 APK/splits 到容器（不限安装渠道），配对日文原文与零协译文生成宿主持久索引，从容器内启动游戏并接管显示文本；不覆盖游戏原始 JSON。用户选择保留系统安装包，大资源只在 BYBUS 使用；本轮不切换独立容器模式。多渠道查询、本地包校验安装和快照去重边界见 `docs/multichannel-game-updates.md`。
 - 禁止修改游戏 APK, 禁止 Frida 注入, 禁止 Shizuku 生产路径。
 - App 模块: `:app`; 容器模块: `:virtualapp` -> `third_party/virtualapp-upstream/lib`。
@@ -77,7 +78,8 @@
   不得从当前已修改内存学习可信 CRC，未知保护结构仍拒绝。471 的专属例外不扩展。
 
 - Limbus native 终止路径只做容器进程内轻量拦截; `SIGPWR` / `SIGXCPU` 必须放行。
-- `SIGSEGV` 仅可忽略 `si_code <= 0` 的用户主动投递; 同步内存错误必须交回原 handler。若下游 handler 返回后 PC/SP 均未改变,表示它没有消费当前同步故障,必须恢复默认处理并终止,不得返回原指令形成信号/日志死循环。
+- `SIGSEGV` 仅可忽略 `si_code <= 0` 的用户主动投递; 同步内存错误必须交回原 handler。下游返回后核对 PC/SP/PSTATE 和全部通用寄存器，不能仅凭 PC/SP 不变误杀已修正寄存器的处理结果；完整上下文仍未改变时恢复默认处理并终止，不得返回原指令形成信号/日志死循环。
+- ARM64 libc 同地址符号只安装一次 IO hook；只有确切等价的 ABI 别名可共享原跳板，未知冲突拒绝覆盖。指令搬运须按 ISA 位宽扩展有符号偏移，保留 4/16 KiB 页保护边界和原函数发布顺序。
 - libc hook 必须保持公开 API 返回值语义。例如 `getcwd()` 成功时返回调用方 buffer 指针, 不能暴露 raw syscall 长度。
 - native 路径伪装必须覆盖 `readlinkat` / `syscall(__NR_readlinkat)` 和 `/proc/self/fd` 反向路径。
 - AppSealing 50040 已确认由 `/proc/self/maps` 审计路径触发; `/sys/module`、`/proc/modules` 走 direct syscall, libc 文件 API 伪装不能覆盖。
