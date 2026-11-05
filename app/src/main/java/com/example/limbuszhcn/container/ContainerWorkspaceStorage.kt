@@ -19,8 +19,10 @@ import kotlin.io.path.name
 import kotlin.io.path.outputStream
 
 class ContainerWorkspaceStorage(
-    private val localizeRoot: Path
+    private val localizeRoot: Path,
+    private val migrationRoots: Map<String, Path> = mapOf("assets" to localizeRoot.parent.parent)
 ) : GameStorage {
+    override fun resourceMigrationRoots(): Map<String, Path> = migrationRoots
     override fun probe(): GameStorageProbe {
         val en = localizeRoot.resolve("en")
         if (!Files.isDirectory(en)) {

@@ -42,7 +42,7 @@ BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeL
 ## 功能特点
 
 - **免 Root 使用** — 导入官方游戏，在容器内显示中文，保留原始 APK 与游戏文本文件。
-- **独立安装与迁移** — 可与 limbusZhCN 共存；旧 BYBUS 的游戏资源和配置可通过本机导入，无需重新下载已有资源。
+- **独立安装与迁移** — 可与 limbusZhCN 共存；旧 BYBUS 的资源与配置可本机迁移，也可导入兼容容器导出的资源包，减少重复下载。
 - **汉化持续同步** — 启动前检查零协更新，复用已校验的缓存；汉化索引与配置持久保存，无需每次重新设置。
 - **减少下载负担** — 大型游戏资源可只在 BYBUS 内下载；应用更新自动复用已安装内容，只下载缺少的部分，无需逐个匹配旧版本补丁。
 - **应用更新提醒** — 自动检查 BYBUS 正式发行版，发现新版时在设置与更新入口显示红点，覆盖升级后自动消除。
@@ -70,7 +70,7 @@ BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeL
 | 文件 | 用途 |
 | --- | --- |
 | `BYBUS-<版本>-arm64-v8a.apk` 或 `BYBUS-Android.apk` | 内容相同的独立版完整安装包，首次安装或手动更新任选一个 |
-| `BYBUS.apk` | 旧版迁移助手，仅供旧 BYBUS 迁移；首次安装不要选它 |
+| `BYBUS.apk` | 旧 BYBUS 的一次性迁移衔接更新，覆盖旧版并保留数据；首次安装不要选它 |
 | `bybus-app-update.json`、`bybus-update.json`、`SHA256SUMS.txt` | 更新描述与校验值，无需手动安装 |
 | Source code | 项目源码，不是安装包 |
 
@@ -89,11 +89,22 @@ BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeL
 <details>
 <summary><strong>已有旧版 BYBUS，如何保留数据并迁移？</strong></summary>
 
-1. 在旧版 BYBUS 中检查更新，安装迁移助手；若旧版没有更新入口，可手动安装[迁移助手](https://github.com/gravere/BYBUS/releases/latest/download/BYBUS.apk)。不要提前卸载旧版或清除数据。
-2. 打开助手，下载并安装独立版 BYBUS，在独立版选择「导入旧版数据」。
-3. 导入完成并确认运行正常后，再移除迁移助手。此后可同时安装 limbusZhCN。
+1. **保留旧版，不要卸载或清除数据。** 在旧版中检查更新并完成一次覆盖更新；没有更新入口时，可手动安装[旧版衔接更新](https://github.com/gravere/BYBUS/releases/latest/download/BYBUS.apk)。这会保留数据并开放迁移接口，旧版不再用于启动游戏。
+2. 从[最新发行页](https://github.com/gravere/BYBUS/releases/latest)下载 `BYBUS-Android.apk`，安装新版 BYBUS。
+3. 在新版「设置与工具 → 数据迁移」中选择「一键迁移旧 BYBUS」。确认新版正常后，再卸载旧版。
 
-数据只在本机复制和校验，迁移需要额外存储空间；中断后可重新导入，旧数据始终保留到你自行移除助手。Google 账号凭据可能需要重新授权。迁移只需一次，后续直接在独立版内更新。
+迁移会替换新版容器内的同名数据，需要额外存储空间；中断可重新导入，旧数据不会自动删除。Google 凭据可能需要重新授权。资源无需与当前游戏版本一致，游戏会自行校验并补齐差异。
+
+最新发行始终保留旧版衔接入口，较早版本无需逐版更新，不会因历史 Release 清理而错过迁移。迁移后直接在新版内更新即可。
+
+</details>
+
+<details>
+<summary><strong>其他容器的资源也能导入吗？</strong></summary>
+
+支持 [limbusZhCN](https://github.com/BBBEANNN/limbusZhCN) 及使用相同 `limbus-resources-v1` 格式的容器导出的资源 ZIP。先在来源应用中「迁出资源」，再到 BYBUS「设置与工具 → 数据迁移 → 导入资源包」选择文件。
+
+资源包只补充缺少的资源，保留 BYBUS 中已有文件，不包含账号，导入后需自行登录。不同版本的资源也可导入，由游戏补齐更新。没有迁移接口或兼容导出功能的容器，暂不支持直接读取其私有数据。
 
 </details>
 

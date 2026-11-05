@@ -29,21 +29,20 @@ public final class LegacyMigrationActivity extends Activity {
         page.addView(icon,new LinearLayout.LayoutParams(dp(72),dp(72)));
         text(page,"BYBUS",32,true);
         boolean complete=getSharedPreferences("bybus-migration",MODE_PRIVATE).getBoolean("complete",false);
-        text(page,complete?"数据已导入独立版":"将数据带到独立版",23,true);
-        text(page,complete?"确认独立版运行正常后，可以移除这个迁移助手，再安装 limbusZhCN。"
-                :"安装独立版后，选择导入旧版数据。游戏资源通过本机传输，旧数据会一直保留到你自行移除这个助手。",16,false);
+        text(page,complete?"数据已迁入新版":"旧数据已保留",23,true);
+        text(page,complete?"请先确认新版 BYBUS 运行正常，再卸载这个旧版。之后可同时使用 limbusZhCN。"
+                :"请保留这个旧版，从 GitHub 下载新版 BYBUS。在新版的“设置与工具 → 数据迁移”中，一键导入已有数据。资源无需更新到最新，旧数据不会自动删除。",16,false);
         boolean installed=false;
         try { installed=getPackageManager().checkSignatures(getPackageName(),MigrationArchive.TARGET)==PackageManager.SIGNATURE_MATCH; }
         catch (RuntimeException ignored) { }
         final boolean targetReady=installed;
-        button(page,installed?"打开独立版并迁移":"下载独立版",() -> {
+        button(page,installed?"打开新版 BYBUS":"前往 GitHub 下载新版",() -> {
             Intent launch=targetReady?getPackageManager().getLaunchIntentForPackage(MigrationArchive.TARGET):null;
-            if (launch!=null) launch.setAction(MigrationArchive.IMPORT_ACTION)
-                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            if (launch==null) launch=new Intent(Intent.ACTION_VIEW,Uri.parse("https://github.com/gravere/BYBUS/releases/latest/download/BYBUS-Android.apk"));
-            try { startActivity(launch); } catch (RuntimeException error) { Toast.makeText(this,"暂时无法打开，请从 GitHub 下载独立版",Toast.LENGTH_LONG).show(); }
+            if (launch!=null) launch.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            if (launch==null) launch=new Intent(Intent.ACTION_VIEW,Uri.parse("https://github.com/gravere/BYBUS/releases/latest"));
+            try { startActivity(launch); } catch (RuntimeException error) { Toast.makeText(this,"暂时无法打开，请从 GitHub 下载新版 BYBUS",Toast.LENGTH_LONG).show(); }
         });
-        if (complete) button(page,"移除迁移助手",() -> startActivity(new Intent(Intent.ACTION_DELETE,Uri.parse("package:"+getPackageName()))));
+        if (complete) button(page,"卸载旧版 BYBUS",() -> startActivity(new Intent(Intent.ACTION_DELETE,Uri.parse("package:"+getPackageName()))));
         ScrollView scroll=new ScrollView(this); scroll.setFillViewport(true); scroll.addView(page);
         setContentView(scroll);
     }

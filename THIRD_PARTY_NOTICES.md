@@ -5,6 +5,16 @@ binary components, fonts, and artwork. The root `GPL-3.0` license applies only
 to material for which the project authors have the right to grant that license.
 Third-party material remains under its own license or copyright terms.
 
+## Limbus resource archive interoperability
+
+- Source: [BBBEANNN/limbusZhCN](https://github.com/BBBEANNN/limbusZhCN)
+- Revision: `7c3cdb14fe439a706122eb657645b47499265ef1`
+- Adapted files: `GameResourceTransfer.kt`, `GameResourceTransferTest.kt`
+- License: GPL-3.0; see the repository's `LICENSE`.
+
+The resource-only `limbus-resources-v1` format is retained for importing exported
+game assets across compatible containers. It does not contain account data.
+
 ## VirtualApp
 
 - Location: `third_party/virtualapp-upstream/`

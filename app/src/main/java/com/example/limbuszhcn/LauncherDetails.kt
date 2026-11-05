@@ -23,6 +23,7 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
     onGameStore: () -> Unit,
     onAppUpdate: () -> Unit,
     onSync: () -> Unit, onRestore: () -> Unit, onExport: () -> Unit, onSettings: () -> Unit,
+    onMigration: () -> Unit,
     onGoogleSettings: () -> Unit,
     onRefresh: () -> Unit, onAbout: () -> Unit) {
     val enabled = !state.busy
@@ -37,6 +38,8 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
                 DetailSection("管理") {
                     SheetAction(Glyph.Sync, "同步游戏", enabled && state.installedVersion != null,
                         onClick = onSync)
+                    HorizontalDivider(color = C.Line)
+                    SheetAction(Glyph.Import, "数据迁移", enabled, navigation = true, onClick = onMigration)
                     HorizontalDivider(color = C.Line)
                     SheetAction(Glyph.Battery, "后台运行", enabled, navigation = true, onClick = onSettings)
                     HorizontalDivider(color = C.Line)

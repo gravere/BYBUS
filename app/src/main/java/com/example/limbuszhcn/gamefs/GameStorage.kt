@@ -13,6 +13,7 @@ interface GameStorage {
     fun resolvePatchTarget(targetPath: String): String
     fun rootPath(): String
     fun deleteResource(relativePath: String): Boolean = false
+    fun resourceMigrationRoots(): Map<String, Path> = emptyMap()
 }
 
 data class GameStorageProbe(
