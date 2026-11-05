@@ -32,11 +32,13 @@ BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeL
 ## 界面预览
 
 <p align="center">
-  <img src="docs/assets/screenshots/home.png" width="30%" alt="BYBUS 首页">
+  <img src="docs/assets/screenshots/home.png" width="22%" alt="BYBUS 首页">
   &nbsp;
-  <img src="docs/assets/screenshots/project.png" width="30%" alt="都市零协会项目动态">
+  <img src="docs/assets/screenshots/project.png" width="22%" alt="都市零协会项目动态">
   &nbsp;
-  <img src="docs/assets/screenshots/settings.png" width="30%" alt="设置与工具">
+  <img src="docs/assets/screenshots/settings.png" width="22%" alt="设置与工具">
+  &nbsp;
+  <img src="docs/assets/screenshots/migration.png" width="22%" alt="数据迁移">
 </p>
 
 ## 功能特点
