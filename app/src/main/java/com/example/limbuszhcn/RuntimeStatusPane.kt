@@ -1,11 +1,5 @@
 package com.example.limbuszhcn
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -76,8 +70,7 @@ internal fun RuntimeStatusPane(state: LauncherUiState, onGameUpdates: () -> Unit
                     TextButton(onClick = { showDetails = !showDetails }, contentPadding = PaddingValues(horizontal = 0.dp)) {
                         Text(if (showDetails) "收起详细记录" else "展开详细记录", style = MaterialTheme.typography.labelMedium)
                     }
-                    AnimatedVisibility(showDetails, enter = expandVertically(tween(180)) + fadeIn(tween(180)),
-                        exit = shrinkVertically(tween(180)) + fadeOut(tween(120))) {
+                    ExpandableDetails(showDetails) {
                         Text(state.message, color = C.Muted, style = MaterialTheme.typography.bodySmall)
                     }
                 }

@@ -32,29 +32,24 @@ BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeL
 ## 界面预览
 
 <p align="center">
-  <img src="docs/assets/screenshots/home.png" width="22%" alt="BYBUS 首页">
+  <img src="docs/assets/screenshots/home.png" width="30%" alt="BYBUS 首页">
   &nbsp;
-  <img src="docs/assets/screenshots/project.png" width="22%" alt="都市零协会项目动态">
+  <img src="docs/assets/screenshots/project.png" width="30%" alt="都市零协会项目动态">
   &nbsp;
-  <img src="docs/assets/screenshots/settings.png" width="22%" alt="设置与工具">
-  &nbsp;
-  <img src="docs/assets/screenshots/migration.png" width="22%" alt="数据迁移">
+  <img src="docs/assets/screenshots/settings.png" width="30%" alt="设置与工具">
 </p>
 
 ## 功能特点
 
 - **免 Root 使用** — 导入官方游戏，在容器内显示中文，保留原始 APK 与游戏文本文件。
-- **独立安装与迁移** — 使用独立包名；自动识别旧 BYBUS，本机迁移资源与配置，也可导入兼容的资源文件，减少重复下载。
 - **汉化持续同步** — 启动前检查零协更新，复用已校验的缓存；汉化索引与配置持久保存，无需每次重新设置。
-- **减少下载负担** — 大型游戏资源可只在 BYBUS 内下载；应用更新自动复用已安装内容，只下载缺少的部分，无需逐个匹配旧版本补丁。
-- **应用更新提醒** — 自动检查 BYBUS 正式发行版，发现新版时在设置与更新入口显示红点，覆盖升级后自动消除。
-- **多渠道游戏更新** — 支持 Google Play、Uptodown 等更新入口与本地安装包，更新安装文件时保留容器资源和账号数据。
-- **零协项目动态** — 默认展示 GitHub 更新状态，可切换 ParaTranz 查看可用统计或前往项目页面。
-- **适应不同屏幕** — 竖屏纵向排列，宽屏将信息卡片与启动按钮并排展示，随分屏窗口和系统字体大小调整布局。
+- **节省下载流量** — 应用更新复用已安装内容，只下载缺少的部分；支持旧版数据迁移和兼容资源 ZIP 导入。
+- **更新集中管理** — BYBUS 新版本自动红点提醒，游戏支持多渠道更新入口与本地安装包，零协项目动态随时可查。
+- **手机与平板自适应** — 竖屏单列、宽屏并排，适应分屏和大字号；启动过程通过图标与环绕进度呈现。
 
 ## 开始使用
 
-需要 **Android 8.0 及以上、64 位 ARM（arm64-v8a）的手机或平板**，并先安装官方《边狱巴士》。设备与 Google 组件的具体条件见 [Android 适配说明](docs/android-runtime-portability.md)。
+需要 **Android 8.0 及以上、64 位 ARM（arm64-v8a）的手机或平板**，并先安装官方《边狱巴士》。
 
 1. **安装 BYBUS** — [下载完整 APK](https://github.com/gravere/BYBUS/releases/latest/download/BYBUS-Android.apk) 并安装。
 2. **导入游戏** — 打开 BYBUS，点击「启动游戏」，按提示导入已安装的官方游戏。
@@ -64,7 +59,7 @@ BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeL
 > [!NOTE]
 > BYBUS 与系统原版的数据独立，首次使用需要重新登录和下载资源。日常保留系统里的官方游戏安装包，大型资源可只在 BYBUS 中下载和使用。游戏更新新增的资源仍需正常下载。
 
-首次下载资源前，可先准备启动、登录和提示文本的汉化；完整汉化需要游戏资源下载完成。Google 登录使用容器内的独立账号环境，新设备需添加账号，不能直接沿用系统 Play 商店的登录状态。
+Google 登录使用容器内的独立账号环境，首次使用需在 BYBUS 中添加账号。
 
 <details>
 <summary><strong>发行文件怎么选？首次安装请选择完整 APK</strong></summary>
@@ -91,33 +86,27 @@ BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeL
 <details>
 <summary><strong>已有旧版 BYBUS，如何保留数据并迁移？</strong></summary>
 
-1. **保留旧版，不要卸载或清除数据。** 在旧版中检查更新并完成一次覆盖更新；没有更新入口时，可手动安装[旧版衔接更新](https://github.com/gravere/BYBUS/releases/latest/download/BYBUS.apk)。这会保留数据并开放迁移接口，旧版不再用于启动游戏。
+1. **保留旧版，不要卸载或清除数据。** 在旧版中检查更新并完成一次覆盖更新；没有更新入口时，可安装[旧版衔接更新](https://github.com/gravere/BYBUS/releases/latest/download/BYBUS.apk)，保留数据并开放迁移入口。
 2. 从[最新发行页](https://github.com/gravere/BYBUS/releases/latest)下载 `BYBUS-Android.apk`，安装新版 BYBUS。
 3. 在新版「设置与工具 → 数据迁移」中，确认识别到旧版后点击「开始迁移」，无需手动导出文件。确认新版正常后，再卸载旧版。
 
-迁移会替换新版容器内的同名数据，需要额外存储空间；中断可重新导入，旧数据不会自动删除。Google 凭据可能需要重新授权。资源无需与当前游戏版本一致，游戏会自行校验并补齐差异。
-
-最新发行始终保留旧版衔接入口，较早版本无需逐版更新，不会因历史 Release 清理而错过迁移。迁移后直接在新版内更新即可。
+迁移需要额外空间，会替换新版的同名数据；旧数据保留，账号可能需要重新授权。最新发行始终提供衔接入口，无需逐版升级。
 
 </details>
 
 <details>
-<summary><strong>其他容器的资源也能导入吗？</strong></summary>
+<summary><strong>如何导入已有资源？</strong></summary>
 
-支持兼容导出格式的资源 ZIP。先在来源应用中导出资源，再到 BYBUS「设置与工具 → 数据迁移 → 选择资源文件」导入。
-
-资源包只补充缺少的资源，保留 BYBUS 中已有文件，不包含账号，导入后需自行登录。不同版本的资源也可导入，由游戏补齐更新。没有迁移接口或兼容导出功能的容器，暂不支持直接读取其私有数据。
+在「设置与工具 → 数据迁移 → 选择资源文件」中选择兼容格式的资源 ZIP。只补充缺少的资源，保留已有文件，不迁入账号；资源版本可以不同，由游戏补齐更新。来源应用需提供兼容导出功能，不能直接读取任意应用的私有数据。
 
 </details>
 
 <details>
 <summary><strong>增量更新如何工作？</strong></summary>
 
-支持通用增量的更新器会检查已安装 APK，复用其中与最新版相同的内容，只下载缺少的部分，再合成并校验完整 APK，交给系统覆盖安装。同一份更新描述可用于不同旧版本，无需逐个发布补丁，也不受 Releases 只保留三个版本的限制。
+应用内更新复用当前 APK 中未变化的内容，下载差异后合成并校验完整 APK，再交给系统安装。支持通用增量的旧版本可直接更新，无需逐版下载，也不依赖历史发行文件。
 
-下载量取决于旧版还能复用多少内容；资源变化较多、网络不支持分段下载或校验失败时，会使用完整包。增量减少下载流量，合成与安装仍需完整 APK 的临时空间。
-
-旧更新器需要先完整升级一次，之后即可使用通用增量。首次安装和手动升级始终选择完整 APK；历史发行页的 `.delta` 不能独立安装，无需手动下载。
+不能复用或分段下载失败时会使用完整包；安装仍需完整 APK 的临时空间。较早的更新器需先完整升级一次。**首次安装和手动更新始终下载完整 APK，无需寻找增量附件。**
 
 </details>
 
@@ -130,7 +119,6 @@ BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeL
 | [构建指南](docs/building.md) | 本地环境、编译与打包 |
 | [架构说明](docs/project-architecture.md) | 模块职责与运行流程 |
 | [Android 适配说明](docs/android-runtime-portability.md) | 设备条件与已知限制 |
-| [云端运行检查](docs/cloud-runtime.md) | 正式安装包、页面和容器入口验证 |
 | [第三方声明](THIRD_PARTY_NOTICES.md) | 组件来源、版权与许可 |
 
 欢迎提交建议、问题反馈和 Pull Request。遇到闪退、漏译或显示问题，请在 [Issues](https://github.com/gravere/BYBUS/issues/new/choose) 选择对应模板，提供设备型号、Android 版本、BYBUS 与游戏版本，以及复现步骤。运行问题可附上「设置与工具 → 导出诊断」生成的诊断包。

@@ -284,7 +284,7 @@ def inspect_google(parent):
     print("::warning::Container Google settings did not open; payment runtime remains unverified")
 
 
-def inspect_tablet():
+def inspect_tablet(focused=False):
     adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=30)
     tree = hierarchy("before-tablet")
     try:
@@ -316,6 +316,8 @@ def inspect_tablet():
         REPORT["checks"].append(f"{name} layout at {size}, 160 dpi, font scale {font_scale}")
     adb("shell", "settings", "put", "system", "font_scale", "1.0")
     time.sleep(2)
+    if focused:
+        return
     home = hierarchy("tablet-before-details")
     header_position = None
     for label, name in [("运行状态", "tablet-status"), ("都市零协会", "tablet-project"),
@@ -481,9 +483,25 @@ def inspect_migration(release, verifier):
     REPORT["checks"].append("signed helper update retains synthetic files; private import hashes match; actual upstream APK coexists")
 
 
-def inspect_migration_screen(release, verifier):
+def scroll_to_control(tree, label, down=True):
+    for _ in range(6):
+        try:
+            bounds = clickable_bounds(tree, label)
+            if bounds[3] - bounds[1] >= 96:
+                return tree
+        except (RuntimeError, StopIteration):
+            pass
+        scroll = next(n for n in tree.iter("node") if n.get("scrollable") == "true")
+        x1, y1, x2, y2 = map(int, re.findall(r"\d+", scroll.get("bounds", "")))
+        start, end = (y2 - 24, y1 + 24) if down else (y1 + 24, y2 - 24)
+        adb("shell", "input", "swipe", str((x1+x2)//2), str(start), str((x1+x2)//2), str(end), "350")
+        tree = hierarchy("disclosure-scroll")
+    raise RuntimeError("Cannot reach control: " + label)
+
+
+def inspect_migration_screen(release, verifier, focused=False, probe_digest=None):
     """Presentation fixtures only; real release navigation was checked before installing them."""
-    digest = install_component_probe(release, verifier)
+    digest = probe_digest or install_component_probe(release, verifier)
     cases = [("migration-ready", "ready", "720x1560", "1.0", "no"),
              ("migration-update", "update", "720x1560", "1.0", "no"),
              ("migration-copy", "copy", "720x1560", "1.0", "no"),
@@ -494,7 +512,13 @@ def inspect_migration_screen(release, verifier):
              ("migration-large-text", "ready", "640x1136", "1.6", "no"),
              ("migration-landscape", "ready", "1920x1200", "1.0", "no"),
              ("migration-portrait", "ready", "1200x1920", "1.0", "no")]
+    if focused:
+        cases = [case for case in cases if case[0] in (
+            "migration-ready", "migration-large-text", "migration-landscape", "migration-portrait")]
     rendered = []
+    disclosures = []
+    overlays = adb("shell", "cmd", "overlay", "list")
+    original_nav = re.search(r"\[x\]\s+(com\.android\.internal\.systemui\.navbar\.\S+)", overlays)
     try:
         for name, fixture, size, font, night in cases:
             adb("shell", "am", "force-stop", PACKAGE)
@@ -502,6 +526,9 @@ def inspect_migration_screen(release, verifier):
             adb("shell", "wm", "density", "320")
             adb("shell", "settings", "put", "system", "font_scale", font)
             adb("shell", "cmd", "uimode", "night", night)
+            if focused:
+                adb("shell", "cmd", "overlay", "enable-exclusive", "--category",
+                    "com.android.internal.systemui.navbar." + ("threebutton" if font != "1.0" else "gestural"))
             adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MigrationScreenProbeActivity",
                 "--es", "state", fixture, timeout=40)
             time.sleep(1)
@@ -544,48 +571,87 @@ def inspect_migration_screen(release, verifier):
                     raise RuntimeError("Landscape source cards do not align")
                 if name.endswith("portrait") and right[1] <= left[3]:
                     raise RuntimeError("Portrait migration should use one column")
+                if name.endswith("landscape"):
+                    primary = clickable_bounds(tree, "开始迁移")
+                    secondary = clickable_bounds(tree, "选择资源文件")
+                    if abs(primary[3] - secondary[3]) > 4:
+                        raise RuntimeError("Landscape actions do not align at the bottom")
+            if focused:
+                tree = scroll_to_control(tree, "迁移须知")
+                tap("迁移须知", tree)
+                expanded = capture(name + "-expanded")
+                first = element_bounds(expanded, "旧版迁移包含资源与账号配置；文件导入只补充缺少的资源。")
+                last = element_bounds(expanded, "资源版本无需相同，进入游戏后会校验更新。")
+                header = clickable_bounds(expanded, "返回上一页")
+                height = int(size.split("x")[1])
+                if not (first[1] >= header[3] and last[1] >= first[3] and last[3] <= height-96 and
+                        last[3]-last[1] >= 32*float(font)):
+                    raise RuntimeError("Expanded notes are obscured or overlap navigation: " + name)
+                collapse = scroll_to_control(expanded, "收起说明", down=False)
+                tap("收起说明", collapse)
+                tree = hierarchy(name + "-collapsed")
+                if any(n.get("text") == "资源版本无需相同，进入游戏后会校验更新。" for n in tree.iter("node")):
+                    raise RuntimeError("Collapsed notes remain in the accessibility tree")
+                disclosures.append(name + "-expanded")
             rendered.append(dict(name=name, state=fixture, size=size, font_scale=font, night=night))
         # A single callback check uses the production button with a synthetic model.
+        tree = scroll_to_control(tree, "开始迁移", down=False)
         tap("开始迁移", tree)
         started = hierarchy("migration-action")
         locate(started, "正在迁移数据")
         locate(started, "正在准备游戏…")
+        if element_bounds(started, "正在迁移数据")[1] > clickable_bounds(started, "返回上一页", allow_disabled=True)[3] + 300:
+            raise RuntimeError("Migration progress inherited the old source-page scroll")
     finally:
         adb("shell", "wm", "size", "720x1560", check=False)
         adb("shell", "settings", "put", "system", "font_scale", "1.0", check=False)
         adb("shell", "cmd", "uimode", "night", "no", check=False)
+        if original_nav:
+            adb("shell", "cmd", "overlay", "enable-exclusive", "--category", original_nav[1], check=False)
     REPORT["migration_screen"] = dict(apk_sha256=digest, fixtures=rendered, start_callback=True,
-        progress_units=True, pending_guard=True, portrait_single_column=True,
-        landscape_aligned=True, large_text_scroll=True, real_data_transfer=False)
+        progress_units=None if focused else True, pending_guard=None if focused else True, portrait_single_column=True,
+        landscape_aligned=True, large_text_scroll=True, real_data_transfer=False,
+        disclosure_fixtures=disclosures, disclosure_collapses=focused, status_resets_scroll=True)
 
 
-def inspect_launch_control(release, verifier):
+def inspect_launch_control(release, verifier, probe_digest=None):
     """Render production controls with debug-only fixtures after all release screenshots."""
-    digest = install_component_probe(release, verifier)
+    digest = probe_digest or install_component_probe(release, verifier)
     adb("shell", "wm", "size", "720x1560")
     adb("shell", "wm", "density", "320")
     cases = [("launch-stage-0", 0, "no", "1.0"), ("launch-stage-1", 1, "no", "1.0"),
              ("launch-stage-2", 2, "no", "1.0"), ("launch-dark", 1, "yes", "1.0"),
              ("launch-large-text", 1, "no", "2.0"), ("launch-idle", -1, "no", "1.0"),
              ("launch-generic-busy", -2, "no", "1.0")]
+    cases = [(*case, "") for case in cases] + [
+        ("launch-detect", -1, "no", "1.0", "detect"),
+        ("launch-detecting", -1, "no", "1.0", "detecting"),
+        ("launch-compatibility", -1, "no", "1.6", "compatibility"),
+        ("launch-retry", -1, "no", "1.0", "retry")]
     rendered = []
     try:
-        for name, step, night, font in cases:
+        for name, step, night, font, fixture in cases:
             adb("shell", "am", "force-stop", PACKAGE)
             adb("shell", "cmd", "uimode", "night", night)
             adb("shell", "settings", "put", "system", "font_scale", font)
             adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.LaunchControlProbeActivity",
-                "--ei", "step", str(step), timeout=40)
+                "--ei", "step", str(step), "--es", "state", fixture or "default", timeout=40)
             time.sleep(2)
             tree = capture(name)
             title = {0: "准备游戏", 1: "检查汉化", 2: "正在启动", -1: "启动游戏", -2: "正在处理"}[step]
+            title = {"detect": "检测游戏", "detecting": "正在检测", "compatibility": "查看设备兼容性", "retry": "重新启动"}.get(fixture, title)
             button = clickable_bounds(tree, title, allow_disabled=True)
             if button[3] - button[1] < 112:
                 raise RuntimeError("Launch control clips its minimum touch height: " + name)
             progress = [n for n in tree.iter("node") if n.get("content-desc") == "启动进度"]
             if bool(progress) != (step in (0, 1, 2)):
                 raise RuntimeError("Stage progress appears outside real launch stages: " + name)
-            rendered.append(dict(name=name, step=step, night=night, font_scale=font, button_bounds=button))
+            if fixture in ("detect", "compatibility", "retry"):
+                if fixture == "retry" and clickable_bounds(tree, "查看失败原因")[1] < button[3]:
+                    raise RuntimeError("Failure details overlap the launch button")
+                tap(title, tree)
+                locate(hierarchy(name + "-callback"), {"detect": "检测回调已触发", "compatibility": "详情回调已触发", "retry": "正在启动"}[fixture])
+            rendered.append(dict(name=name, step=step, state=fixture, night=night, font_scale=font, button_bounds=button))
         # Observe real frame changes, separately from the frozen stage references.
         adb("shell", "am", "force-stop", PACKAGE)
         adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.LaunchControlProbeActivity",
@@ -624,7 +690,7 @@ def inspect_launch_control(release, verifier):
         adb("shell", "cmd", "uimode", "night", "no", check=False)
     REPORT["launch_component"] = dict(apk_sha256=digest, fixtures=rendered, animated_frames_differ=True,
         completion_restores=True, completion_keeps_bounds=True, completion_action=True,
-        real_startup=False, readme_uses_component_fixtures=False)
+        action_routes=True, real_startup=False, readme_uses_component_fixtures=False)
     REPORT["checks"].append("production launch control: 3 stage fixtures, dark/large text/idle/generic busy and moving highlight")
 
 
@@ -944,7 +1010,7 @@ def main():
     locate(parent, "设置与工具")
     locate(parent, "版本与资源")
     REPORT["checks"].append("child back returns to parent settings")
-    if os.environ.get("RUNTIME_MODE") in ("launch", "resources", "migration-ui"):
+    if os.environ.get("RUNTIME_MODE") in ("launch", "resources", "migration-ui", "interaction-ui"):
         tap("数据迁移", parent)
         migration = capture("migration-menu")
         locate(migration, "选择资源文件")
@@ -957,6 +1023,13 @@ def main():
         time.sleep(.5)
         locate(hierarchy("migration-parent"), "设置与工具")
         REPORT["checks"].append("release migration menu and document picker cancellation return safely")
+    if os.environ.get("RUNTIME_MODE") == "interaction-ui":
+        inspect_tablet(focused=True)
+        digest = install_component_probe(release, verifier)
+        inspect_launch_control(release, verifier, probe_digest=digest)
+        inspect_migration_screen(release, verifier, focused=True, probe_digest=digest)
+        REPORT["result"] = "interaction inspection completed; screenshots require visual review"
+        return
     if os.environ.get("RUNTIME_MODE") == "migration-ui":
         inspect_migration_screen(release, verifier)
         REPORT["result"] = "migration screen inspection completed; screenshots require visual review"
