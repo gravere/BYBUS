@@ -28,13 +28,16 @@ public class MigrationArchiveTest {
         put(source,"virtual/storage/emulated/0/Android/data/com.ProjectMoon.LimbusCompany/files/UnityCache/empty",new byte[0]);
         put(source,"virtual/data/app/system/account-list.ini",new byte[]{1,2,3});
         put(source,"files/translation-cache/zh/中文.json",new byte[]{4});
+        String gameCache="virtual/storage/emulated/0/Android/data/com.ProjectMoon.LimbusCompany/cache/UnityCache/Shared/bundle/__data";
+        put(source,gameCache,new byte[]{5,6});
         put(source,"virtual/data/user/0/com.google.android.gms/cache/skip",new byte[]{9});
         put(source,"virtual/data/app/system/packages.ini",new byte[]{9});
         put(source,"files/translation-cache/redirect-gate.pid",new byte[]{9});
-        byte[] archive=encode(source); assertEquals(data.length+4,decode(target,archive));
+        byte[] archive=encode(source); assertEquals(data.length+6,decode(target,archive));
         assertArrayEquals(data,Files.readAllBytes(source.resolve(FILE)));
         assertArrayEquals(data,Files.readAllBytes(target.resolve(FILE)));
-        assertEquals(4,MigrationArchive.snapshot(target).entries.size());
+        assertEquals(5,MigrationArchive.snapshot(target).entries.size());
+        assertArrayEquals(new byte[]{5,6},Files.readAllBytes(target.resolve(gameCache)));
         assertFalse(Files.exists(target.resolve("virtual/data/app/system/packages.ini")));
         assertFalse(Files.exists(target.resolve("files/translation-cache/redirect-gate.pid")));
     }

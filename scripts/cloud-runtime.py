@@ -402,6 +402,7 @@ def inspect_migration(release, verifier):
     fixture = bytes(range(256)) * 16385
     expected = hashlib.sha256(fixture).hexdigest()
     fixtures = {relative: fixture, "files/translation-cache/fixture.json": b'{"migration":true}',
+                "virtual/storage/emulated/0/Android/data/com.ProjectMoon.LimbusCompany/cache/UnityCache/Shared/fixture/__data": b"portable-game-cache",
                 "virtual/data/app/system/bybus-migration-fixture.secret": b"not portable",
                 "files/translation-cache/redirect-gate.pid": b"12345"}
     for path, body in fixtures.items():
@@ -471,7 +472,7 @@ def inspect_migration(release, verifier):
     adb("shell", "am", "force-stop", PACKAGE)
     adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
     time.sleep(3); locate(hierarchy("coexisting-home"), "设置与工具")
-    REPORT["migration"] = dict(synthetic_bytes=len(fixture), sha256=expected, source_preserved=True, reopen_after_defer=True,
+    REPORT["migration"] = dict(synthetic_bytes=len(fixture), sha256=expected, source_preserved=True, reopen_after_defer=True, game_cache_preserved=True,
         provider_rejects_shell=True, skipped_install_registry=True, stale_pid_excluded=True,
         target_preparation="fixture skips official game installation; real accounts not tested")
     REPORT["coexistence"] = dict(packages=[PACKAGE, legacy], upstream="v1.5.2", upstream_sha256=upstream_sha)

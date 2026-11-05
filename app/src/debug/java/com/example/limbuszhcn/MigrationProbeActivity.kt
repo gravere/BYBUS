@@ -22,6 +22,8 @@ class MigrationProbeActivity : MigrationActivity() {
                 .joinToString("") { "%02x".format(it.toInt() and 255) }
             check(!File(root, "virtual/data/app/system/bybus-migration-fixture.secret").exists())
             check(!File(root, "files/translation-cache/redirect-gate.pid").exists())
+            check(File(root, "virtual/storage/emulated/0/Android/data/com.ProjectMoon.LimbusCompany/cache/UnityCache/Shared/fixture/__data")
+                .readText() == "portable-game-cache")
             "MIGRATION_PASS $digest"
         }.getOrElse { "MIGRATION_FAIL ${it.javaClass.simpleName}: ${it.message}" }
         setContentView(TextView(this).apply { text = result })

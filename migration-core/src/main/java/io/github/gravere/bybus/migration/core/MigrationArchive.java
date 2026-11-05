@@ -31,21 +31,26 @@ public final class MigrationArchive {
     }
     public static boolean allowed(String relative) {
         if (relative == null || relative.length() > 4096 || relative.startsWith("/") || relative.contains("\\") || relative.contains(":")) return false;
+        boolean gameData=packageData(relative,PACKAGES[0]);
         for (String part : relative.split("/", -1)) {
             if (part.isEmpty() || part.equals(".") || part.equals("..")) return false;
             for (int i=0; i<part.length(); i++) if (Character.isISOControl(part.charAt(i))) return false;
-            if (part.equals("cache") || part.equals("code_cache") || part.equals("lib") || part.equals("app_chimera")) return false;
+            // Unity stores downloaded AssetBundles in its game cache; this is portable user data.
+            if ((part.equals("cache") && !gameData) || part.equals("code_cache") || part.equals("lib") || part.equals("app_chimera")) return false;
         }
         if (relative.equals("virtual/data/app/system/account-list.ini")
                 || relative.equals("virtual/data/app/system/account-visibility-list.ini")) return true;
         if (relative.startsWith("files/translation-cache/"))
             return !relative.startsWith("files/translation-cache/redirect-gate.pid");
         for (String pkg : PACKAGES) {
-            if (relative.startsWith("virtual/data/user/0/"+pkg+"/")
-                    || relative.startsWith("virtual/data/user_de/0/"+pkg+"/")
-                    || relative.startsWith("virtual/storage/emulated/0/Android/data/"+pkg+"/")) return true;
+            if (packageData(relative,pkg)) return true;
         }
         return false;
+    }
+    private static boolean packageData(String relative,String pkg) {
+        return relative.startsWith("virtual/data/user/0/"+pkg+"/")
+                || relative.startsWith("virtual/data/user_de/0/"+pkg+"/")
+                || relative.startsWith("virtual/storage/emulated/0/Android/data/"+pkg+"/");
     }
     public static Path resolve(Path root, String relative) throws IOException {
         if (!allowed(relative)) throw new IOException("迁移包含不支持的文件路径");

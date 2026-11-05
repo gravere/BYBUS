@@ -12,7 +12,7 @@ BYBUS 使用 `io.github.gravere.bybus`，可与上游 `com.example.limbuszhcn` �
 
 用户在独立版发起导入。旧助手的只读 Provider 只接受独立 BYBUS 的确切 UID、包名及相同签名，不提供通用文件访问、写入或删除入口。数据通过私有 Binder 文件描述符流传输，不写入公共存储或上传网络。
 
-迁移保留游戏与 Google 组件的数据目录、账号配置及可复用的汉化缓存；跳过符号链接、代码/运行缓存和安装注册表。目标先从系统官方游戏与内置 Google 组件建立新的安装记录，再停止目标容器服务并复制数据。原有绝对路径、Provider authority 和包缓存不得按字符串全盘替换。
+迁移保留游戏与 Google 组件的数据目录、账号配置及可复用的汉化缓存；游戏 `cache/UnityCache` 也必须保留，[Unity 的下载资源缓存](https://docs.unity.com/en-us/engine/6000.7/manual/assets-and-media/assets-managing-runtime/assetbundles-section/caching)不能视为可丢弃代码缓存。跳过符号链接、代码缓存、Google 运行缓存和安装注册表。目标先从系统官方游戏与内置 Google 组件建立新的安装记录，再停止目标容器服务并复制数据。原有绝对路径、Provider authority 和包缓存不得按字符串全盘替换。
 
 每个文件限制路径、长度，使用临时文件、SHA-256 校验及同步落盘后原子替换。源数据始终保留；中断可重新导入。导入期间阻止普通游戏启动，成功后才记录完成状态。空间不足应在传输前明确提示，不删除旧文件腾空间。Android Keystore 与 UID 绑定的凭据不能通过文件复制保证有效，必要时由用户重新授权 Google 账号。
 
