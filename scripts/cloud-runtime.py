@@ -1141,6 +1141,14 @@ def main():
         inspect_detail_redesign(parent)
         inspect_tablet(focused=True)
         inspect_launch_control(release, verifier)
+        # Only the notes layout needs a fixture; the draft is not publicly offered as an update yet.
+        adb("shell", "am", "force-stop", PACKAGE)
+        adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.UpdateControlProbeActivity",
+            "--es", "case", "available", timeout=40)
+        notes = capture("update-notes-layout")
+        locate(notes, "更新内容")
+        locate(notes, "下载更新")
+        REPORT["detail_fixture_pages"] = ["update-notes-layout"]
         REPORT["result"] = "button inspection completed; screenshots require visual review"
         return
     if os.environ.get("RUNTIME_MODE") == "interaction-ui":
