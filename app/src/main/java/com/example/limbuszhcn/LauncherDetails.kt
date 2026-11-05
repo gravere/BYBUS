@@ -32,27 +32,27 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         when (page) {
             "tools" -> {
-                DetailSection("版本与资源") {
+                DetailActionSection("版本与资源") {
                     SheetAction(Glyph.Upgrade, "更新", showUpdate = appUpdateAvailable, navigation = true, onClick = onAppUpdate)
-                    HorizontalDivider(color = C.Line)
+                    DetailActionDivider()
                     SheetAction(Glyph.Gamepad, "游戏更新", navigation = true, onClick = onGameStore)
                 }
-                DetailSection("管理") {
+                DetailActionSection("管理") {
                     SheetAction(Glyph.Sync, "同步游戏", enabled && state.installedVersion != null,
                         onClick = onSync)
-                    HorizontalDivider(color = C.Line)
+                    DetailActionDivider()
                     SheetAction(Glyph.Import, "数据迁移", enabled, navigation = true, onClick = onMigration)
-                    HorizontalDivider(color = C.Line)
+                    DetailActionDivider()
                     SheetAction(Glyph.Battery, "后台运行", enabled, navigation = true, onClick = onSettings)
-                    HorizontalDivider(color = C.Line)
+                    DetailActionDivider()
                     SheetAction(Glyph.Account, "Google 账号与付款", enabled, navigation = true,
                         onClick = onGoogleSettings)
-                    HorizontalDivider(color = C.Line)
+                    DetailActionDivider()
                     SheetAction(Glyph.File, "导出诊断", enabled, onClick = onExport)
-                    HorizontalDivider(color = C.Line)
+                    DetailActionDivider()
                     SheetAction(Glyph.Info, "使用说明与版本", navigation = true, onClick = onAbout)
                 }
-                DetailSection("汉化设置") {
+                DetailActionSection("汉化设置") {
                     SheetAction(Glyph.Stop, "停用汉化", enabled && state.translation != null,
                         onClick = onRestore)
                 }
@@ -60,8 +60,11 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
             "status" -> RuntimeStatusPane(state, onGameStore, onRefresh)
             "error" -> {
                 Text(state.message, color = C.Muted, style = MaterialTheme.typography.bodyMedium)
-                SheetAction(Glyph.Refresh, "重新检测", enabled, onClick = onRefresh)
-                SheetAction(Glyph.File, "导出诊断", enabled, onClick = onExport)
+                DetailActionSection("操作") {
+                    SheetAction(Glyph.Refresh, "重新检测", enabled, onClick = onRefresh)
+                    DetailActionDivider()
+                    SheetAction(Glyph.File, "导出诊断", enabled, onClick = onExport)
+                }
             }
             else -> AboutPane()
         }
@@ -71,9 +74,10 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
 @Composable
 internal fun SheetAction(icon: Glyph, title: String, enabled: Boolean = true, subtitle: String? = null,
     external: Boolean = false, navigation: Boolean = false, showUpdate: Boolean = false, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+    // The containing group owns the rounded outline; the entire row owns its feedback.
+    Row(Modifier.fillMaxWidth().clickable(enabled = enabled, role = Role.Button, onClick = onClick)
         .semantics { if (showUpdate) stateDescription = "有 BYBUS 新版本" }
-        .heightIn(min = 56.dp).padding(vertical = 10.dp).graphicsLayer { alpha = if (enabled) 1f else .4f },
+        .heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 10.dp).graphicsLayer { alpha = if (enabled) 1f else .4f },
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         IconTile(icon)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -98,16 +102,16 @@ internal fun DetailCard(modifier: Modifier = Modifier, content: @Composable Colu
 internal fun DetailDisclosure(title: String, content: @Composable ColumnScope.() -> Unit) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     Surface(color = C.Background, shape = RoundedCornerShape(20.dp)) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+        Column(Modifier.fillMaxWidth()) {
+            Row(Modifier.fillMaxWidth()
                 .clickable(role = Role.Button) { expanded = !expanded }
                 .semantics { stateDescription = if (expanded) "已展开" else "已收起" }
-                .heightIn(min = 52.dp).padding(vertical = 12.dp),
+                .heightIn(min = 52.dp).padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                 LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(16.dp).rotate(if (expanded) 270f else 90f))
             }
-            ExpandableDetails(expanded, Modifier.padding(bottom = 16.dp)) {
+            ExpandableDetails(expanded, Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
             }
         }
@@ -153,16 +157,28 @@ internal fun UpdateDot(modifier: Modifier = Modifier) {
 }
 
 @Composable
-internal fun DetailSection(title: String, action: (@Composable () -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
+internal fun DetailSection(title: String, action: (@Composable () -> Unit)? = null,
+    contentPadding: PaddingValues = PaddingValues(horizontal = 16.dp), content: @Composable ColumnScope.() -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth().heightIn(min = 24.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(title, color = C.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
             action?.invoke()
         }
         Surface(color = C.Background, shape = RoundedCornerShape(20.dp)) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), content = content)
+            Column(Modifier.fillMaxWidth().padding(contentPadding), content = content)
         }
     }
+}
+
+/** Navigation/action groups keep feedback edge-to-edge and inset only their content. */
+@Composable
+internal fun DetailActionSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    DetailSection(title, contentPadding = PaddingValues(0.dp), content = content)
+}
+
+@Composable
+internal fun DetailActionDivider() {
+    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = C.Line)
 }
 
 @Composable
