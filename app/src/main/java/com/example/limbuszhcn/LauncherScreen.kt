@@ -154,7 +154,7 @@ internal fun LauncherScreen(
                             appUpdateAvailable = appUpdateState.updateAvailable,
                             onAppUpdate = { updateTab = UpdateTab.App; openChild("app-update"); onCheckAppUpdate() },
                             onSync = { close(); onSync() }, onRestore = { close(); onRestore() },
-                            onMigration = { close(); onMigration() },
+                            onMigration = onMigration,
                             onExport = { close(); onExport() }, onSettings = { close(); onSettings() },
                             onGoogleSettings = { close(); onGoogleSettings() },
                             onRefresh = { if (active != "status") close(); onRefresh() }, onAbout = { openChild("about") })
