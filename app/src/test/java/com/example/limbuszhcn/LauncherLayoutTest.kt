@@ -28,7 +28,7 @@ class LauncherLayoutTest {
                     val card = (minOf(width, layout.contentMaxWidth) - layout.margin * 2 -
                         layout.columnGap * 2 - layout.actionWidth) / 2
                     assertTrue("$width at $scale", card >= 256 * scale)
-                    assertTrue(layout.actionWidth >= minOf(232 * scale, 360f) + 64)
+                    assertTrue(layout.actionWidth >= minOf(260 * scale, 360f) + 52)
                 }
             }
         }

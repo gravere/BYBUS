@@ -1,5 +1,7 @@
 package com.example.limbuszhcn
 
+internal fun launchButtonWidth(fontScale: Float): Float = (260f * fontScale.coerceAtLeast(1f)).coerceAtMost(360f)
+
 /** All measurements are available window dp, after safe insets; never physical screen pixels. */
 internal data class LauncherLayout(
     val twoColumns: Boolean,
@@ -18,7 +20,8 @@ internal data class LauncherLayout(
             val scale = fontScale.coerceAtLeast(1f)
             val margin = if (width < 360) 16f else if (width < 1200) 24f else 32f
             val gap = 16f
-            val actionWidth = (232f * scale).coerceAtMost(360f) + 64f
+            // Reserve 26dp per side for the outline without displacing enlarged tablet cards.
+            val actionWidth = launchButtonWidth(scale) + 52f
             val availableColumns = (minOf(width, 1320f) - margin * 2 - gap * 2 - actionWidth) / 2
             val twoColumns = width > height && availableColumns >= 256 * scale
             val centered = width >= 600
