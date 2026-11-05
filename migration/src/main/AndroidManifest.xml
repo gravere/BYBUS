@@ -1,7 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <queries><package android:name="io.github.gravere.bybus" /></queries>
     <permission android:name="com.example.limbuszhcn.permission.BYBUS_MIGRATION" android:protectionLevel="signature" />
-    <application android:allowBackup="false" android:label="BYBUS 迁移助手" android:icon="@drawable/app_icon"
+    <application android:allowBackup="false" android:label="BYBUS（旧版）" android:icon="@drawable/app_icon"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity android:name=".LegacyMigrationActivity" android:exported="true" />
         <!-- Keep the original launcher component so pinned icons and update returns remain valid. -->

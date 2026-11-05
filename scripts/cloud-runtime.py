@@ -423,19 +423,21 @@ def inspect_migration(release, verifier):
     adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
     time.sleep(3)
     tap("暂不导入", hierarchy("migration-defer"))
-    # The user's next entry through the helper must reopen migration even with an existing home task.
+    # Return through the old app, then enter migration from the new app's persistent menu.
     adb("shell", "am", "start", "-W", "-n", f"{legacy}/{legacy}.MainActivity", timeout=30)
-    time.sleep(2); tap("打开独立版并迁移", hierarchy("migration-helper"))
-    locate(hierarchy("migration-reopened"), "导入旧版数据")
+    time.sleep(2); tap("打开新版 BYBUS", hierarchy("migration-helper"))
+    tap("设置与工具", hierarchy("migration-main"))
+    tap("数据迁移", hierarchy("migration-tools"))
+    locate(hierarchy("migration-reopened"), "数据迁移")
     capture("migration-reopened")
     adb("shell", "am", "force-stop", PACKAGE)
     adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MigrationProbeActivity", timeout=90)
     time.sleep(3)
-    tap("开始导入", hierarchy("migration-ready"))
+    tap("一键迁移旧 BYBUS", hierarchy("migration-ready"))
     deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
         view = hierarchy("migration-progress")
-        if any(node.get("text") == "旧数据已就位" for node in view.iter("node")):
+        if any(node.get("text") == "数据已就位" for node in view.iter("node")):
             capture("migration-complete")
             break
         time.sleep(2)
@@ -516,12 +518,53 @@ def inspect_launch_control(release, verifier):
         capture("launch-motion-b")
         if (OUT / "launch-motion-a.png").read_bytes() == (OUT / "launch-motion-b.png").read_bytes():
             raise RuntimeError("Animated launch control produced identical frames")
+        # Exercise the real completion timer and action routing, with no game operation.
+        adb("shell", "settings", "put", "secure", "accessibility_non_interactive_ui_timeout_ms", "10000")
+        adb("shell", "am", "force-stop", PACKAGE)
+        adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.LaunchControlProbeActivity",
+            "--ez", "sync", "true", timeout=40)
+        before = hierarchy("sync-before")
+        origin = clickable_bounds(before, "准备游戏", allow_disabled=True)
+        tap("完成同步", before)
+        complete = capture("sync-complete")
+        if clickable_bounds(complete, "游戏已同步") != origin:
+            raise RuntimeError("Completion feedback moved the primary button")
+        time.sleep(10.2)
+        restored = hierarchy("sync-restored")
+        if clickable_bounds(restored, "启动游戏") != origin:
+            raise RuntimeError("Completion timeout changed button layout")
+        # Repeat once to verify that the completion state remains an actionable launch control.
+        adb("shell", "am", "force-stop", PACKAGE)
+        adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.LaunchControlProbeActivity",
+            "--ez", "sync", "true", timeout=40)
+        tap("完成同步", hierarchy("sync-action-before"))
+        tap("游戏已同步", hierarchy("sync-action-ready"))
+        locate(hierarchy("sync-action-started"), "正在启动")
     finally:
+        adb("shell", "settings", "delete", "secure", "accessibility_non_interactive_ui_timeout_ms", check=False)
         adb("shell", "settings", "put", "system", "font_scale", "1.0", check=False)
         adb("shell", "cmd", "uimode", "night", "no", check=False)
     REPORT["launch_component"] = dict(apk_sha256=digest, fixtures=rendered, animated_frames_differ=True,
+        completion_restores=True, completion_keeps_bounds=True, completion_action=True,
         real_startup=False, readme_uses_component_fixtures=False)
     REPORT["checks"].append("production launch control: 3 stage fixtures, dark/large text/idle/generic busy and moving highlight")
+
+
+def inspect_resource_import():
+    adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.ResourceImportProbeActivity", timeout=40)
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline:
+        tree = hierarchy("resource-import")
+        labels = [node.get("text", "") for node in tree.iter("node")]
+        if "RESOURCE_IMPORT_PASS" in labels:
+            REPORT["resource_import"] = dict(production_model=True, synthetic_archive=True,
+                preserves_existing=True, source_preserved=True, pending_guard_cleared=True, real_account=False)
+            return
+        failure = next((label for label in labels if label.startswith("RESOURCE_IMPORT_FAIL")), None)
+        if failure:
+            raise RuntimeError(failure)
+        time.sleep(1)
+    raise RuntimeError("Resource archive import probe timed out")
 
 
 def inspect_update_controls(release, verifier):
@@ -823,6 +866,17 @@ def main():
     locate(parent, "设置与工具")
     locate(parent, "版本与资源")
     REPORT["checks"].append("child back returns to parent settings")
+    if os.environ.get("RUNTIME_MODE") == "launch":
+        tap("数据迁移", parent)
+        migration = capture("migration-menu")
+        locate(migration, "导入资源包")
+        tap("导入资源包", migration)
+        time.sleep(1)
+        adb("shell", "input", "keyevent", "KEYCODE_BACK")
+        time.sleep(1)
+        locate(hierarchy("migration-picker-cancel"), "数据迁移")
+        tap("暂不导入", hierarchy("migration-exit"))
+        REPORT["checks"].append("release migration menu and document picker cancellation return safely")
     if os.environ.get("RUNTIME_MODE") == "ui":
         inspect_detail_scroll(parent)
         inspect_update_progress()
@@ -838,6 +892,7 @@ def main():
         inspect_tablet()
     if os.environ.get("RUNTIME_MODE") == "launch":
         inspect_launch_control(release, verifier)
+        inspect_resource_import()
     elif os.environ.get("RUNTIME_MODE") == "updates":
         inspect_update_controls(release, verifier)
     REPORT["result"] = "runtime baseline completed; screenshots require visual review"

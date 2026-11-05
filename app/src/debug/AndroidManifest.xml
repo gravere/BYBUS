@@ -6,5 +6,6 @@
         <activity android:name=".UpdateControlProbeActivity" android:exported="true" />
         <activity android:name=".AccountRegistryProbeActivity" android:exported="true" />
         <activity android:name=".MigrationProbeActivity" android:exported="true" />
+        <activity android:name=".ResourceImportProbeActivity" android:exported="true" />
     </application>
 </manifest>

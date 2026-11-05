@@ -1,6 +1,7 @@
 package com.example.limbuszhcn
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -36,7 +37,7 @@ import kotlin.math.sin
 
 @Composable
 internal fun LaunchButton(title: String, busy: Boolean, enabled: Boolean, step: Int,
-    animated: Boolean, onClick: () -> Unit) {
+    animated: Boolean, confirmed: Boolean = false, status: String = "", onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scale = animateFloatAsState(if (pressed) .985f else 1f, tween(130), label = "launch press")
@@ -53,6 +54,7 @@ internal fun LaunchButton(title: String, busy: Boolean, enabled: Boolean, step: 
     val line = C.Line
     val active = enabled || busy
     val haptic = LocalHapticFeedback.current
+    val buttonColor by animateColorAsState(if (confirmed) soft else C.Panel, tween(180), label = "launch feedback")
     Box(Modifier.fillMaxWidth().heightIn(min = 176.dp)
         .graphicsLayer { scaleX = scale.value; scaleY = scale.value }, contentAlignment = Alignment.Center) {
         Box(Modifier.matchParentSize().semantics {
@@ -113,19 +115,23 @@ internal fun LaunchButton(title: String, busy: Boolean, enabled: Boolean, step: 
         Button(onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onClick() },
             enabled = enabled && !busy, interactionSource = interaction,
             modifier = Modifier.padding(horizontal = 12.dp).widthIn(max = width).fillMaxWidth()
-                .heightIn(min = 56.dp).onSizeChanged { buttonSize = it },
+                .heightIn(min = 56.dp).onSizeChanged { buttonSize = it }.semantics {
+                    if (busy || confirmed) liveRegion = LiveRegionMode.Polite
+                    if (status.isNotBlank()) stateDescription = status
+                },
             shape = CircleShape,
             border = BorderStroke(1.dp, accent.copy(alpha = if (active) .22f else .1f)),
             elevation = ButtonDefaults.buttonElevation(defaultElevation = 1.dp, pressedElevation = 0.dp,
                 disabledElevation = if (busy) 1.dp else 0.dp),
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = C.Panel, contentColor = C.Ink,
+            colors = ButtonDefaults.buttonColors(containerColor = buttonColor, contentColor = C.Ink,
                 disabledContainerColor = C.Panel, disabledContentColor = if (busy) C.Ink else C.Muted)) {
             Box(Modifier.size(30.dp).clip(CircleShape).background(if (active) accent else line),
                 contentAlignment = Alignment.Center) {
                 if (busy && activeStep < 0) CircularProgressIndicator(Modifier.size(16.dp),
                     color = C.OnPrimary, strokeWidth = 2.dp)
-                else LauncherGlyph(Glyph.Play, if (active) C.OnPrimary else C.Muted, Modifier.size(17.dp))
+                else LauncherGlyph(if (confirmed) Glyph.Check else Glyph.Play,
+                    if (active) C.OnPrimary else C.Muted, Modifier.size(17.dp))
             }
             Spacer(Modifier.width(12.dp))
             AnimatedContent(title, transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(90)) }, label = "launch title") {

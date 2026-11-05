@@ -67,7 +67,7 @@ internal fun <T> SourceTabs(options: List<T>, selected: T, label: (T) -> String,
 
 internal enum class Glyph {
     Mark, Bus, Settings, Battery, Account, Arrow, Chevron, Refresh, File, Stop, Globe, Play, External, Check, Close, Info,
-    Upgrade, Gamepad, Sync, Apps, Translation, ReleaseTag, Folder, Store, Progress, BookOpen
+    Upgrade, Gamepad, Sync, Apps, Translation, ReleaseTag, Folder, Store, Progress, BookOpen, Import
 }
 
 @Composable
@@ -105,6 +105,7 @@ internal fun LauncherGlyph(glyph: Glyph, color: Color, modifier: Modifier = Modi
                 Glyph.Arrow -> { line(4f, 12f, 20f, 12f); path(14f, 6f, 20f, 12f, 14f, 18f) }
                 Glyph.Chevron -> path(9f, 6f, 15f, 12f, 9f, 18f)
                 Glyph.Play -> drawPath(Path().apply { moveTo(8f, 5f); lineTo(19f, 12f); lineTo(8f, 19f); close() }, color)
+                Glyph.Import -> { line(12f, 3f, 12f, 14f); path(8f, 10f, 12f, 14f, 16f, 10f); path(4f, 14f, 4f, 20f, 20f, 20f, 20f, 14f) }
                 Glyph.Check -> path(5f, 12f, 10f, 17f, 19f, 7f)
                 Glyph.Close -> { line(6f, 6f, 18f, 18f); line(6f, 18f, 18f, 6f) }
                 Glyph.External -> { path(13f, 4f, 20f, 4f, 20f, 11f); line(11f, 13f, 20f, 4f); path(9f, 5f, 4f, 5f, 4f, 20f, 19f, 20f, 19f, 15f) }

@@ -15,10 +15,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInRoot
-import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.platform.LocalAccessibilityManager
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -27,6 +24,7 @@ import androidx.compose.ui.unit.sp
 import com.example.limbuszhcn.tracking.ProjectTrackingState
 import com.example.limbuszhcn.tracking.ProjectSource
 import com.example.limbuszhcn.update.GameUpdateSource
+import kotlinx.coroutines.delay
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -52,6 +50,7 @@ internal fun LauncherScreen(
     onInstallGame: () -> Unit,
     onCancelGameInstall: () -> Unit,
     onSync: () -> Unit,
+    onMigration: () -> Unit,
     onRestore: () -> Unit,
     onExport: () -> Unit,
     onSettings: () -> Unit,
@@ -71,26 +70,6 @@ internal fun LauncherScreen(
             sheet = "updates"
         }
     }
-    val snackbar = remember { SnackbarHostState() }
-    var actionTop by remember { mutableFloatStateOf(0f) }
-    var homeTop by remember { mutableFloatStateOf(0f) }
-    var wasBusy by remember { mutableStateOf(false) }
-    LaunchedEffect(state.busy) {
-        val finished = wasBusy && !state.busy
-        wasBusy = state.busy
-        if (finished && !state.failed) {
-            val feedback = when (state.stage) {
-                "检查零协更新并校验汉化文件" -> "汉化检查完成"
-                "重新同步游戏", "同步游戏，保留已有数据" -> "游戏已同步"
-                "正在停用汉化" -> "汉化已停用"
-                "正在保存诊断包" -> "诊断包已保存"
-                "取消导出" -> "已取消导出"
-                else -> null
-            }
-            if (feedback != null && snackbar.showSnackbar(feedback, actionLabel = "详情",
-                    duration = SnackbarDuration.Short) == SnackbarResult.ActionPerformed) { parentSheet = null; sheet = "status" }
-        }
-    }
     val haptic = LocalHapticFeedback.current
     fun open(page: String) {
         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -101,8 +80,7 @@ internal fun LauncherScreen(
     fun close() { parentSheet = null; sheet = null }
 
     Surface(Modifier.fillMaxSize(), color = C.Background) {
-        BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()
-            .onGloballyPositioned { homeTop = it.positionInRoot().y }) {
+        BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
             // Use the space allocated to this window, including split screen.
             // Large text needs a wider column, not a smaller font.
             val layout = LauncherLayout.calculate(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale)
@@ -128,7 +106,6 @@ internal fun LauncherScreen(
                 }
                 BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                     val bodyHeight = maxHeight
-                    val actionModifier = Modifier.onGloballyPositioned { actionTop = it.positionInRoot().y }
                     if (layout.twoColumns) {
                         Column(Modifier.fillMaxWidth().verticalScroll(homeScroll).heightIn(min = bodyHeight)
                             .padding(vertical = 8.dp), verticalArrangement = Arrangement.Center) {
@@ -138,7 +115,7 @@ internal fun LauncherScreen(
                                 InstallationCard(state, cardWidth, Modifier.weight(1f).fillMaxHeight()) { open("status") }
                                 LaunchActions(state, onLaunch, onRefresh, resumed && sheet == null,
                                     onDetails = { open(if (state.failed) "error" else "status") },
-                                    modifier = actionModifier.width(layout.actionWidth.dp))
+                                    modifier = Modifier.width(layout.actionWidth.dp))
                                 ProjectCard(projectState, Modifier.weight(1f).fillMaxHeight()) { open("project") }
                             }
                         }
@@ -150,7 +127,7 @@ internal fun LauncherScreen(
                             InstallationCard(state, cardWidth) { open("status") }
                             LaunchActions(state, onLaunch, onRefresh, resumed && sheet == null,
                                 onDetails = { open(if (state.failed) "error" else "status") },
-                                modifier = actionModifier.widthIn(max = layout.actionWidth.dp).fillMaxWidth())
+                                modifier = Modifier.widthIn(max = layout.actionWidth.dp).fillMaxWidth())
                             ProjectCard(projectState) { open("project") }
                         }
                     }
@@ -158,11 +135,6 @@ internal fun LauncherScreen(
                 Box(Modifier.fillMaxWidth().padding(bottom = 12.dp), contentAlignment = Alignment.Center) {
                     AboutLink { open("about") }
                 }
-            }
-            SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp)
-                .padding(bottom = (maxHeight - with(LocalDensity.current) { (actionTop - homeTop).toDp() }).coerceAtLeast(0.dp) + 12.dp)) {
-                Snackbar(it, shape = RoundedCornerShape(20.dp), containerColor = C.Ink,
-                    contentColor = C.OnPrimary, actionColor = C.OnPrimary)
             }
             sheet?.let { page ->
                 LauncherDetailSurface(layout, page, onDismiss = ::close,
@@ -187,6 +159,7 @@ internal fun LauncherScreen(
                             appUpdateAvailable = appUpdateState.updateAvailable,
                             onAppUpdate = { updateTab = UpdateTab.App; openChild("app-update"); onCheckAppUpdate() },
                             onSync = { close(); onSync() }, onRestore = { close(); onRestore() },
+                            onMigration = { close(); onMigration() },
                             onExport = { close(); onExport() }, onSettings = { close(); onSettings() },
                             onGoogleSettings = { close(); onGoogleSettings() },
                             onRefresh = { if (active != "status") close(); onRefresh() }, onAbout = { openChild("about") })
@@ -257,7 +230,8 @@ private fun InstallationRow(icon: Glyph, title: String, subtitle: String, value:
 }
 
 @Composable
-private fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefresh: () -> Unit, onDetails: () -> Unit, animated: Boolean) {
+internal fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefresh: () -> Unit, onDetails: () -> Unit, animated: Boolean) {
+    val feedback = rememberOperationFeedback(state)
     val missing = state.container != null && state.installedVersion == null
     val canLaunch = state.container?.available == true && state.installedVersion != null &&
         state.compatibility?.isSupported == true && state.nativeCompatibilityIssue == null
@@ -271,25 +245,43 @@ private fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefres
         state.failed -> "重新启动"
         else -> "启动游戏"
     }
-    val caption = when {
-        state.busy -> state.stage
-        state.failed -> "准备未完成 · 查看详情"
-        else -> ""
-    }
     if (state.failed && !state.busy) {
         TextButton(onClick = onDetails, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(10.dp)) {
-            Text(caption, color = C.Error, style = MaterialTheme.typography.bodySmall)
-        }
-    } else if (caption.isNotBlank()) {
-        Box(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 12.dp).semantics { liveRegion = LiveRegionMode.Polite },
-            contentAlignment = Alignment.Center) {
-            Text(caption, color = C.Muted, style = MaterialTheme.typography.bodySmall,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Text("准备未完成 · 查看详情", color = C.Error, style = MaterialTheme.typography.bodySmall)
         }
     }
-    LaunchButton(title, state.busy, enabled = state.container != null || state.failed,
-        step = state.launchStep, animated = animated,
+    LaunchButton(feedback ?: title, state.busy, enabled = state.container != null || state.failed,
+        step = state.launchStep, animated = animated, confirmed = feedback != null,
+        status = if (state.busy) state.stage else feedback.orEmpty(),
         onClick = { when { needsDetection -> onRefresh(); canLaunch -> onLaunch(); else -> onDetails() } })
+}
+
+@Composable
+private fun rememberOperationFeedback(state: LauncherUiState): String? {
+    var feedback by remember { mutableStateOf<String?>(null) }
+    var wasBusy by remember { mutableStateOf(false) }
+    val accessibility = LocalAccessibilityManager.current
+    LaunchedEffect(state.busy, state.failed) {
+        val finished = wasBusy && !state.busy
+        wasBusy = state.busy
+        feedback = null
+        if (finished && !state.failed) {
+            feedback = when (state.stage) {
+                "检查零协更新并校验汉化文件" -> "汉化检查完成"
+                "重新同步游戏", "同步游戏，保留已有数据" -> "游戏已同步"
+                "正在停用汉化" -> "汉化已停用"
+                "正在保存诊断包" -> "诊断包已保存"
+                "取消导出" -> "已取消导出"
+                else -> null
+            }
+            if (feedback != null) {
+                delay(accessibility?.calculateRecommendedTimeoutMillis(4000L,
+                    containsIcons = true, containsText = true, containsControls = false) ?: 4000L)
+                feedback = null
+            }
+        }
+    }
+    return feedback.takeUnless { state.busy || state.failed }
 }
 
 @Composable
