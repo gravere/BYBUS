@@ -583,7 +583,7 @@ def inspect_migration_screen(release, verifier, focused=False, probe_digest=None
                 first = element_bounds(expanded, "旧版迁移包含资源与账号配置；文件导入只补充缺少的资源。")
                 last = element_bounds(expanded, "资源版本无需相同，进入游戏后会校验更新。")
                 header = clickable_bounds(expanded, "返回上一页")
-                viewport = next(n for n in expanded.iter("node") if n.get("scrollable") == "true")
+                viewport = next(n for n in expanded.iter("node") if n.get("class") == "android.widget.ScrollView")
                 visible = tuple(map(int, re.findall(r"\d+", viewport.get("bounds", ""))))
                 # Gesture and three-button navigation reserve different real insets.
                 if not (first[1] >= max(header[3], visible[1]) and last[1] >= first[3] and last[3] <= visible[3] and
