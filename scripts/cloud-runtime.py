@@ -405,6 +405,50 @@ def install_component_probe(release, verifier, name="bybus-ui-probe.apk"):
     return digest
 
 
+def inspect_service_callback(release, verifier):
+    """Exercise the platform AIDL Proxy/Stub and production delegate, not a mocked ABI."""
+    # Only this disposable emulator: probe builds intentionally retain debuggable=false.
+    # The probe still runs under the ordinary app UID; shell root reads only its test result.
+    adb("root")
+    adb("wait-for-device", timeout=30)
+    if adb("shell", "id", "-u").strip() != "0":
+        raise RuntimeError("The isolated emulator cannot read the private probe result")
+    adb("shell", "am", "force-stop", PACKAGE)
+    digest = install_component_probe(release, verifier)
+    result_file = f"/data/user/0/{PACKAGE}/files/service-callback-result.json"
+    adb("shell", "rm", "-f", result_file)
+    started = adb("shell", "am", "broadcast", "--receiver-foreground", "-n",
+                  f"{PACKAGE}/{NAMESPACE}.ServiceConnectionProbeReceiver", timeout=45)
+    (OUT / "service-callback-start.txt").write_text(started, encoding="utf-8")
+    deadline = time.monotonic() + 45
+    while time.monotonic() < deadline:
+        raw = adb("shell", "cat", result_file, check=False)
+        if raw.lstrip().startswith("{"):
+            try:
+                result = json.loads(raw)
+            except json.JSONDecodeError:
+                time.sleep(.5)
+                continue
+            (OUT / "service-callback.json").write_text(raw, encoding="utf-8")
+            REPORT["service_callback"] = dict(result, probe_sha256=digest)
+            if not result.get("passed"):
+                raise RuntimeError("Platform service callback failed: " + str(result.get("error")))
+            expected = {"android15": (35, 3), "android17": (37, 4)}[REPORT["profile"]]
+            if (result["sdk"], result["framework_parameters"]) != expected:
+                raise RuntimeError("The image does not exercise the expected framework signature")
+            required = ("platform_proxy_and_stub", "component_preserved", "service_binder_preserved",
+                        "null_binding", "dead_flag", "legacy_entry_points")
+            if result["callbacks"] != 5 or not all(result[key] for key in required):
+                raise RuntimeError("Service callback preservation checks did not all pass")
+            if expected[1] == 4 and not result["session_preserved"]:
+                raise RuntimeError("Framework service session was not preserved")
+            REPORT["checks"].append("platform callback ABI, Binder/session, null binding and dead flag preserved")
+            REPORT["result"] = "service callback inspection completed; game runtime not tested"
+            return
+        time.sleep(1)
+    raise RuntimeError("Platform service callback inspection timed out")
+
+
 def inspect_migration(release, verifier):
     """Exercise the production provider/decoder with synthetic data, then install upstream beside BYBUS."""
     legacy = "com.example.limbuszhcn"
@@ -1189,6 +1233,14 @@ def main():
     if "Success" not in installed:
         raise RuntimeError("APK installation did not succeed: " + installed[-1000:])
     REPORT["checks"].append("published APK signature/hash and installation")
+    if os.environ.get("RUNTIME_MODE") == "service-callback":
+        adb("logcat", "-c")
+        adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
+        time.sleep(3)
+        locate(hierarchy("release-home"), "设置与工具")
+        REPORT["checks"].append("signed release main activity resumed")
+        inspect_service_callback(release, verifier)
+        return
     if os.environ.get("RUNTIME_MODE") == "button-feedback":
         adb("shell", "cmd", "statusbar", "send-disable-flag", "system-icons", "clock", "notification-icons")
         adb("logcat", "-c")
@@ -1311,6 +1363,10 @@ except Exception as error:
     raise
 finally:
     try:
+        if os.environ.get("RUNTIME_MODE") == "service-callback":
+            diagnostic = adb("logcat", "-d", "-t", "700", "ServiceCallbackProbe:E", "ActivityManager:I",
+                             "ActivityTaskManager:I", "LimbusZhCN:D", "LimbusVA:W", "*:S", timeout=15, check=False)
+            (OUT / "callback-log.txt").write_text(diagnostic, encoding="utf-8")
         crashes = adb("logcat", "-d", "-b", "crash", "-t", "150", timeout=15, check=False)
         (OUT / "crashes.txt").write_text(crashes, encoding="utf-8")
     except Exception:

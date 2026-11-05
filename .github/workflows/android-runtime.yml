@@ -6,7 +6,7 @@ on:
       mode:
         description: Inspection scope
         type: choice
-        options: [ui, launch, button-ui, button-feedback, detail-rest, row-feedback, updates, repairs, resources, migration-ui, interaction-ui, disclosure-ui, runtime]
+        options: [ui, launch, button-ui, button-feedback, detail-rest, row-feedback, service-callback, service-callback-new, updates, repairs, resources, migration-ui, interaction-ui, disclosure-ui, runtime]
         default: ui
       candidate:
         description: Inspect the staged release matching this branch
@@ -32,11 +32,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        profile: ${{ fromJSON(inputs.mode != 'runtime' && '["android15"]' || '["android11","experimental16k"]') }}
+        profile: ${{ fromJSON(inputs.mode == 'service-callback-new' && '["android17"]' || inputs.mode == 'service-callback' && '["android15","android17"]' || inputs.mode != 'runtime' && '["android15"]' || '["android11","experimental16k"]') }}
     env:
       RUNTIME_PROFILE: ${{ matrix.profile }}
-      ANDROID_IMAGE: ${{ matrix.profile == 'android15' && 'system-images;android-35;google_apis;x86_64' || matrix.profile == 'android11' && 'system-images;android-30;google_apis;x86_64' || 'system-images;android-35;google_apis_ps16k;x86_64' }}
-      RUNTIME_MODE: ${{ inputs.mode }}
+      ANDROID_IMAGE: ${{ matrix.profile == 'android17' && 'system-images;android-37.0;google_apis;x86_64' || matrix.profile == 'android15' && 'system-images;android-35;google_apis;x86_64' || matrix.profile == 'android11' && 'system-images;android-30;google_apis;x86_64' || 'system-images;android-35;google_apis_ps16k;x86_64' }}
+      RUNTIME_MODE: ${{ inputs.mode == 'service-callback-new' && 'service-callback' || inputs.mode }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -56,6 +56,13 @@ jobs:
             done
           fi
           test -x "$sdk_bin/sdkmanager"
+          # Older runner tools silently write target=android-0 for dotted API versions.
+          # Pin a parser that supports major.minor and call its binaries explicitly.
+          if [ "$RUNTIME_PROFILE" = android17 ]; then
+            "$sdk_bin/sdkmanager" --install 'cmdline-tools;20.0'
+            sdk_bin="$ANDROID_HOME/cmdline-tools/20.0/bin"
+            test -x "$sdk_bin/avdmanager"
+          fi
           export PATH="$sdk_bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
           printf '%s\n' "$sdk_bin" "$ANDROID_HOME/platform-tools" "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
           export ANDROID_AVD_HOME="$RUNNER_TEMP/bybus-avd"
@@ -63,9 +70,13 @@ jobs:
           printf 'ANDROID_AVD_HOME=%s\n' "$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
           sdkmanager --install emulator "$ANDROID_IMAGE"
           printf 'no\n' | avdmanager create avd -n bybus-runtime -k "$ANDROID_IMAGE"
-          printf '\nhw.lcd.width=720\nhw.lcd.height=1560\nhw.lcd.density=320\n' >> "$ANDROID_AVD_HOME/bybus-runtime.avd/config.ini"
+          expected_target=$(cut -d ';' -f 2 <<< "$ANDROID_IMAGE")
+          grep -Fx "target=$expected_target" "$ANDROID_AVD_HOME/bybus-runtime.ini" > runtime-output/avd-target.txt
+          printf '\nhw.lcd.width=720\nhw.lcd.height=1560\nhw.lcd.density=320\ndisk.dataPartition.size=4G\n' >> "$ANDROID_AVD_HOME/bybus-runtime.avd/config.ini"
           "$ANDROID_HOME/emulator/emulator" -accel-check > runtime-output/acceleration.txt
-          "$ANDROID_HOME/emulator/emulator" -avd bybus-runtime -accel on -memory 3072 -cores 2 -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect -camera-back none -camera-front none > "$RUNNER_TEMP/bybus-emulator.log" 2>&1 &
+          graphics_mode=swiftshader_indirect
+          if [ "$RUNTIME_PROFILE" = android17 ]; then graphics_mode=software; fi
+          "$ANDROID_HOME/emulator/emulator" -avd bybus-runtime -accel on -memory 3072 -cores 2 -no-window -no-audio -no-snapshot -no-boot-anim -gpu "$graphics_mode" -camera-back none -camera-front none > "$RUNNER_TEMP/bybus-emulator.log" 2>&1 &
       - name: Inspect the published APK
         env:
           GITHUB_TOKEN: ${{ github.token }}

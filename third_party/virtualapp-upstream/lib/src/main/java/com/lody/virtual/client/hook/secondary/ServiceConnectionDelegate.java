@@ -1,6 +1,7 @@
 package com.lody.virtual.client.hook.secondary;
 
 import android.app.IServiceConnection;
+import android.app.IBinderSession;
 import android.content.ComponentName;
 import android.os.Bundle;
 import android.os.IBinder;
@@ -11,8 +12,8 @@ import android.util.Log;
 import com.lody.virtual.client.VClient;
 import com.lody.virtual.client.core.VirtualCore;
 import com.lody.virtual.helper.collection.ArrayMap;
-import com.lody.virtual.helper.compat.BuildCompat;
 import com.lody.virtual.helper.compat.LimbusBillingDiagnostics;
+import com.lody.virtual.helper.compat.ServiceConnectionCompat;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
@@ -22,8 +23,6 @@ import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
 import java.lang.reflect.Constructor;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import mirror.android.app.IServiceConnectionO;
 
 /**
  * @author Lody
@@ -88,14 +87,15 @@ public class ServiceConnectionDelegate extends IServiceConnection.Stub {
     }
 
     public void connected(ComponentName name, IBinder service, boolean dead) throws RemoteException {
+        connected(name, service, null, dead);
+    }
+
+    // Exact Android 16 QPR2+ signature. Object/Any here would not override the framework method.
+    public void connected(ComponentName name, IBinder service, IBinderSession session, boolean dead) throws RemoteException {
         service = wrapLimbusPlayBillingService(name, service);
         service = wrapLimbusGmsServiceBroker(name, service);
         ComponentName deliveryComponent = targetComponent != null ? targetComponent : name;
-        if (BuildCompat.isOreo()) {
-            IServiceConnectionO.connected.call(mConn, deliveryComponent, service, dead);
-        } else {
-            mConn.connected(name, service);
-        }
+        ServiceConnectionCompat.connected(mConn, deliveryComponent, service, session, dead);
     }
 
     private IBinder wrapLimbusPlayBillingService(ComponentName connectedComponent, IBinder service) {
