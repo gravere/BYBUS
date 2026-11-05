@@ -7,6 +7,8 @@ __pycache__/
 .DS_Store
 /build
 /app/build
+/migration/build
+/migration-core/build
 /captures
 .externalNativeBuild
 .cxx

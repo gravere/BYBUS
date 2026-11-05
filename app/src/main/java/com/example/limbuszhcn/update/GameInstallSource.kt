@@ -13,7 +13,7 @@ internal data class GameInstallSource(val packageName: String? = null, val label
 /** Installer attribution is only a navigation hint, never a trust/compatibility decision. */
 internal object GameStores {
     const val APKPURE_PAGE = "https://apkpure.net/limbus-company/com.ProjectMoon.LimbusCompany"
-    const val UPDATE_ACTION = "com.example.limbuszhcn.SHOW_GAME_UPDATES"
+    const val UPDATE_ACTION = "io.github.gravere.bybus.SHOW_GAME_UPDATES"
     private val systemInstallers = setOf("com.android.shell", "com.android.packageinstaller", "com.google.android.packageinstaller",
         "com.miui.packageinstaller", "com.vivo.packageinstaller", "com.samsung.android.packageinstaller")
     private val labels = mapOf("com.android.vending" to "Google Play", "com.uptodown" to "Uptodown",
@@ -22,7 +22,7 @@ internal object GameStores {
 
     fun describe(installer: String?, visibleLabel: String?): GameInstallSource {
         if (installer == null) return GameInstallSource()
-        if (installer == "com.example.limbuszhcn") return GameInstallSource(label = "BYBUS 文件安装")
+        if (installer == "io.github.gravere.bybus") return GameInstallSource(label = "BYBUS 文件安装")
         if (installer in systemInstallers) return GameInstallSource(label = "本地安装")
         val name = labels[installer] ?: visibleLabel?.filterNot(Char::isISOControl)?.trim()?.take(40)
         return if (name.isNullOrBlank()) GameInstallSource(label = "其他安装来源") else GameInstallSource(installer, name)

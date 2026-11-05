@@ -4,7 +4,9 @@
 
 ## 安装身份
 
-两个项目当前都使用 `com.example.limbuszhcn`。BYBUS 沿用了上游安装身份；显示名称不同不等于可并存。目前保留此身份以延续现有账号和容器数据的升级路径。已检查上游正式 APK：v1.5.2 的 versionCode 为 8，BYBUS 的后续构建更高，因此 Android 会拒绝降级。两者签名也不同，不能以降级参数解决。改包名需要单独的数据迁移方案，不应通过卸载让用户丢失容器数据。
+旧 BYBUS 使用上游的 `com.example.limbuszhcn`，因此 Android 将上游 APK 识别为同一应用的较低版本。已检查上游正式 APK：v1.5.2 的 versionCode 为 8，且证书与 BYBUS 不同。
+
+BYBUS 已改用 `io.github.gravere.bybus`，同时隔离容器 Provider、权限、任务栈与宿主 action。旧身份仅保留为同签名迁移助手；独立版导入旧数据、用户确认后移除助手，即可安装上游并与 BYBUS 共存。迁移和双更新入口见 [迁移设计](package-migration.md)。
 
 上游 APK SHA-256：`4233a4ad131dcc5f898e007ad787cdbcb3231bb506c28b0a3d4988a459b24200`；证书 SHA-256：`df648cd25ec9661b06a6c2d8ddf6ef8e7c3864b6b02c94a258a82c871e18705b`。BYBUS 证书 SHA-256：`d50bbcfb234692d5d5f90427499158608c5a4c13adb7f99a78d9b5f1af44d55b`。
 

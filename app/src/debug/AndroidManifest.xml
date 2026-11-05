@@ -5,5 +5,6 @@
         <activity android:name=".LaunchControlProbeActivity" android:exported="true" />
         <activity android:name=".UpdateControlProbeActivity" android:exported="true" />
         <activity android:name=".AccountRegistryProbeActivity" android:exported="true" />
+        <activity android:name=".MigrationProbeActivity" android:exported="true" />
     </application>
 </manifest>

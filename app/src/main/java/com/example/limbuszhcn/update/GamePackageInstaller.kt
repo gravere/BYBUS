@@ -180,7 +180,7 @@ internal class GamePackageInstaller(private val context: Context) {
         if (Files.exists(staging)) AtomicFiles.deleteOwnedTree(owner, staging)
     }
 
-    companion object { const val RESULT_ACTION = "com.example.limbuszhcn.GAME_INSTALL_RESULT" }
+    companion object { const val RESULT_ACTION = "io.github.gravere.bybus.GAME_INSTALL_RESULT" }
 }
 
 /** Explicit, non-exported callback; unmatched or stale sessions cannot change installation state. */

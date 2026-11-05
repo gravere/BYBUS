@@ -46,7 +46,7 @@ static bool match_host_pkg(const char *path) {
         return false;
     }
     return strstr(path, "io.busniess.va") != NULL
-           || strstr(path, "com.example.limbuszhcn") != NULL
+           || strstr(path, "io.github.gravere.bybus") != NULL
            || strstr(path, "libv++") != NULL;
 }
 

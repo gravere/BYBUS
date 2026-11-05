@@ -9,9 +9,9 @@ import java.nio.file.Files
 
 class AppReleaseTest {
     private fun release() = JSONObject().put("tag_name", "v1.0-build.41").put("draft", false).put("prerelease", false)
-        .put("assets", JSONArray().put(JSONObject().put("id", 123L).put("name", "BYBUS.apk").put("state", "uploaded").put("size", 1000L)))
+        .put("assets", JSONArray().put(JSONObject().put("id", 123L).put("name", "BYBUS-Android.apk").put("state", "uploaded").put("size", 1000L)))
     private fun manifest() = JSONObject().put("schemaVersion", 1).put("packageName", AppReleases.PACKAGE)
-        .put("versionName", "v1.0").put("versionCode", 41).put("minSdk", 26).put("apkName", "BYBUS.apk")
+        .put("versionName", "v1.0").put("versionCode", 41).put("minSdk", 26).put("apkName", "BYBUS-Android.apk")
         .put("sha256", "a".repeat(64)).put("size", 1000L).put("notes", "保留数据升级")
     private fun rejects(action: () -> Unit) { assertThrows(Exception::class.java, action) }
 
@@ -25,6 +25,7 @@ class AppReleaseTest {
     }
     @Test fun rejectsWrongAppAndMismatchedReleaseCode() {
         rejects { AppRelease.parse(release(), manifest().put("packageName", "com.ProjectMoon.LimbusCompany")) }
+        rejects { AppRelease.parse(release(), manifest().put("packageName", "com.example.limbuszhcn").put("apkName", "BYBUS.apk")) }
         rejects { AppRelease.parse(release(), manifest().put("versionCode", 42)) }
         rejects { AppRelease.parse(release(), manifest().put("schemaVersion", 2)) }
     }
@@ -38,7 +39,7 @@ class AppReleaseTest {
     }
     @Test fun onlyTrustsExactGitHubHostsAndRepositoryEndpoints() {
         assertTrue(AppReleases.allowed(AppReleases.NOTICE))
-        assertTrue(AppReleases.allowed("https://github.com/gravere/BYBUS/releases/download/v1.0.19-build.62/bybus-update.json"))
+        assertTrue(AppReleases.allowed("https://github.com/gravere/BYBUS/releases/download/v1.0.19-build.62/bybus-app-update.json"))
         assertTrue(AppReleases.allowed("${AppReleases.API}/latest"))
         assertTrue(AppReleases.allowed("${AppReleases.API}/assets/123"))
         assertTrue(AppReleases.allowed("https://release-assets.githubusercontent.com/github-production-release-asset/a?token=signed"))
@@ -49,13 +50,13 @@ class AppReleaseTest {
             "https://api.github.com/repositories/${AppReleases.REPOSITORY_ID}/releases/assets/0",
             "https://api.github.com/repos/${AppReleases.REPOSITORY}/releases/latest",
             "https://api.github.com/repos/other/app/releases/latest", "https://api.github.com/user",
-            "https://github.com/other/BYBUS/releases/latest/download/bybus-update.json",
-            "https://github.com/gravere/BYBUS/releases/latest/download/BYBUS.apk",
-            "https://github.com/gravere/BYBUS/releases/download/untagged/bybus-update.json",
+            "https://github.com/other/BYBUS/releases/latest/download/bybus-app-update.json",
+            "https://github.com/gravere/BYBUS/releases/latest/download/BYBUS-Android.apk",
+            "https://github.com/gravere/BYBUS/releases/download/untagged/bybus-app-update.json",
             "https://release-assets.githubusercontent.com@evil.test/a", "https://name:secret@objects.githubusercontent.com/a",
             "https://objects.githubusercontent.com:4433/a", "file:///data/local/tmp/app.apk").forEach { assertFalse(it, AppReleases.allowed(it)) }
         assertEquals("https://api.github.com/repositories/${AppReleases.REPOSITORY_ID}/releases/assets/123",
-            ReleaseAsset(123, "BYBUS.apk", 1000).url)
+            ReleaseAsset(123, "BYBUS-Android.apk", 1000).url)
     }
     @Test fun automaticNoticeUsesOnlyBoundedPublicMetadata() {
         val calls = mutableListOf<String>()

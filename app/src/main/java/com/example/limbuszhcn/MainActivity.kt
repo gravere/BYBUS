@@ -36,6 +36,13 @@ class MainActivity : ComponentActivity() {
      */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val migration = com.example.limbuszhcn.migration.MigrationAccess
+        if (migration.preferences(this).getBoolean("pending", false) ||
+            !intent.getBooleanExtra("skip_legacy_migration", false) && migration.shouldOffer(this)) {
+            startActivity(Intent(this, com.example.limbuszhcn.migration.MigrationActivity::class.java))
+            finish()
+            return
+        }
         if (android.os.Build.VERSION.SDK_INT >= 31) {
             splashScreen.setOnExitAnimationListener { it.remove() }
         }

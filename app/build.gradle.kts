@@ -42,7 +42,7 @@ android {
     ndkVersion = "30.0.14904198"
 
     defaultConfig {
-        applicationId = "com.example.limbuszhcn"
+        applicationId = "io.github.gravere.bybus"
         // java.time and the native container require API 26; actual game libraries
         // must also pass ABI, kernel page-size and structural qualification.
         minSdk = 26
@@ -130,6 +130,7 @@ tasks.named("preBuild").configure { dependsOn(prepareCompactAssets, verifyBundle
 dependencies {
 
     implementation(project(":virtualapp"))
+    implementation(project(":migration-core"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)

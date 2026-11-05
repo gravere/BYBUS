@@ -14,7 +14,7 @@ public final class LimbusPlayStoreActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         try {
-            Intent details = new Intent("com.example.limbuszhcn.SHOW_GAME_UPDATES")
+            Intent details = new Intent(getPackageName() + ".SHOW_GAME_UPDATES")
                     .setClassName(getPackageName(), "com.example.limbuszhcn.MainActivity")
                     .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
             try {

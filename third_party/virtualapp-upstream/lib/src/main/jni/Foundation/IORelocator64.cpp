@@ -958,7 +958,7 @@ static const char *relocate_path_with_dirfd(int dirfd, const char *pathname, cha
 
 static bool limbus_is_translation_cache_path(const char *path) {
     return path != nullptr
-           && strstr(path, "com.example.limbuszhcn") != nullptr
+           && strstr(path, "io.github.gravere.bybus") != nullptr
            && strstr(path, "/translation-cache/") != nullptr;
 }
 
@@ -971,9 +971,9 @@ static const char *limbus_virtual_storage_path(const char *path, char *const buf
         const char *actual;
     };
     static const PrefixRule rules[] = {
-            {"/storage/emulated/0/", "/data/user/0/com.example.limbuszhcn/virtual/storage/emulated/0/"},
-            {"/sdcard/", "/data/user/0/com.example.limbuszhcn/virtual/storage/emulated/0/"},
-            {"/mnt/sdcard/", "/data/user/0/com.example.limbuszhcn/virtual/storage/emulated/0/"},
+            {"/storage/emulated/0/", "/data/user/0/io.github.gravere.bybus/virtual/storage/emulated/0/"},
+            {"/sdcard/", "/data/user/0/io.github.gravere.bybus/virtual/storage/emulated/0/"},
+            {"/mnt/sdcard/", "/data/user/0/io.github.gravere.bybus/virtual/storage/emulated/0/"},
     };
     for (const PrefixRule &rule : rules) {
         size_t prefix_len = strlen(rule.visible);
@@ -1034,19 +1034,19 @@ static const char *limbus_reverse_host_vm_path(const char *path, char *const buf
     };
     static const PrefixRule rules[] = {
             {
-                    "/data/data/com.example.limbuszhcn/virtual/storage/emulated/0/",
+                    "/data/data/io.github.gravere.bybus/virtual/storage/emulated/0/",
                     "/storage/emulated/0/"
             },
             {
-                    "/data/user/0/com.example.limbuszhcn/virtual/storage/emulated/0/",
+                    "/data/user/0/io.github.gravere.bybus/virtual/storage/emulated/0/",
                     "/storage/emulated/0/"
             },
             {
-                    "/data/data/com.example.limbuszhcn/virtual/data/user/0/com.ProjectMoon.LimbusCompany/",
+                    "/data/data/io.github.gravere.bybus/virtual/data/user/0/com.ProjectMoon.LimbusCompany/",
                     "/data/user/0/com.ProjectMoon.LimbusCompany/"
             },
             {
-                    "/data/user/0/com.example.limbuszhcn/virtual/data/user/0/com.ProjectMoon.LimbusCompany/",
+                    "/data/user/0/io.github.gravere.bybus/virtual/data/user/0/com.ProjectMoon.LimbusCompany/",
                     "/data/user/0/com.ProjectMoon.LimbusCompany/"
             },
     };
@@ -1089,7 +1089,7 @@ static int reverse_readlink_result(char *buf, size_t bufsiz, int ret) {
         reversed_len = bufsiz;
     }
     memcpy(buf, reversed, reversed_len);
-    if (strstr(link_temp, "com.example.limbuszhcn") != nullptr
+    if (strstr(link_temp, "io.github.gravere.bybus") != nullptr
             || strstr(link_temp, "/virtual/") != nullptr) {
         ALOGI("Limbus readlink reverse %s -> %.*s",
               link_temp,

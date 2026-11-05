@@ -21,5 +21,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "limbusZhCN"
 include(":app")
+include(":migration-core", ":migration")
 include(":virtualapp")
 project(":virtualapp").projectDir = file("third_party/virtualapp-upstream/lib")

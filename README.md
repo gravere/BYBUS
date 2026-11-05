@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/gravere/BYBUS/releases/latest/download/BYBUS.apk"><strong>下载完整 APK</strong></a>
+  <a href="https://github.com/gravere/BYBUS/releases/latest/download/BYBUS-Android.apk"><strong>下载完整 APK</strong></a>
   &nbsp;·&nbsp;
   <a href="#开始使用">开始使用</a>
   &nbsp;·&nbsp;
@@ -42,6 +42,7 @@ BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeL
 ## 功能特点
 
 - **免 Root 使用** — 导入官方游戏，在容器内显示中文，保留原始 APK 与游戏文本文件。
+- **独立安装与迁移** — 可与 limbusZhCN 共存；旧 BYBUS 的游戏资源和配置可通过本机导入，无需重新下载已有资源。
 - **汉化持续同步** — 启动前检查零协更新，复用已校验的缓存；汉化索引与配置持久保存，无需每次重新设置。
 - **减少下载负担** — 大型游戏资源可只在 BYBUS 内下载；应用更新自动复用已安装内容，只下载缺少的部分，无需逐个匹配旧版本补丁。
 - **应用更新提醒** — 自动检查 BYBUS 正式发行版，发现新版时在设置与更新入口显示红点，覆盖升级后自动消除。
@@ -53,7 +54,7 @@ BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeL
 
 需要 **Android 8.0 及以上、64 位 ARM（arm64-v8a）的手机或平板**，并先安装官方《边狱巴士》。设备与 Google 组件的具体条件见 [Android 适配说明](docs/android-runtime-portability.md)。
 
-1. **安装 BYBUS** — [下载完整 APK](https://github.com/gravere/BYBUS/releases/latest/download/BYBUS.apk) 并安装。
+1. **安装 BYBUS** — [下载完整 APK](https://github.com/gravere/BYBUS/releases/latest/download/BYBUS-Android.apk) 并安装。
 2. **导入游戏** — 打开 BYBUS，点击「启动游戏」，按提示导入已安装的官方游戏。
 3. **准备资源** — 首次进入时登录账号并下载游戏资源；完成后返回 BYBUS，再启动一次以启用完整汉化。
 4. **开始游玩** — 此后从 BYBUS 启动游戏，汉化检查会自动完成。
@@ -68,8 +69,9 @@ BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeL
 
 | 文件 | 用途 |
 | --- | --- |
-| `BYBUS-<版本>-arm64-v8a.apk` 或 `BYBUS.apk` | 内容相同的完整安装包，首次安装或手动更新任选一个 |
-| `bybus-update.json`、`SHA256SUMS.txt` | 包含通用更新描述与校验值，无需手动安装 |
+| `BYBUS-<版本>-arm64-v8a.apk` 或 `BYBUS-Android.apk` | 内容相同的独立版完整安装包，首次安装或手动更新任选一个 |
+| `BYBUS.apk` | 旧版迁移助手，仅供旧 BYBUS 迁移；首次安装不要选它 |
+| `bybus-app-update.json`、`bybus-update.json`、`SHA256SUMS.txt` | 更新描述与校验值，无需手动安装 |
 | Source code | 项目源码，不是安装包 |
 
 </details>
@@ -85,6 +87,17 @@ BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeL
 手动更新时，下载最新完整 APK **覆盖安装**即可保留数据；应用内更新不可用时也可采用此方式。卸载 BYBUS 或清除数据会删除容器内的资源和配置。
 
 <details>
+<summary><strong>已有旧版 BYBUS，如何保留数据并迁移？</strong></summary>
+
+1. 在旧版 BYBUS 中检查更新，安装迁移助手；不要提前卸载旧版或清除数据。
+2. 打开助手，下载并安装独立版 BYBUS，在独立版选择「导入旧版数据」。
+3. 导入完成并确认运行正常后，再移除迁移助手。此后可同时安装 limbusZhCN。
+
+数据只在本机复制和校验，迁移需要额外存储空间；中断后可重新导入，旧数据始终保留到你自行移除助手。Google 账号凭据可能需要重新授权。迁移只需一次，后续直接在独立版内更新。
+
+</details>
+
+<details>
 <summary><strong>增量更新如何工作？</strong></summary>
 
 支持通用增量的更新器会检查已安装 APK，复用其中与最新版相同的内容，只下载缺少的部分，再合成并校验完整 APK，交给系统覆盖安装。同一份更新描述可用于不同旧版本，无需逐个发布补丁，也不受 Releases 只保留三个版本的限制。
@@ -96,13 +109,6 @@ BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeL
 </details>
 
 各版本变化见[发行说明](https://github.com/gravere/BYBUS/releases)。Releases 保留最近三个正式构建的发行文件。
-
-<details>
-<summary>能与 limbusZhCN 同时安装吗？</summary>
-
-目前不能。BYBUS 沿用了上游的 Android 应用 ID，但使用独立签名，两者无法同时安装，也不能相互覆盖更新。请使用 BYBUS 自己的更新入口；不要为了切换项目卸载已有应用，否则会删除其中的容器数据。
-
-</details>
 
 ## 文档与贡献
 

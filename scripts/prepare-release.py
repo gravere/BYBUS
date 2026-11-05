@@ -6,13 +6,14 @@ from release_notes import render_release_notes, update_summary
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--apk', required=True, type=Path)
+parser.add_argument('--legacy-apk', required=True, type=Path)
 parser.add_argument('--output', required=True, type=Path)
 parser.add_argument('--aapt', required=True)
 args = parser.parse_args()
 root = Path(__file__).resolve().parent.parent
 badging = subprocess.check_output([args.aapt, 'dump', 'badging', str(args.apk.resolve())], text=True, encoding='utf-8')
 identity = re.search(r"package: name='([^']+)' versionCode='(\d+)' versionName='([^']+)'", badging)
-assert identity and identity[1] == 'com.example.limbuszhcn', 'Not a BYBUS APK'
+assert identity and identity[1] == 'io.github.gravere.bybus', 'Not an independent BYBUS APK'
 version, code = identity[3], int(identity[2])
 min_sdk = int(re.search(r"sdkVersion:'(\d+)'", badging)[1])
 assert re.fullmatch(r'v\d+(?:\.\d+){1,2}', version)
@@ -48,18 +49,30 @@ apksigner = Path(args.aapt).with_name('apksigner.bat' if Path(args.aapt).suffix 
 verification = subprocess.check_output([str(apksigner), 'verify', '--print-certs', str(args.apk.resolve())], text=True, encoding='utf-8')
 signer = re.search(r'Signer #1 certificate SHA-256 digest: ([a-f0-9]{64})', verification)
 assert signer, 'APK signature not verified'
+legacy_badging = subprocess.check_output([args.aapt, 'dump', 'badging', str(args.legacy_apk.resolve())], text=True, encoding='utf-8')
+legacy_identity = re.search(r"package: name='([^']+)' versionCode='(\d+)' versionName='([^']+)'", legacy_badging)
+assert legacy_identity and legacy_identity[1] == 'com.example.limbuszhcn' and int(legacy_identity[2]) == code and legacy_identity[3] == version, 'Migration helper identity differs'
+legacy_verification = subprocess.check_output([str(apksigner), 'verify', '--print-certs', str(args.legacy_apk.resolve())], text=True, encoding='utf-8')
+assert re.search(r'Signer #1 certificate SHA-256 digest: ([a-f0-9]{64})', legacy_verification)[1] == signer[1], 'Migration helper signer differs'
+legacy_tree = subprocess.check_output([args.aapt, 'dump', 'xmltree', str(args.legacy_apk.resolve()), 'AndroidManifest.xml'], text=True, encoding='utf-8')
+assert 'LegacyMigrationProvider' in legacy_tree and 'com.example.limbuszhcn.permission.BYBUS_MIGRATION' in legacy_tree
+assert 'BinderProvider' not in legacy_tree and 'MigrationProbeActivity' not in manifest_tree
 args.output.mkdir(parents=True, exist_ok=True)
 apk = args.output/f'BYBUS-{version}-arm64-v8a.apk'
 if not apk.exists() or not apk.samefile(args.apk):
     # Unlink before writing: a previous output may share an inode with its alias.
     if apk.exists(): apk.unlink()
     shutil.copyfile(args.apk, apk)
-# Existing clients require this exact name. Both downloads contain the same APK.
-compat_apk = args.output/'BYBUS.apk'
+# Independent clients and direct download links use this stable name.
+compat_apk = args.output/'BYBUS-Android.apk'
 if not compat_apk.exists() or not compat_apk.samefile(apk):
     if compat_apk.exists(): compat_apk.unlink()
     try: compat_apk.hardlink_to(apk)
     except OSError: shutil.copyfile(apk, compat_apk)
+legacy_apk = args.output/'BYBUS.apk'
+# An earlier version of this output was a hardlink to the main APK. Unlink first.
+if legacy_apk.exists(): legacy_apk.unlink()
+shutil.copyfile(args.legacy_apk, legacy_apk)
 def digest(path):
     with path.open('rb') as stream: return hashlib.file_digest(stream, 'sha256').hexdigest()
 sha = digest(apk)
@@ -71,8 +84,12 @@ manifest = dict(schemaVersion=1, packageName=identity[1], versionName=version, v
 (args.output/'release-notes.md').write_text(render_release_notes(manifest, notes), encoding='utf-8')
 metadata = json.dumps(manifest, ensure_ascii=False, indent=2)+'\n'
 assert len(metadata.encode('utf-8')) <= 32 * 1024, 'Metadata exceeds legacy updater limit'
-(args.output/'bybus-update.json').write_text(metadata, encoding='utf-8')
-files = [apk, compat_apk, args.output/'bybus-update.json']
+(args.output/'bybus-app-update.json').write_text(metadata, encoding='utf-8')
+legacy_manifest = dict(schemaVersion=1, packageName=legacy_identity[1], versionName=version, versionCode=code,
+    minSdk=26, apkName=legacy_apk.name, size=legacy_apk.stat().st_size, sha256=digest(legacy_apk), deltas=[],
+    notes='- 本次更新为旧版迁移助手，保留旧数据。\n- 更新后按提示下载独立 BYBUS，并在独立版导入旧数据。\n- 确认运行正常后，再移除迁移助手，即可与 limbusZhCN 共存。')
+(args.output/'bybus-update.json').write_text(json.dumps(legacy_manifest, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
+files = [apk, compat_apk, legacy_apk, args.output/'bybus-app-update.json', args.output/'bybus-update.json']
 (args.output/'SHA256SUMS.txt').write_text(''.join(digest(p)+'  '+p.name+'\n' for p in files), encoding='utf-8')
 print(json.dumps(dict(tag=f'{version}-build.{code}', name=f'BYBUS {version}', apkName=apk.name,
                      compatibilityApkName=compat_apk.name, sha256=sha, size=apk.stat().st_size, signer=signer[1],

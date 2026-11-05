@@ -12,7 +12,8 @@
 ## 项目边界
 
 - 目标游戏包名: `com.ProjectMoon.LimbusCompany`
-- 汉化器包名: `com.example.limbuszhcn`
+- 汉化器独立包名: `io.github.gravere.bybus`；Java/Kotlin namespace 保留 `com.example.limbuszhcn`。
+- 旧包 `com.example.limbuszhcn` 只用于同签名的数据迁移助手。迁移边界见 `docs/package-migration.md`；不得自动卸载或清空旧应用，不复制容器安装注册表和绝对路径缓存。独立安装、更新清单与旧版升级入口必须一起验证。
 - 主路径: VirtualApp 容器模式。同步系统已安装的官方游戏 APK/splits 到容器（不限安装渠道），配对日文原文与零协译文生成宿主持久索引，从容器内启动游戏并接管显示文本；不覆盖游戏原始 JSON。用户选择保留系统安装包，大资源只在 BYBUS 使用；本轮不切换独立容器模式。多渠道查询、本地包校验安装和快照去重边界见 `docs/multichannel-game-updates.md`。
 - 禁止修改游戏 APK, 禁止 Frida 注入, 禁止 Shizuku 生产路径。
 - App 模块: `:app`; 容器模块: `:virtualapp` -> `third_party/virtualapp-upstream/lib`。
