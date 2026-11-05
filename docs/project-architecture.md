@@ -72,6 +72,12 @@ separates application and translation resources with fixed tabs. Each tab has it
 summary and fixed action footer; release notes remain a simple bullet list. Application progress,
 download/install and cancel controls stay outside the scrolling notes; an active transfer is
 also indicated on its tab. Switching tabs or closing the page does not cancel either operation.
+Both update tabs share an inset, softly tinted action card aligned to the body's actual padding.
+Status, a measured percentage when available, and a compact cancel target occupy one row;
+the thin rounded progress track sits inside the same card. Idle states have no progress track,
+and download/install/check actions use the same rounded tonal treatment. No full-width divider
+separates this area from the page. Labels may wrap at large font scales; existing window insets,
+short-window scrolling, controller states and action enablement remain authoritative.
 App-version notices use the independent metadata-only foreground check described in
 [app-updates.md](app-updates.md); they do not enter the game preparation queue.
 

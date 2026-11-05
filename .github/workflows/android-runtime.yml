@@ -6,7 +6,7 @@ on:
       mode:
         description: Inspection scope
         type: choice
-        options: [ui, launch, runtime]
+        options: [ui, launch, updates, runtime]
         default: ui
       candidate:
         description: Inspect the staged release matching this branch
