@@ -3,6 +3,7 @@
     <application>
         <!-- Component rendering only; this activity is absent from the release APK. -->
         <activity android:name=".LaunchControlProbeActivity" android:exported="true" />
+        <activity android:name=".ServiceConnectionProbeActivity" android:exported="true" />
         <activity android:name=".MigrationScreenProbeActivity" android:exported="true" />
         <activity android:name=".UpdateControlProbeActivity" android:exported="true" />
         <activity android:name=".AccountRegistryProbeActivity" android:exported="true" />

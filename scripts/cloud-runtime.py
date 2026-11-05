@@ -405,6 +405,37 @@ def install_component_probe(release, verifier, name="bybus-ui-probe.apk"):
     return digest
 
 
+def inspect_service_callback(release, verifier):
+    """Exercise the platform AIDL Proxy/Stub and production delegate, not a mocked ABI."""
+    digest = install_component_probe(release, verifier)
+    adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.ServiceConnectionProbeActivity", timeout=90)
+    deadline = time.monotonic() + 45
+    while time.monotonic() < deadline:
+        tree = hierarchy("service-callback")
+        for node in tree.iter("node"):
+            label = node.get("text", "")
+            if not label.startswith("SERVICE_CALLBACK_RESULT\n"):
+                continue
+            result = json.loads(label.split("\n", 1)[1])
+            REPORT["service_callback"] = dict(result, probe_sha256=digest)
+            if not result.get("passed"):
+                raise RuntimeError("Platform service callback failed: " + str(result.get("error")))
+            expected = {"android15": (35, 3), "android17": (37, 4)}[REPORT["profile"]]
+            if (result["sdk"], result["framework_parameters"]) != expected:
+                raise RuntimeError("The image does not exercise the expected framework signature")
+            required = ("platform_proxy_and_stub", "component_preserved", "service_binder_preserved",
+                        "null_binding", "dead_flag", "legacy_entry_points")
+            if result["callbacks"] != 5 or not all(result[key] for key in required):
+                raise RuntimeError("Service callback preservation checks did not all pass")
+            if expected[1] == 4 and not result["session_preserved"]:
+                raise RuntimeError("Framework service session was not preserved")
+            REPORT["checks"].append("platform callback ABI, Binder/session, null binding and dead flag preserved")
+            REPORT["result"] = "service callback inspection completed; game runtime not tested"
+            return
+        time.sleep(1)
+    raise RuntimeError("Platform service callback inspection timed out")
+
+
 def inspect_migration(release, verifier):
     """Exercise the production provider/decoder with synthetic data, then install upstream beside BYBUS."""
     legacy = "com.example.limbuszhcn"
@@ -1189,6 +1220,14 @@ def main():
     if "Success" not in installed:
         raise RuntimeError("APK installation did not succeed: " + installed[-1000:])
     REPORT["checks"].append("published APK signature/hash and installation")
+    if os.environ.get("RUNTIME_MODE") == "service-callback":
+        adb("logcat", "-c")
+        adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
+        time.sleep(3)
+        locate(hierarchy("release-home"), "设置与工具")
+        REPORT["checks"].append("signed release main activity resumed")
+        inspect_service_callback(release, verifier)
+        return
     if os.environ.get("RUNTIME_MODE") == "button-feedback":
         adb("shell", "cmd", "statusbar", "send-disable-flag", "system-icons", "clock", "notification-icons")
         adb("logcat", "-c")
