@@ -2,6 +2,14 @@
 
 本文从 AGENTS.md 拆出,记录 VirtualApp 接入状态、设备实测结论和 Limbus 专项兼容细节。AGENTS.md 只保留架构边界和当前关键判断。
 
+## 服务连接回调签名
+
+`IServiceConnection.connected` 在旧系统使用两个参数，Android 8 起增加 `dead`，Android 16 QPR2 的框架又在 `dead` 前增加可空 `IBinderSession`。厂商可能回移接口，必须检查实际方法签名，不能只按 SDK 分支。容器接收端同时实现这三种精确签名；发回系统 `LoadedApk` 连接时选择系统真实接口，并原样传递组件、服务 Binder、会话和断开标志。会话与服务 Binder 不可混淆，也不能吞掉转发异常。
+
+新接口的类型声明沿用项目已有的隐藏 AIDL 桩方式；系统存在同名接口时由平台类加载器提供，旧系统只需能够解析方法类型。不要修改全局服务冻结规则、清除游戏数据或绕过游戏原生检查来处理回调 ABI 不匹配。
+
+参考：[AOSP IServiceConnection](https://android.googlesource.com/platform/frameworks/base/+/android16-qpr2-release/core/java/android/app/IServiceConnection.aidl)、[IBinderSession](https://android.googlesource.com/platform/frameworks/base/+/android16-qpr2-release/core/java/android/app/IBinderSession.aidl)。
+
 VirtualApp 接入状态:
 
 - 上游固定为 ServenScorpion/VirtualApp Android 12 分支提交 `ae7c4275096b6614fa1aa7befe326630fd3f8833`。
