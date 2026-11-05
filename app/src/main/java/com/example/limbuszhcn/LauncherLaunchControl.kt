@@ -8,7 +8,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
@@ -17,7 +16,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -30,23 +28,20 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.*
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 import kotlin.math.PI
 import kotlin.math.sin
 
-internal enum class LaunchAction(val title: String, val glyph: Glyph, val busy: Boolean = false,
-    val primary: Boolean = false) {
-    Detect("检测游戏", Glyph.Search), Detecting("正在检测", Glyph.Search, busy = true),
-    Prepare("准备游戏", Glyph.Sync, busy = true), Translate("检查汉化", Glyph.Translation, busy = true),
-    Starting("正在启动", Glyph.Enter, busy = true, primary = true), Working("正在处理", Glyph.Progress, busy = true),
-    DeviceStatus("查看设备兼容性", Glyph.Shield), NativeStatus("查看兼容状态", Glyph.Shield),
-    Status("查看运行状态", Glyph.Info), Retry("重新启动", Glyph.Refresh, primary = true),
-    Launch("启动游戏", Glyph.Play, primary = true)
+internal enum class LaunchAction(val title: String, val busy: Boolean = false) {
+    Detect("检测游戏"), Detecting("正在检测", busy = true),
+    Prepare("准备游戏", busy = true), Translate("检查汉化", busy = true),
+    Starting("正在启动", busy = true), Working("正在处理", busy = true),
+    DeviceStatus("查看设备兼容性"), NativeStatus("查看兼容状态"),
+    Status("查看运行状态"), Retry("重新启动"), Launch("启动游戏")
 }
-
-private data class LaunchContent(val title: String, val glyph: Glyph, val working: Boolean)
 
 @Composable
 internal fun LaunchButton(action: LaunchAction, enabled: Boolean, step: Int,
@@ -68,11 +63,8 @@ internal fun LaunchButton(action: LaunchAction, enabled: Boolean, step: Int,
     val soft = C.AccentSoft
     val line = C.Line
     val haptic = LocalHapticFeedback.current
-    val strong = action.primary && !confirmed
-    val buttonColor by animateColorAsState(if (strong) accent else soft, tween(180), label = "launch surface")
-    val foreground by animateColorAsState(if (strong) C.OnPrimary else C.Accent, tween(180), label = "launch ink")
-    val content = LaunchContent(feedback ?: action.title, if (confirmed) Glyph.Check else action.glyph, busy)
-    Box(Modifier.fillMaxWidth().heightIn(min = 164.dp)
+    val buttonColor by animateColorAsState(if (confirmed) soft else C.Panel, tween(180), label = "launch surface")
+    Box(Modifier.fillMaxWidth().heightIn(min = 120.dp)
         .graphicsLayer { scaleX = scale.value; scaleY = scale.value }, contentAlignment = Alignment.Center) {
         Box(Modifier.matchParentSize().semantics {
             if (activeStep >= 0) {
@@ -97,8 +89,8 @@ internal fun LaunchButton(action: LaunchAction, enabled: Boolean, step: Int,
             val highlight = Path()
             val glow = Brush.radialGradient(listOf(accent.copy(alpha = .09f),
                 soft.copy(alpha = .025f), Color.Transparent), Offset(size.width / 2, size.height / 2), size.width / 2)
-            val wave = Brush.linearGradient(listOf(accent.copy(alpha = .03f),
-                accent.copy(alpha = .18f), accent.copy(alpha = .04f)),
+            val wave = Brush.linearGradient(listOf(accent.copy(alpha = .04f),
+                accent.copy(alpha = .24f), accent.copy(alpha = .05f)),
                 start = Offset.Zero, end = Offset(size.width, size.height))
             onDrawBehind {
                 if (measured.width <= 0 || measured.height <= 0) return@onDrawBehind
@@ -132,35 +124,24 @@ internal fun LaunchButton(action: LaunchAction, enabled: Boolean, step: Int,
         Button(onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onClick() },
             enabled = enabled && !busy, interactionSource = interaction,
             modifier = Modifier.padding(horizontal = 12.dp).widthIn(max = width).fillMaxWidth()
-                .heightIn(min = 76.dp).background(Brush.linearGradient(listOf(buttonColor,
-                    lerp(buttonColor, if (strong) C.OnPrimary else C.Panel, .06f))), CircleShape)
+                .heightIn(min = 56.dp)
                 .onSizeChanged { buttonSize = it }.semantics {
                     if (busy || confirmed) liveRegion = LiveRegionMode.Polite
                     if (status.isNotBlank()) stateDescription = status
                 },
             shape = CircleShape,
-            border = BorderStroke(1.dp, accent.copy(alpha = if (strong) .04f else .12f)),
-            elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp),
-            contentPadding = PaddingValues(start = 14.dp, end = 22.dp, top = 12.dp, bottom = 12.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent, contentColor = foreground,
-                disabledContainerColor = Color.Transparent, disabledContentColor = if (busy) foreground else C.Muted)) {
-            AnimatedContent(content, Modifier.fillMaxWidth(), transitionSpec = {
+            border = BorderStroke(1.dp, accent.copy(alpha = if (enabled || busy) .22f else .1f)),
+            elevation = ButtonDefaults.buttonElevation(defaultElevation = 1.dp, pressedElevation = 0.dp,
+                disabledElevation = if (busy) 1.dp else 0.dp),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = buttonColor, contentColor = C.Ink,
+                disabledContainerColor = C.Panel, disabledContentColor = if (busy) C.Ink else C.Muted)) {
+            AnimatedContent(feedback ?: action.title, Modifier.fillMaxWidth(), contentAlignment = Alignment.Center,
+                transitionSpec = {
                 (fadeIn(tween(180)) togetherWith fadeOut(tween(90))).using(SizeTransform(clip = false))
-            }, label = "launch action") { item ->
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Box(Modifier.size(44.dp).clip(CircleShape).background(foreground.copy(alpha = .1f)),
-                        contentAlignment = Alignment.Center) {
-                        LauncherGlyph(item.glyph, foreground, Modifier.size(23.dp))
-                        if (item.working && activeStep < 0) CircularProgressIndicator(Modifier.size(39.dp),
-                            color = foreground.copy(alpha = .5f), strokeWidth = 1.5.dp)
-                    }
-                    Text(item.title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                    Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
-                        if (!item.working && !confirmed && enabled) LauncherGlyph(
-                            if (action.primary) Glyph.Arrow else Glyph.Chevron, foreground, Modifier.size(18.dp))
-                    }
-                }
+            }, label = "launch action") { title ->
+                Text(title, Modifier.fillMaxWidth(), textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.labelLarge)
             }
         }
     }

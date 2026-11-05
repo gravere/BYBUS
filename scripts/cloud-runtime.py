@@ -152,6 +152,8 @@ def inspect_home_alignment(tree, width, height, density=1, landscape=False):
         card_gap = (project[1] - status[3]) / density
         if card_gap > 400 or min(above, below) < 0 or abs(above - below - 12) > 2:
             raise RuntimeError(f"Portrait spacing is not bounded and balanced: {above=} {below=} {card_gap=}")
+        if os.environ.get("RUNTIME_MODE") == "button-ui" and not 126 <= card_gap <= 130:
+            raise RuntimeError(f"Compact portrait card spacing was not applied: {card_gap=}")
     REPORT.setdefault("home_layouts", []).append(dict(width=width, height=height, middle_error_dp=middle_error,
         horizontal=landscape,
         status_bounds=status, project_bounds=project, action_bounds=action,
@@ -616,7 +618,7 @@ def inspect_migration_screen(release, verifier, focused=False, probe_digest=None
         disclosure_fixtures=disclosures, disclosure_collapses=focused, status_resets_scroll=True)
 
 
-def inspect_launch_control(release, verifier, probe_digest=None):
+def inspect_launch_control(release, verifier, probe_digest=None, feedback_only=False):
     """Render production controls with debug-only fixtures after all release screenshots."""
     digest = probe_digest or install_component_probe(release, verifier)
     adb("shell", "wm", "size", "720x1560")
@@ -630,6 +632,8 @@ def inspect_launch_control(release, verifier, probe_digest=None):
         ("launch-detecting", -1, "no", "1.0", "detecting"),
         ("launch-compatibility", -1, "no", "1.6", "compatibility"),
         ("launch-retry", -1, "no", "1.0", "retry")]
+    if feedback_only:
+        cases = []
     rendered = []
     try:
         for name, step, night, font, fixture in cases:
@@ -645,6 +649,12 @@ def inspect_launch_control(release, verifier, probe_digest=None):
             button = clickable_bounds(tree, title, allow_disabled=True)
             if button[3] - button[1] < 112:
                 raise RuntimeError("Launch control clips its minimum touch height: " + name)
+            if os.environ.get("RUNTIME_MODE") == "button-ui":
+                text = element_bounds(tree, title)
+                if abs((text[0] + text[2]) - (button[0] + button[2])) > 4 or abs((text[1] + text[3]) - (button[1] + button[3])) > 4:
+                    raise RuntimeError("Launch title is not centered: " + name)
+                if font == "1.0" and (abs(button[2] - button[0] - 464) > 4 or abs(button[3] - button[1] - 112) > 4):
+                    raise RuntimeError("Launch control did not restore its compact size: " + name)
             progress = [n for n in tree.iter("node") if n.get("content-desc") == "启动进度"]
             if bool(progress) != (step in (0, 1, 2)):
                 raise RuntimeError("Stage progress appears outside real launch stages: " + name)
@@ -659,10 +669,18 @@ def inspect_launch_control(release, verifier, probe_digest=None):
         adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.LaunchControlProbeActivity",
             "--ei", "step", "1", "--ez", "animate", "true", timeout=40)
         time.sleep(2)
-        capture("launch-motion-a")
-        time.sleep(.6)
-        capture("launch-motion-b")
-        if (OUT / "launch-motion-a.png").read_bytes() == (OUT / "launch-motion-b.png").read_bytes():
+        locate(hierarchy("launch-motion"), "检查汉化")
+        # Hierarchy dumps wait for UI idle and can repeatedly sample the same phase.
+        # Capture adjacent frames directly, at intervals unrelated to the 1.6s loop.
+        motion_digests = []
+        for name, pause in [("a", 0), ("b", .173), ("c", .347)]:
+            time.sleep(pause)
+            frame = adb("exec-out", "screencap", "-p", binary=True)
+            if not frame.startswith(b"\x89PNG\r\n\x1a\n"):
+                raise RuntimeError("Invalid animation screenshot")
+            (OUT / f"launch-motion-{name}.png").write_bytes(frame)
+            motion_digests.append(hashlib.sha256(frame).hexdigest())
+        if len(set(motion_digests)) == 1:
             raise RuntimeError("Animated launch control produced identical frames")
         # Exercise the real completion timer and action routing, with no game operation.
         adb("shell", "settings", "put", "secure", "accessibility_non_interactive_ui_timeout_ms", "10000")
@@ -692,8 +710,10 @@ def inspect_launch_control(release, verifier, probe_digest=None):
         adb("shell", "cmd", "uimode", "night", "no", check=False)
     REPORT["launch_component"] = dict(apk_sha256=digest, fixtures=rendered, animated_frames_differ=True,
         completion_restores=True, completion_keeps_bounds=True, completion_action=True,
-        action_routes=True, real_startup=False, readme_uses_component_fixtures=False)
-    REPORT["checks"].append("production launch control: 3 stage fixtures, dark/large text/idle/generic busy and moving highlight")
+        action_routes=not feedback_only, real_startup=False, readme_uses_component_fixtures=False,
+        motion_frame_sha256=motion_digests)
+    REPORT["checks"].append("production launch control: motion and completion feedback" if feedback_only else
+        "production launch control: 3 stage fixtures, dark/large text/idle/generic busy and moving highlight")
 
 
 def inspect_resource_import():
@@ -973,6 +993,12 @@ def main():
     if "Success" not in installed:
         raise RuntimeError("APK installation did not succeed: " + installed[-1000:])
     REPORT["checks"].append("published APK signature/hash and installation")
+    if os.environ.get("RUNTIME_MODE") == "button-feedback":
+        adb("shell", "cmd", "statusbar", "send-disable-flag", "system-icons", "clock", "notification-icons")
+        adb("logcat", "-c")
+        inspect_launch_control(release, verifier, feedback_only=True)
+        REPORT["result"] = "button feedback inspection completed; screenshots require visual review"
+        return
     if os.environ.get("RUNTIME_MODE") == "disclosure-ui":
         adb("shell", "cmd", "statusbar", "send-disable-flag", "system-icons", "clock", "notification-icons")
         adb("logcat", "-c")
@@ -994,7 +1020,7 @@ def main():
     adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
     time.sleep(15)
     home = capture("home")
-    if os.environ.get("RUNTIME_MODE") in ("ui", "launch", "interaction-ui"):
+    if os.environ.get("RUNTIME_MODE") in ("ui", "launch", "button-ui", "interaction-ui"):
         inspect_home_alignment(home, 720, 1560, density=2)
     REPORT["checks"].append("main activity resumed")
     tap("都市零协会", home)
@@ -1031,6 +1057,11 @@ def main():
         time.sleep(.5)
         locate(hierarchy("migration-parent"), "设置与工具")
         REPORT["checks"].append("release migration menu and document picker cancellation return safely")
+    if os.environ.get("RUNTIME_MODE") == "button-ui":
+        inspect_tablet(focused=True)
+        inspect_launch_control(release, verifier)
+        REPORT["result"] = "button inspection completed; screenshots require visual review"
+        return
     if os.environ.get("RUNTIME_MODE") == "interaction-ui":
         inspect_tablet(focused=True)
         digest = install_component_probe(release, verifier)
