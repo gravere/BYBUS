@@ -23,7 +23,8 @@ class ServiceConnectionProbeActivity : Activity() {
         setContentView(output)
         Thread {
             val result = runCatching { inspect() }.getOrElse {
-                JSONObject().put("passed", false).put("error", "${it.javaClass.simpleName}: ${it.message}")
+                android.util.Log.e("ServiceCallbackProbe", "Platform callback inspection failed", it)
+                JSONObject().put("passed", false).put("error", it.stackTraceToString().take(8000))
             }
             runOnUiThread { output.text = "SERVICE_CALLBACK_RESULT\n$result" }
         }.start()
