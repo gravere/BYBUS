@@ -45,7 +45,7 @@ class UpdateControlProbeActivity : ComponentActivity() {
                         val layout = LauncherLayout.calculate(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale)
                         Text("更新控件渲染 · 不执行下载或安装", Modifier.padding(24.dp), style = MaterialTheme.typography.bodySmall)
                         LauncherDetailSurface(layout, "app-update", onDismiss = { finish() },
-                            navigation = { UpdateTabs(if (translation) UpdateTab.Translation else UpdateTab.App, state.busy && !translation, translation) {} },
+                            navigation = { UpdateTabs(if (translation) UpdateTab.Translation else UpdateTab.App, translation) {} },
                             footer = {
                                 if (translation) TranslationUpdateControls(launcher, {}, layout.detailPadding.dp)
                                 else AppUpdateControls(state, launcher, {}, {},

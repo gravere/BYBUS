@@ -159,9 +159,9 @@ private fun ParaTranzDetails(state: ProjectTrackerState, onOpenLink: (String) ->
             }
         }
     }
-    DetailSection("项目链接") {
+    DetailActionSection("项目链接") {
         SheetAction(Glyph.Globe, "打开 ParaTranz", external = true) { onOpenLink(ZeroProject.URL) }
-        HorizontalDivider(color = C.Line)
+        DetailActionDivider()
         SheetAction(Glyph.BookOpen, "原文对照快照", subtitle = "2026/08/04 冻结记录", external = true) {
             onOpenLink(ZeroProject.SNAPSHOT_URL)
         }
@@ -199,7 +199,7 @@ private fun GitHubDetails(state: GitHubTrackerState, onOpenLink: (String) -> Uni
                 style = MaterialTheme.typography.bodySmall)
         }
     }
-    DetailSection("项目链接") {
+    DetailActionSection("项目链接") {
         SheetAction(Glyph.Globe, "查看 GitHub 发布", external = true) { onOpenLink(ZeroGitHub.RELEASES) }
     }
     Text("正式汉化包 · 启动前自动检查更新",

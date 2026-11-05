@@ -1046,6 +1046,95 @@ def inspect_detail_controls(release, verifier):
     REPORT["detail_fixture_pages"] = ["update-notes-layout"]
 
 
+def inspect_row_feedback(release, verifier, home):
+    """Inspect only changed feedback bounds, using the signed app and held touch events."""
+    frames = ["home"]
+    feedback = []
+
+    def hold(tree, label, name, full_row=True):
+        bounds = clickable_bounds(tree, label)
+        left, top, right, bottom = bounds
+        if full_row and (left >= 80 or right <= 640):
+            raise RuntimeError("Action remains inset from the phone detail group: " + label)
+        if not full_row and right - left >= 360:
+            raise RuntimeError("Auxiliary action unexpectedly fills the row: " + label)
+        # Avoid an accessibility dump during the held press: it waits for ripple idleness.
+        (OUT / f"{name}-rest.png").write_bytes(adb("exec-out", "screencap", "-p", binary=True))
+        x, y = (left + right) // 2, (top + bottom) // 2
+        adb("shell", "input", "touchscreen", "motionevent", "DOWN", str(x), str(y))
+        try:
+            time.sleep(.55)
+            (OUT / f"{name}-pressed.png").write_bytes(adb("exec-out", "screencap", "-p", binary=True))
+        finally:
+            adb("shell", "input", "touchscreen", "motionevent", "CANCEL", str(x), str(y))
+        time.sleep(.3)
+        frames.extend([name + "-rest", name + "-pressed"])
+        feedback.append(dict(name=name, label=label, bounds=bounds, full_row=full_row))
+        return bounds
+
+    hold(home, "使用说明", "help-feedback", full_row=False)
+    tap("使用说明", home)
+    about = capture("about-feedback")
+    frames.append("about-feedback")
+    edge = hold(scroll_to_control(about, "游戏更新与数据保存"), "游戏更新与数据保存", "disclosure-feedback")
+    adb("shell", "input", "tap", str(edge[2] - 4), str((edge[1] + edge[3]) // 2))
+    time.sleep(.6)
+    expanded = capture("disclosure-edge-open")
+    frames.append("disclosure-edge-open")
+    locate(expanded, "游戏可从原安装渠道更新，返回后自动识别；大资源只需在 BYBUS 内下载。")
+    tap("关闭面板", expanded)
+    tap("运行状态", hierarchy("feedback-home"))
+    runtime = capture("runtime-feedback")
+    frames.append("runtime-feedback")
+    hold(runtime, "游戏更新与安装", "runtime-row-feedback")
+    tap("关闭面板", runtime)
+    tap("都市零协会", hierarchy("feedback-project-home"))
+    project = capture("project")
+    frames.append("project")
+    hold(scroll_to_control(project, "查看 GitHub 发布"), "查看 GitHub 发布", "project-link-feedback")
+    tap("关闭面板", project)
+    tap("设置与工具", hierarchy("feedback-settings-home"))
+    settings = capture("settings")
+    frames.append("settings")
+    edge = hold(settings, "更新", "settings-row-feedback")
+    adb("shell", "input", "tap", str(edge[0] + 4), str((edge[1] + edge[3]) // 2))
+    time.sleep(.6)
+    update = hierarchy("update-edge-open")
+    locate(update, "更新类别：BYBUS")
+    locate(update, "返回上一页")
+    tap("返回上一页", update)
+    parent = hierarchy("settings-edge-return")
+    locate(parent, "版本与资源")
+    tap("关闭面板", parent)
+    # Dark and enlarged text still use the same row semantics and group clipping.
+    adb("shell", "cmd", "uimode", "night", "yes")
+    adb("shell", "settings", "put", "system", "font_scale", "1.5")
+    time.sleep(2)
+    tap("使用说明", hierarchy("large-feedback-home"))
+    large = capture("disclosure-large-dark")
+    frames.append("disclosure-large-dark")
+    # The expanded contents may scroll; only exercise the visible header.
+    hold(scroll_to_control(large, "游戏更新与数据保存"), "游戏更新与数据保存", "disclosure-large-feedback")
+    tap("关闭面板", large)
+    adb("shell", "cmd", "uimode", "night", "no")
+    adb("shell", "settings", "put", "system", "font_scale", "1.0")
+    time.sleep(1)
+    digest = install_component_probe(release, verifier)
+    adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.UpdateControlProbeActivity",
+        "--es", "case", "download", timeout=40)
+    downloading = capture("update-busy-label")
+    frames.append("update-busy-label")
+    locate(downloading, "更新类别：BYBUS")
+    locate(downloading, "应用更新进度")
+    if any("BYBUS · 更新中" in n.get("text", "") or "BYBUS · 更新中" in n.get("content-desc", "")
+           for n in downloading.iter("node")):
+        raise RuntimeError("Busy wording remains in the BYBUS tab")
+    REPORT["row_feedback"] = dict(frames=frames, controls=feedback, probe_sha256=digest,
+        edge_navigation=True, edge_disclosure=True, stable_update_label=True,
+        update_fixture=True, press_cancelled=True)
+    REPORT["result"] = "row feedback inspection completed; held press screenshots require visual review"
+
+
 def main():
     candidate = os.environ.get("RUNTIME_CANDIDATE") == "true"
     endpoint = "latest"
@@ -1132,6 +1221,9 @@ def main():
         REPORT["result"] = "detail continuation completed; combine with the same APK's retained first pages"
         return
     home = capture("home")
+    if os.environ.get("RUNTIME_MODE") == "row-feedback":
+        inspect_row_feedback(release, verifier, home)
+        return
     if os.environ.get("RUNTIME_MODE") in ("ui", "launch", "button-ui", "interaction-ui"):
         inspect_home_alignment(home, 720, 1560, density=2)
     REPORT["checks"].append("main activity resumed")
