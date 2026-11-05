@@ -140,6 +140,9 @@ class MainActivity : ComponentActivity() {
                     },
                     onCancelGameInstall = model::cancelPackageUpdate,
                     onSync = model::syncGame,
+                    onMigration = { runCatching {
+                        startActivity(Intent(this, com.example.limbuszhcn.migration.MigrationActivity::class.java))
+                    }.onFailure(model::showError) },
                     onRestore = model::restore,
                     onExport = model::exportDiagnostics,
                     onGoogleSettings = model::openGoogleSettings,

@@ -31,7 +31,7 @@ def render_release_notes(manifest: dict, source: str) -> str:
     update = ('支持通用增量的更新器会复用已安装 APK 中相同的内容，只下载缺少的部分，不受保留几个旧版本限制。旧更新器本次会下载完整包，升级后即可使用新机制。'
               if universal else '已安装 APK 与差异补丁匹配时优先增量下载。')
     rows = [f'| `{apk}` 或 `BYBUS-Android.apk` | 相同的独立版完整安装包，首次安装或手动更新任选一个 |',
-            '| `BYBUS.apk` | 旧版迁移助手，仅供旧 BYBUS 迁移；首次安装不要选它 |']
+            '| `BYBUS.apk` | 旧 BYBUS 的迁移衔接更新，保留旧数据；首次安装不要选它 |']
     for delta in manifest.get('deltas', []):
         previous = delta['fromVersionCode']
         if type(previous) is not int or not 0 < previous < code:
@@ -56,7 +56,9 @@ def render_release_notes(manifest: dict, source: str) -> str:
 
 已使用独立版的用户可在应用内检查更新，或用完整 APK 覆盖安装。{update}
 
-**旧版首次迁移：** 在原 BYBUS 内检查更新，安装迁移助手；打开助手下载独立版，在独立版选择「导入旧版数据」。导入需要额外存储空间，旧数据不会自动删除；确认独立版正常后，再移除迁移助手，即可同时安装 limbusZhCN。不要提前卸载旧版或清除数据。迁移不会重新下载已有游戏资源；Google 凭据可能需要重新授权。
+**旧版首次迁移：** 保留旧版，在旧 BYBUS 内完成一次覆盖更新以开放迁移接口；从本发行页下载 `BYBUS-Android.apk`，在新版「设置与工具 → 数据迁移」选择「一键迁移旧 BYBUS」。旧版此后只保留数据供迁移，不再用于启动游戏。导入会替换新版的同名数据，需要额外存储空间；确认新版正常后再卸载旧版。不要提前清除旧数据，Google 凭据可能需要重新授权。最新发行持续保留旧版衔接入口，迟更新用户无需寻找历史版本。
+
+**从其他容器导入资源：** 支持 limbusZhCN 及兼容容器导出的 `limbus-resources-v1` ZIP，在「数据迁移 → 导入资源包」选取。只补充资源，不导入账号，不替换已有文件。资源版本可以不同，游戏会校验并补齐更新。
 
 首次使用请先登录并完成游戏资源下载，再返回 BYBUS 启动一次以启用完整汉化。容器内 Google 账号与系统 Play 商店独立，新设备需重新登录。
 

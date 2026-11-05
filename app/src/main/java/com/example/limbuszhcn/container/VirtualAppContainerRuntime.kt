@@ -97,7 +97,8 @@ class VirtualAppContainerRuntime(
      */
     override fun storage() =
         if (bridge.available) {
-            ContainerWorkspaceStorage(bridge.localizeRoot(LocalContainerRuntime.GAME_PACKAGE).toPath())
+            ContainerWorkspaceStorage(bridge.localizeRoot(LocalContainerRuntime.GAME_PACKAGE).toPath(),
+                bridge.resourceMigrationRoots(LocalContainerRuntime.GAME_PACKAGE))
         } else {
             fallback.storage()
         }
@@ -330,6 +331,19 @@ private class VirtualAppBridge(
         requireAvailable()
         val appData = VEnvironment.getExternalStorageAppDataDir(0, packageName)
         return appData.resolve("files/Assets/Resources_moved/Localize")
+    }
+
+    fun resourceMigrationRoots(packageName: String): Map<String, java.nio.file.Path> {
+        requireAvailable()
+        val external = VEnvironment.getExternalStorageAppDataDir(0, packageName)
+        val internal = VEnvironment.getDataUserPackageDirectory(0, packageName)
+        return mapOf(
+            "assets" to external.resolve("files/Assets").toPath(),
+            "external-unity-cache" to external.resolve("cache/UnityCache/Shared").toPath(),
+            "external-files-unity-cache" to external.resolve("files/UnityCache/Shared").toPath(),
+            "internal-unity-cache" to internal.resolve("cache/UnityCache/Shared").toPath(),
+            "internal-files-unity-cache" to internal.resolve("files/UnityCache/Shared").toPath()
+        )
     }
 
     fun ensureGameLocalizeRoot(packageName: String) {

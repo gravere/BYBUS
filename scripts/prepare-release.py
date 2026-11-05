@@ -87,7 +87,7 @@ assert len(metadata.encode('utf-8')) <= 32 * 1024, 'Metadata exceeds legacy upda
 (args.output/'bybus-app-update.json').write_text(metadata, encoding='utf-8')
 legacy_manifest = dict(schemaVersion=1, packageName=legacy_identity[1], versionName=version, versionCode=code,
     minSdk=26, apkName=legacy_apk.name, size=legacy_apk.stat().st_size, sha256=digest(legacy_apk), deltas=[],
-    notes='- 本次更新为旧版迁移助手，保留旧数据。\n- 更新后按提示下载独立 BYBUS，并在独立版导入旧数据。\n- 确认运行正常后，再移除迁移助手，即可与 limbusZhCN 共存。')
+    notes='- 请保留旧版，不要卸载或清除数据。本次覆盖更新保留数据并开放本机迁移接口。\n- 前往 GitHub 最新发行页下载 BYBUS-Android.apk，在新版“设置与工具 → 数据迁移”中一键导入。\n- 无需逐版升级，最新发行始终保留此入口。确认新版正常后再卸载旧版；资源版本不同也可导入。')
 (args.output/'bybus-update.json').write_text(json.dumps(legacy_manifest, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
 files = [apk, compat_apk, legacy_apk, args.output/'bybus-app-update.json', args.output/'bybus-update.json']
 (args.output/'SHA256SUMS.txt').write_text(''.join(digest(p)+'  '+p.name+'\n' for p in files), encoding='utf-8')
