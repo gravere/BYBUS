@@ -35,7 +35,7 @@ class AppUpdateDeltaTest {
         }.toByteArray()
         val patch = temporary.newFile().apply { writeBytes(gzip(raw)) }
         val delta = AppDelta(48, base.length(), AppUpdateRepository.hash(base), AppUpdateRepository.hash(patch), ReleaseAsset(2, "BYBUS-update-48-to-49.delta", patch.length()))
-        val release = AppRelease("v1.0.6-build.49", "v1.0.6", 49, 26, AppUpdateRepository.hash(target), ReleaseAsset(1, "BYBUS.apk", target.length()), "", listOf(delta))
+        val release = AppRelease("v1.0.6-build.49", "v1.0.6", 49, 26, AppUpdateRepository.hash(target), ReleaseAsset(1, "BYBUS-Android.apk", target.length()), "", listOf(delta))
         return Fixture(base, patch, target, delta, release, raw)
     }
 
@@ -110,7 +110,7 @@ class AppUpdateDeltaTest {
         assertTrue(stages.any { it.message == "正在合成安装包" && it.percent == 100 })
         assertEquals(result, repo.download(f.release, f.base, f.delta) {})
         assertEquals(1, requested.size)
-        assertEquals(listOf("BYBUS.apk"), cache.list()!!.toList())
+        assertEquals(listOf("BYBUS-Android.apk"), cache.list()!!.toList())
     }
 
     @Test fun corruptPatchFallsBackExactlyOnceAndCleansTemporaryFiles() {
@@ -124,7 +124,7 @@ class AppUpdateDeltaTest {
         assertArrayEquals(f.target.readBytes(), repo.download(f.release, f.base, f.delta, stages::add).readBytes())
         assertEquals(listOf(f.delta.asset.url, f.release.apk.url), requested)
         assertTrue(stages.any { it.delta == null && it.message.contains("完整包") })
-        assertEquals(listOf("BYBUS.apk"), cache.list()!!.toList())
+        assertEquals(listOf("BYBUS-Android.apk"), cache.list()!!.toList())
     }
 
     @Test fun reconstructionFailureAlsoFallsBackAndFailedFullDownloadLeavesNoApk() {

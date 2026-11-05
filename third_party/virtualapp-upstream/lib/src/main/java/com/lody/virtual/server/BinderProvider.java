@@ -222,7 +222,7 @@ public final class BinderProvider extends ContentProvider {
     }
 
     private boolean shouldPreserveRunningVirtualClients(Context context) {
-        return "com.example.limbuszhcn".equals(context.getPackageName());
+        return "io.github.gravere.bybus".equals(context.getPackageName());
     }
 
     private void addService(String name, IBinder service) {

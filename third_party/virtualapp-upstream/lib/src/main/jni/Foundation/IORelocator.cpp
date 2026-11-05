@@ -142,7 +142,7 @@ static int reverse_readlink_result(char *buf, size_t bufsiz, int ret) {
         reversed_len = bufsiz;
     }
     memcpy(buf, reversed, reversed_len);
-    if (strstr(link_temp, "com.example.limbuszhcn") != nullptr
+    if (strstr(link_temp, "io.github.gravere.bybus") != nullptr
             || strstr(link_temp, "/virtual/") != nullptr) {
         ALOGI("Limbus readlink reverse %s -> %.*s",
               link_temp,

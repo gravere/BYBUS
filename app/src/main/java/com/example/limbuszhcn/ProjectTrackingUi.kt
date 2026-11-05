@@ -94,7 +94,8 @@ internal fun ProjectCard(tracking: ProjectTrackingState, modifier: Modifier = Mo
 @Composable
 internal fun ProjectDetails(tracking: ProjectTrackingState, onRefresh: () -> Unit,
                            onSelectSource: (ProjectSource) -> Unit, onOpenLink: (String) -> Unit) {
-    val retryAt = tracking.github.retryAtMillis.takeIf { tracking.source == ProjectSource.GitHub }
+    val retryAt = if (tracking.source == ProjectSource.GitHub) tracking.github.retryAtMillis
+        else tracking.paratranz.retryAtMillis
     // One UI wake-up to re-enable the control; this does not schedule any network request.
     val waiting by produceState(retryAt != null && retryAt > System.currentTimeMillis(), retryAt) {
         value = retryAt != null && retryAt > System.currentTimeMillis()
@@ -156,7 +157,9 @@ private fun ParaTranzDetails(state: ProjectTrackerState, onOpenLink: (String) ->
             Text(if (state.loading) "正在连接 ParaTranz。" else when (state.issue) {
                 ProjectIssue.Restricted -> "项目接口暂未向当前访问者开放，可前往项目网页查看。"
                 ProjectIssue.Unavailable -> "项目接口暂不可用，可稍后刷新或前往 ParaTranz 查看。"
-                ProjectIssue.RateLimited -> "ParaTranz 暂时限制了请求，请稍后再试。"
+                ProjectIssue.RateLimited -> "ParaTranz 暂时限制了请求。" +
+                    if (state.retryAtMillis != null && state.retryAtMillis > System.currentTimeMillis())
+                        "可在 ${time(state.retryAtMillis)} 后刷新。" else "请稍后刷新。"
                 ProjectIssue.InvalidData -> "暂时无法解析项目统计，请稍后再试。"
                 else -> "暂时无法连接 ParaTranz，请稍后再试。"
             }, color = C.Muted, style = MaterialTheme.typography.bodyMedium)

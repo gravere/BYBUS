@@ -3,9 +3,7 @@ package com.lody.virtual.helper;
 import android.os.Parcel;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.IOException;
 
 /**
@@ -45,9 +43,7 @@ public abstract class PersistenceLayer {
             writeMagic(p);
             p.writeInt(getCurrentVersion());
             writePersistenceData(p);
-            FileOutputStream fos = new FileOutputStream(mPersistenceFile);
-            fos.write(p.marshall());
-            fos.close();
+            com.lody.virtual.helper.utils.DurableFile.write(mPersistenceFile, p.marshall());
         } catch (Exception e) {
             e.printStackTrace();
         } finally {
@@ -57,15 +53,10 @@ public abstract class PersistenceLayer {
 
     public void read() {
         File file = mPersistenceFile;
+        if (!file.exists()) return;
         Parcel p = Parcel.obtain();
         try {
-            FileInputStream fis = new FileInputStream(file);
-            byte[] bytes = new byte[(int) file.length()];
-            int len = fis.read(bytes);
-            fis.close();
-            if (len != bytes.length) {
-                throw new IOException("Unable to read Persistence file.");
-            }
+            byte[] bytes = com.lody.virtual.helper.utils.DurableFile.read(file, 16 * 1024 * 1024);
             p.unmarshall(bytes, 0, bytes.length);
             p.setDataPosition(0);
             if (!verifyMagic(p)) {

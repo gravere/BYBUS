@@ -59,7 +59,7 @@ static bool is_limbus_translation_redirect(const char *orig_path, const char *ne
            && new_path != NULL
            && strstr(orig_path, "com.ProjectMoon.LimbusCompany") != NULL
            && strstr(orig_path, "/Localize/") != NULL
-           && strstr(new_path, "com.example.limbuszhcn") != NULL
+           && strstr(new_path, "io.github.gravere.bybus") != NULL
            && strstr(new_path, "/translation-cache/") != NULL;
 }
 

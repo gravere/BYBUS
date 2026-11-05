@@ -49,6 +49,7 @@ public class VAccount implements Parcelable {
         password = in.readString();
         lastAuthenticatedTime = in.readLong();
         int authTokensSize = in.readInt();
+        if (authTokensSize < 0 || authTokensSize > 10000) throw new IllegalArgumentException("Invalid token count");
         authTokens = new HashMap<>(authTokensSize);
         for (int i = 0; i < authTokensSize; i++) {
             String key = in.readString();
@@ -56,6 +57,7 @@ public class VAccount implements Parcelable {
             authTokens.put(key, value);
         }
         int userDatasSize = in.readInt();
+        if (userDatasSize < 0 || userDatasSize > 10000) throw new IllegalArgumentException("Invalid account data count");
         userDatas = new HashMap<>(userDatasSize);
         for (int i = 0; i < userDatasSize; i++) {
             String key = in.readString();

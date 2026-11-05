@@ -34,7 +34,8 @@ internal enum class ProjectIssue {
 internal data class ProjectTrackerState(
     val snapshot: ProjectSnapshot? = null,
     val loading: Boolean = false,
-    val issue: ProjectIssue? = null
+    val issue: ProjectIssue? = null,
+    val retryAtMillis: Long? = null
 )
 
 /** Retain only public aggregate data; names, avatars, member records and descriptions are never cached. */
@@ -168,6 +169,8 @@ internal class ParatranzRepository(
 ) {
     private var result: ProjectTrackerState? = null
     private var lastAttempt: Long? = null
+    private val retryCache = cache.resolveSibling(cache.fileName.toString() + ".retry")
+    private var retryUntilElapsed: Long? = null
 
     fun cached(): ProjectTrackerState {
         result?.let { return it }
@@ -175,11 +178,24 @@ internal class ParatranzRepository(
             require(Files.size(cache) <= ProjectSnapshotCodec.MAX_BYTES)
             ProjectSnapshotCodec.decodeCache(String(Files.readAllBytes(cache), Charsets.UTF_8), clock())
         }.getOrNull()
-        return ProjectTrackerState(snapshot).also { result = it }
+        val retryAt = runCatching {
+            require(Files.size(retryCache) <= 1024)
+            val saved = JSONObject(String(Files.readAllBytes(retryCache), Charsets.UTF_8))
+            val recorded = saved.getLong("recordedAt")
+            val until = saved.getLong("retryAt")
+            val now = clock()
+            require(saved.getInt("schema") == 1 && recorded > 0 && until > recorded &&
+                until - recorded <= MAX_WAIT && now in recorded until until)
+            retryUntilElapsed = elapsed() + until - now
+            until
+        }.getOrNull()
+        return ProjectTrackerState(snapshot, issue = if (retryAt != null) ProjectIssue.RateLimited else null,
+            retryAtMillis = retryAt).also { result = it }
     }
 
     fun refresh(force: Boolean = false): ProjectTrackerState {
         val current = cached()
+        if (retryUntilElapsed?.let { elapsed() < it } == true) return current
         val elapsedSinceAttempt = lastAttempt?.let { (elapsed() - it).coerceAtLeast(0) }
         if (elapsedSinceAttempt != null && elapsedSinceAttempt < if (force) 15_000 else 60_000) return current
         val age = current.snapshot?.let { clock() - it.fetchedAtMillis }
@@ -188,13 +204,35 @@ internal class ParatranzRepository(
         val response = try {
             fetch()
         } catch (error: Exception) {
-            return current.copy(issue = (error as? ProjectFetchException)?.issue ?: ProjectIssue.Network)
+            if (Thread.currentThread().isInterrupted || error is java.util.concurrent.CancellationException) throw error
+            val failure = error as? ProjectFetchException
+            val issue = failure?.issue ?: ProjectIssue.Network
+            val retryAt = if (issue == ProjectIssue.RateLimited) {
+                val now = clock()
+                val wait = failure?.retryAtMillis?.takeIf { it > now && it - now <= MAX_WAIT }
+                    ?.minus(now)?.coerceAtLeast(60_000) ?: 60_000L
+                retryUntilElapsed = elapsed() + wait
+                (now + wait).also { until -> runCatching {
+                    writeProjectCache(retryCache, JSONObject().put("schema", 1)
+                        .put("recordedAt", now).put("retryAt", until).toString())
+                } }
+            } else { clearRetry(); null }
+            return current.copy(issue = issue, retryAtMillis = retryAt)
                 .also { result = it }
         }
+        clearRetry()
         val snapshot = runCatching { ProjectSnapshotCodec.parseResponse(response, clock()) }.getOrNull()
-            ?: return current.copy(issue = ProjectIssue.InvalidData).also { result = it }
+            ?: return current.copy(issue = ProjectIssue.InvalidData, retryAtMillis = null).also { result = it }
         // A full disk must not discard successfully fetched data or the previous valid cache.
         runCatching { writeProjectCache(cache, ProjectSnapshotCodec.encode(snapshot)) }
         return ProjectTrackerState(snapshot).also { result = it }
     }
+
+    private fun clearRetry() {
+        retryUntilElapsed = null
+        runCatching { Files.deleteIfExists(retryCache) }
+    }
+
+    // HTTP parsing adds one second past the latest valid 24-hour reset boundary.
+    private companion object { const val MAX_WAIT = 86_401_000L }
 }

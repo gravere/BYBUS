@@ -326,9 +326,10 @@ public class VAppManagerService extends IAppManager.Stub {
     public void installPackage(String path, InstallOptions options, ResultReceiver receiver) {
         InstallResult res;
         try {
-            synchronized (this) {
-                res = installPackageImpl(path, options);
-            }
+            res = com.lody.virtual.helper.utils.PackageInstallGuard.runServer(
+                    VirtualCore.get().getContext().getFilesDir(), () -> {
+                        synchronized (this) { return installPackageImpl(path, options); }
+                    });
         } catch (Throwable error) {
             // 该 AIDL 方法是 oneway 调用，服务端异常不会自动传回调用方。
             // 必须把异常转换成安装结果并继续发送回调，否则客户端会永久阻塞在 ConditionVariable。
@@ -533,6 +534,8 @@ public class VAppManagerService extends IAppManager.Stub {
         PackageParserEx.savePackageCache(pkg);
         PackageCacheManager.put(pkg, ps);
         mPersistenceLayer.save();
+        // Internal account routing must also see silent installs, including the first microG install.
+        if (!options.notify) VAccountManagerService.get().refreshAuthenticatorCache(null);
         if (support32bit && !useSourceLocationApk) {
             try {
                 DexOptimizer.optimizeDex(packageFile.getPath(), VEnvironment.getOdexFile(ps.packageName).getPath());

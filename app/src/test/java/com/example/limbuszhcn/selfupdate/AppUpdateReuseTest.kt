@@ -45,7 +45,7 @@ class AppUpdateReuseTest {
             }
         }
         return AppRelease("v1.0.14-build.57", "v1.0.14", 57, 26, AppUpdateRepository.hash(target),
-            ReleaseAsset(17, "BYBUS.apk", target.length()), "", reuse = entries)
+            ReleaseAsset(17, "BYBUS-Android.apk", target.length()), "", reuse = entries)
     }
 
     private fun reader(target: File, ranges: MutableList<Pair<Long, Long>>) = AppRangeReader { offset, length, consume ->
@@ -112,7 +112,7 @@ class AppUpdateReuseTest {
         assertEquals(1, completeReads); assertTrue(requests > 0)
         repo.download(release, base, null, plan) {}
         assertEquals(requests, rangeReads); assertEquals(1, completeReads)
-        assertEquals(listOf("BYBUS.apk"), cache.list()!!.toList())
+        assertEquals(listOf("BYBUS-Android.apk"), cache.list()!!.toList())
     }
 
     @Test fun cancelledAndRateLimitedRangesNeverFallBackToFullDownload() {

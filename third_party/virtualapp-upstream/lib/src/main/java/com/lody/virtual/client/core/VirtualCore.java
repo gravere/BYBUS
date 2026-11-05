@@ -676,19 +676,45 @@ public final class VirtualCore {
     }
 
     public InstallResult installPackageSync(String apkPath, InstallOptions options) {
-        final ConditionVariable lock = new ConditionVariable();
-        final InstallResult[] out = new InstallResult[1];
-        installPackage(apkPath, options, new InstallCallback() {
-            @Override
-            public void onFinish(InstallResult result) {
-                out[0] = result;
-                lock.open();
-            }
-        });
-        lock.block();
-        //Add by xdja
-        preLaunchApp();
-        return out[0];
+        // Also fence rollback/retry calls made inside the same host operation after a timeout.
+        try {
+            com.lody.virtual.helper.utils.PackageInstallGuard.assertIdle(getContext().getFilesDir());
+        } catch (IOException error) {
+            throw new IllegalStateException("无法确认容器安装状态，请稍后重试", error);
+        }
+        final com.lody.virtual.server.interfaces.IAppManager service = getService();
+        final IBinder binder = service.asBinder();
+        final com.lody.virtual.helper.utils.PackageInstallGuard.Pending<InstallResult> pending =
+                new com.lody.virtual.helper.utils.PackageInstallGuard.Pending<>();
+        final IBinder.DeathRecipient death = () -> pending.fail(
+                new IllegalStateException("容器安装服务已退出，请重新启动；已有数据已保留"));
+        try {
+            binder.linkToDeath(death, 0);
+            service.installPackage(apkPath, options, new ResultReceiver(null) {
+                @Override protected void onReceiveResult(int resultCode, Bundle data) {
+                    try {
+                        if (data == null) throw new IllegalStateException("容器安装结果缺失");
+                        data.setClassLoader(InstallResult.class.getClassLoader());
+                        pending.complete(data.getParcelable("result"));
+                    } catch (RuntimeException error) { pending.fail(error); }
+                    finally { unlinkInstallDeath(binder, death); }
+                }
+            });
+        } catch (RemoteException | RuntimeException error) {
+            pending.fail(new IllegalStateException("无法提交容器安装，请重试", error));
+        }
+        try {
+            InstallResult result = pending.await(120_000);
+            preLaunchApp();
+            return result;
+        } finally {
+            // On timeout keep the death recipient and pending fence until the actual terminal result.
+            if (pending.isDone()) unlinkInstallDeath(binder, death);
+        }
+    }
+
+    private static void unlinkInstallDeath(IBinder binder, IBinder.DeathRecipient death) {
+        try { binder.unlinkToDeath(death, 0); } catch (RuntimeException ignored) { }
     }
 
     @Deprecated

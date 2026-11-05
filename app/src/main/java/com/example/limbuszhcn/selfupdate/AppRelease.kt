@@ -9,9 +9,9 @@ internal object AppReleases {
     const val PAGE = "https://github.com/$REPOSITORY/releases/latest"
     private const val API_PATH = "/repositories/$REPOSITORY_ID/releases"
     const val API = "https://api.github.com$API_PATH"
-    const val PACKAGE = "com.example.limbuszhcn"
-    const val APK = "BYBUS.apk"
-    const val MANIFEST = "bybus-update.json"
+    const val PACKAGE = "io.github.gravere.bybus"
+    const val APK = "BYBUS-Android.apk"
+    const val MANIFEST = "bybus-app-update.json"
     const val NOTICE = "$PAGE/download/$MANIFEST"
     const val MAX_APK_BYTES = 256L * 1024 * 1024
     const val DELTA_FORMAT = "bybus-copy-v1"

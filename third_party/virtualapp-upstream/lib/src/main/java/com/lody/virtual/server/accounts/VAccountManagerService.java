@@ -47,8 +47,6 @@ import com.lody.virtual.server.pm.VPackageManagerService;
 import org.xmlpull.v1.XmlPullParser;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -305,7 +303,12 @@ public class VAccountManagerService extends IAccountManager.Stub {
                                     }
                                     account = new VAccount(userId, new Account(name, type));
                                     accounts.add(account);
-                                    saveAllAccounts();
+                                    try { saveAllAccounts(); }
+                                    catch (IllegalStateException failure) {
+                                        accounts.remove(account);
+                                        onError(AccountManager.ERROR_CODE_REMOTE_EXCEPTION, failure.getMessage());
+                                        return;
+                                    }
                                 }
                             }
                         }
@@ -652,12 +655,16 @@ public class VAccountManagerService extends IAccountManager.Stub {
     @Override
     public void renameAccount(int userId, IAccountManagerResponse response, Account accountToRename, String newName) {
         if (accountToRename == null) throw new IllegalArgumentException("account is null");
-        Account resultingAccount = renameAccountInternal(userId, accountToRename, newName);
-        Bundle result = new Bundle();
-        result.putString(AccountManager.KEY_ACCOUNT_NAME, resultingAccount.name);
-        result.putString(AccountManager.KEY_ACCOUNT_TYPE, resultingAccount.type);
         try {
-            response.onResult(result);
+            try {
+                Account resultingAccount = renameAccountInternal(userId, accountToRename, newName);
+                Bundle result = new Bundle();
+                result.putString(AccountManager.KEY_ACCOUNT_NAME, resultingAccount.name);
+                result.putString(AccountManager.KEY_ACCOUNT_TYPE, resultingAccount.type);
+                response.onResult(result);
+            } catch (IllegalStateException failure) {
+                response.onError(AccountManager.ERROR_CODE_REMOTE_EXCEPTION, failure.getMessage());
+            }
         } catch (RemoteException e) {
             Log.w(TAG, e.getMessage());
         }
@@ -697,7 +704,11 @@ public class VAccountManagerService extends IAccountManager.Stub {
                         && !result.containsKey(AccountManager.KEY_INTENT)) {
                     final boolean removalAllowed = result.getBoolean(AccountManager.KEY_BOOLEAN_RESULT);
                     if (removalAllowed) {
-                        removeAccountInternal(userId, account);
+                        try { removeAccountInternal(userId, account); }
+                        catch (IllegalStateException failure) {
+                            onError(AccountManager.ERROR_CODE_REMOTE_EXCEPTION, failure.getMessage());
+                            return;
+                        }
                     }
                     IAccountManagerResponse response = getResponseAndClose();
                     if (response != null) {
@@ -934,13 +945,12 @@ public class VAccountManagerService extends IAccountManager.Stub {
                 account.writeToParcel(dest, 0);
             }
             dest.writeLong(lastAccountChangeTime);
-            FileOutputStream fileOutputStream = new FileOutputStream(accountFile);
-            fileOutputStream.write(dest.marshall());
-            fileOutputStream.close();
+            com.lody.virtual.helper.utils.DurableFile.write(accountFile, dest.marshall());
         } catch (Exception e) {
-            e.printStackTrace();
+            throw new IllegalStateException("无法保存容器账号，原有记录已保留", e);
+        } finally {
+            dest.recycle();
         }
-        dest.recycle();
     }
 
     /**
@@ -950,39 +960,34 @@ public class VAccountManagerService extends IAccountManager.Stub {
         File accountFile = VEnvironment.getAccountConfigFile();
         refreshAuthenticatorCache(null);
         if (accountFile.exists()) {
-            accountsByUserId.clear();
             Parcel dest = Parcel.obtain();
             try {
-                FileInputStream is = new FileInputStream(accountFile);
-                byte[] bytes = new byte[(int) accountFile.length()];
-                int readLength = is.read(bytes);
-                is.close();
-                if (readLength != bytes.length) {
-                    throw new IOException(String.format(Locale.ENGLISH, "Expect length %d, but got %d.", bytes.length, readLength));
-                }
+                byte[] bytes = com.lody.virtual.helper.utils.DurableFile.read(accountFile, 16 * 1024 * 1024);
                 dest.unmarshall(bytes, 0, bytes.length);
                 dest.setDataPosition(0);
-                dest.readInt(); // skip the magic
+                if (dest.readInt() != 1) throw new IOException("Unknown account format");
                 int size = dest.readInt(); // the VAccount's size we need to read
-                boolean invalid = false;
+                if (size < 0 || size > 10000) throw new IOException("Invalid account count");
+                SparseArray<List<VAccount>> restored = new SparseArray<>();
                 while (size-- > 0) {
                     VAccount account = new VAccount(dest);
-                    VLog.d(TAG, "Reading account : " + account.type);
-                    AuthenticatorInfo info = cache.authenticators.get(account.type);
-                    if (info != null) {
-                        List<VAccount> accounts = accountsByUserId.get(account.userId);
-                        if (accounts == null) {
-                            accounts = new ArrayList<>();
-                            accountsByUserId.put(account.userId, accounts);
-                        }
-                        accounts.add(account);
-                    } else {
-                        invalid = true;
+                    if (account.userId < 0 || TextUtils.isEmpty(account.name) || TextUtils.isEmpty(account.type))
+                        throw new IOException("Invalid account record");
+                    List<VAccount> accounts = restored.get(account.userId);
+                    if (accounts == null) {
+                        accounts = new ArrayList<>();
+                        restored.put(account.userId, accounts);
                     }
+                    // A temporarily unavailable authenticator is not permission to erase an account.
+                    accounts.add(account);
                 }
-                lastAccountChangeTime = dest.readLong();
-                if (invalid) {
-                    saveAllAccounts();
+                long changedAt = dest.readLong();
+                if (dest.dataAvail() != 0) throw new IOException("Unexpected account data");
+                synchronized (accountsByUserId) {
+                    accountsByUserId.clear();
+                    for (int i = 0; i < restored.size(); i++)
+                        accountsByUserId.put(restored.keyAt(i), restored.valueAt(i));
+                    lastAccountChangeTime = changedAt;
                 }
             } catch (Exception e) {
                 e.printStackTrace();
@@ -1007,14 +1012,16 @@ public class VAccountManagerService extends IAccountManager.Stub {
 
 
     public void refreshAuthenticatorCache(String packageName) {
-        cache.authenticators.clear();
+        Map<String, AuthenticatorInfo> updated = new HashMap<>();
         Intent intent = new Intent(AccountManager.ACTION_AUTHENTICATOR_INTENT);
-        if (packageName != null) {
-            intent.setPackage(packageName);
-        }
+        // Always publish a complete registry, even when one package triggered the refresh.
         generateServicesMap(
                 VPackageManagerService.get().queryIntentServices(intent, null, PackageManager.GET_META_DATA, 0),
-                cache.authenticators, new RegisteredServicesParser());
+                updated, new RegisteredServicesParser());
+        synchronized (cache) {
+            cache.authenticators.clear();
+            cache.authenticators.putAll(updated);
+        }
     }
 
     private void generateServicesMap(List<ResolveInfo> services, Map<String, AuthenticatorInfo> map,
@@ -1039,6 +1046,8 @@ public class VAccountManagerService extends IAccountManager.Stub {
                     }
                 } catch (Exception e) {
                     e.printStackTrace();
+                } finally {
+                    parser.close();
                 }
             }
         }
@@ -1160,7 +1169,7 @@ public class VAccountManagerService extends IAccountManager.Stub {
             obtain.writeInt(1);
             obtain.writeInt(accountsVisibilitiesByUserId.size());
             for (int i = 0; i < this.accountsVisibilitiesByUserId.size(); i++) {
-                obtain.writeInt(i);
+                obtain.writeInt(accountsVisibilitiesByUserId.keyAt(i));
                 List<VAccountVisibility> list = this.accountsVisibilitiesByUserId.valueAt(i);
                 if (list == null) {
                     obtain.writeInt(0);
@@ -1172,13 +1181,12 @@ public class VAccountManagerService extends IAccountManager.Stub {
                 }
             }
             obtain.writeLong(this.lastAccountChangeTime);
-            FileOutputStream fileOutputStream = new FileOutputStream(accountVisibilityConfigFile);
-            fileOutputStream.write(obtain.marshall());
-            fileOutputStream.close();
+            com.lody.virtual.helper.utils.DurableFile.write(accountVisibilityConfigFile, obtain.marshall());
         } catch (Exception e) {
-            e.printStackTrace();
+            throw new IllegalStateException("无法保存容器账号可见性，原有记录已保留", e);
+        } finally {
+            obtain.recycle();
         }
-        obtain.recycle();
     }
 
     @TargetApi(Build.VERSION_CODES.O)
@@ -1187,27 +1195,35 @@ public class VAccountManagerService extends IAccountManager.Stub {
         Parcel dest = Parcel.obtain();
         if (accountVisibilityConfigFile.exists()) {
             try {
-                FileInputStream is = new FileInputStream(accountVisibilityConfigFile);
-                byte[] bytes = new byte[(int) accountVisibilityConfigFile.length()];
-                int readLength = is.read(bytes);
-                is.close();
-                if (readLength != bytes.length) {
-                    throw new IOException(String.format("Expect length %d, but got %d.", bytes.length, readLength));
-                }
+                byte[] bytes = com.lody.virtual.helper.utils.DurableFile.read(accountVisibilityConfigFile, 16 * 1024 * 1024);
                 dest.unmarshall(bytes, 0, bytes.length);
                 dest.setDataPosition(0);
                 int version = dest.readInt();
                 int userCount = dest.readInt();
+                if (version != 1 || userCount < 0 || userCount > 10000) throw new IOException("Invalid visibility header");
+                SparseArray<List<VAccountVisibility>> restored = new SparseArray<>();
                 for (int i = 0; i < userCount; i++) {
                     int userId = dest.readInt();
                     int count = dest.readInt();
-                    List<VAccountVisibility> list = new ArrayList<>();
-                    accountsVisibilitiesByUserId.put(userId, list);
+                    if (userId < 0 || count < 0 || count > 10000) throw new IOException("Invalid visibility group");
                     for (int j = 0; j < count; j++) {
-                        list.add(new VAccountVisibility(dest));
+                        VAccountVisibility item = new VAccountVisibility(dest);
+                        if (item.userId < 0 || TextUtils.isEmpty(item.name) || TextUtils.isEmpty(item.type))
+                            throw new IOException("Invalid visibility record");
+                        // Older files used the group index as their key; the record has the actual user.
+                        List<VAccountVisibility> group = restored.get(item.userId);
+                        if (group == null) { group = new ArrayList<>(); restored.put(item.userId, group); }
+                        group.add(item);
                     }
                 }
-                this.lastAccountChangeTime = dest.readLong();
+                long changedAt = dest.readLong();
+                if (dest.dataAvail() != 0) throw new IOException("Unexpected visibility data");
+                synchronized (accountsVisibilitiesByUserId) {
+                    accountsVisibilitiesByUserId.clear();
+                    for (int i = 0; i < restored.size(); i++)
+                        accountsVisibilitiesByUserId.put(restored.keyAt(i), restored.valueAt(i));
+                    lastAccountChangeTime = Math.max(lastAccountChangeTime, changedAt);
+                }
             } catch (Throwable e) {
                 e.printStackTrace();
             }
@@ -1509,8 +1525,14 @@ public class VAccountManagerService extends IAccountManager.Stub {
                     synchronized (accountsByUserId) {
                         VAccount account = getAccount(mUserId, mAccountName, mAuthenticatorInfo.desc.type);
                         if (needUpdate && account != null) {
+                            long previousAuthenticationTime = account.lastAuthenticatedTime;
                             account.lastAuthenticatedTime = System.currentTimeMillis();
-                            saveAllAccounts();
+                            try { saveAllAccounts(); }
+                            catch (IllegalStateException failure) {
+                                account.lastAuthenticatedTime = previousAuthenticationTime;
+                                onError(AccountManager.ERROR_CODE_REMOTE_EXCEPTION, failure.getMessage());
+                                return;
+                            }
                         }
                         if (mAuthDetailsRequired) {
                             long lastAuthenticatedTime = -1;
