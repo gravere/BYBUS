@@ -13,14 +13,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import com.example.limbuszhcn.MainActivity
@@ -44,9 +37,13 @@ internal object MigrationAccess {
         !preferences(context).getBoolean("complete", false) && sourceIsOurs(context)
 }
 
+internal enum class MigrationOperation { Inspect, Legacy, Resources }
+
 internal data class MigrationState(val busy: Boolean = false, val copied: Long = 0, val total: Long = 0,
     val done: Boolean = false, val message: String = "正在读取旧版数据…", val ready: Boolean = false,
-    val pending: Boolean = false, val hasLegacy: Boolean = false)
+    val pending: Boolean = false, val hasLegacy: Boolean = false,
+    val operation: MigrationOperation = MigrationOperation.Inspect, val failed: Boolean = false,
+    val progressFiles: Boolean = false)
 
 internal class MigrationModel(application: Application) : AndroidViewModel(application) {
     private val context = application.applicationContext
@@ -64,7 +61,8 @@ internal class MigrationModel(application: Application) : AndroidViewModel(appli
     init { inspect() }
     private fun publish(value: MigrationState) { handler.post { state = value } }
     private fun inspect() {
-        state = state.copy(busy = true)
+        state = state.copy(busy = true, failed = false, operation = MigrationOperation.Inspect,
+            message = "正在查找旧版数据…", copied = 0, total = 0, progressFiles = false)
         executor.execute {
             runCatching {
                 if (MigrationAccess.preferences(context).getBoolean("resource_pending", false)) {
@@ -79,7 +77,7 @@ internal class MigrationModel(application: Application) : AndroidViewModel(appli
                     publish(MigrationState(hasLegacy = ours,
                         pending = MigrationAccess.preferences(context).getBoolean("pending", false),
                         message = if (ours) "请保留旧版，先在旧版检查更新并完成一次覆盖更新，然后回来重新检测。"
-                            else "可从旧 BYBUS 直接迁移，或选择其他兼容容器导出的资源包。"))
+                            else "未检测到旧版，可选择已导出的资源文件。"))
                     return@execute
                 }
                 context.contentResolver.acquireContentProviderClient(MigrationArchive.AUTHORITY).use { client ->
@@ -89,13 +87,15 @@ internal class MigrationModel(application: Application) : AndroidViewModel(appli
                         pending = MigrationAccess.preferences(context).getBoolean("pending", false),
                         message = "将导入旧版的游戏资源与账号配置，替换新版中的同名数据。旧版数据仍保留，资源版本无需相同。"))
                 }
-            }.onFailure { publish(state.copy(busy = false, ready = false, message = it.message ?: "暂时无法读取旧版数据")) }
+            }.onFailure { publish(state.copy(busy = false, ready = false, failed = true,
+                message = it.message ?: "暂时无法读取旧版数据")) }
         }
     }
     fun refresh() { if (!state.busy) inspect() }
     fun start(prepareTarget: Boolean) {
         if (state.busy || !state.ready) return
-        state = state.copy(busy = true, done = false, message = "正在准备游戏…")
+        state = state.copy(busy = true, done = false, failed = false, copied = 0,
+            operation = MigrationOperation.Legacy, progressFiles = false, message = "正在准备游戏…")
         executor.execute {
             runCatching {
                 OperationLock.run(context.filesDir.toPath()) {
@@ -124,7 +124,8 @@ internal class MigrationModel(application: Application) : AndroidViewModel(appli
                                 val now = SystemClock.elapsedRealtime()
                                 if (now - lastProgress >= 100 || copied == total) {
                                     lastProgress = now
-                                    publish(MigrationState(true, copied, total, message = "正在导入，请保持此页面打开", ready = true, pending = true))
+                                    publish(MigrationState(true, copied, total, message = "正在复制数据", ready = true,
+                                        hasLegacy = true, pending = true, operation = MigrationOperation.Legacy))
                                 }
                             }
                         }
@@ -137,12 +138,13 @@ internal class MigrationModel(application: Application) : AndroidViewModel(appli
                         // turn a completed import into a failed one or require copying it again.
                         runCatching { client.call("complete", null, null) }
                         publish(MigrationState(copied = bytes, total = bytes, done = true, ready = true,
+                            hasLegacy = true, operation = MigrationOperation.Legacy,
                             message = "数据已导入。确认新版运行正常后再卸载旧版。游戏会校验并补齐资源；Google 账号可能需要重新授权。"))
                     }
                 }
             }.onFailure {
                 runCatching { input?.close() }; input = null
-                publish(state.copy(busy = false, pending = MigrationAccess.preferences(context).getBoolean("pending", false),
+                publish(state.copy(busy = false, failed = true, pending = MigrationAccess.preferences(context).getBoolean("pending", false),
                     message = it.message ?: "迁移中断，可重新导入；旧数据仍保留"))
             }
         }
@@ -162,7 +164,8 @@ internal class MigrationModel(application: Application) : AndroidViewModel(appli
 
     fun importResources(uri: Uri, prepareTarget: Boolean) {
         if (state.busy || state.pending) return
-        state = state.copy(busy = true, done = false, copied = 0, total = 0, message = "正在准备导入资源…")
+        state = state.copy(busy = true, done = false, failed = false, copied = 0, total = 0,
+            operation = MigrationOperation.Resources, progressFiles = false, message = "正在准备导入资源…")
         executor.execute {
             runCatching {
                 OperationLock.run(context.filesDir.toPath()) {
@@ -177,14 +180,14 @@ internal class MigrationModel(application: Application) : AndroidViewModel(appli
                         val result = ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { stream ->
                             resourceTransfer { update ->
                                 publish(state.copy(busy = true, pending = true, copied = update.bytes, total = update.total,
-                                    message = if (update.phase == "正在合并资源") "正在合并资源 · ${update.bytes}/${update.total} 个文件"
-                                        else update.phase))
+                                    progressFiles = update.phase == "正在合并资源", message = update.phase))
                             }.importResources(stream)
                         }
                         input = null
                         TranslationRedirectGate(context).close()
                         clearResourcePending()
                         publish(MigrationState(done = true, copied = result.bytes, total = result.bytes,
+                            operation = MigrationOperation.Resources,
                             message = "已导入 ${result.files} 个资源文件，保留 ${result.keptExisting} 个已有文件。进入游戏后登录并补齐版本差异；原资源包未改动。"))
                     } catch (error: Throwable) {
                         runCatching { input?.close() }; input = null
@@ -197,7 +200,7 @@ internal class MigrationModel(application: Application) : AndroidViewModel(appli
                     }
                 }
             }.onFailure {
-                publish(state.copy(busy = false, pending = MigrationAccess.preferences(context).getBoolean("pending", false),
+                publish(state.copy(busy = false, failed = true, pending = MigrationAccess.preferences(context).getBoolean("pending", false),
                     message = it.message ?: "资源导入中断，请重新检测后重试"))
             }
             runCatching { context.contentResolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
@@ -225,6 +228,7 @@ open class MigrationActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = false
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val model = ViewModelProvider(this)[MigrationModel::class.java]
         setContent {
@@ -236,47 +240,18 @@ open class MigrationActivity : ComponentActivity() {
                         model.importResources(uri, prepareTarget())
                     }
                 }
-                BackHandler(state.busy || state.pending) { }
-                Surface(Modifier.fillMaxSize()) {
-                    Box(Modifier.safeDrawingPadding().padding(24.dp), contentAlignment = Alignment.Center) {
-                        Column(Modifier.widthIn(max = 560.dp).fillMaxWidth().verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(24.dp)) {
-                            Text("数据迁移", style = MaterialTheme.typography.headlineMedium)
-                            Text(if (state.done) "数据已就位" else "把已有资源带过来", style = MaterialTheme.typography.titleMedium)
-                            Card(Modifier.fillMaxWidth(), shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp)) {
-                                Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                    Text(state.message, style = MaterialTheme.typography.bodyLarge)
-                                    if (state.total > 0 && !state.message.startsWith("正在合并资源")) Text("${android.text.format.Formatter.formatFileSize(this@MigrationActivity, state.copied)} / " +
-                                        android.text.format.Formatter.formatFileSize(this@MigrationActivity, state.total),
-                                        style = MaterialTheme.typography.labelLarge)
-                                    if (state.busy && state.copied == 0L) LinearProgressIndicator(Modifier.fillMaxWidth())
-                                    else if (state.total > 0 && (state.busy || state.done)) LinearProgressIndicator(
-                                        progress = (state.copied.toDouble()/state.total).toFloat().coerceIn(0f,1f), modifier = Modifier.fillMaxWidth())
-                                }
-                            }
-                            if (state.done) Button(onClick = ::openMain, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("进入 BYBUS") }
-                            else if (state.ready) Button(onClick = { model.start(prepareTarget()) }, enabled = !state.busy,
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text(if (state.busy) "正在迁移" else "一键迁移旧 BYBUS") }
-                            else if (!state.busy && state.hasLegacy) {
-                                Button(onClick = {
-                                    packageManager.getLaunchIntentForPackage(MigrationArchive.LEGACY)?.let(::startActivity)
-                                }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("打开旧版 BYBUS") }
-                            }
-                            if (!state.busy && !state.done) {
-                                TextButton(onClick = model::refresh) { Text("重新检测") }
-                                if (!state.pending) {
-                                    OutlinedButton(onClick = { picker.launch(arrayOf("application/zip", "application/octet-stream")) },
-                                        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("导入资源包") }
-                                    Text("支持 limbusZhCN 及兼容容器迁出的资源 ZIP。只补充资源，不导入账号或替换已有文件；版本不同也可使用。",
-                                        style = MaterialTheme.typography.bodySmall)
-                                    TextButton(onClick = ::openMain) { Text("暂不导入") }
-                                }
-                            }
-                        }
-                    }
-                }
+                BackHandler { if (!state.busy && !state.pending) leaveMigration() }
+                MigrationScreen(state = state, onBack = ::leaveMigration, onRefresh = model::refresh,
+                    onMigrate = { model.start(prepareTarget()) },
+                    onSelectFile = { picker.launch(arrayOf("application/zip", "application/octet-stream")) },
+                    onOpenLegacy = {
+                        packageManager.getLaunchIntentForPackage(MigrationArchive.LEGACY)?.let(::startActivity)
+                    }, onFinish = ::leaveMigration)
             }
         }
+    }
+    private fun leaveMigration() {
+        if (isTaskRoot) openMain() else finish()
     }
     private fun openMain() {
         startActivity(Intent(this, MainActivity::class.java).putExtra("skip_legacy_migration", true))
