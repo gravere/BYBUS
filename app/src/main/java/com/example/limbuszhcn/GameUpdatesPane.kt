@@ -69,13 +69,13 @@ internal fun GameUpdatesPane(state: LauncherUiState, onCheck: () -> Unit,
             }
         }
 
-        DetailSection("其他方式") {
+        DetailActionSection("其他方式") {
             SheetAction(Glyph.Folder, "从文件更新", !state.busy && !state.gameInstallPending && state.gameInstallReview == null,
                 subtitle = "APK、分包、XAPK / APKS", navigation = true, onClick = onImport)
-            HorizontalDivider(color = C.Line)
+            DetailActionDivider()
             SheetAction(Glyph.Globe, "APKPure 网页", external = true, onClick = { onPage(GameStores.APKPURE_PAGE) })
             if (state.installSource.canOpen && GameStores.sourceFor(state.installSource) == null) {
-                HorizontalDivider(color = C.Line)
+                DetailActionDivider()
                 SheetAction(Glyph.Store, "原安装商店 · ${state.installSource.label}", external = true, onClick = onOriginalStore)
             }
         }

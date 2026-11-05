@@ -19,11 +19,11 @@ import kotlinx.coroutines.delay
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
 @Composable
-internal fun UpdateTabs(selected: UpdateTab, appBusy: Boolean, translationBusy: Boolean, onSelect: (UpdateTab) -> Unit) {
+internal fun UpdateTabs(selected: UpdateTab, translationBusy: Boolean, onSelect: (UpdateTab) -> Unit) {
     Box(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp)) {
         SourceTabs(UpdateTab.entries, selected, label = {
             when (it) {
-                UpdateTab.App -> if (appBusy) "BYBUS · 更新中" else "BYBUS"
+                UpdateTab.App -> "BYBUS"
                 UpdateTab.Translation -> if (translationBusy) "汉化资源 · 检查中" else "汉化资源"
             }
         }, description = "更新类别", onSelect = onSelect)

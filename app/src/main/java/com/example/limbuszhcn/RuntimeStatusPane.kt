@@ -2,13 +2,11 @@ package com.example.limbuszhcn
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -19,18 +17,18 @@ import com.example.limbuszhcn.ui.theme.LauncherColors as C
 internal fun RuntimeStatusPane(state: LauncherUiState, onGameUpdates: () -> Unit, onRefresh: () -> Unit) {
     var showDetails by rememberSaveable { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        DetailSection("游戏与汉化") {
-            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+        DetailSection("游戏与汉化", contentPadding = PaddingValues(0.dp)) {
+            Row(Modifier.fillMaxWidth()
                 .clickable(role = Role.Button, onClickLabel = "游戏更新与安装", onClick = onGameUpdates)
                 .semantics { contentDescription = "游戏更新与安装" }
-                .heightIn(min = 56.dp).padding(vertical = 14.dp),
+                .heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 14.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 DetailRow("游戏版本", state.installedVersionName ?: state.installedVersion?.toString() ?: "未安装",
                     modifier = Modifier.weight(1f))
                 LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(15.dp))
             }
-            HorizontalDivider(color = C.Line)
-            Column(Modifier.padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            DetailActionDivider()
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 DetailRow("安装来源", state.installSource.label)
                 DetailRow("游戏同步", if (state.container?.importedVersionCode == state.installedVersion && state.installedVersion != null &&
                     state.container?.requiresInstalledGameResync == false) "已同步" else "启动时同步")

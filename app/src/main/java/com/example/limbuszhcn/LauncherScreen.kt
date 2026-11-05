@@ -135,7 +135,7 @@ internal fun LauncherScreen(
                 LauncherDetailSurface(layout, page, onDismiss = ::close,
                     onBack = parentSheet?.let { parent -> { sheet = parent; parentSheet = null } },
                     navigation = { active -> if (active == "app-update") {
-                        UpdateTabs(updateTab, appUpdateState.busy, state.busy && state.stage == "检查零协更新并校验汉化文件") { updateTab = it }
+                        UpdateTabs(updateTab, state.busy && state.stage == "检查零协更新并校验汉化文件") { updateTab = it }
                     } },
                     footer = { active -> if (active == "app-update") {
                         if (updateTab == UpdateTab.App) AppUpdateControls(appUpdateState, state, onDownloadAppUpdate, onInstallAppUpdate, onCancelAppUpdate, layout.detailPadding.dp)
