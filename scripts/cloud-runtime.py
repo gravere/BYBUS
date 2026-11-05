@@ -353,8 +353,8 @@ def visible_navigation_frames(windows, width, height):
     return [f for f in frames if 0 <= f[0] < f[2] <= width and 0 <= f[1] < f[3] <= height]
 
 
-def inspect_launch_control(release, verifier):
-    """Render production controls with debug-only fixtures after all release screenshots."""
+def install_component_probe(release, verifier):
+    """Only used after the signed release screenshots have been saved."""
     if not release["draft"] or os.environ.get("RUNTIME_CANDIDATE") != "true":
         raise RuntimeError("Component rendering requires a private-to-collaborators release draft")
     asset = next(a for a in release["assets"] if a["name"] == "bybus-ui-probe.apk")
@@ -371,6 +371,12 @@ def inspect_launch_control(release, verifier):
         raise RuntimeError("Component rendering APK signature mismatch")
     if "Success" not in adb("install", "--no-streaming", "-r", str(probe), timeout=150):
         raise RuntimeError("Component rendering APK installation failed")
+    return digest
+
+
+def inspect_launch_control(release, verifier):
+    """Render production controls with debug-only fixtures after all release screenshots."""
+    digest = install_component_probe(release, verifier)
     adb("shell", "wm", "size", "720x1560")
     adb("shell", "wm", "density", "320")
     cases = [("launch-stage-0", 0, "no", "1.0"), ("launch-stage-1", 1, "no", "1.0"),
@@ -411,6 +417,60 @@ def inspect_launch_control(release, verifier):
     REPORT["launch_component"] = dict(apk_sha256=digest, fixtures=rendered, animated_frames_differ=True,
         real_startup=False, readme_uses_component_fixtures=False)
     REPORT["checks"].append("production launch control: 3 stage fixtures, dark/large text/idle/generic busy and moving highlight")
+
+
+def inspect_update_controls(release, verifier):
+    digest = install_component_probe(release, verifier)
+    cases = [("update-download", "download", "no", "1.0", "720x1560", 320),
+             ("update-dark", "download", "yes", "1.0", "720x1560", 320),
+             ("update-large-text", "download", "no", "2.0", "720x1560", 320),
+             ("update-tablet", "download", "no", "1.0", "1280x800", 160),
+             ("update-available", "available", "no", "1.0", "720x1560", 320),
+             ("update-ready", "ready", "no", "1.0", "720x1560", 320),
+             ("update-latest", "latest", "no", "1.0", "720x1560", 320),
+             ("update-error", "error", "no", "1.0", "720x1560", 320),
+             ("update-translation-active", "translation", "no", "1.0", "720x1560", 320)]
+    rendered = []
+    try:
+        for name, case, night, font, size, density in cases:
+            adb("shell", "am", "force-stop", PACKAGE)
+            adb("shell", "wm", "size", size)
+            adb("shell", "wm", "density", str(density))
+            adb("shell", "cmd", "uimode", "night", night)
+            adb("shell", "settings", "put", "system", "font_scale", font)
+            adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/.UpdateControlProbeActivity",
+                "--es", "case", case, timeout=40)
+            time.sleep(2)
+            tree = capture(name)
+            progress_label = "汉化更新进度" if case == "translation" else "应用更新进度"
+            progress_nodes = [n for n in tree.iter("node") if n.get("content-desc") == progress_label]
+            if bool(progress_nodes) != (case in ("download", "translation")):
+                raise RuntimeError("Update track does not follow the active operation: " + name)
+            if case == "download":
+                locate(tree, "46%")
+                action = clickable_bounds(tree, "取消更新")
+                if min(action[2] - action[0], action[3] - action[1]) < 48 * density / 160:
+                    raise RuntimeError("Cancel touch target is clipped: " + name)
+                if name == "update-download":
+                    tap("取消更新", tree)
+                    cancelled = capture("update-component-cancelled")
+                    locate(cancelled, "已取消，可重试")
+                    if any(n.get("content-desc") == "应用更新进度" for n in cancelled.iter("node")):
+                        raise RuntimeError("Progress did not clear after fixture cancellation")
+            elif case in ("available", "error", "ready"):
+                label = "安装更新" if case == "ready" else "下载更新"
+                action = clickable_bounds(tree, label)
+                if action[3] - action[1] < 52 * density / 160:
+                    raise RuntimeError("Update action height is clipped: " + name)
+            rendered.append(dict(name=name, case=case, night=night, font_scale=font, size=size))
+    finally:
+        adb("shell", "settings", "put", "system", "font_scale", "1.0", check=False)
+        adb("shell", "cmd", "uimode", "night", "no", check=False)
+        adb("shell", "wm", "size", "720x1560", check=False)
+        adb("shell", "wm", "density", "320", check=False)
+    REPORT["update_component"] = dict(apk_sha256=digest, fixtures=rendered,
+        cancellation_callback=True, real_download=False, readme_uses_component_fixtures=False)
+    REPORT["checks"].append("shared update action card states, cancel callback, dark/large text/tablet rendering")
 
 
 def inspect_system_navigation():
@@ -654,11 +714,19 @@ def main():
         inspect_detail_scroll(parent)
         inspect_update_progress()
         inspect_system_navigation()
+    elif os.environ.get("RUNTIME_MODE") == "updates":
+        adb("shell", "input", "keyevent", "KEYCODE_BACK")
+        time.sleep(.5)
+        inspect_update_progress()
+        inspect_system_navigation()
     elif os.environ.get("RUNTIME_MODE") == "runtime":
         inspect_google(parent)
-    inspect_tablet()
+    if os.environ.get("RUNTIME_MODE") != "updates":
+        inspect_tablet()
     if os.environ.get("RUNTIME_MODE") == "launch":
         inspect_launch_control(release, verifier)
+    elif os.environ.get("RUNTIME_MODE") == "updates":
+        inspect_update_controls(release, verifier)
     REPORT["result"] = "runtime baseline completed; screenshots require visual review"
 
 

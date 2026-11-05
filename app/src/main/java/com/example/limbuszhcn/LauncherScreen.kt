@@ -171,8 +171,8 @@ internal fun LauncherScreen(
                         UpdateTabs(updateTab, appUpdateState.busy, state.busy && state.stage == "检查零协更新并校验汉化文件") { updateTab = it }
                     } },
                     footer = { active -> if (active == "app-update") {
-                        if (updateTab == UpdateTab.App) AppUpdateControls(appUpdateState, state, onDownloadAppUpdate, onInstallAppUpdate, onCancelAppUpdate)
-                        else TranslationUpdateControls(state, onUpdate)
+                        if (updateTab == UpdateTab.App) AppUpdateControls(appUpdateState, state, onDownloadAppUpdate, onInstallAppUpdate, onCancelAppUpdate, layout.detailPadding.dp)
+                        else TranslationUpdateControls(state, onUpdate, layout.detailPadding.dp)
                     } }) { active ->
                     if (active == "project") {
                         ProjectDetails(projectState, onRefreshProject, onSelectProjectSource, onOpenLink)

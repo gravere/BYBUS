@@ -11,8 +11,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import com.example.limbuszhcn.selfupdate.AppUpdateState
 import com.example.limbuszhcn.selfupdate.releaseNoteItems
 import kotlinx.coroutines.delay
@@ -119,56 +119,31 @@ internal fun TranslationUpdatesPane(state: LauncherUiState) {
 }
 
 @Composable
-internal fun TranslationUpdateControls(state: LauncherUiState, onCheck: () -> Unit) {
+internal fun TranslationUpdateControls(state: LauncherUiState, onCheck: () -> Unit, horizontalPadding: Dp = 24.dp) {
     val checking = state.busy && state.stage == "检查零协更新并校验汉化文件"
-    Column(Modifier.fillMaxWidth()) {
-        HorizontalDivider(color = C.Line)
-        Column(Modifier.padding(horizontal = 24.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (state.stage == "检查零协更新并校验汉化文件") {
-                Text(state.message, color = if (state.failed) C.Error else C.Muted,
-                    style = MaterialTheme.typography.bodySmall)
-            }
-            if (checking) LinearProgressIndicator(Modifier.fillMaxWidth(), color = C.Accent, trackColor = C.Line)
-            Button(onClick = onCheck, enabled = !state.busy && state.container?.gameImported == true,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = RoundedCornerShape(16.dp)) {
-                Text(if (checking) "正在检查汉化" else "检查汉化更新")
-            }
-        }
-    }
+    val showingResult = state.stage == "检查零协更新并校验汉化文件"
+    UpdateActionCard(message = state.message.takeIf { showingResult }, icon = Glyph.Translation,
+        busy = checking, failed = showingResult && state.failed, description = "汉化更新操作",
+        progressDescription = "汉化更新进度", horizontalPadding = horizontalPadding,
+        action = if (checking) null else "检查汉化更新",
+        actionEnabled = !state.busy && state.container?.gameImported == true, onAction = onCheck)
 }
 
 /** Keep transfer feedback beside its action, outside long release notes. */
 @Composable
 internal fun AppUpdateControls(state: AppUpdateState, launcher: LauncherUiState,
-    onDownload: () -> Unit, onInstall: () -> Unit, onCancel: () -> Unit) {
+    onDownload: () -> Unit, onInstall: () -> Unit, onCancel: () -> Unit, horizontalPadding: Dp = 24.dp) {
     val retryRemaining = updateRetryRemaining(state.retryAtElapsed)
-    Column(Modifier.fillMaxWidth().semantics { contentDescription = "应用更新操作" }) {
-        HorizontalDivider(color = C.Line)
-        Column(Modifier.padding(horizontal = 24.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(if (state.retryAtElapsed != null && retryRemaining == 0L) "可以重新检查更新" else state.message,
-                    style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                if (state.busy) state.progress?.let {
-                    Text("${it.coerceIn(0, 100)}%", color = C.Accent, style = MaterialTheme.typography.labelLarge)
-                }
-            }
-            if (state.busy) {
-                val progressModifier = Modifier.fillMaxWidth().semantics { contentDescription = "应用更新进度" }
-                state.progress?.let {
-                    LinearProgressIndicator(progress = { it.coerceIn(0, 100) / 100f }, modifier = progressModifier,
-                        color = C.Accent, trackColor = C.Line)
-                } ?: LinearProgressIndicator(progressModifier, color = C.Accent, trackColor = C.Line)
-                TextButton(onClick = onCancel, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("取消更新") }
-            } else if (state.release?.newerThan(state.installedCode) == true) {
-                Button(onClick = if (state.ready) onInstall else onDownload,
-                    enabled = (state.ready || retryRemaining == 0L) && (!state.ready || !launcher.busy),
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)) {
-                    Text(if (state.ready) "安装更新" else "下载更新")
-                }
-            }
-        }
-    }
+    val hasAction = !state.busy && state.release?.newerThan(state.installedCode) == true
+    UpdateActionCard(
+        message = if (state.retryAtElapsed != null && retryRemaining == 0L) "可以重新检查更新" else state.message,
+        icon = when { state.error != null -> Glyph.Info; state.busy -> Glyph.Progress
+            state.ready || state.message == "已是最新版本" -> Glyph.Check; else -> Glyph.Upgrade },
+        busy = state.busy, progress = state.progress, failed = state.error != null,
+        description = "应用更新操作", progressDescription = "应用更新进度", horizontalPadding = horizontalPadding,
+        action = if (hasAction) if (state.ready) "安装更新" else "下载更新" else null,
+        actionEnabled = (state.ready || retryRemaining == 0L) && (!state.ready || !launcher.busy),
+        onAction = if (state.ready) onInstall else onDownload, onCancel = onCancel)
 }
 
 @Composable
