@@ -42,7 +42,7 @@ BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeL
 ## 功能特点
 
 - **免 Root 使用** — 导入官方游戏，在容器内显示中文，保留原始 APK 与游戏文本文件。
-- **独立安装与迁移** — 可与 limbusZhCN 共存；旧 BYBUS 的资源与配置可本机迁移，也可导入兼容容器导出的资源包，减少重复下载。
+- **独立安装与迁移** — 使用独立包名；自动识别旧 BYBUS，本机迁移资源与配置，也可导入兼容的资源文件，减少重复下载。
 - **汉化持续同步** — 启动前检查零协更新，复用已校验的缓存；汉化索引与配置持久保存，无需每次重新设置。
 - **减少下载负担** — 大型游戏资源可只在 BYBUS 内下载；应用更新自动复用已安装内容，只下载缺少的部分，无需逐个匹配旧版本补丁。
 - **应用更新提醒** — 自动检查 BYBUS 正式发行版，发现新版时在设置与更新入口显示红点，覆盖升级后自动消除。
@@ -91,7 +91,7 @@ BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeL
 
 1. **保留旧版，不要卸载或清除数据。** 在旧版中检查更新并完成一次覆盖更新；没有更新入口时，可手动安装[旧版衔接更新](https://github.com/gravere/BYBUS/releases/latest/download/BYBUS.apk)。这会保留数据并开放迁移接口，旧版不再用于启动游戏。
 2. 从[最新发行页](https://github.com/gravere/BYBUS/releases/latest)下载 `BYBUS-Android.apk`，安装新版 BYBUS。
-3. 在新版「设置与工具 → 数据迁移」中选择「一键迁移旧 BYBUS」。确认新版正常后，再卸载旧版。
+3. 在新版「设置与工具 → 数据迁移」中，确认识别到旧版后点击「开始迁移」，无需手动导出文件。确认新版正常后，再卸载旧版。
 
 迁移会替换新版容器内的同名数据，需要额外存储空间；中断可重新导入，旧数据不会自动删除。Google 凭据可能需要重新授权。资源无需与当前游戏版本一致，游戏会自行校验并补齐差异。
 
@@ -102,7 +102,7 @@ BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeL
 <details>
 <summary><strong>其他容器的资源也能导入吗？</strong></summary>
 
-支持 [limbusZhCN](https://github.com/BBBEANNN/limbusZhCN) 及使用相同 `limbus-resources-v1` 格式的容器导出的资源 ZIP。先在来源应用中「迁出资源」，再到 BYBUS「设置与工具 → 数据迁移 → 导入资源包」选择文件。
+支持兼容导出格式的资源 ZIP。先在来源应用中导出资源，再到 BYBUS「设置与工具 → 数据迁移 → 选择资源文件」导入。
 
 资源包只补充缺少的资源，保留 BYBUS 中已有文件，不包含账号，导入后需自行登录。不同版本的资源也可导入，由游戏补齐更新。没有迁移接口或兼容导出功能的容器，暂不支持直接读取其私有数据。
 
