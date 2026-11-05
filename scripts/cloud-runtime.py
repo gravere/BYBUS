@@ -583,8 +583,10 @@ def inspect_migration_screen(release, verifier, focused=False, probe_digest=None
                 first = element_bounds(expanded, "旧版迁移包含资源与账号配置；文件导入只补充缺少的资源。")
                 last = element_bounds(expanded, "资源版本无需相同，进入游戏后会校验更新。")
                 header = clickable_bounds(expanded, "返回上一页")
-                height = int(size.split("x")[1])
-                if not (first[1] >= header[3] and last[1] >= first[3] and last[3] <= height-96 and
+                viewport = next(n for n in expanded.iter("node") if n.get("scrollable") == "true")
+                visible = tuple(map(int, re.findall(r"\d+", viewport.get("bounds", ""))))
+                # Gesture and three-button navigation reserve different real insets.
+                if not (first[1] >= max(header[3], visible[1]) and last[1] >= first[3] and last[3] <= visible[3] and
                         last[3]-last[1] >= 32*float(font)):
                     raise RuntimeError("Expanded notes are obscured or overlap navigation: " + name)
                 collapse = scroll_to_control(expanded, "收起说明", down=False)
@@ -971,6 +973,12 @@ def main():
     if "Success" not in installed:
         raise RuntimeError("APK installation did not succeed: " + installed[-1000:])
     REPORT["checks"].append("published APK signature/hash and installation")
+    if os.environ.get("RUNTIME_MODE") == "disclosure-ui":
+        adb("shell", "cmd", "statusbar", "send-disable-flag", "system-icons", "clock", "notification-icons")
+        adb("logcat", "-c")
+        inspect_migration_screen(release, verifier, focused=True)
+        REPORT["result"] = "disclosure inspection completed; screenshots require visual review"
+        return
     if os.environ.get("RUNTIME_MODE") == "repairs":
         adb("logcat", "-c")
         adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
