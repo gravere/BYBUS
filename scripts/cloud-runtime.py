@@ -986,7 +986,7 @@ def main():
     adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
     time.sleep(15)
     home = capture("home")
-    if os.environ.get("RUNTIME_MODE") in ("ui", "launch"):
+    if os.environ.get("RUNTIME_MODE") in ("ui", "launch", "interaction-ui"):
         inspect_home_alignment(home, 720, 1560, density=2)
     REPORT["checks"].append("main activity resumed")
     tap("都市零协会", home)
