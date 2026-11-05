@@ -866,7 +866,7 @@ def main():
     locate(parent, "设置与工具")
     locate(parent, "版本与资源")
     REPORT["checks"].append("child back returns to parent settings")
-    if os.environ.get("RUNTIME_MODE") == "launch":
+    if os.environ.get("RUNTIME_MODE") in ("launch", "resources"):
         tap("数据迁移", parent)
         migration = capture("migration-menu")
         locate(migration, "导入资源包")
@@ -877,6 +877,11 @@ def main():
         locate(hierarchy("migration-picker-cancel"), "数据迁移")
         tap("暂不导入", hierarchy("migration-exit"))
         REPORT["checks"].append("release migration menu and document picker cancellation return safely")
+    if os.environ.get("RUNTIME_MODE") == "resources":
+        install_component_probe(release, verifier)
+        inspect_resource_import()
+        REPORT["result"] = "resource import regression completed; screenshots require visual review"
+        return
     if os.environ.get("RUNTIME_MODE") == "ui":
         inspect_detail_scroll(parent)
         inspect_update_progress()

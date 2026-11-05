@@ -107,7 +107,9 @@ class GameResourceTransfer(
                 count = metadata.getProperty("files")?.toIntOrNull() ?: -1
                 sourceVersion = metadata.getProperty("versionCode")?.toLongOrNull() ?: -1
                 require(total in 1..MAX_BYTES && count in 1..MAX_FILES && sourceVersion > 0) { "迁移包大小或版本信息无效" }
-                require(Files.getFileStore(stage).usableSpace > total + 64 * 1024 * 1024) { "空间不足：迁入前需要暂存并校验整份资源" }
+                // Android's NIO provider does not implement getFileStore. File uses
+                // the platform statvfs path and remains usable on all supported APIs.
+                require(stage.toFile().usableSpace > total + 64 * 1024 * 1024) { "空间不足：迁入前需要暂存并校验整份资源" }
                 var entry = zip.nextEntry
                 while (entry != null) {
                     checkCancelled()
