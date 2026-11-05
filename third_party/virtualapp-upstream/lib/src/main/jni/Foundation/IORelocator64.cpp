@@ -22,6 +22,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <signal.h>
+#include "LimbusNativeCompat.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -1197,7 +1198,15 @@ hook_function(void *handle, const char *symbol, void *new_func, void **old_func)
         ALOGE("Not found symbol : %s", symbol);
         return;
     }
-    MSHookFunction(addr, new_func, old_func);
+    static LimbusIoHookRegistry registry;
+    static pthread_mutex_t install_lock = PTHREAD_MUTEX_INITIALIZER;
+    pthread_mutex_lock(&install_lock);
+    const bool installed = registry.install(addr, symbol, new_func, old_func,
+            [](void *address, void *replacement, void **original) {
+                MSHookFunction(address, replacement, original);
+            });
+    pthread_mutex_unlock(&install_lock);
+    if (!installed) ALOGE("IO hook rejected conflicting or unavailable symbol: %s", symbol);
 }
 
 void onSoLoaded(const char *name, void *handle);
@@ -1864,6 +1873,11 @@ static void limbus_sigsegv_guard(int sig, siginfo_t *info, void *context) {
         }
     }
 #endif
+#if defined(__aarch64__)
+    LimbusSignalContextSnapshot before{};
+    if (context != nullptr) before = limbus_snapshot_context(
+            reinterpret_cast<const ucontext_t *>(context)->uc_mcontext);
+#endif
     struct sigaction action = g_limbus_sigsegv_action;
     if ((action.sa_flags & SA_SIGINFO) != 0
             && action.sa_sigaction != nullptr
@@ -1879,9 +1893,7 @@ static void limbus_sigsegv_guard(int sig, siginfo_t *info, void *context) {
 #if defined(__aarch64__)
         if (context != nullptr) {
             const auto *updated_context = reinterpret_cast<const ucontext_t *>(context);
-            uintptr_t updated_pc = static_cast<uintptr_t>(updated_context->uc_mcontext.pc);
-            uintptr_t updated_sp = static_cast<uintptr_t>(updated_context->uc_mcontext.sp);
-            if (updated_pc != pc || updated_sp != sp) {
+            if (limbus_machine_context_changed(updated_context->uc_mcontext, before)) {
                 return;
             }
             /*
@@ -1906,8 +1918,7 @@ static void limbus_sigsegv_guard(int sig, siginfo_t *info, void *context) {
 #if defined(__aarch64__)
         if (context != nullptr) {
             const auto *updated_context = reinterpret_cast<const ucontext_t *>(context);
-            if (static_cast<uintptr_t>(updated_context->uc_mcontext.pc) != pc
-                    || static_cast<uintptr_t>(updated_context->uc_mcontext.sp) != sp) {
+            if (limbus_machine_context_changed(updated_context->uc_mcontext, before)) {
                 return;
             }
         } else {

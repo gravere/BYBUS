@@ -12,6 +12,40 @@ class ParatranzRepositoryTest {
     private val json = """{"id":6860,"dest":"zh-cn","name":"LLC","stats":{"total":100,"translated":90,"checked":50,"reviewed":20,"modifiedAt":"2026-09-22T06:00:00Z"}}"""
     private val now = 1_790_000_000_000L
 
+    @Test fun serverRetryWindowBlocksManualAndAutomaticChecksAndSurvivesRestart() {
+        var tick = 0L; var calls = 0
+        val file = folder.root.toPath().resolve("project.json")
+        val fetch = { calls++; throw ProjectFetchException(ProjectIssue.RateLimited, now + 3_600_000) }
+        val repository = ParatranzRepository(file, fetch, { now + tick }, { tick })
+        assertEquals(now + 3_600_000, repository.refresh(true).retryAtMillis)
+        for (time in listOf(15_000L, 75_000L, 3_599_999L)) {
+            tick = time; repository.refresh(true); repository.refresh(false)
+        }
+        val restarted = ParatranzRepository(file, { calls++; json }, { now + tick }, { tick })
+        assertEquals(ProjectIssue.RateLimited, restarted.refresh(true).issue)
+        assertEquals(1, calls)
+        tick = 3_600_000
+        assertNull(restarted.refresh(true).issue)
+        assertEquals(2, calls)
+        assertFalse(Files.exists(file.resolveSibling("project.json.retry")))
+    }
+
+    @Test fun retryUsesElapsedTimeAndRejectsUnboundedSavedWindows() {
+        var tick = 0L; var wall = now; var calls = 0
+        val file = folder.root.toPath().resolve("project.json")
+        val repository = ParatranzRepository(file,
+            { calls++; throw ProjectFetchException(ProjectIssue.RateLimited, now + 3_600_000) }, { wall }, { tick })
+        repository.refresh(true)
+        tick = 75_000; wall += 86_400_000
+        repository.refresh(true)
+        assertEquals(1, calls)
+        Files.write(file.resolveSibling("project.json.retry"),
+            """{"schema":1,"recordedAt":$now,"retryAt":${now + 172_800_000}}""".toByteArray())
+        val restarted = ParatranzRepository(file, { calls++; json }, { now + 100 }, { tick })
+        assertNull(restarted.refresh(true).issue)
+        assertEquals(2, calls)
+    }
+
     @Test fun countersAreIndependentNotAddedTogether() {
         val snapshot = ProjectSnapshotCodec.parseResponse(json, now)
         assertEquals(.9f, snapshot.translatedFraction!!, .0001f)

@@ -97,6 +97,13 @@ BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeL
 
 各版本变化见[发行说明](https://github.com/gravere/BYBUS/releases)。Releases 保留最近三个正式构建的发行文件。
 
+<details>
+<summary>能与 limbusZhCN 同时安装吗？</summary>
+
+目前不能。BYBUS 沿用了上游的 Android 应用 ID，但使用独立签名，两者无法同时安装，也不能相互覆盖更新。请使用 BYBUS 自己的更新入口；不要为了切换项目卸载已有应用，否则会删除其中的容器数据。
+
+</details>
+
 ## 文档与贡献
 
 | 文档 | 内容 |

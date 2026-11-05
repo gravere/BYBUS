@@ -48,6 +48,7 @@ public class VAccountVisibility implements Parcelable {
         this.type = in.readString();
         this.userId = in.readInt();
         int visibilitySize = in.readInt();
+        if (visibilitySize < 0 || visibilitySize > 10000) throw new IllegalArgumentException("Invalid visibility count");
         this.visibility = new HashMap<String, Integer>(visibilitySize);
         for (int i = 0; i < visibilitySize; i++) {
             String key = in.readString();

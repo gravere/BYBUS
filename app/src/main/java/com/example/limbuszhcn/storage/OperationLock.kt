@@ -18,7 +18,10 @@ internal object OperationLock {
             Files.createDirectories(key)
             FileChannel.open(key.resolve("launcher-operation.lock"), StandardOpenOption.CREATE, StandardOpenOption.WRITE).use { channel ->
                 val lock = channel.tryLock() ?: throw IllegalStateException("另一进程正在处理游戏，请稍后重试")
-                lock.use { return task() }
+                lock.use {
+                    com.lody.virtual.helper.utils.PackageInstallGuard.assertIdle(key.toFile())
+                    return task()
+                }
             }
         } finally { mutex.unlock() }
     }

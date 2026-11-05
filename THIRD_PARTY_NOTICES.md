@@ -44,6 +44,10 @@ GPL-3.0.
 
 ## Native hook and Android-derived files
 
+ARM64 relocation, libc alias handling, and signal-context comparison also incorporate
+work from [BBBEANNN/limbusZhCN PR #17](https://github.com/BBBEANNN/limbusZhCN/pull/17).
+The original And64InlineHook MIT notice is retained in its source files.
+
 The vendored runtime contains Android Open Source Project-derived files and
 native hook implementations whose Apache-2.0, MIT, or other notices are kept in
 their original source headers. Those headers control the corresponding files.

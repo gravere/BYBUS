@@ -353,6 +353,25 @@ def visible_navigation_frames(windows, width, height):
     return [f for f in frames if 0 <= f[0] < f[2] <= width and 0 <= f[1] < f[3] <= height]
 
 
+def inspect_account_registry(release, verifier):
+    digest = install_component_probe(release, verifier)
+    adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/.AccountRegistryProbeActivity", timeout=90)
+    deadline = time.monotonic() + 180
+    while time.monotonic() < deadline:
+        tree = hierarchy("account-registry")
+        labels = [node.get("text", "") for node in tree.iter("node")]
+        if "ACCOUNT_REGISTRY_PASS" in labels:
+            REPORT["account_registry"] = dict(first_silent_install=True, fresh_cache=True,
+                server_restart=False, account_access=False, probe_sha256=digest)
+            REPORT["checks"].append("Google authenticator registered on first silent install without server restart")
+            return
+        failures = [text for text in labels if text.startswith("ACCOUNT_REGISTRY_FAIL")]
+        if failures:
+            raise RuntimeError(failures[0])
+        time.sleep(3)
+    raise RuntimeError("First-install account registry probe timed out")
+
+
 def install_component_probe(release, verifier):
     """Only used after the signed release screenshots have been saved."""
     if not release["draft"] or os.environ.get("RUNTIME_CANDIDATE") != "true":
@@ -679,6 +698,13 @@ def main():
     if "Success" not in installed:
         raise RuntimeError("APK installation did not succeed: " + installed[-1000:])
     REPORT["checks"].append("published APK signature/hash and installation")
+    if os.environ.get("RUNTIME_MODE") == "repairs":
+        adb("logcat", "-c")
+        adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/.MainActivity", timeout=90)
+        time.sleep(3)
+        inspect_account_registry(release, verifier)
+        REPORT["result"] = "container repair regression completed; no account or purchase attempted"
+        return
     adb("shell", "settings", "delete", "global", "policy_control")
     # Hide emulator system chrome before taking raw captures; never paint over app pixels.
     adb("shell", "cmd", "statusbar", "send-disable-flag", "system-icons", "clock", "notification-icons")

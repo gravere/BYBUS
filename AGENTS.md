@@ -77,7 +77,8 @@
   不得从当前已修改内存学习可信 CRC，未知保护结构仍拒绝。471 的专属例外不扩展。
 
 - Limbus native 终止路径只做容器进程内轻量拦截; `SIGPWR` / `SIGXCPU` 必须放行。
-- `SIGSEGV` 仅可忽略 `si_code <= 0` 的用户主动投递; 同步内存错误必须交回原 handler。若下游 handler 返回后 PC/SP 均未改变,表示它没有消费当前同步故障,必须恢复默认处理并终止,不得返回原指令形成信号/日志死循环。
+- `SIGSEGV` 仅可忽略 `si_code <= 0` 的用户主动投递; 同步内存错误必须交回原 handler。下游返回后核对 PC/SP/PSTATE 和全部通用寄存器，不能仅凭 PC/SP 不变误杀已修正寄存器的处理结果；完整上下文仍未改变时恢复默认处理并终止，不得返回原指令形成信号/日志死循环。
+- ARM64 libc 同地址符号只安装一次 IO hook；只有确切等价的 ABI 别名可共享原跳板，未知冲突拒绝覆盖。指令搬运须按 ISA 位宽扩展有符号偏移，保留 4/16 KiB 页保护边界和原函数发布顺序。
 - libc hook 必须保持公开 API 返回值语义。例如 `getcwd()` 成功时返回调用方 buffer 指针, 不能暴露 raw syscall 长度。
 - native 路径伪装必须覆盖 `readlinkat` / `syscall(__NR_readlinkat)` 和 `/proc/self/fd` 反向路径。
 - AppSealing 50040 已确认由 `/proc/self/maps` 审计路径触发; `/sys/module`、`/proc/modules` 走 direct syscall, libc 文件 API 伪装不能覆盖。
