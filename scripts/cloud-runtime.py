@@ -407,14 +407,22 @@ def install_component_probe(release, verifier, name="bybus-ui-probe.apk"):
 
 def inspect_service_callback(release, verifier):
     """Exercise the platform AIDL Proxy/Stub and production delegate, not a mocked ABI."""
+    # Only this disposable emulator: probe builds intentionally retain debuggable=false.
+    # The probe still runs under the ordinary app UID; shell root reads only its test result.
+    adb("root")
+    adb("wait-for-device", timeout=30)
+    if adb("shell", "id", "-u").strip() != "0":
+        raise RuntimeError("The isolated emulator cannot read the private probe result")
+    adb("shell", "am", "force-stop", PACKAGE)
     digest = install_component_probe(release, verifier)
-    adb("shell", "run-as", PACKAGE, "rm", "-f", "files/service-callback-result.json")
+    result_file = f"/data/user/0/{PACKAGE}/files/service-callback-result.json"
+    adb("shell", "rm", "-f", result_file)
     started = adb("shell", "am", "broadcast", "--receiver-foreground", "-n",
                   f"{PACKAGE}/{NAMESPACE}.ServiceConnectionProbeReceiver", timeout=45)
     (OUT / "service-callback-start.txt").write_text(started, encoding="utf-8")
     deadline = time.monotonic() + 45
     while time.monotonic() < deadline:
-        raw = adb("shell", "run-as", PACKAGE, "cat", "files/service-callback-result.json", check=False)
+        raw = adb("shell", "cat", result_file, check=False)
         if raw.lstrip().startswith("{"):
             try:
                 result = json.loads(raw)
