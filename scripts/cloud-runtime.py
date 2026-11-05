@@ -408,15 +408,20 @@ def install_component_probe(release, verifier, name="bybus-ui-probe.apk"):
 def inspect_service_callback(release, verifier):
     """Exercise the platform AIDL Proxy/Stub and production delegate, not a mocked ABI."""
     digest = install_component_probe(release, verifier)
-    adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.ServiceConnectionProbeActivity", timeout=90)
+    adb("shell", "run-as", PACKAGE, "rm", "-f", "files/service-callback-result.json")
+    started = adb("shell", "am", "broadcast", "--receiver-foreground", "-n",
+                  f"{PACKAGE}/{NAMESPACE}.ServiceConnectionProbeReceiver", timeout=45)
+    (OUT / "service-callback-start.txt").write_text(started, encoding="utf-8")
     deadline = time.monotonic() + 45
     while time.monotonic() < deadline:
-        tree = hierarchy("service-callback")
-        for node in tree.iter("node"):
-            label = node.get("text", "")
-            if not label.startswith("SERVICE_CALLBACK_RESULT\n"):
+        raw = adb("shell", "run-as", PACKAGE, "cat", "files/service-callback-result.json", check=False)
+        if raw.lstrip().startswith("{"):
+            try:
+                result = json.loads(raw)
+            except json.JSONDecodeError:
+                time.sleep(.5)
                 continue
-            result = json.loads(label.split("\n", 1)[1])
+            (OUT / "service-callback.json").write_text(raw, encoding="utf-8")
             REPORT["service_callback"] = dict(result, probe_sha256=digest)
             if not result.get("passed"):
                 raise RuntimeError("Platform service callback failed: " + str(result.get("error")))
@@ -1350,6 +1355,10 @@ except Exception as error:
     raise
 finally:
     try:
+        if os.environ.get("RUNTIME_MODE") == "service-callback":
+            diagnostic = adb("logcat", "-d", "-t", "700", "ServiceCallbackProbe:E", "ActivityManager:I",
+                             "ActivityTaskManager:I", "LimbusZhCN:D", "LimbusVA:W", "*:S", timeout=15, check=False)
+            (OUT / "callback-log.txt").write_text(diagnostic, encoding="utf-8")
         crashes = adb("logcat", "-d", "-b", "crash", "-t", "150", timeout=15, check=False)
         (OUT / "crashes.txt").write_text(crashes, encoding="utf-8")
     except Exception:

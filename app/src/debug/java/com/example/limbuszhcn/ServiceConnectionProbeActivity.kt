@@ -4,6 +4,9 @@ import android.app.Activity
 import android.app.IBinderSession
 import android.app.IServiceConnection
 import android.content.ComponentName
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
 import android.os.Binder
 import android.os.Bundle
 import android.os.IBinder
@@ -22,7 +25,7 @@ class ServiceConnectionProbeActivity : Activity() {
         val output = TextView(this).apply { text = "SERVICE_CALLBACK_PENDING" }
         setContentView(output)
         Thread {
-            val result = runCatching { inspect() }.getOrElse {
+            val result = runCatching { ServiceConnectionProbe.inspect() }.getOrElse {
                 android.util.Log.e("ServiceCallbackProbe", "Platform callback inspection failed", it)
                 JSONObject().put("passed", false).put("error", it.stackTraceToString().take(8000))
             }
@@ -30,7 +33,28 @@ class ServiceConnectionProbeActivity : Activity() {
         }.start()
     }
 
-    private fun inspect(): JSONObject {
+}
+
+/** Read the result independently of Activity navigation and focus. Debug builds only. */
+class ServiceConnectionProbeReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val pending = goAsync()
+        Thread {
+            try {
+                val result = runCatching { ServiceConnectionProbe.inspect() }.getOrElse {
+                    android.util.Log.e("ServiceCallbackProbe", "Platform callback inspection failed", it)
+                    JSONObject().put("passed", false).put("error", it.stackTraceToString().take(8000))
+                }
+                java.io.File(context.filesDir, "service-callback-result.json").writeText(result.toString())
+            } finally {
+                pending.finish()
+            }
+        }.start()
+    }
+}
+
+internal object ServiceConnectionProbe {
+    fun inspect(): JSONObject {
         val count = IServiceConnection::class.java.methods.filter { it.name == "connected" }.maxOf { it.parameterTypes.size }
         check(count in 2..4)
         val callbacks = mutableListOf<Array<out Any?>>()
