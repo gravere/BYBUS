@@ -109,7 +109,8 @@ internal fun LauncherScreen(
                     if (layout.twoColumns) {
                         Column(Modifier.fillMaxWidth().verticalScroll(homeScroll).heightIn(min = bodyHeight)
                             .padding(vertical = 8.dp), verticalArrangement = Arrangement.Center) {
-                            Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min),
+                            Row(Modifier.fillMaxWidth().heightIn(min = minOf(bodyHeight * .64f, 360.dp))
+                                .height(IntrinsicSize.Min),
                                 horizontalArrangement = Arrangement.spacedBy(layout.columnGap.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
                                 InstallationCard(state, cardWidth, Modifier.weight(1f).fillMaxHeight()) { open("status") }
@@ -120,15 +121,17 @@ internal fun LauncherScreen(
                             }
                         }
                     } else {
-                        Column(Modifier.fillMaxWidth().align(Alignment.Center)
-                            .verticalScroll(homeScroll).padding(vertical = 16.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        val groupHeight = minOf(bodyHeight, 1000.dp)
+                        val cardHeight = ((groupHeight - 180.dp) / 2).coerceIn(0.dp, 360.dp)
+                        Column(Modifier.fillMaxWidth().heightIn(max = 1000.dp).align(Alignment.Center)
+                            .verticalScroll(homeScroll).heightIn(min = groupHeight).padding(vertical = 16.dp),
+                            verticalArrangement = Arrangement.SpaceBetween,
                             horizontalAlignment = Alignment.CenterHorizontally) {
-                            InstallationCard(state, cardWidth) { open("status") }
+                            InstallationCard(state, cardWidth, Modifier.heightIn(min = cardHeight)) { open("status") }
                             LaunchActions(state, onLaunch, onRefresh, resumed && sheet == null,
                                 onDetails = { open(if (state.failed) "error" else "status") },
                                 modifier = Modifier.widthIn(max = layout.actionWidth.dp).fillMaxWidth())
-                            ProjectCard(projectState) { open("project") }
+                            ProjectCard(projectState, Modifier.heightIn(min = cardHeight)) { open("project") }
                         }
                     }
                 }
@@ -280,7 +283,7 @@ private fun rememberOperationFeedback(state: LauncherUiState): String? {
             }
             if (feedback != null) {
                 delay(accessibility?.calculateRecommendedTimeoutMillis(4000L,
-                    containsIcons = false, containsText = true, containsControls = false) ?: 4000L)
+                    containsIcons = true, containsText = true, containsControls = false) ?: 4000L)
                 feedback = null
             }
         }
