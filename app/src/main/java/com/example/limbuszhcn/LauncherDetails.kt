@@ -5,10 +5,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
@@ -61,24 +63,7 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
                 SheetAction(Glyph.Refresh, "重新检测", enabled, onClick = onRefresh)
                 SheetAction(Glyph.File, "导出诊断", enabled, onClick = onExport)
             }
-            else -> {
-                Text(androidx.compose.ui.res.stringResource(R.string.app_name), style = MaterialTheme.typography.headlineMedium)
-                Text("汉化文本由都市零协会制作。", color = C.Muted, style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.height(4.dp))
-                Text("开始使用", style = MaterialTheme.typography.titleMedium)
-                Text("首次启动后，在游戏中登录并下载资源。完成后返回这里，再启动一次即可。",
-                    color = C.Muted, style = MaterialTheme.typography.bodyMedium)
-                Text("之后从本应用进入游戏，每次启动前检查游戏版本与汉化更新。",
-                    color = C.Muted, style = MaterialTheme.typography.bodyMedium)
-                Text("更新与数据", style = MaterialTheme.typography.titleMedium)
-                Text("系统安装的游戏可从不同渠道更新，返回后自动识别。保留系统安装包即可，大资源只需在本应用内下载。容器单独保存登录和资源，覆盖升级会保留。",
-                    color = C.Muted, style = MaterialTheme.typography.bodyMedium)
-                Text("请勿卸载原版。卸载本应用或清除本应用数据会删除容器。", color = C.Muted, style = MaterialTheme.typography.bodySmall)
-                Text("游戏新版本可能需要新的兼容修复。", color = C.Muted, style = MaterialTheme.typography.bodyMedium)
-                HorizontalDivider(Modifier.padding(vertical = 8.dp), color = C.Line)
-                DetailRow("版本", androidx.compose.ui.res.stringResource(R.string.app_version_name))
-                Text("非官方社区启动器 · LocalizeLimbusCompany", color = C.Muted, style = MaterialTheme.typography.bodySmall)
-            }
+            else -> AboutPane()
         }
     }
 }
@@ -93,13 +78,73 @@ internal fun SheetAction(icon: Glyph, title: String, enabled: Boolean = true, su
         IconTile(icon)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f, fill = false))
+                Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f, fill = false))
                 if (showUpdate) UpdateDot()
             }
             subtitle?.let { Text(it, color = C.Muted, style = MaterialTheme.typography.bodySmall) }
         }
         if (external || navigation) LauncherGlyph(if (external) Glyph.External else Glyph.Chevron, C.Muted, Modifier.size(17.dp))
     }
+}
+
+@Composable
+internal fun DetailCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    Surface(modifier.fillMaxWidth(), color = C.Background, shape = RoundedCornerShape(20.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
+    }
+}
+
+@Composable
+internal fun DetailDisclosure(title: String, content: @Composable ColumnScope.() -> Unit) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    Surface(color = C.Background, shape = RoundedCornerShape(20.dp)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                .clickable(role = Role.Button) { expanded = !expanded }
+                .semantics { stateDescription = if (expanded) "已展开" else "已收起" }
+                .heightIn(min = 52.dp).padding(vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(16.dp).rotate(if (expanded) 270f else 90f))
+            }
+            ExpandableDetails(expanded, Modifier.padding(bottom = 16.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AboutPane() {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        LauncherGlyph(Glyph.Mark, C.Accent, Modifier.size(32.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(androidx.compose.ui.res.stringResource(R.string.app_name), style = MaterialTheme.typography.titleLarge)
+            Text("非官方社区启动器", color = C.Muted, style = MaterialTheme.typography.bodySmall)
+        }
+        Text(androidx.compose.ui.res.stringResource(R.string.app_version_name), color = C.Muted,
+            style = MaterialTheme.typography.labelMedium)
+    }
+    DetailSection("开始使用") {
+        Column(Modifier.padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            listOf("进入游戏，登录并下载资源。", "下载完成后，返回 BYBUS 再启动一次。", "以后从这里启动，自动检查汉化更新。").forEachIndexed { index, text ->
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
+                    Text("0${index + 1}", color = C.Accent, style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(top = 3.dp))
+                    Text(text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+    Text("保留系统安装的游戏。卸载 BYBUS 或清除数据会删除资源与登录信息。",
+        color = C.Muted, style = MaterialTheme.typography.bodySmall)
+    DetailDisclosure("游戏更新与数据保存") {
+        Text("游戏可从原安装渠道更新，返回后自动识别；大资源只需在 BYBUS 内下载。",
+            color = C.Muted, style = MaterialTheme.typography.bodyMedium)
+        Text("覆盖更新 BYBUS 会保留数据。游戏新版本可能需要新的兼容修复。",
+            color = C.Muted, style = MaterialTheme.typography.bodyMedium)
+    }
+    Text("汉化文本：都市零协会\nLocalizeLimbusCompany", color = C.Muted, style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable

@@ -1,17 +1,13 @@
 package com.example.limbuszhcn
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalDensity
@@ -84,8 +80,6 @@ internal fun LauncherScreen(
             // Use the space allocated to this window, including split screen.
             // Large text needs a wider column, not a smaller font.
             val layout = LauncherLayout.calculate(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale)
-            val contentWidth = minOf(maxWidth.value, layout.contentMaxWidth) - layout.margin * 2
-            val cardWidth = if (layout.twoColumns) (contentWidth - layout.columnGap * 2 - layout.actionWidth) / 2 else contentWidth
             val homeScroll = rememberScrollState()
             Column(Modifier.widthIn(max = layout.contentMaxWidth.dp).fillMaxSize().align(Alignment.TopCenter)
                 .padding(horizontal = layout.margin.dp)) {
@@ -109,11 +103,10 @@ internal fun LauncherScreen(
                     if (layout.twoColumns) {
                         Column(Modifier.fillMaxWidth().verticalScroll(homeScroll).heightIn(min = bodyHeight)
                             .padding(vertical = 8.dp), verticalArrangement = Arrangement.Center) {
-                            Row(Modifier.fillMaxWidth().heightIn(min = minOf(bodyHeight * .64f, 360.dp))
-                                .height(IntrinsicSize.Min),
+                            Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min),
                                 horizontalArrangement = Arrangement.spacedBy(layout.columnGap.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
-                                InstallationCard(state, cardWidth, Modifier.weight(1f).fillMaxHeight()) { open("status") }
+                                InstallationCard(state, Modifier.weight(1f).fillMaxHeight()) { open("status") }
                                 LaunchActions(state, onLaunch, onRefresh, resumed && sheet == null,
                                     onDetails = { open(if (state.failed) "error" else "status") },
                                     modifier = Modifier.width(layout.actionWidth.dp))
@@ -121,17 +114,16 @@ internal fun LauncherScreen(
                             }
                         }
                     } else {
-                        val groupHeight = minOf(bodyHeight, 1000.dp)
-                        val cardHeight = ((groupHeight - 180.dp) / 2).coerceIn(0.dp, 360.dp)
-                        Column(Modifier.fillMaxWidth().heightIn(max = 1000.dp).align(Alignment.Center)
+                        val groupHeight = minOf(bodyHeight, 600.dp)
+                        Column(Modifier.fillMaxWidth().align(Alignment.Center)
                             .verticalScroll(homeScroll).heightIn(min = groupHeight).padding(vertical = 16.dp),
                             verticalArrangement = Arrangement.SpaceBetween,
                             horizontalAlignment = Alignment.CenterHorizontally) {
-                            InstallationCard(state, cardWidth, Modifier.heightIn(min = cardHeight)) { open("status") }
+                            InstallationCard(state) { open("status") }
                             LaunchActions(state, onLaunch, onRefresh, resumed && sheet == null,
                                 onDetails = { open(if (state.failed) "error" else "status") },
                                 modifier = Modifier.widthIn(max = layout.actionWidth.dp).fillMaxWidth())
-                            ProjectCard(projectState, Modifier.heightIn(min = cardHeight)) { open("project") }
+                            ProjectCard(projectState) { open("project") }
                         }
                     }
                 }
@@ -182,50 +174,39 @@ private fun LaunchActions(state: LauncherUiState, onLaunch: () -> Unit,
 }
 
 @Composable
-private fun InstallationCard(state: LauncherUiState, width: Float, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun InstallationCard(state: LauncherUiState, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val ready = state.container?.available == true && state.installedVersion != null &&
         state.compatibility?.isSupported == true && state.nativeCompatibilityIssue == null
     HomeSummaryCard(onClick, modifier) {
-        Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("运行状态", color = C.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
-            Box(Modifier.size(6.dp).clip(CircleShape).background(if (ready) C.Accent else C.Muted))
-            Text(when {
+        SummaryHeading(Glyph.Progress, "运行状态", when {
                 state.busy -> "正在准备"
                 state.failed -> "需要检查"
                 ready -> "设备已就绪"
                 state.container == null -> "检测中"
                 state.installedVersion == null -> "等待安装"
                 else -> "需要检查"
-            }, color = C.Muted, style = MaterialTheme.typography.labelMedium)
-        }
+            }, ready)
+        Spacer(Modifier.height(16.dp))
         InstallationRow(Glyph.Bus, "游戏",
             when { state.container == null -> "正在检测"; state.installedVersion == null -> "等待安装";
-                else -> "已安装 · ${state.installedVersionName ?: state.installedVersion}" },
-            when { state.gameUpdate.loading -> "检查中";
-                state.gameUpdate.newerSources(state.installedVersionName).isNotEmpty() -> "有新版";
-                state.installedVersion == null -> "查看"; else -> state.gameUpdate.label }, state.installedVersion != null, width - 40f)
-        HorizontalDivider(color = C.Line)
-        InstallationRow(Glyph.Translation, "本地汉化", state.translation?.version ?: "首次启动时准备",
-            if (state.translation != null) "已保存" else "待准备", state.translation != null, width - 40f)
+                else -> state.installedVersionName ?: state.installedVersion.toString() },
+            if (state.gameUpdate.newerSources(state.installedVersionName).isNotEmpty()) "有新版" else null)
+        HorizontalDivider(Modifier.padding(start = 32.dp, top = 12.dp, bottom = 12.dp), color = C.Line)
+        InstallationRow(Glyph.Translation, "本地汉化", state.translation?.version ?: "首次启动时准备")
     }
 }
 
 @Composable
-private fun InstallationRow(icon: Glyph, title: String, subtitle: String, value: String, ready: Boolean, width: Float) {
-    val stacked = width < 260f * LocalDensity.current.fontScale
-    val statusWidth = (width * .32f).dp
-    Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun InstallationRow(icon: Glyph, title: String, value: String, status: String? = null) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         LauncherGlyph(icon, C.Muted, Modifier.size(20.dp))
-        Column(Modifier.weight(1f).padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall)
-            Text(subtitle, color = C.Muted, style = MaterialTheme.typography.bodySmall)
-            if (stacked) Text(value, color = if (ready) C.Ink else C.Muted, style = MaterialTheme.typography.labelMedium)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(title, color = C.Muted, style = MaterialTheme.typography.bodySmall)
+            Text(value, style = MaterialTheme.typography.titleMedium)
         }
-        if (!stacked) Text(value, color = if (ready) C.Ink else C.Muted, style = MaterialTheme.typography.labelMedium,
-            modifier = Modifier.widthIn(max = statusWidth))
-        Spacer(Modifier.width(9.dp))
-        LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(14.dp))
+        status?.let { Text(it, color = C.Accent, style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.widthIn(max = 72.dp)) }
     }
 }
 

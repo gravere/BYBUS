@@ -18,7 +18,7 @@ import com.example.limbuszhcn.ui.theme.LauncherColors as C
 @Composable
 internal fun RuntimeStatusPane(state: LauncherUiState, onGameUpdates: () -> Unit, onRefresh: () -> Unit) {
     var showDetails by rememberSaveable { mutableStateOf(false) }
-    Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         DetailSection("游戏与汉化") {
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
                 .clickable(role = Role.Button, onClickLabel = "游戏更新与安装", onClick = onGameUpdates)

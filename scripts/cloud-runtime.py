@@ -152,8 +152,8 @@ def inspect_home_alignment(tree, width, height, density=1, landscape=False):
         card_gap = (project[1] - status[3]) / density
         if card_gap > 400 or min(above, below) < 0 or abs(above - below - 12) > 2:
             raise RuntimeError(f"Portrait spacing is not bounded and balanced: {above=} {below=} {card_gap=}")
-        if os.environ.get("RUNTIME_MODE") == "button-ui" and (not 120 <= card_gap <= 260 or max(above, below) > 120):
-            raise RuntimeError(f"Adaptive portrait spacing leaves excessive blank space: {above=} {below=} {card_gap=}")
+        if os.environ.get("RUNTIME_MODE") == "button-ui" and not 120 <= card_gap <= 320:
+            raise RuntimeError(f"Compact portrait cards leave an excessive launch gap: {card_gap=}")
     REPORT.setdefault("home_layouts", []).append(dict(width=width, height=height, middle_error_dp=middle_error,
         horizontal=landscape,
         status_bounds=status, project_bounds=project, action_bounds=action,
@@ -316,6 +316,13 @@ def inspect_tablet(focused=False):
         elif project[1] <= game[1]:
             raise RuntimeError("Portrait did not place the project card below the game controls")
         REPORT["checks"].append(f"{name} layout at {size}, 160 dpi, font scale {font_scale}")
+    if os.environ.get("RUNTIME_MODE") == "button-ui":
+        tap("设置与工具", tree)
+        tap("游戏更新", hierarchy("tablet-detail-parent"))
+        detail = capture("tablet-game-update")
+        locate(detail, "返回上一页")
+        REPORT.setdefault("detail_pages", []).append("tablet-game-update")
+        tap("关闭面板", detail)
     adb("shell", "settings", "put", "system", "font_scale", "1.0")
     time.sleep(2)
     if focused:
@@ -501,6 +508,74 @@ def scroll_to_control(tree, label, down=True):
     raise RuntimeError("Cannot reach control: " + label)
 
 
+def inspect_detail_redesign(parent):
+    """Read actual release subpages and disclosures; no game or account actions."""
+    pages = ["game-update-detail"]
+    tap("更新", parent)
+    update = capture("app-update-detail")
+    pages.append("app-update-detail")
+    tap("更新类别：汉化资源", update)
+    capture("translation-detail")
+    pages.append("translation-detail")
+    adb("shell", "input", "keyevent", "KEYCODE_BACK")
+    parent = hierarchy("details-parent")
+    locate(parent, "设置与工具")
+    parent = scroll_to_control(parent, "使用说明与版本")
+    tap("使用说明与版本", parent)
+    about = capture("about-detail")
+    pages.append("about-detail")
+    locate(about, "返回上一页")
+    about = scroll_to_control(about, "游戏更新与数据保存")
+    tap("游戏更新与数据保存", about)
+    expanded = capture("about-expanded")
+    pages.append("about-expanded")
+    locate(expanded, "覆盖更新 BYBUS 会保留数据。游戏新版本可能需要新的兼容修复。")
+    tap("游戏更新与数据保存", scroll_to_control(expanded, "游戏更新与数据保存", down=False))
+    adb("shell", "input", "keyevent", "KEYCODE_BACK")
+    parent = hierarchy("about-parent")
+    locate(parent, "设置与工具")
+    parent = scroll_to_control(parent, "数据迁移", down=False)
+    tap("数据迁移", parent)
+    migration = capture("migration-menu")
+    pages.append("migration-menu")
+    tap("返回上一页", migration)
+    locate(hierarchy("migration-parent"), "设置与工具")
+    adb("shell", "input", "keyevent", "KEYCODE_BACK")
+    home = hierarchy("details-home")
+    tap("运行状态", home)
+    capture("runtime-detail")
+    pages.append("runtime-detail")
+    adb("shell", "input", "keyevent", "KEYCODE_BACK")
+    home = hierarchy("runtime-home")
+    tap("都市零协会", home)
+    tap("项目来源：翻译进度", hierarchy("project-tabs"))
+    project = capture("project-progress")
+    pages.append("project-progress")
+    project = scroll_to_control(project, "这些统计代表什么？")
+    tap("这些统计代表什么？", project)
+    capture("project-explanation")
+    pages.append("project-explanation")
+    tap("项目来源：GitHub 更新", scroll_to_control(hierarchy("project-restore"), "项目来源：GitHub 更新", down=False))
+    adb("shell", "input", "keyevent", "KEYCODE_BACK")
+    for name, night, font in [("about-dark", "yes", "1.0"), ("about-large-text", "no", "1.6")]:
+        adb("shell", "cmd", "uimode", "night", night)
+        adb("shell", "settings", "put", "system", "font_scale", font)
+        time.sleep(2)
+        tap("使用说明", hierarchy(name + "-home"))
+        about = capture(name)
+        pages.append(name)
+        locate(about, "关闭面板")
+        if font != "1.0":
+            about = scroll_to_control(about, "游戏更新与数据保存")
+            tap("游戏更新与数据保存", about)
+            capture("about-large-expanded")
+            pages.append("about-large-expanded")
+        adb("shell", "input", "keyevent", "KEYCODE_BACK")
+    adb("shell", "settings", "put", "system", "font_scale", "1.0")
+    REPORT["detail_pages"] = pages
+    REPORT["checks"].append("release subpages, expandable explanations, parent navigation, dark and enlarged text")
+
+
 def inspect_migration_screen(release, verifier, focused=False, probe_digest=None):
     """Presentation fixtures only; real release navigation was checked before installing them."""
     digest = probe_digest or install_component_probe(release, verifier)
@@ -651,8 +726,9 @@ def inspect_launch_control(release, verifier, probe_digest=None, feedback_only=F
                 raise RuntimeError("Launch control clips its minimum touch height: " + name)
             if os.environ.get("RUNTIME_MODE") == "button-ui":
                 text = element_bounds(tree, title)
-                if abs((text[0] + text[2]) - (button[0] + button[2])) > 4 or abs((text[1] + text[3]) - (button[1] + button[3])) > 4:
-                    raise RuntimeError("Launch title is not centered: " + name)
+                # The 22dp symbol and 10dp gap belong to the centered content group.
+                if abs((text[0] - 64 + text[2]) - (button[0] + button[2])) > 4 or abs((text[1] + text[3]) - (button[1] + button[3])) > 4:
+                    raise RuntimeError("Launch icon and title group is not centered: " + name)
                 if font == "1.0" and (abs(button[2] - button[0] - 464) > 4 or abs(button[3] - button[1] - 112) > 4):
                     raise RuntimeError("Launch control did not restore its compact size: " + name)
             progress = [n for n in tree.iter("node") if n.get("content-desc") == "启动进度"]
@@ -1040,7 +1116,7 @@ def main():
         if texts & {"应用与汉化资源", "保留已下载的游戏资源", "管理容器账号与应用内购买", "保留资源，下次启动会重新准备"}:
             raise RuntimeError("Removed tools subtitles are still present")
     tap("游戏更新", settings)
-    child = hierarchy("game-update")
+    child = capture("game-update-detail") if os.environ.get("RUNTIME_MODE") == "button-ui" else hierarchy("game-update")
     locate(child, "返回上一页")
     adb("shell", "input", "keyevent", "KEYCODE_BACK")
     time.sleep(1)
@@ -1062,6 +1138,7 @@ def main():
         locate(hierarchy("migration-parent"), "设置与工具")
         REPORT["checks"].append("release migration menu and document picker cancellation return safely")
     if os.environ.get("RUNTIME_MODE") == "button-ui":
+        inspect_detail_redesign(parent)
         inspect_tablet(focused=True)
         inspect_launch_control(release, verifier)
         REPORT["result"] = "button inspection completed; screenshots require visual review"

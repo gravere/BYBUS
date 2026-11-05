@@ -91,7 +91,7 @@ internal fun MigrationScreen(state: MigrationState, onBack: () -> Unit, onRefres
 @Composable
 private fun MigrationPanel(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     Surface(modifier.fillMaxWidth(), color = C.Panel, shape = RoundedCornerShape(24.dp)) {
-        Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp), content = content)
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp), content = content)
     }
 }
 
@@ -111,8 +111,7 @@ private fun LegacySourceCard(state: MigrationState, onMigrate: () -> Unit, onOpe
             }
         }
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(if (state.ready) byteSize(state.total) else if (state.hasLegacy) "先更新，再迁移" else "保留原来的数据",
-                style = if (state.ready) MaterialTheme.typography.displaySmall else MaterialTheme.typography.titleLarge)
+            if (state.ready) Text(byteSize(state.total), style = MaterialTheme.typography.headlineSmall)
             Text(when {
                 state.ready -> "游戏资源与账号配置"
                 state.hasLegacy -> "在旧版完成一次覆盖更新，再回来检测。"

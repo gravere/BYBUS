@@ -30,15 +30,29 @@ internal fun HomeSummaryCard(onClick: () -> Unit, modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit) {
     Surface(onClick = onClick, modifier = modifier, color = C.Panel, contentColor = C.Ink,
         shape = RoundedCornerShape(24.dp)) {
-        Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.Center, content = content)
+        Column(Modifier.fillMaxWidth().padding(20.dp), content = content)
+    }
+}
+
+@Composable
+internal fun SummaryHeading(icon: Glyph, title: String, status: String? = null, ready: Boolean = false) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        LauncherGlyph(icon, C.Accent, Modifier.size(20.dp))
+        Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+        status?.let {
+            Text(it, color = if (ready) C.Accent else C.Muted, style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.widthIn(max = 96.dp))
+        }
+        LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(14.dp))
     }
 }
 
 @Composable
 internal fun IconTile(icon: Glyph, accent: Boolean = false, modifier: Modifier = Modifier) {
-    Box(modifier.size(42.dp).clip(RoundedCornerShape(14.dp))
+    Box(modifier.size(36.dp).clip(RoundedCornerShape(12.dp))
         .background(if (accent) C.AccentSoft else C.Background), contentAlignment = Alignment.Center) {
-        LauncherGlyph(icon, if (accent) C.Accent else C.Ink, Modifier.size(21.dp))
+        LauncherGlyph(icon, if (accent) C.Accent else C.Ink, Modifier.size(20.dp))
     }
 }
 

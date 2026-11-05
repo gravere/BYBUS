@@ -38,7 +38,7 @@ internal fun AppUpdatesPane(state: AppUpdateState, onCheck: () -> Unit, onOpenPa
     val available = release?.newerThan(state.installedCode) == true
     val retryAt = state.retryAtElapsed
     val retryRemaining = updateRetryRemaining(retryAt)
-    Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             LauncherGlyph(Glyph.Mark, C.Accent, Modifier.size(36.dp))
             Column(Modifier.weight(1f).padding(start = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -71,15 +71,16 @@ internal fun AppUpdatesPane(state: AppUpdateState, onCheck: () -> Unit, onOpenPa
         if (release != null && release.versionCode >= state.installedCode) {
             val points = remember(release.notes) { releaseNoteItems(release.notes) }
             if (points.isNotEmpty()) {
-                Text("更新内容", style = MaterialTheme.typography.titleSmall)
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    points.forEach { point ->
-                        Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {},
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("•", color = C.Accent, style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.width(12.dp).clearAndSetSemantics {})
-                            Text(point, color = C.Muted, style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.weight(1f))
+                DetailSection("更新内容") {
+                    Column(Modifier.padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        points.forEach { point ->
+                            Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {},
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("•", color = C.Accent, style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.width(12.dp).clearAndSetSemantics {})
+                                Text(point, color = C.Muted, style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.weight(1f))
+                            }
                         }
                     }
                 }
@@ -98,7 +99,7 @@ internal fun AppUpdatesPane(state: AppUpdateState, onCheck: () -> Unit, onOpenPa
 
 @Composable
 internal fun TranslationUpdatesPane(state: LauncherUiState) {
-    Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             IconTile(Glyph.Translation, accent = true)
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -106,14 +107,12 @@ internal fun TranslationUpdatesPane(state: LauncherUiState) {
                 Text("边狱巴士 · 简体中文", color = C.Muted, style = MaterialTheme.typography.bodySmall)
             }
         }
-        Surface(color = C.Background, shape = RoundedCornerShape(20.dp)) {
-            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("本地汉化", color = C.Muted, style = MaterialTheme.typography.labelMedium)
-                Text(state.translation?.version ?: "尚未准备", style = MaterialTheme.typography.headlineSmall)
-                Text(if (state.translation != null) "已保存，下次启动继续使用"
-                    else if (state.container?.gameImported == true) "检查更新后下载汉化资源"
-                    else "先在首页准备游戏，再检查汉化资源", color = C.Muted, style = MaterialTheme.typography.bodySmall)
-            }
+        DetailCard {
+            Text("本地汉化", color = C.Muted, style = MaterialTheme.typography.labelMedium)
+            Text(state.translation?.version ?: "尚未准备", style = MaterialTheme.typography.headlineSmall)
+            Text(if (state.translation != null) "已保存 · 启动前自动检查更新"
+                else if (state.container?.gameImported == true) "检查后下载最新汉化"
+                else "先在首页准备游戏", color = C.Muted, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
