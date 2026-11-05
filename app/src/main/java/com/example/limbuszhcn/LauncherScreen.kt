@@ -236,24 +236,31 @@ internal fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefre
     val canLaunch = state.container?.available == true && state.installedVersion != null &&
         state.compatibility?.isSupported == true && state.nativeCompatibilityIssue == null
     val needsDetection = missing || state.container == null
-    val title = when {
-        state.busy -> when (state.launchStep) { 0 -> "准备游戏"; 1 -> "检查汉化"; 2 -> "正在启动"; else -> "正在处理" }
-        needsDetection -> "检测游戏"
-        state.compatibility?.isSupported == false -> "查看设备兼容性"
-        state.nativeCompatibilityIssue != null -> "查看兼容状态"
-        !canLaunch -> "查看运行状态"
-        state.failed -> "重新启动"
-        else -> "启动游戏"
+    val action = when {
+        state.busy -> when (state.launchStep) {
+            0 -> LaunchAction.Prepare; 1 -> LaunchAction.Translate; 2 -> LaunchAction.Starting; else -> LaunchAction.Working
+        }
+        state.container == null && !state.failed -> LaunchAction.Detecting
+        needsDetection -> LaunchAction.Detect
+        state.compatibility?.isSupported == false -> LaunchAction.DeviceStatus
+        state.nativeCompatibilityIssue != null -> LaunchAction.NativeStatus
+        !canLaunch -> LaunchAction.Status
+        state.failed -> LaunchAction.Retry
+        else -> LaunchAction.Launch
     }
-    if (state.failed && !state.busy) {
-        TextButton(onClick = onDetails, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(10.dp)) {
-            Text("准备未完成 · 查看详情", color = C.Error, style = MaterialTheme.typography.bodySmall)
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        LaunchButton(action, enabled = state.container != null || state.failed,
+            step = state.launchStep, animated = animated, feedback = feedback,
+            status = if (state.busy) state.stage else feedback.orEmpty(),
+            onClick = { when { needsDetection -> onRefresh(); canLaunch -> onLaunch(); else -> onDetails() } })
+        if (state.failed && !state.busy) {
+            TextButton(onClick = onDetails, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)) {
+                LauncherGlyph(Glyph.Info, C.Error, Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("查看失败原因", color = C.Error, style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
-    LaunchButton(feedback ?: title, state.busy, enabled = state.container != null || state.failed,
-        step = state.launchStep, animated = animated, confirmed = feedback != null,
-        status = if (state.busy) state.stage else feedback.orEmpty(),
-        onClick = { when { needsDetection -> onRefresh(); canLaunch -> onLaunch(); else -> onDetails() } })
 }
 
 @Composable

@@ -1,9 +1,6 @@
 package com.example.limbuszhcn.migration
 
 import android.text.format.Formatter
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.LocalOverscrollConfiguration
 import androidx.compose.foundation.background
@@ -28,6 +25,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.limbuszhcn.Glyph
+import com.example.limbuszhcn.ExpandableDetails
 import com.example.limbuszhcn.IconTile
 import com.example.limbuszhcn.LauncherGlyph
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
@@ -59,7 +57,11 @@ internal fun MigrationScreen(state: MigrationState, onBack: () -> Unit, onRefres
                     }
                 }
                 CompositionLocalProvider(LocalOverscrollConfiguration provides null) {
-                    Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())
+                    val scroll = rememberScrollState()
+                    LaunchedEffect(state.busy, state.done, state.failed, state.pending, state.operation) {
+                        scroll.scrollTo(0)
+                    }
+                    Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(scroll)
                         .padding(top = 16.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                         if (state.busy || state.done) {
                             MigrationTransferCard(state, onFinish)
@@ -117,10 +119,11 @@ private fun LegacySourceCard(state: MigrationState, onMigrate: () -> Unit, onOpe
                 else -> "安装着旧版时，这里会自动识别。"
             }, style = MaterialTheme.typography.bodyMedium, color = C.Muted)
         }
+        if (state.ready) Text("新版同名数据将被替换，旧版数据保留。",
+            style = MaterialTheme.typography.bodySmall, color = C.Muted)
         if (stretch) Spacer(Modifier.weight(1f))
         if (state.ready) {
             MigrationPrimaryButton(if (state.pending) "继续迁移" else "开始迁移", onMigrate, Glyph.Import)
-            Text("新版同名数据将被替换，旧版数据保留。", style = MaterialTheme.typography.bodySmall, color = C.Muted)
         } else if (state.hasLegacy) {
             MigrationPrimaryButton("打开旧版 BYBUS", onOpenLegacy, Glyph.External)
         }
@@ -229,7 +232,7 @@ private fun MigrationFailure(state: MigrationState) {
 @Composable
 private fun MigrationNotes(pending: Boolean) {
     var expanded by rememberSaveable { mutableStateOf(false) }
-    Column(Modifier.fillMaxWidth().animateContentSize(tween(180))) {
+    Column(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             LauncherGlyph(Glyph.Check, C.Muted, Modifier.size(16.dp))
             Text("来源数据会保留", Modifier.weight(1f).padding(start = 8.dp),
@@ -239,7 +242,7 @@ private fun MigrationNotes(pending: Boolean) {
                 LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.padding(start = 4.dp).size(16.dp).rotate(if (expanded) 270f else 90f))
             }
         }
-        AnimatedVisibility(expanded) {
+        ExpandableDetails(expanded) {
             Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (pending) Text("请先完成上次迁移，再启动游戏。", style = MaterialTheme.typography.bodySmall, color = C.Muted)
                 Text("旧版迁移包含资源与账号配置；文件导入只补充缺少的资源。", style = MaterialTheme.typography.bodySmall, color = C.Muted)

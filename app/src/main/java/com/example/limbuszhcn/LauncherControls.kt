@@ -67,7 +67,8 @@ internal fun <T> SourceTabs(options: List<T>, selected: T, label: (T) -> String,
 
 internal enum class Glyph {
     Mark, Bus, Settings, Battery, Account, Arrow, Chevron, Refresh, File, Stop, Globe, Play, External, Check, Close, Info,
-    Upgrade, Gamepad, Sync, Apps, Translation, ReleaseTag, Folder, Store, Progress, BookOpen, Import
+    Upgrade, Gamepad, Sync, Apps, Translation, ReleaseTag, Folder, Store, Progress, BookOpen, Import,
+    Search, Enter, Shield
 }
 
 @Composable
@@ -100,6 +101,24 @@ internal fun LauncherGlyph(glyph: Glyph, color: Color, modifier: Modifier = Modi
                 drawPath(p, color, style = stroke)
             }
             when (glyph) {
+                Glyph.Search -> {
+                    drawCircle(color, 6.5f, Offset(10.5f, 10.5f), style = stroke)
+                    line(15.2f, 15.2f, 20.5f, 20.5f)
+                }
+                Glyph.Enter -> {
+                    path(13f, 3.5f, 20f, 3.5f, 20f, 20.5f, 13f, 20.5f)
+                    line(3.5f, 12f, 14.5f, 12f)
+                    path(10.5f, 7.5f, 15f, 12f, 10.5f, 16.5f)
+                }
+                Glyph.Shield -> {
+                    drawPath(Path().apply {
+                        moveTo(12f, 2.5f); lineTo(20f, 6f); lineTo(20f, 11f)
+                        cubicTo(20f, 16f, 16.5f, 19.5f, 12f, 22f)
+                        cubicTo(7.5f, 19.5f, 4f, 16f, 4f, 11f)
+                        lineTo(4f, 6f); close()
+                    }, color, style = stroke)
+                    line(12f, 7f, 12f, 12f); drawCircle(color, 1f, Offset(12f, 16f))
+                }
                 Glyph.Mark, Glyph.Refresh, Glyph.Upgrade, Glyph.Gamepad, Glyph.Sync, Glyph.Apps, Glyph.Translation,
                 Glyph.ReleaseTag, Glyph.Folder, Glyph.Store, Glyph.Progress, Glyph.BookOpen -> Unit // Vectors above.
                 Glyph.Arrow -> { line(4f, 12f, 20f, 12f); path(14f, 6f, 20f, 12f, 14f, 18f) }
