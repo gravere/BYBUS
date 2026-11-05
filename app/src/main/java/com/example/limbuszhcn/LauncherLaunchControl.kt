@@ -35,13 +35,15 @@ import com.example.limbuszhcn.ui.theme.LauncherColors as C
 import kotlin.math.PI
 import kotlin.math.sin
 
-internal enum class LaunchAction(val title: String, val busy: Boolean = false) {
-    Detect("检测游戏"), Detecting("正在检测", busy = true),
-    Prepare("准备游戏", busy = true), Translate("检查汉化", busy = true),
-    Starting("正在启动", busy = true), Working("正在处理", busy = true),
-    DeviceStatus("查看设备兼容性"), NativeStatus("查看兼容状态"),
-    Status("查看运行状态"), Retry("重新启动"), Launch("启动游戏")
+internal enum class LaunchAction(val title: String, val symbol: LaunchSymbol, val busy: Boolean = false) {
+    Detect("检测游戏", LaunchSymbol.Scan), Detecting("正在检测", LaunchSymbol.Scan, busy = true),
+    Prepare("准备游戏", LaunchSymbol.Prepare, busy = true), Translate("检查汉化", LaunchSymbol.Translate, busy = true),
+    Starting("正在启动", LaunchSymbol.Depart, busy = true), Working("正在处理", LaunchSymbol.Working, busy = true),
+    DeviceStatus("查看设备兼容性", LaunchSymbol.Attention), NativeStatus("查看兼容状态", LaunchSymbol.Attention),
+    Status("查看运行状态", LaunchSymbol.Info), Retry("重新启动", LaunchSymbol.Retry), Launch("启动游戏", LaunchSymbol.Ready)
 }
+
+private data class LaunchContent(val title: String, val symbol: LaunchSymbol, val busy: Boolean)
 
 @Composable
 internal fun LaunchButton(action: LaunchAction, enabled: Boolean, step: Int,
@@ -123,7 +125,7 @@ internal fun LaunchButton(action: LaunchAction, enabled: Boolean, step: Int,
         })
         Button(onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onClick() },
             enabled = enabled && !busy, interactionSource = interaction,
-            modifier = Modifier.padding(horizontal = 12.dp).widthIn(max = width).fillMaxWidth()
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 16.dp).widthIn(max = width).fillMaxWidth()
                 .heightIn(min = 56.dp)
                 .onSizeChanged { buttonSize = it }.semantics {
                     if (busy || confirmed) liveRegion = LiveRegionMode.Polite
@@ -136,12 +138,21 @@ internal fun LaunchButton(action: LaunchAction, enabled: Boolean, step: Int,
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
             colors = ButtonDefaults.buttonColors(containerColor = buttonColor, contentColor = C.Ink,
                 disabledContainerColor = C.Panel, disabledContentColor = if (busy) C.Ink else C.Muted)) {
-            AnimatedContent(feedback ?: action.title, Modifier.fillMaxWidth(), contentAlignment = Alignment.Center,
+            val content = LaunchContent(feedback ?: action.title, if (confirmed) LaunchSymbol.Complete else action.symbol, busy)
+            AnimatedContent(content, Modifier.fillMaxWidth(), contentAlignment = Alignment.Center,
                 transitionSpec = {
                 (fadeIn(tween(180)) togetherWith fadeOut(tween(90))).using(SizeTransform(clip = false))
-            }, label = "launch action") { title ->
-                Text(title, Modifier.fillMaxWidth(), textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.labelLarge)
+            }, label = "launch action") { item ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically) {
+                    LaunchPhaseGlyph(item.symbol, phase, animated && item.busy,
+                        if (enabled || busy) accent else C.Muted, Modifier.size(22.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text(item.title, Modifier.weight(1f, fill = false), textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.labelLarge)
+                    // Balance the symbol and its gap, keeping the title at the button centre.
+                    Spacer(Modifier.width(32.dp))
+                }
             }
         }
     }

@@ -152,8 +152,8 @@ def inspect_home_alignment(tree, width, height, density=1, landscape=False):
         card_gap = (project[1] - status[3]) / density
         if card_gap > 400 or min(above, below) < 0 or abs(above - below - 12) > 2:
             raise RuntimeError(f"Portrait spacing is not bounded and balanced: {above=} {below=} {card_gap=}")
-        if os.environ.get("RUNTIME_MODE") == "button-ui" and not 126 <= card_gap <= 130:
-            raise RuntimeError(f"Compact portrait card spacing was not applied: {card_gap=}")
+        if os.environ.get("RUNTIME_MODE") == "button-ui" and (not 120 <= card_gap <= 260 or max(above, below) > 120):
+            raise RuntimeError(f"Adaptive portrait spacing leaves excessive blank space: {above=} {below=} {card_gap=}")
     REPORT.setdefault("home_layouts", []).append(dict(width=width, height=height, middle_error_dp=middle_error,
         horizontal=landscape,
         status_bounds=status, project_bounds=project, action_bounds=action,
@@ -664,24 +664,27 @@ def inspect_launch_control(release, verifier, probe_digest=None, feedback_only=F
                 tap(title, tree)
                 locate(hierarchy(name + "-callback"), {"detect": "检测回调已触发", "compatibility": "详情回调已触发", "retry": "正在启动"}[fixture])
             rendered.append(dict(name=name, step=step, state=fixture, night=night, font_scale=font, button_bounds=button))
-        # Observe real frame changes, separately from the frozen stage references.
-        adb("shell", "am", "force-stop", PACKAGE)
-        adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.LaunchControlProbeActivity",
-            "--ei", "step", "1", "--ez", "animate", "true", timeout=40)
-        time.sleep(2)
-        locate(hierarchy("launch-motion"), "检查汉化")
-        # Hierarchy dumps wait for UI idle and can repeatedly sample the same phase.
-        # Capture adjacent frames directly, at intervals unrelated to the 1.6s loop.
-        motion_digests = []
-        for name, pause in [("a", 0), ("b", .173), ("c", .347)]:
-            time.sleep(pause)
-            frame = adb("exec-out", "screencap", "-p", binary=True)
-            if not frame.startswith(b"\x89PNG\r\n\x1a\n"):
-                raise RuntimeError("Invalid animation screenshot")
-            (OUT / f"launch-motion-{name}.png").write_bytes(frame)
-            motion_digests.append(hashlib.sha256(frame).hexdigest())
-        if len(set(motion_digests)) == 1:
-            raise RuntimeError("Animated launch control produced identical frames")
+        # Observe each real stage, separately from the frozen references.
+        motion_stages = []
+        for stage in ([0, 1, 2] if os.environ.get("RUNTIME_MODE") == "button-ui" else [1]):
+            adb("shell", "am", "force-stop", PACKAGE)
+            adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.LaunchControlProbeActivity",
+                "--ei", "step", str(stage), "--ez", "animate", "true", timeout=40)
+            time.sleep(2)
+            prefix = {0: "launch-prepare-motion", 1: "launch-motion", 2: "launch-start-motion"}[stage]
+            locate(hierarchy(prefix), {0: "准备游戏", 1: "检查汉化", 2: "正在启动"}[stage])
+            # Hierarchy dumps can sample the same phase. Capture adjacent frames directly.
+            digests = []
+            for name, pause in [("a", 0), ("b", .173), ("c", .347)]:
+                time.sleep(pause)
+                frame = adb("exec-out", "screencap", "-p", binary=True)
+                if not frame.startswith(b"\x89PNG\r\n\x1a\n"):
+                    raise RuntimeError("Invalid animation screenshot")
+                (OUT / f"{prefix}-{name}.png").write_bytes(frame)
+                digests.append(hashlib.sha256(frame).hexdigest())
+            if len(set(digests)) == 1:
+                raise RuntimeError("Animated launch control produced identical frames at stage " + str(stage))
+            motion_stages.append(dict(stage=stage, frame_sha256=digests))
         # Exercise the real completion timer and action routing, with no game operation.
         adb("shell", "settings", "put", "secure", "accessibility_non_interactive_ui_timeout_ms", "10000")
         adb("shell", "am", "force-stop", PACKAGE)
@@ -711,7 +714,8 @@ def inspect_launch_control(release, verifier, probe_digest=None, feedback_only=F
     REPORT["launch_component"] = dict(apk_sha256=digest, fixtures=rendered, animated_frames_differ=True,
         completion_restores=True, completion_keeps_bounds=True, completion_action=True,
         action_routes=not feedback_only, real_startup=False, readme_uses_component_fixtures=False,
-        motion_frame_sha256=motion_digests)
+        motion_frame_sha256=next(item["frame_sha256"] for item in motion_stages if item["stage"] == 1),
+        motion_stages=motion_stages)
     REPORT["checks"].append("production launch control: motion and completion feedback" if feedback_only else
         "production launch control: 3 stage fixtures, dark/large text/idle/generic busy and moving highlight")
 

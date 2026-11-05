@@ -30,7 +30,7 @@ internal fun HomeSummaryCard(onClick: () -> Unit, modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit) {
     Surface(onClick = onClick, modifier = modifier, color = C.Panel, contentColor = C.Ink,
         shape = RoundedCornerShape(24.dp)) {
-        Column(Modifier.fillMaxWidth().padding(20.dp), content = content)
+        Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.Center, content = content)
     }
 }
 
