@@ -424,7 +424,7 @@ def inspect_migration(release, verifier):
     time.sleep(3)
     tap("暂不导入", hierarchy("migration-defer"))
     # The user's next entry through the helper must reopen migration even with an existing home task.
-    adb("shell", "am", "start", "-W", "-n", f"{legacy}/io.github.gravere.bybus.migration.LegacyMigrationActivity", timeout=30)
+    adb("shell", "am", "start", "-W", "-n", f"{legacy}/{legacy}.MainActivity", timeout=30)
     time.sleep(2); tap("打开独立版并迁移", hierarchy("migration-helper"))
     locate(hierarchy("migration-reopened"), "导入旧版数据")
     capture("migration-reopened")

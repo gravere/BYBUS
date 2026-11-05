@@ -6,6 +6,8 @@ BYBUS 使用 `io.github.gravere.bybus`，可与上游 `com.example.limbuszhcn` �
 
 旧更新器固定读取 `bybus-update.json` 和 `BYBUS.apk`，且校验旧包名。这两个入口保留为同版本的轻量迁移助手；它保留旧签名和包名，覆盖升级会停止旧容器进程，原数据仍保留。助手不携带游戏运行环境，也不初始化 VirtualApp。
 
+助手通过 Activity alias 保留旧 `MainActivity` 启动组件，已有桌面图标和安装返回入口仍有效；不能同时声明两个桌面入口。
+
 独立版使用 `BYBUS-Android.apk` 与 `bybus-app-update.json`。版本化完整安装包指向独立版。首次下载始终指向独立版；迁移附件标明仅供旧更新器使用。两个清单分别校验自己的包名、签名与文件摘要。
 
 ## 数据边界
