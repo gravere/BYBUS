@@ -150,8 +150,6 @@ internal fun LaunchButton(action: LaunchAction, enabled: Boolean, step: Int,
                     Spacer(Modifier.width(10.dp))
                     Text(item.title, Modifier.weight(1f, fill = false), textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.labelLarge)
-                    // Balance the symbol and its gap, keeping the title at the button centre.
-                    Spacer(Modifier.width(32.dp))
                 }
             }
         }
