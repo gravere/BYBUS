@@ -233,5 +233,6 @@ internal class ParatranzRepository(
         runCatching { Files.deleteIfExists(retryCache) }
     }
 
-    private companion object { const val MAX_WAIT = 86_400_000L }
+    // HTTP parsing adds one second past the latest valid 24-hour reset boundary.
+    private companion object { const val MAX_WAIT = 86_401_000L }
 }

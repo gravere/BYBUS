@@ -12,6 +12,13 @@ class ParatranzRepositoryTest {
     private val json = """{"id":6860,"dest":"zh-cn","name":"LLC","stats":{"total":100,"translated":90,"checked":50,"reviewed":20,"modifiedAt":"2026-09-22T06:00:00Z"}}"""
     private val now = 1_790_000_000_000L
 
+    @Test fun maximumHttpRetryWindowDoesNotFallBackToOneMinute() {
+        val failure = projectHttpFailure(429, null, null, "86400", now)
+        val repository = ParatranzRepository(folder.root.toPath().resolve("project.json"),
+            { throw failure }, { now }, { 0L })
+        assertEquals(now + 86_401_000, repository.refresh(true).retryAtMillis)
+    }
+
     @Test fun serverRetryWindowBlocksManualAndAutomaticChecksAndSurvivesRestart() {
         var tick = 0L; var calls = 0
         val file = folder.root.toPath().resolve("project.json")
