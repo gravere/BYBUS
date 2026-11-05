@@ -511,7 +511,11 @@ def inspect_migration_screen(release, verifier):
                 locate(tree, "50%")
                 if fixture == "merge":
                     locate(tree, "16 / 32 个文件")
-                if locate(tree, "返回上一页").get("enabled") != "false":
+                back = next(n for n in tree.iter("node") if n.get("content-desc") == "返回上一页")
+                parents = {child: parent for parent in tree.iter() for child in parent}
+                while back.get("clickable") != "true" and back in parents:
+                    back = parents[back]
+                if back.get("enabled") != "false":
                     raise RuntimeError("Active migration permits leaving the page")
             elif fixture == "error":
                 locate(tree, "迁移尚未完成")
