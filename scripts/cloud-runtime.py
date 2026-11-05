@@ -419,6 +419,15 @@ def inspect_migration(release, verifier):
     if not any(word in denial for word in ("SecurityException", "Permission Denial", "not authorized")):
         raise RuntimeError("Migration provider did not reject the shell UID")
     adb("shell", "am", "force-stop", PACKAGE)
+    adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
+    time.sleep(3)
+    tap("暂不导入", hierarchy("migration-defer"))
+    # The user's next entry through the helper must reopen migration even with an existing home task.
+    adb("shell", "am", "start", "-W", "-n", f"{legacy}/io.github.gravere.bybus.migration.LegacyMigrationActivity", timeout=30)
+    time.sleep(2); tap("打开独立版并迁移", hierarchy("migration-helper"))
+    locate(hierarchy("migration-reopened"), "导入旧版数据")
+    capture("migration-reopened")
+    adb("shell", "am", "force-stop", PACKAGE)
     adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MigrationProbeActivity", timeout=90)
     time.sleep(3)
     tap("开始导入", hierarchy("migration-ready"))
@@ -462,7 +471,7 @@ def inspect_migration(release, verifier):
     adb("shell", "am", "force-stop", PACKAGE)
     adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
     time.sleep(3); locate(hierarchy("coexisting-home"), "设置与工具")
-    REPORT["migration"] = dict(synthetic_bytes=len(fixture), sha256=expected, source_preserved=True,
+    REPORT["migration"] = dict(synthetic_bytes=len(fixture), sha256=expected, source_preserved=True, reopen_after_defer=True,
         provider_rejects_shell=True, skipped_install_registry=True, stale_pid_excluded=True,
         target_preparation="fixture skips official game installation; real accounts not tested")
     REPORT["coexistence"] = dict(packages=[PACKAGE, legacy], upstream="v1.5.2", upstream_sha256=upstream_sha)

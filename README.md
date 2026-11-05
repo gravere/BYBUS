@@ -89,7 +89,7 @@ BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeL
 <details>
 <summary><strong>已有旧版 BYBUS，如何保留数据并迁移？</strong></summary>
 
-1. 在旧版 BYBUS 中检查更新，安装迁移助手；不要提前卸载旧版或清除数据。
+1. 在旧版 BYBUS 中检查更新，安装迁移助手；若旧版没有更新入口，可手动安装[迁移助手](https://github.com/gravere/BYBUS/releases/latest/download/BYBUS.apk)。不要提前卸载旧版或清除数据。
 2. 打开助手，下载并安装独立版 BYBUS，在独立版选择「导入旧版数据」。
 3. 导入完成并确认运行正常后，再移除迁移助手。此后可同时安装 limbusZhCN。
 

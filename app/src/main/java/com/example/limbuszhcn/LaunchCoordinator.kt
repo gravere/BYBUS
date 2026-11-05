@@ -108,7 +108,12 @@ internal class LaunchCoordinator private constructor(application: Application) {
         state = state.copy(busy = true, stage = label, message = label, failed = false, launchStep = -1)
         worker.execute {
             val start = System.nanoTime()
-            val result = runCatching { com.example.limbuszhcn.storage.OperationLock.run(app.filesDir.toPath(), task) }
+            val result = runCatching { com.example.limbuszhcn.storage.OperationLock.run(app.filesDir.toPath()) {
+                check(!com.example.limbuszhcn.migration.MigrationAccess.preferences(app).getBoolean("pending", false)) {
+                    "旧数据迁移尚未完成，请先继续导入"
+                }
+                task()
+            } }
             result.exceptionOrNull()?.let { PersistentDiagnosticLog.error(TAG, label, it) }
             PersistentDiagnosticLog.info(TAG, "Task finished stage=$label elapsedMs=${(System.nanoTime() - start) / 1_000_000} success=${result.isSuccess}")
             publish { it.copy(busy = false, launchStep = -1, failed = result.isFailure,

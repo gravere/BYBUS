@@ -178,12 +178,24 @@ class MainActivity : ComponentActivity() {
     /** Returning from the guest refreshes its last launch receipt. */
     override fun onResume() {
         super.onResume()
+        if (isFinishing) return
+        if (com.example.limbuszhcn.migration.MigrationAccess.preferences(this).getBoolean("pending", false)) {
+            startActivity(Intent(this, com.example.limbuszhcn.migration.MigrationActivity::class.java))
+            finish()
+            return
+        }
         androidx.lifecycle.ViewModelProvider(this)[LauncherViewModel::class.java].refresh()
     }
 
     /** 处理复用现有 Activity 时收到的受限调试 Intent。 */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (intent.action == io.github.gravere.bybus.migration.core.MigrationArchive.IMPORT_ACTION &&
+            com.example.limbuszhcn.migration.MigrationAccess.shouldOffer(this)) {
+            startActivity(Intent(this, com.example.limbuszhcn.migration.MigrationActivity::class.java))
+            finish()
+            return
+        }
         Log.i(TAG, "MainActivity.onNewIntent pid=${Process.myPid()} taskId=$taskId intent=${intent.describeForLog()} stack=${shortStack()}")
         launchContainerGameFromDebugIntent(intent)
         if (intent.action == com.example.limbuszhcn.update.GameStores.UPDATE_ACTION)

@@ -38,6 +38,8 @@ public final class LegacyMigrationActivity extends Activity {
         final boolean targetReady=installed;
         button(page,installed?"打开独立版并迁移":"下载独立版",() -> {
             Intent launch=targetReady?getPackageManager().getLaunchIntentForPackage(MigrationArchive.TARGET):null;
+            if (launch!=null) launch.setAction(MigrationArchive.IMPORT_ACTION)
+                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
             if (launch==null) launch=new Intent(Intent.ACTION_VIEW,Uri.parse("https://github.com/gravere/BYBUS/releases/latest/download/BYBUS-Android.apk"));
             try { startActivity(launch); } catch (RuntimeException error) { Toast.makeText(this,"暂时无法打开，请从 GitHub 下载独立版",Toast.LENGTH_LONG).show(); }
         });

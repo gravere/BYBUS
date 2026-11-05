@@ -11,6 +11,7 @@ import java.util.stream.Stream;
 public final class MigrationArchive {
     public static final String LEGACY = "com.example.limbuszhcn";
     public static final String TARGET = "io.github.gravere.bybus";
+    public static final String IMPORT_ACTION = TARGET + ".IMPORT_LEGACY";
     public static final String AUTHORITY = LEGACY + ".bybus.migration";
     public static final int MAX_FILES = 250_000;
     public static final long MAX_TOTAL = 512L * 1024 * 1024 * 1024;
