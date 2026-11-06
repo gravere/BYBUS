@@ -93,6 +93,10 @@ class LimbusZhCNApplication : Application() {
 
         override fun isHideForegroundNotification(): Boolean = true
 
+        override fun onLimbusPackageQueries(summary: String) {
+            PersistentDiagnosticLog.warn("PackageQueries", summary)
+        }
+
         override fun onLimbusSafetyAlert(callerPid: Int, summary: com.lody.virtual.helper.compat.LimbusSafetyAlert.Summary) {
             val root = VirtualCore.get().context.filesDir.toPath().resolve("translation-cache/translation-index")
             val recorded = runCatching {

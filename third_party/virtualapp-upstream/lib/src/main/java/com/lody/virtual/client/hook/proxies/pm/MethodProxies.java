@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.content.IntentSender;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.ComponentInfo;
 import android.content.pm.IPackageDataObserver;
 import android.content.pm.IPackageDeleteObserver2;
 import android.content.pm.IPackageInstallerCallback;
@@ -19,6 +20,7 @@ import android.content.pm.ProviderInfo;
 import android.content.pm.ResolveInfo;
 import android.content.pm.ServiceInfo;
 import android.content.pm.Signature;
+import android.content.pm.VersionedPackage;
 import android.graphics.Bitmap;
 import android.os.Binder;
 import android.os.Build;
@@ -177,18 +179,45 @@ class MethodProxies {
     }
 
     private static void fixLimbusOwnApplicationInfo(ApplicationInfo info) {
+        if (fixLimbusOwnUid(info)) VClient.applyLimbusPlayCoreLocalTesting(info);
+    }
+
+    private static boolean fixLimbusOwnUid(ApplicationInfo info) {
         if (info != null
                 && LIMBUS_PACKAGE.equals(MethodProxy.getAppPkg())
                 && LIMBUS_PACKAGE.equals(info.packageName)) {
             info.uid = VirtualCore.get().myUid();
-            VClient.applyLimbusPlayCoreLocalTesting(info);
+            return true;
         }
+        return false;
     }
 
     private static void fixLimbusOwnPackageInfo(PackageInfo info) {
         if (info != null) {
             fixLimbusOwnApplicationInfo(info.applicationInfo);
+            fixLimbusOwnComponents(info.activities);
+            fixLimbusOwnComponents(info.receivers);
+            fixLimbusOwnComponents(info.services);
+            fixLimbusOwnComponents(info.providers);
         }
+    }
+
+    private static void fixLimbusOwnComponents(ComponentInfo[] infos) {
+        if (infos != null) for (ComponentInfo info : infos) fixLimbusOwnComponentInfo(info);
+    }
+
+    private static <T extends ComponentInfo> T fixLimbusOwnComponentInfo(T info) {
+        if (info != null) fixLimbusOwnUid(info.applicationInfo);
+        return info;
+    }
+
+    private static ResolveInfo fixLimbusOwnResolveInfo(ResolveInfo info) {
+        if (info != null) {
+            fixLimbusOwnComponentInfo(info.activityInfo);
+            fixLimbusOwnComponentInfo(info.serviceInfo);
+            fixLimbusOwnComponentInfo(info.providerInfo);
+        }
+        return info;
     }
 
     static class FreeStorage extends MethodProxy {
@@ -402,7 +431,7 @@ class MethodProxies {
             int userId = VUserHandle.myUserId();
             ServiceInfo info = VPackageManager.get().getServiceInfo(componentName, flags, userId);
             if (info != null) {
-                return info;
+                return fixLimbusOwnComponentInfo(info);
             }
             if (shouldIsolateHostPackagesForLimbus()) {
                 return null;
@@ -412,7 +441,7 @@ class MethodProxies {
                 return null;
             }
             ComponentFixer.fixOutsideComponentInfo(info);
-            return info;
+            return fixLimbusOwnComponentInfo(info);
         }
 
         @Override
@@ -439,8 +468,7 @@ class MethodProxies {
                 return method.invoke(who, args);
             }
             if (isAppPkg(pkgName)) {
-                int uid = VPackageManager.get().getPackageUid(pkgName, 0);
-                return VUserHandle.getAppId(uid);
+                return VPackageManager.get().getPackageUid(pkgName, VUserHandle.myUserId());
             }
             if (isVisiblePackageForCurrentApp(pkgName)) {
                 return method.invoke(who, args);
@@ -489,7 +517,7 @@ class MethodProxies {
                 }
                 ComponentFixer.fixOutsideComponentInfo(info);
             }
-            return info;
+            return fixLimbusOwnComponentInfo(info);
         }
 
         @Override
@@ -684,10 +712,10 @@ class MethodProxies {
                 }
                 info = (ProviderInfo) method.invoke(who, args);
                 if (info != null && isVisiblePackageForCurrentApp(info.applicationInfo)) {
-                    return info;
+                    return fixLimbusOwnComponentInfo(info);
                 }
             }
-            return info;
+            return fixLimbusOwnComponentInfo(info);
         }
     }
 
@@ -706,6 +734,7 @@ class MethodProxies {
             int userId = VUserHandle.myUserId();
             List<ResolveInfo> appResult = VPackageManager.get().queryIntentServices((Intent) args[0],
                     (String) args[1], readPackageFlags(args[2]), userId);
+            for (ResolveInfo item : appResult) fixLimbusOwnResolveInfo(item);
             if (shouldIsolateHostPackagesForLimbus()) {
                 if (slice) {
                     return ParceledListSliceCompat.create(appResult);
@@ -795,6 +824,7 @@ class MethodProxies {
             int userId = VUserHandle.myUserId();
             List<ResolveInfo> appResult = VPackageManager.get().queryIntentActivities((Intent) args[0],
                     (String) args[1], readPackageFlags(args[2]), userId);
+            for (ResolveInfo item : appResult) fixLimbusOwnResolveInfo(item);
 
             //xdja
             Intent intent = (Intent)args[0];
@@ -856,7 +886,7 @@ class MethodProxies {
             int userId = VUserHandle.myUserId();
             ResolveInfo resolveInfo = VPackageManager.get().resolveService(intent, resolvedType, flags, userId);
             if (resolveInfo != null) {
-                return resolveInfo;
+                return fixLimbusOwnResolveInfo(resolveInfo);
             }
             if (shouldIsolateHostPackagesForLimbus()) {
                 return null;
@@ -864,7 +894,7 @@ class MethodProxies {
             ResolveInfo info = (ResolveInfo) method.invoke(who, args);
             if (info != null && isVisiblePackageForCurrentApp(info.serviceInfo.applicationInfo)) {
                 ComponentFixer.fixOutsideComponentInfo(info.serviceInfo);
-                return info;
+                return fixLimbusOwnResolveInfo(info);
             }
             return null;
         }
@@ -934,7 +964,7 @@ class MethodProxies {
     }
 
 
-    static final class GetPackageInfo extends MethodProxy {
+    static class GetPackageInfo extends MethodProxy {
         /**
          * @see android.content.pm.PackageManager #MATCH_FACTORY_ONLY
          */
@@ -949,12 +979,16 @@ class MethodProxies {
 
         @Override
         public boolean beforeCall(Object who, Method method, Object... args) {
-            return args != null && args[0] != null;
+            return args != null && args.length > 0 && args[0] != null;
+        }
+
+        protected String queriedPackage(Object argument) {
+            return (String) argument;
         }
 
         @Override
         public Object call(Object who, Method method, Object... args) throws Throwable {
-            String pkg = (String) args[0];
+            String pkg = queriedPackage(args[0]);
             int flags = readPackageFlags(args[1]);
             int userId = VUserHandle.myUserId();
             if (shouldHidePackageFromCurrentApp(pkg)) {
@@ -990,6 +1024,26 @@ class MethodProxies {
             return null;
         }
 
+    }
+
+    @TargetApi(26)
+    static final class GetPackageInfoVersioned extends GetPackageInfo {
+        @Override public String getMethodName() { return "getPackageInfoVersioned"; }
+
+        @Override protected String queriedPackage(Object argument) {
+            return ((VersionedPackage) argument).getPackageName();
+        }
+
+        @Override public Object call(Object who, Method method, Object... args) throws Throwable {
+            PackageInfo info = (PackageInfo) super.call(who, method, args);
+            if (info == null) return null;
+            VersionedPackage requested = (VersionedPackage) args[0];
+            long version = Build.VERSION.SDK_INT >= 28
+                    ? requested.getLongVersionCode() : requested.getVersionCode();
+            long installed = Build.VERSION.SDK_INT >= 28
+                    ? info.getLongVersionCode() : info.versionCode;
+            return version == PackageManager.VERSION_CODE_HIGHEST || version == installed ? info : null;
+        }
     }
 
     static class DeleteApplicationCacheFiles extends MethodProxy {
@@ -1143,13 +1197,14 @@ class MethodProxies {
         public Object call(Object who, Method method, Object... args) throws Throwable {
             int uid = (int) args[0];
             if (uid == getRealUid()) {
-                VLog.e("VPackageManager", "uid = real uid");
-                uid = VBinder.getCallingUid();
+                // Limbus exposes its physical UID. Other guests retain Binder-caller attribution,
+                // which Google service authorization uses to identify their virtual clients.
+                uid = shouldIsolateHostPackagesForLimbus() ? getVUid() : VBinder.getCallingUid();
             }
             String[] pkgs = VPackageManager.get().getPackagesForUid(uid);
             if (pkgs == null) {
                 if (shouldIsolateHostPackagesForLimbus()) {
-                    return new String[]{LIMBUS_PACKAGE};
+                    return null;
                 }
                 args[0] = uid;
                 return method.invoke(who, args);
@@ -1203,6 +1258,7 @@ class MethodProxies {
             int vuid = (int) args[1];
             int flags = readPackageFlags(args[2]);
             List<ProviderInfo> infos = VPackageManager.get().queryContentProviders(processName, vuid, 0);
+            for (ProviderInfo item : infos) fixLimbusOwnComponentInfo(item);
             if (shouldIsolateHostPackagesForLimbus()) {
                 if (slice) {
                     return ParceledListSliceCompat.create(infos);
@@ -1263,9 +1319,6 @@ class MethodProxies {
         public Object call(Object who, Method method, Object... args) throws Throwable {
             if (args.length == 2 && args[0] instanceof String && args[1] instanceof String) {
                 String pkgNameOne = (String) args[0], pkgNameTwo = (String) args[1];
-                if (TextUtils.equals(pkgNameOne, pkgNameTwo)) {
-                    return PackageManager.SIGNATURE_MATCH;
-                }
                 return VPackageManager.get().checkSignatures(pkgNameOne, pkgNameTwo);
             }
             return method.invoke(who, args);
@@ -1283,14 +1336,14 @@ class MethodProxies {
         public Object call(Object who, Method method, Object... args) throws Throwable {
             int uid1 = (int) args[0];
             int uid2 = (int) args[1];
-            if (uid1 == uid2) {
-                return PackageManager.SIGNATURE_MATCH;
+            if (uid1 == getRealUid()) uid1 = getVUid();
+            if (uid2 == getRealUid()) uid2 = getVUid();
+            String[] pkgs1 = VPackageManager.get().getPackagesForUid(uid1);
+            String[] pkgs2 = VPackageManager.get().getPackagesForUid(uid2);
+            if (!shouldIsolateHostPackagesForLimbus()) {
+                if (pkgs1 == null) pkgs1 = VirtualCore.getPM().getPackagesForUid(uid1);
+                if (pkgs2 == null) pkgs2 = VirtualCore.getPM().getPackagesForUid(uid2);
             }
-            if (uid1 == Constants.OUTSIDE_APP_UID || uid2 == Constants.OUTSIDE_APP_UID) {
-                return PackageManager.SIGNATURE_MATCH;
-            }
-            String[] pkgs1 = VirtualCore.getPM().getPackagesForUid(uid1);
-            String[] pkgs2 = VirtualCore.getPM().getPackagesForUid(uid2);
             if (pkgs1 == null || pkgs1.length == 0) {
                 return PackageManager.SIGNATURE_UNKNOWN_PACKAGE;
             }
@@ -1311,7 +1364,8 @@ class MethodProxies {
         @Override
         public Object call(Object who, Method method, Object... args) throws Throwable {
             int uid = (int) args[0];
-            if (uid == Constants.OUTSIDE_APP_UID) {
+            if ((uid == getRealUid() && shouldIsolateHostPackagesForLimbus()) || (uid == Constants.OUTSIDE_APP_UID
+                    && !shouldIsolateHostPackagesForLimbus())) {
                 uid = getVUid();
             }
             return VPackageManager.get().getNameForUid(uid);
@@ -1386,10 +1440,10 @@ class MethodProxies {
                 ResolveInfo info = (ResolveInfo) method.invoke(who, args);
                 if (info != null && isVisiblePackageForCurrentApp(info.activityInfo.applicationInfo)) {
                     ComponentFixer.fixOutsideComponentInfo(info.activityInfo);
-                    return info;
+                    return fixLimbusOwnResolveInfo(info);
                 }
             }
-            return resolveInfo;
+            return fixLimbusOwnResolveInfo(resolveInfo);
         }
     }
 
@@ -1474,7 +1528,7 @@ class MethodProxies {
                 }
                 ComponentFixer.fixOutsideComponentInfo(info);
             }
-            return info;
+            return fixLimbusOwnComponentInfo(info);
         }
 
     }
@@ -1515,6 +1569,7 @@ class MethodProxies {
             int flags = readPackageFlags(args[0]);
             int userId = VUserHandle.myUserId();
             List<ApplicationInfo> appInfos = VPackageManager.get().getInstalledApplications(flags, userId);
+            for (ApplicationInfo info : appInfos) fixLimbusOwnApplicationInfo(info);
             if (shouldIsolateHostPackagesForLimbus()) {
                 if (slice) {
                     return ParceledListSliceCompat.create(appInfos);
@@ -1558,6 +1613,7 @@ class MethodProxies {
             int flags = readPackageFlags(args[0]);
             int userId = VUserHandle.myUserId();
             List<PackageInfo> packageInfos = VPackageManager.get().getInstalledPackages(flags, userId);
+            for (PackageInfo info : packageInfos) fixLimbusOwnPackageInfo(info);
             if (shouldIsolateHostPackagesForLimbus()) {
                 if (slice) {
                     return ParceledListSliceCompat.create(packageInfos);
@@ -1607,6 +1663,7 @@ class MethodProxies {
             int userId = VUserHandle.myUserId();
             List<ResolveInfo> appResult = VPackageManager.get().queryIntentReceivers((Intent) args[0], (String) args[1],
                     readPackageFlags(args[2]), userId);
+            for (ResolveInfo item : appResult) fixLimbusOwnResolveInfo(item);
             if (shouldIsolateHostPackagesForLimbus()) {
                 if (slice) {
                     return ParceledListSliceCompat.create(appResult);
@@ -1662,7 +1719,7 @@ class MethodProxies {
                 }
                 ComponentFixer.fixOutsideComponentInfo(info);
             }
-            return info;
+            return fixLimbusOwnComponentInfo(info);
         }
 
         @Override
@@ -1732,6 +1789,7 @@ class MethodProxies {
             int userId = VUserHandle.myUserId();
             List<ResolveInfo> appResult = VPackageManager.get().queryIntentContentProviders((Intent) args[0], (String) args[1],
                     readPackageFlags(args[2]), userId);
+            for (ResolveInfo item : appResult) fixLimbusOwnResolveInfo(item);
             if (shouldIsolateHostPackagesForLimbus()) {
                 if (slice) {
                     return ParceledListSliceCompat.create(appResult);
