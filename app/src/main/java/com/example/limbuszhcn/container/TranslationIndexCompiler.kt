@@ -20,7 +20,7 @@ import kotlin.io.path.readText
 import kotlin.io.path.outputStream
 import kotlin.io.path.writeText
 
-internal const val TRANSLATION_COMPILER_REVISION = "jp-pairing-10"
+internal const val TRANSLATION_COMPILER_REVISION = "jp-pairing-11"
 
 /**
  * 表示一条从官方日文显示字段到中文显示字段的结构化配对记录。
@@ -404,6 +404,9 @@ internal class TranslationIndexStore(private val root: Path) {
     }
 
     fun clearBootstrap() { Files.deleteIfExists(root.resolve(BOOTSTRAP_POINTER)) }
+
+    fun bootstrapManifest(): Properties? = validPointer(root.resolve(BOOTSTRAP_POINTER))
+        ?.let { validatedManifest(it.parent) }
 
     /** Full and startup-only readiness remain separate; native code receives one verified pointer. */
     fun selectRuntimeIndex(): String {

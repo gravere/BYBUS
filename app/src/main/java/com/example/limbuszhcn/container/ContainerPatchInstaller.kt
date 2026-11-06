@@ -168,6 +168,8 @@ class ContainerPatchInstaller(
         var activeFiles = 0
         val candidateFiles = manifest.entries.count { it.cachePath.endsWith(".json", ignoreCase = true) }
         var availableFiles = 0
+        var readableFiles = 0
+        var pairedFiles = 0
         val indexCompiler = TranslationIndexCompiler()
         val startupCompiler = TranslationIndexCompiler()
         manifest.entries.forEach { entry ->
@@ -191,14 +193,16 @@ class ContainerPatchInstaller(
             }
             if (bundled != null) {
                 runCatching { TranslationJsonPairer.pair(japaneseSource, bundled, source.readText(Charsets.UTF_8)) }
-                    .getOrNull()?.takeIf { it.sufficientlyPaired }?.records?.let(::addRecords)
+                    .getOrNull()?.records?.let(::addRecords)
             }
             val japaneseJson = storage.read(japaneseSource) ?: return@forEach
+            readableFiles += 1
             val pair = runCatching { TranslationJsonPairer.pair(
                 path = japaneseSource,
                 originalJson = japaneseJson.toString(Charsets.UTF_8),
                 translationJson = source.readText(Charsets.UTF_8)
             ) }.getOrNull() ?: return@forEach
+            pairedFiles += 1
             if (pair.sufficientlyPaired) availableFiles += 1
             // Coverage is a readiness gate, not evidence that individually paired
             // rows are wrong. Keep proven rows from partially translated tables.
@@ -225,6 +229,7 @@ class ContainerPatchInstaller(
             identity == inputIdentity(BundledBattleHints.read(installedApkPaths()))
         val activated = resourcesReady && recordCountSafe && stableInputs && compiledIndex.uniqueEntries.isNotEmpty()
         var startupAvailable = false
+        var startupRecords = 0
         if (activated) {
             val activeIndex = TranslationIndexStore(indexRoot()).activate(compiledIndex)
             runCatching { android.util.Log.i(
@@ -256,6 +261,7 @@ class ContainerPatchInstaller(
         }
         if (!activated && !previousIndexAvailable) {
             val startup = startupCompiler.compile(manifest.requestedVersion, manifest.archiveSha256)
+            startupRecords = startup.sourceRecordCount
             if (stableInputs && startup.uniqueEntries.isNotEmpty()) {
                 store.activate(startup, bootstrap = true)
                 startupAvailable = true
@@ -269,7 +275,11 @@ class ContainerPatchInstaller(
             com.example.limbuszhcn.update.TranslationRepository(cacheRoot).prune(retained)
         }
         runCatching { com.example.limbuszhcn.PersistentDiagnosticLog.info("LimbusStartup",
-            "phase=translation_index_rebuild elapsedMs=${(System.nanoTime() - rebuildStarted) / 1_000_000} activated=$activated") }
+            "phase=translation_index_rebuild elapsedMs=${(System.nanoTime() - rebuildStarted) / 1_000_000}" +
+                " activated=$activated preserved=${!activated && previousIndexAvailable} stableInputs=$stableInputs" +
+                " bundledTables=${bundledHints.size} readableFiles=$readableFiles pairedFiles=$pairedFiles" +
+                " availableFiles=$availableFiles candidateFiles=$candidateFiles" +
+                " startupActivated=$startupAvailable startupRecords=$startupRecords") }
         return PatchInstallSummary(
             version = manifest.requestedVersion,
             writtenFiles = activeFiles,

@@ -42,6 +42,7 @@ import com.lody.virtual.helper.compat.ApplicationThreadCompat;
 import com.lody.virtual.helper.compat.BroadcastReceiverCompat;
 import com.lody.virtual.helper.compat.BundleCompat;
 import com.lody.virtual.helper.compat.PermissionCompat;
+import com.lody.virtual.helper.compat.LimbusSafetyAlert;
 import com.lody.virtual.helper.utils.ComponentUtils;
 import com.lody.virtual.helper.utils.Singleton;
 import com.lody.virtual.helper.utils.VLog;
@@ -132,6 +133,19 @@ public class VActivityManagerService extends IActivityManager.Stub {
     @Override
     public int startActivity(Intent intent, ActivityInfo info, IBinder resultTo, Bundle options, String resultWho, int requestCode, int userId) {
         synchronized (this) {
+            // Capture before the alert process starts: its UI can disappear with the game.
+            // Never unpack other apps' intents (including GMS Binder/Parcelable payloads).
+            if (info != null && intent != null && LimbusSafetyAlert.isTarget(info.packageName, info.name, intent.getAction())
+                    && LimbusSafetyAlert.matches(
+                    getInitialPackage(VBinder.getCallingPid()), getAppProcessName(VBinder.getCallingPid()),
+                    info.packageName, info.name, intent.getAction())) {
+                try {
+                    VirtualCore.getConfig().onLimbusSafetyAlert(VBinder.getCallingPid(),
+                            LimbusSafetyAlert.summarize(intent.getIntExtra("type", -1), intent.getStringExtra("msg")));
+                } catch (RuntimeException error) {
+                    Log.w("LimbusVA", "Safety alert metadata unavailable: " + error.getClass().getSimpleName());
+                }
+            }
             Log.i("LimbusVA", "VAMS.startActivity userId=" + userId
                     + " callingUid=" + VBinder.getCallingUid()
                     + " callingPid=" + VBinder.getCallingPid()

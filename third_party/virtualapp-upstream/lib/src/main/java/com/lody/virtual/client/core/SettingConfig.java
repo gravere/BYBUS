@@ -25,6 +25,10 @@ import com.lody.virtual.helper.compat.NotificationChannelCompat;
  */
 public abstract class SettingConfig {
 
+    /** Already reduced to safe metadata by the server; observation must not affect activity dispatch. */
+    public void onLimbusSafetyAlert(int callerPid, com.lody.virtual.helper.compat.LimbusSafetyAlert.Summary summary) {
+    }
+
     public abstract String getHostPackageName();
 
     public abstract String getPluginEnginePackageName();
