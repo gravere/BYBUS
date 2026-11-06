@@ -35,8 +35,10 @@
   容器 Companion，不回退宿主 Play Store，不改写游戏业务包名；宿主 Play 的真实 UID 校验
   已证明阻断旧直连方案。Google 组件使用固定签名版本、保留数据升级，不通过卸载清空账号。
   商品可见、购买初始化、结算页、实际到账分开验证，不伪造或隐藏服务错误，不自动付款。
-  Android 14+ 的 ACCOUNT_MANAGER 兼容仅可安装到容器 GoogleLoginService 的
+  ACCOUNT_MANAGER 兼容仅可安装到容器 GoogleLoginService 的
   IAccountAuthenticator Binder，且只认可同宿主 UID、确切虚拟账号管理服务 PID。
+  Android 13 及更早仅包装该 Binder 所属 authenticator 的私有 Context，Android 14+
+  使用局部 PermissionEnforcer；两者均保留实际 Binder 身份和后台同步传输。
   不给宿主或其他访客授予系统账号权限。容器 Google 组件保留业务包名；读取容器
   GServicesProvider 时可保留真实 Binder UID 与准确 Google 包名，宿主 Provider 不适用。
   authenticator 是 oneway 接口，调用 PID 为 0；不能因此放宽身份检查。

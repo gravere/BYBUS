@@ -21,7 +21,7 @@ class PermissionProbeReceiver : BroadcastReceiver() {
         val pending = goAsync()
         Thread {
             try {
-                val result = runCatching { inspect() }.getOrElse {
+                val result = runCatching { inspect(context) }.getOrElse {
                     android.util.Log.e("PermissionProbe", "Permission contract inspection failed", it)
                     JSONObject().put("passed", false).put("error", it.stackTraceToString().take(8000))
                 }
@@ -32,7 +32,7 @@ class PermissionProbeReceiver : BroadcastReceiver() {
         }.start()
     }
 
-    private fun inspect(): JSONObject {
+    private fun inspect(context: Context): JSONObject {
         // Initialize the real services through their normal provider before touching the registry.
         check(VActivityManager.get().systemPid == Process.myPid())
         val manager = VPackageManagerService.get()
@@ -114,5 +114,6 @@ class PermissionProbeReceiver : BroadcastReceiver() {
             .put("ordinary_app_uid", true).put("production_permission_services", true)
             .put("synthetic_package_registry", true).put("registry_restored", true)
             .put("checks", checks).put("check_count", checks.length())
+            .put("authenticator_checks", AuthenticatorPermissionProbe.inspect(context))
     }
 }

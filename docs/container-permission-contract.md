@@ -13,8 +13,15 @@
 Google 账号服务继续使用 `MicrogAuthenticatorCompat` 的局部 Binder 边界：仅确切
 GoogleLoginService、同宿主 UID 和确切账号管理服务 PID 可通过账号回调检查。
 这不向游戏、其他访客或宿主授予系统账号权限。不修改游戏 APK、保护错误码或退出逻辑。
+Android 13 及更早版本的 `AbstractAccountAuthenticator.Transport` 在其私有 Context
+上执行账号权限检查；仅包装该确切 Binder 所属 authenticator 的 Context。
+Android 14 起继续使用局部 PermissionEnforcer。两条路径都保留实际 Binder UID/PID
+验证和有界后台同步传输，未知调用方使用原平台判断，不保留全局账号权限放行。
+框架差异参见 AOSP [Android 13](https://github.com/aosp-mirror/platform_frameworks_base/blob/android13-release/core/java/android/accounts/AbstractAccountAuthenticator.java)
+及 [Android 14](https://github.com/aosp-mirror/platform_frameworks_base/blob/android14-release/core/java/android/accounts/AbstractAccountAuthenticator.java)。
 
 验证使用独立云端 Android 中的生产权限服务与临时包注册表，覆盖不存在目标、
 权限未声明、虚拟用户、共享 UID、卸载状态、宿主真实权限以及 Google 回调身份规则。
-调试入口不进入正式 APK，不安装或启动游戏，不操作账号或购买。
+另用框架真实 Authenticator、Proxy/Stub 和合成结果回调验证新旧系统的局部权限处理，
+不创建系统账号、不读取凭据。调试入口不进入正式 APK，不安装或启动游戏，不操作购买。
 这些检查能证明权限查询错误已修复，不能证明某次游戏 70036 的具体原因或实际启动结果。

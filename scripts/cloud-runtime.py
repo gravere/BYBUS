@@ -432,14 +432,18 @@ def inspect_permissions(release, verifier):
             REPORT["permissions"] = dict(result, probe_sha256=digest)
             if not result.get("passed"):
                 raise RuntimeError("Permission checks failed: " + str(result.get("error")))
-            if result.get("sdk") != 37 or result.get("check_count") != 22:
-                raise RuntimeError("Permission check coverage differs from the expected Android 17 scope")
+            expected_sdk = {"android13": 33, "android17": 37}[REPORT["profile"]]
+            if result.get("sdk") != expected_sdk or result.get("check_count") != 22:
+                raise RuntimeError("Permission check coverage differs from the expected platform scope")
             if not all(result.get(key) for key in ("ordinary_app_uid", "production_permission_services",
                                                   "synthetic_package_registry", "registry_restored")):
                 raise RuntimeError("Permission check environment or registry cleanup failed")
             if not all(result["checks"].values()):
                 raise RuntimeError("Not all permission checks passed")
+            if len(result.get("authenticator_checks", {})) != 4 or not all(result["authenticator_checks"].values()):
+                raise RuntimeError("Scoped framework authenticator checks did not pass")
             REPORT["checks"].append("22 production permission checks with real host grants and temporary virtual packages")
+            REPORT["checks"].append("framework authenticator Proxy/Stub: ordinary caller denied, exact server callback preserved, wrong UID/PID denied")
             REPORT["result"] = "permission contract inspection completed; game and 70036 outcome not tested"
             return
         time.sleep(1)
