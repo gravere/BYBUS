@@ -542,9 +542,6 @@ public class VActivityManagerService extends IActivityManager.Stub {
         if (permission == null) {
             return PackageManager.PERMISSION_DENIED;
         }
-        if (Manifest.permission.ACCOUNT_MANAGER.equals(permission)) {
-            return PackageManager.PERMISSION_GRANTED;
-        }
         if ("android.permission.INTERACT_ACROSS_USERS".equals(permission) || "android.permission.INTERACT_ACROSS_USERS_FULL".equals(permission)) {
             return PackageManager.PERMISSION_DENIED;
         }

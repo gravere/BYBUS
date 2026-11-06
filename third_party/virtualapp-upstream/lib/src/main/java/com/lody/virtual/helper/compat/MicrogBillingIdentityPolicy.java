@@ -4,9 +4,9 @@ package com.lody.virtual.helper.compat;
 public final class MicrogBillingIdentityPolicy {
     private MicrogBillingIdentityPolicy() { }
 
-    /** AOSP introduced generated ACCOUNT_MANAGER enforcement in Android 14. */
+    /** Both legacy Context checks and Android 14+ generated checks need a scoped boundary. */
     public static boolean requiresAuthenticatorPermissionBridge(int sdk) {
-        return sdk >= 34;
+        return sdk >= 26;
     }
 
     public static boolean isBillingAuthorization(String caller, String accountType, String scope) {
