@@ -81,4 +81,27 @@ public class MigrationArchiveTest {
         decode(target,encode(source));
         assertEquals(20,MigrationArchive.requiredSpace(target,new ByteArrayInputStream(plan.toByteArray())));
     }
+
+    @Test public void runtimeStateIsNotExportedAndOldProviderEntriesCannotOverwriteNewHostState() throws Exception {
+        Path source=root(),target=root();
+        String state="files/translation-cache/translation-index/runtime-state.properties";
+        String pointer="files/translation-cache/translation-index/active-index.path";
+        String font="files/translation-cache/runtime-font/font.ttf";
+        put(source,state,new byte[]{1}); put(source,pointer,new byte[]{2});
+        put(source,font,new byte[]{3}); put(source,FILE,new byte[]{4});
+        assertEquals(2,MigrationArchive.snapshot(source).entries.size());
+        put(target,state,new byte[]{8}); put(target,pointer,new byte[]{9});
+        // This is the transport emitted by the preceding compatible provider.
+        java.util.List<MigrationArchive.Entry> entries=new java.util.ArrayList<>();
+        for (String path:new String[]{state,pointer,font,FILE}) {
+            entries.add(new MigrationArchive.Entry(path,1,Files.getLastModifiedTime(source.resolve(path)).toMillis()));
+        }
+        ByteArrayOutputStream oldStream=new ByteArrayOutputStream();
+        MigrationArchive.write(source,new MigrationArchive.Snapshot(entries,4),oldStream);
+        assertEquals(4,decode(target,oldStream.toByteArray()));
+        assertArrayEquals(new byte[]{8},Files.readAllBytes(target.resolve(state)));
+        assertArrayEquals(new byte[]{9},Files.readAllBytes(target.resolve(pointer)));
+        assertArrayEquals(new byte[]{3},Files.readAllBytes(target.resolve(font)));
+        assertArrayEquals(new byte[]{4},Files.readAllBytes(target.resolve(FILE)));
+    }
 }

@@ -838,15 +838,14 @@ import static android.content.pm.ActivityInfo.LAUNCH_SINGLE_TOP;
         if (intent == null) {
             return "null";
         }
-        Bundle extras = intent.getExtras();
+        // Do not unparcel guest payloads just to describe an Activity request.
         return "action=" + intent.getAction()
                 + " component=" + intent.getComponent()
                 + " package=" + intent.getPackage()
                 + " flags=0x" + Integer.toHexString(intent.getFlags())
-                + " data=" + intent.getData()
+                + " scheme=" + intent.getScheme()
                 + " type=" + intent.getType()
-                + " categories=" + intent.getCategories()
-                + " extras=" + (extras == null ? null : extras.keySet());
+                + " categories=" + intent.getCategories();
     }
 
     private static String describeActivityInfoForLimbus(ActivityInfo info) {

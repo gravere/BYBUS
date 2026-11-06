@@ -31,7 +31,11 @@ internal class LauncherViewModel(application: Application) : AndroidViewModel(ap
     val state: LauncherUiState get() = coordinator.state
     fun launch() = coordinator.launch()
     fun refresh() {
-        coordinator.refresh()
+        refreshStatus(preserveFailure = false)
+    }
+    fun resumeRefresh() = refreshStatus(preserveFailure = true)
+    private fun refreshStatus(preserveFailure: Boolean) {
+        coordinator.refresh(preserveFailure)
         coordinator.checkGameUpdate()
         refreshProject()
     }

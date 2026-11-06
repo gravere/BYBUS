@@ -25,16 +25,16 @@ class ContainerWorkspaceStorage(
     override fun resourceMigrationRoots(): Map<String, Path> = migrationRoots
     override fun probe(): GameStorageProbe {
         val en = localizeRoot.resolve("en")
-        if (!Files.isDirectory(en)) {
-            return GameStorageProbe(exists = false, jsonFileCount = 0, remoteListPresent = false)
-        }
-        val jsonCount = Files.walk(en).use { paths ->
-            paths.filter { it.isRegularFile() && it.name.endsWith(".json") }.count().toInt()
+        val jp = localizeRoot.resolve("jp")
+        fun jsonCount(directory: Path): Int = if (!Files.isDirectory(directory)) 0 else Files.walk(directory).use { paths ->
+            paths.filter { it.isRegularFile() && it.name.endsWith(".json", ignoreCase = true) }.count().toInt()
         }
         return GameStorageProbe(
-            exists = true,
-            jsonFileCount = jsonCount,
-            remoteListPresent = localizeRoot.resolve("RemoteLocalizeFileList.json").isRegularFile()
+            exists = Files.isDirectory(en),
+            jsonFileCount = jsonCount(en),
+            remoteListPresent = localizeRoot.resolve("RemoteLocalizeFileList.json").isRegularFile(),
+            japaneseExists = Files.isDirectory(jp),
+            japaneseJsonFileCount = jsonCount(jp)
         )
     }
 

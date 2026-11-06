@@ -51,10 +51,7 @@ class ContainerPatchInstaller(
             com.example.limbuszhcn.update.TranslationRepository(cacheRoot, fileDigest = digests::sha256)
                 .verifiedForLaunch(activeInstallSummary()?.version)
         }
-        return activateVerifiedRedirect(cached.outputDirectory, cached.manifest, digests).let { result ->
-            if (result.indexActivated) result else activeInstallSummary()
-                ?: result // Fully verified package, but the game still needs to prepare its resources.
-        }
+        return activateVerifiedRedirect(cached.outputDirectory, cached.manifest, digests)
     }
 
     /**
@@ -228,8 +225,15 @@ class ContainerPatchInstaller(
         val stableInputs = fingerprint == buildCache.fingerprint(identity, inputs, storage) &&
             identity == inputIdentity(BundledBattleHints.read(installedApkPaths()))
         val activated = resourcesReady && recordCountSafe && stableInputs && compiledIndex.uniqueEntries.isNotEmpty()
+        val activationReason = when {
+            activated -> "ready"
+            !stableInputs -> "inputs_changed"
+            !resourcesReady -> "insufficient_pairs"
+            !recordCountSafe -> "record_drop"
+            else -> "empty_index"
+        }
         var startupAvailable = false
-        var startupRecords = 0
+        var startupRecords: Int? = null
         if (activated) {
             val activeIndex = TranslationIndexStore(indexRoot()).activate(compiledIndex)
             runCatching { android.util.Log.i(
@@ -255,7 +259,7 @@ class ContainerPatchInstaller(
         } else {
             runCatching { android.util.Log.w(
                 TAG,
-                "Translation index has no unambiguous entries version=${manifest.requestedVersion}" +
+                    "Translation index not activated reason=$activationReason version=${manifest.requestedVersion}" +
                     " preserved=$previousIndexAvailable"
             ) }
         }
@@ -277,9 +281,12 @@ class ContainerPatchInstaller(
         runCatching { com.example.limbuszhcn.PersistentDiagnosticLog.info("LimbusStartup",
             "phase=translation_index_rebuild elapsedMs=${(System.nanoTime() - rebuildStarted) / 1_000_000}" +
                 " activated=$activated preserved=${!activated && previousIndexAvailable} stableInputs=$stableInputs" +
+                    " reason=$activationReason recordCountSafe=$recordCountSafe previousRecords=$previousCount" +
+                    " sourceRecords=${compiledIndex.sourceRecordCount} uniqueEntries=${compiledIndex.uniqueEntries.size}" +
                 " bundledTables=${bundledHints.size} readableFiles=$readableFiles pairedFiles=$pairedFiles" +
                 " availableFiles=$availableFiles candidateFiles=$candidateFiles" +
-                " startupActivated=$startupAvailable startupRecords=$startupRecords") }
+                    " startupActivated=$startupAvailable startupCompiled=${startupRecords != null}" +
+                    " startupRecords=${startupRecords ?: "not_run"}") }
         return PatchInstallSummary(
             version = manifest.requestedVersion,
             writtenFiles = activeFiles,

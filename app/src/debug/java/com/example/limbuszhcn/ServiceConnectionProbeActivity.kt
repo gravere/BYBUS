@@ -12,6 +12,8 @@ import android.os.Bundle
 import android.os.IBinder
 import android.os.IInterface
 import android.os.Parcel
+import android.os.Parcelable
+import android.os.RemoteException
 import android.widget.TextView
 import com.lody.virtual.client.hook.secondary.ServiceConnectionDelegate
 import com.lody.virtual.helper.compat.ServiceConnectionCompat
@@ -69,7 +71,22 @@ internal object ServiceConnectionProbe {
         } as IServiceConnection
         val originalName = ComponentName("probe.system", "probe.system.Service")
         val targetName = ComponentName("probe.guest", "probe.guest.Service")
-        val delegate = ServiceConnectionDelegate.getOrCreateDelegate(receiver, targetName)
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(8)
+        val start = java.util.concurrent.CountDownLatch(1)
+        val candidates = (0 until 8).map { pool.submit<ServiceConnectionDelegate> {
+            check(start.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            ServiceConnectionDelegate.getOrCreateDelegate(receiver, targetName)
+        } }
+        start.countDown()
+        val delegate = try {
+            val instances = candidates.map { it.get(10, java.util.concurrent.TimeUnit.SECONDS) }
+            check(instances.all { it === instances.first() }) { "Concurrent binds created different delegates" }
+            check(ServiceConnectionDelegate.getDelegate(receiver) === instances.first())
+            instances.first()
+        } finally { pool.shutdownNow() }
+        inspectDeathCleanup(targetName)
+        inspectIntentLogging()
+        inspectStartupFailure()
         // queryLocalInterface must return null so the OS-generated Proxy writes the real wire format.
         val transport = object : Binder() {
             override fun queryLocalInterface(descriptor: String): IInterface? = null
@@ -108,5 +125,92 @@ internal object ServiceConnectionProbe {
             .put("platform_proxy_and_stub", true).put("component_preserved", true)
             .put("service_binder_preserved", true).put("session_preserved", count == 4)
             .put("null_binding", true).put("dead_flag", true).put("legacy_entry_points", true)
+            .put("concurrent_delegate_reuse", true).put("dead_delegate_removed", true)
+            .put("activity_log_payloads_untouched", true)
+            .put("startup_failure_releases_waiters", true)
+    }
+
+    private fun inspectStartupFailure() {
+        val type = com.lody.virtual.client.core.VirtualCore::class.java
+        val constructor = type.getDeclaredConstructor().apply { isAccessible = true }
+        val isolated = constructor.newInstance()
+        val expected = IllegalStateException("Synthetic startup failure")
+        val completed = java.util.concurrent.CountDownLatch(1)
+        var observed: Throwable? = null
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            try {
+                isolated.startup(com.lody.virtual.client.core.VirtualCore.get().context,
+                    object : com.lody.virtual.client.core.SettingConfig() {
+                        override fun getHostPackageName(): String = throw expected
+                        override fun getPluginEnginePackageName(): String? = null
+                    })
+            } catch (error: Throwable) { observed = error }
+            finally { completed.countDown() }
+        }
+        check(completed.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        check(observed === expected && !isolated.isStartup)
+        check(isolated.initLock.block(100)) { "Failed startup left its gate closed" }
+        val result = runCatching { isolated.waitStartup() }
+        check(result.exceptionOrNull()?.cause === expected)
+    }
+
+    private fun inspectDeathCleanup(target: ComponentName) {
+        val deaths = mutableListOf<IBinder.DeathRecipient>()
+        var alreadyDead = false
+        val binder = Proxy.newProxyInstance(IBinder::class.java.classLoader, arrayOf(IBinder::class.java)) { proxy, method, args ->
+            when (method.name) {
+                "hashCode" -> System.identityHashCode(proxy)
+                "equals" -> proxy === args?.firstOrNull()
+                "linkToDeath" -> {
+                    if (alreadyDead) throw RemoteException("Synthetic dead Binder")
+                    deaths.add(args!![0] as IBinder.DeathRecipient); null
+                }
+                "unlinkToDeath" -> true
+                else -> error("Unexpected Binder method ${method.name}")
+            }
+        } as IBinder
+        val receiver = Proxy.newProxyInstance(IServiceConnection::class.java.classLoader, arrayOf(IServiceConnection::class.java)) { _, method, _ ->
+            check(method.name == "asBinder"); binder
+        } as IServiceConnection
+        val first = ServiceConnectionDelegate.getOrCreateDelegate(receiver, target)
+        deaths.first().binderDied()
+        check(ServiceConnectionDelegate.getDelegate(receiver) == null)
+        val replacement = ServiceConnectionDelegate.getOrCreateDelegate(receiver, target)
+        check(replacement !== first)
+        deaths.first().binderDied() // An old death callback cannot remove a replacement.
+        check(ServiceConnectionDelegate.getDelegate(receiver) === replacement)
+        deaths.last().binderDied()
+        alreadyDead = true
+        ServiceConnectionDelegate.getOrCreateDelegate(receiver, target)
+        check(ServiceConnectionDelegate.getDelegate(receiver) == null)
+    }
+
+    private fun inspectIntentLogging() {
+        val parcel = Parcel.obtain()
+        val input = Intent("bybus.probe").putExtra("guest_payload", ExplodingLogExtra())
+        val lazy = try {
+            input.writeToParcel(parcel, 0); parcel.setDataPosition(0)
+            Intent.CREATOR.createFromParcel(parcel)
+        } finally { parcel.recycle() }
+        for (type in listOf("com.lody.virtual.server.am.VActivityManagerService", "com.lody.virtual.server.am.ActivityStack")) {
+            val describe = Class.forName(type).getDeclaredMethod("describeIntentForLimbus", Intent::class.java)
+            describe.isAccessible = true
+            check((describe.invoke(null, lazy) as String).contains("bybus.probe"))
+        }
+        @Suppress("DEPRECATION")
+        check(runCatching { lazy.getParcelableExtra<Parcelable>("guest_payload") }.isFailure) {
+            "Fixture must throw when the guest payload is actually decoded"
+        }
+    }
+}
+
+class ExplodingLogExtra : Parcelable {
+    override fun describeContents() = 0
+    override fun writeToParcel(dest: Parcel, flags: Int) { dest.writeInt(1) }
+    companion object {
+        @JvmField val CREATOR = object : Parcelable.Creator<ExplodingLogExtra> {
+            override fun createFromParcel(source: Parcel): ExplodingLogExtra = error("Guest-only payload decoded")
+            override fun newArray(size: Int): Array<ExplodingLogExtra?> = arrayOfNulls(size)
+        }
     }
 }
