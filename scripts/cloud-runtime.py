@@ -405,7 +405,7 @@ def install_component_probe(release, verifier, name="bybus-ui-probe.apk"):
     return digest
 
 
-def inspect_permissions(release, verifier):
+def inspect_permissions(release, verifier, package_queries=False):
     """Run production permission services under an ordinary app UID with synthetic packages."""
     # Root is used only by this disposable emulator's shell to retrieve the private result.
     adb("root")
@@ -414,11 +414,13 @@ def inspect_permissions(release, verifier):
         raise RuntimeError("The isolated emulator cannot read the private probe result")
     adb("shell", "am", "force-stop", PACKAGE)
     digest = install_component_probe(release, verifier)
-    result_file = f"/data/user/0/{PACKAGE}/files/permission-result.json"
+    stem = "package-query" if package_queries else "permission"
+    receiver = "PackageQueryProbeReceiver" if package_queries else "PermissionProbeReceiver"
+    result_file = f"/data/user/0/{PACKAGE}/files/{stem}-result.json"
     adb("shell", "rm", "-f", result_file)
     started = adb("shell", "am", "broadcast", "--receiver-foreground", "-n",
-                  f"{PACKAGE}/{NAMESPACE}.PermissionProbeReceiver", timeout=45)
-    (OUT / "permission-start.txt").write_text(started, encoding="utf-8")
+                  f"{PACKAGE}/{NAMESPACE}.{receiver}", timeout=45)
+    (OUT / f"{stem}-start.txt").write_text(started, encoding="utf-8")
     deadline = time.monotonic() + 45
     while time.monotonic() < deadline:
         raw = adb("shell", "cat", result_file, check=False)
@@ -428,18 +430,22 @@ def inspect_permissions(release, verifier):
             except json.JSONDecodeError:
                 time.sleep(.5)
                 continue
-            (OUT / "permission.json").write_text(raw, encoding="utf-8")
-            REPORT["permissions"] = dict(result, probe_sha256=digest)
+            (OUT / f"{stem}.json").write_text(raw, encoding="utf-8")
+            REPORT["package_queries" if package_queries else "permissions"] = dict(result, probe_sha256=digest)
             if not result.get("passed"):
                 raise RuntimeError("Permission checks failed: " + str(result.get("error")))
             expected_sdk = {"android11": 30, "android17": 37}[REPORT["profile"]]
-            if result.get("sdk") != expected_sdk or result.get("check_count") != 22:
+            if result.get("sdk") != expected_sdk or result.get("check_count") != (30 if package_queries else 22):
                 raise RuntimeError("Permission check coverage differs from the expected platform scope")
-            if not all(result.get(key) for key in ("ordinary_app_uid", "production_permission_services",
+            if not all(result.get(key) for key in ("ordinary_app_uid", "production_package_proxies" if package_queries else "production_permission_services",
                                                   "synthetic_package_registry", "registry_restored")):
                 raise RuntimeError("Permission check environment or registry cleanup failed")
             if not all(result["checks"].values()):
                 raise RuntimeError("Not all permission checks passed")
+            if package_queries:
+                REPORT["checks"].append("30 production package proxy/registry checks; synthetic metadata, no real game")
+                REPORT["result"] = "package query inspection completed; game and 70036 outcome not tested"
+                return
             if len(result.get("authenticator_checks", {})) != 4 or not all(result["authenticator_checks"].values()):
                 raise RuntimeError("Scoped framework authenticator checks did not pass")
             REPORT["checks"].append("22 production permission checks with real host grants and temporary virtual packages")
@@ -1278,14 +1284,14 @@ def main():
     if "Success" not in installed:
         raise RuntimeError("APK installation did not succeed: " + installed[-1000:])
     REPORT["checks"].append("published APK signature/hash and installation")
-    if os.environ.get("RUNTIME_MODE") in ("service-callback", "permissions"):
+    if os.environ.get("RUNTIME_MODE") in ("service-callback", "permissions", "package-queries"):
         adb("logcat", "-c")
         adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
         time.sleep(3)
         locate(hierarchy("release-home"), "设置与工具")
         REPORT["checks"].append("signed release main activity resumed")
-        if os.environ.get("RUNTIME_MODE") == "permissions":
-            inspect_permissions(release, verifier)
+        if os.environ.get("RUNTIME_MODE") in ("permissions", "package-queries"):
+            inspect_permissions(release, verifier, os.environ.get("RUNTIME_MODE") == "package-queries")
         else:
             inspect_service_callback(release, verifier)
         return
@@ -1411,7 +1417,7 @@ except Exception as error:
     raise
 finally:
     try:
-        if os.environ.get("RUNTIME_MODE") in ("service-callback", "permissions"):
+        if os.environ.get("RUNTIME_MODE") in ("service-callback", "permissions", "package-queries"):
             diagnostic = adb("logcat", "-d", "-t", "700", "PermissionProbe:E", "ServiceCallbackProbe:E", "ActivityManager:I",
                              "ActivityTaskManager:I", "LimbusZhCN:D", "LimbusVA:W", "*:S", timeout=15, check=False)
             (OUT / "callback-log.txt").write_text(diagnostic, encoding="utf-8")

@@ -1,0 +1,25 @@
+# 容器应用身份查询
+
+应用身份查询必须保持 Android API 的返回约定，不能用“查询失败时返回当前游戏”或
+“两个参数相等就签名匹配”代替实际注册记录。
+
+- UID 查询只返回对应虚拟用户已安装的应用。无效、未知或该用户未安装的 UID 返回
+  `null`；未知包返回 `-1`。共享 UID 保留全部已安装成员。
+- 游戏使用真实进程 UID 的现有约定同时适用于单包、批量列表及嵌套组件信息。反向查询自身
+  UID 时使用当前虚拟进程的身份，不能取碰巧正在调用它的 Binder 客户端身份。
+  Google 等其他访客保留其服务鉴权需要的 Binder 调用方归属规则。
+- 签名比较必须先找到双方应用；不存在的包、未知 UID 不得返回签名匹配。保留
+  实际签名比较以及容器 Google 组件既有的受限签名配置。
+  同时接入旧式双参数与新增用户参数的三参数平台接口，避免新版系统落回另一份
+  系统安装的记录。用户限定使用容器身份，不直接采用宿主用户参数。
+- `VersionedPackage` 查询使用与普通包查询相同的容器记录和可见性规则，并检查
+  请求的版本；它不能直接读到另一份系统安装的元数据。
+- 启动诊断仅保留最近的有限应用查询结果分类，不记录查询包名、UID、权限名称、
+  参数、签名或异常消息。游戏主进程发起已有安全提示时输出摘要，不改变原调用、
+  返回结果、提示或进程退出行为。诊断失败不能阻断业务调用。
+
+这些是容器接口自身的正确性修复。现有 70036 诊断没有给出具体失败调用，不能把
+接口回归检查通过等同于真实游戏启动恢复。未知保护结构和游戏 APK 不在此次修改范围。
+
+参考：[Android PackageManager](https://developer.android.com/reference/android/content/pm/PackageManager)、
+[AOSP ApplicationPackageManager](https://github.com/aosp-mirror/platform_frameworks_base/blob/master/core/java/android/app/ApplicationPackageManager.java)。

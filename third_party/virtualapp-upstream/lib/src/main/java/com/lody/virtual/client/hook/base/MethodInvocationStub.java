@@ -160,6 +160,10 @@ public class MethodInvocationStub<T> {
         return mInternalMethodProxies.size();
     }
 
+    /** Optional passive observer. Arguments are deliberately excluded. */
+    protected void onInvocationResult(Method method, boolean proxied, Object result, Throwable error) {
+    }
+
     private class HookInvocationHandler implements InvocationHandler {
         @Override
         public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
@@ -171,6 +175,7 @@ public class MethodInvocationStub<T> {
             String argStr = null;
             Object res = null;
             Throwable exception = null;
+            boolean invokedProxy = false;
             if (mightLog) {
                 // Arguments to string is done before the method is called because the method might actually change it
                 try {
@@ -184,6 +189,7 @@ public class MethodInvocationStub<T> {
 
             try {
                 if (useProxy && methodProxy.beforeCall(mBaseInterface, method, args)) {
+                    invokedProxy = true;
                     res = methodProxy.call(mBaseInterface, method, args);
                     res = methodProxy.afterCall(mBaseInterface, method, args, res);
                 } else {
@@ -199,6 +205,11 @@ public class MethodInvocationStub<T> {
                 throw exception;
 
             } finally {
+                try {
+                    onInvocationResult(method, invokedProxy, res, exception);
+                } catch (Throwable ignored) {
+                    // Diagnostics must never change a Binder result or mask its original exception.
+                }
                 if (mightLog) {
                     int logPriority = mInvocationLoggingCondition.getLogLevel(useProxy, exception != null);
                     if (methodProxy != null) {

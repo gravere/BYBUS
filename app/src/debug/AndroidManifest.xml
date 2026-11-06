@@ -7,6 +7,7 @@
         <activity android:name=".ServiceConnectionProbeActivity" android:process="@string/engine_process_name" android:exported="true" />
         <receiver android:name=".ServiceConnectionProbeReceiver" android:process="@string/engine_process_name" android:exported="true" />
         <receiver android:name=".PermissionProbeReceiver" android:process="@string/engine_process_name" android:exported="true" />
+        <receiver android:name=".PackageQueryProbeReceiver" android:process="@string/engine_process_name" android:exported="true" />
         <activity android:name=".MigrationScreenProbeActivity" android:exported="true" />
         <activity android:name=".UpdateControlProbeActivity" android:exported="true" />
         <activity android:name=".AccountRegistryProbeActivity" android:exported="true" />

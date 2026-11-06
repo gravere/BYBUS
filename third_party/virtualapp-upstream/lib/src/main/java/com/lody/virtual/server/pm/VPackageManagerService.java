@@ -873,17 +873,16 @@ public class VPackageManagerService extends IPackageManager.Stub {
     @Override
     public String[] getPackagesForUid(int uid) {
         int userId = VUserHandle.getUserId(uid);
-        checkUserId(userId);
-        synchronized (this) {
+        if (uid < 0 || !VUserManagerService.get().exists(userId)) return null;
+        synchronized (mPackages) {
             List<String> pkgList = new ArrayList<>(2);
             for (VPackage p : mPackages.values()) {
-                PackageSetting settings = (PackageSetting) p.mExtras;
-                if (VUserHandle.getUid(userId, settings.appId) == uid) {
+                PackageSetting settings = installedSettings(p, userId);
+                if (settings != null && VUserHandle.getUid(userId, settings.appId) == uid) {
                     pkgList.add(p.packageName);
                 }
             }
             if (pkgList.isEmpty()) {
-                VLog.e(TAG, "getPackagesForUid return an empty result.");
                 return null;
             }
             return pkgList.toArray(new String[0]);
@@ -892,11 +891,11 @@ public class VPackageManagerService extends IPackageManager.Stub {
 
     @Override
     public int getPackageUid(String packageName, int userId) {
-        checkUserId(userId);
+        if (userId < 0 || !VUserManagerService.get().exists(userId)) return -1;
         synchronized (mPackages) {
             VPackage p = mPackages.get(packageName);
-            if (p != null) {
-                PackageSetting ps = (PackageSetting) p.mExtras;
+            PackageSetting ps = installedSettings(p, userId);
+            if (ps != null) {
                 return VUserHandle.getUid(userId, ps.appId);
             }
             return -1;
@@ -905,11 +904,13 @@ public class VPackageManagerService extends IPackageManager.Stub {
 
     @Override
     public String getNameForUid(int uid) {
+        int userId = VUserHandle.getUserId(uid);
+        if (uid < 0 || !VUserManagerService.get().exists(userId)) return null;
         int appId = VUserHandle.getAppId(uid);
         synchronized (mPackages) {
             for (VPackage p : mPackages.values()) {
-                PackageSetting ps = (PackageSetting) p.mExtras;
-                if (ps.appId == appId) {
+                PackageSetting ps = installedSettings(p, userId);
+                if (ps != null && ps.appId == appId) {
                     return ps.packageName;
                 }
             }
@@ -1017,15 +1018,15 @@ public class VPackageManagerService extends IPackageManager.Stub {
 
     @Override
     public int checkSignatures(String pkg1, String pkg2) {
-        if (TextUtils.equals(pkg1, pkg2)) {
-            return PackageManager.SIGNATURE_MATCH;
-        }
+        if (TextUtils.isEmpty(pkg1) || TextUtils.isEmpty(pkg2))
+            return PackageManager.SIGNATURE_UNKNOWN_PACKAGE;
         PackageInfo pkgOne, pkgTwo;
 
         pkgOne = getPackageInfo(pkg1, PackageManager.GET_SIGNATURES, 0);
         pkgTwo = getPackageInfo(pkg2, PackageManager.GET_SIGNATURES, 0);
 
         if (pkgOne == null) {
+            if (PackageCacheManager.get(pkg1) != null) return PackageManager.SIGNATURE_UNKNOWN_PACKAGE;
             try {
                 pkgOne = VirtualCore.get().getUnHookPackageManager().getPackageInfo(pkg1, PackageManager.GET_SIGNATURES);
             } catch (PackageManager.NameNotFoundException e) {
@@ -1033,6 +1034,7 @@ public class VPackageManagerService extends IPackageManager.Stub {
             }
         }
         if (pkgTwo == null) {
+            if (PackageCacheManager.get(pkg2) != null) return PackageManager.SIGNATURE_UNKNOWN_PACKAGE;
             try {
                 pkgTwo = VirtualCore.get().getUnHookPackageManager().getPackageInfo(pkg2, PackageManager.GET_SIGNATURES);
             } catch (PackageManager.NameNotFoundException e) {

@@ -675,6 +675,8 @@ class MethodProxies {
             String resolvedType = (String) args[intentIndex + 1];
             Intent intent = (Intent) args[intentIndex];
 
+            com.lody.virtual.client.hook.proxies.pm.PackageManagerStub.recordBeforeSafetyAlert(intent);
+
             // Resolve the one approved store link in the host process, before FakeStore/chooser
             // resolution. A fresh intent prevents guest extras, grants and selectors escaping.
             ComponentName storeComponent = intent.getComponent();
