@@ -1,6 +1,5 @@
 package com.lody.virtual.server.pm;
 
-import android.Manifest;
 import android.annotation.TargetApi;
 import android.content.ComponentName;
 import android.content.Intent;
@@ -1003,32 +1002,17 @@ public class VPackageManagerService extends IPackageManager.Stub {
     }
 
 
-    private boolean hasRequestedPermission(String permission, String packageName) {
-        VPackage pkg;
-        synchronized (mPackages) {
-            pkg = mPackages.get(packageName);
-        }
-        if (pkg != null && pkg.requestedPermissions != null) {
-            return pkg.requestedPermissions.contains(permission);
-        }
-        return false;
-    }
-
-
     @Override
     public int checkPermission(boolean is64bit, String permission, String pkgName, int userId) {
-        if ("android.permission.INTERACT_ACROSS_USERS".equals(permission)
-                || "android.permission.INTERACT_ACROSS_USERS_FULL".equals(permission)) {
+        if (!canCheckPermission(permission, userId) || TextUtils.isEmpty(pkgName)) {
             return PackageManager.PERMISSION_DENIED;
         }
-        if(Manifest.permission.REQUEST_INSTALL_PACKAGES.equals(permission)){
-            return PackageManager.PERMISSION_GRANTED;
+        synchronized (mPackages) {
+            VPackage pkg = mPackages.get(pkgName);
+            PackageSetting settings = installedSettings(pkg, userId);
+            if (settings == null) return PackageManager.PERMISSION_DENIED;
+            return checkVirtualUidPermissionLocked(is64bit, permission, settings.appId, userId);
         }
-        PermissionInfo permissionInfo = getPermissionInfo(permission, 0);
-        if (permissionInfo != null) {
-            return PackageManager.PERMISSION_GRANTED;
-        }
-        return VirtualCore.getPM().checkPermission(permission, StubManifest.getStubPackageName(is64bit));
     }
 
     @Override
@@ -1059,11 +1043,50 @@ public class VPackageManagerService extends IPackageManager.Stub {
     }
 
     public int checkUidPermission(boolean is64bit, String permission, int uid) {
-        PermissionInfo info = getPermissionInfo(permission, 0);
-        if (info != null) {
-            return PackageManager.PERMISSION_GRANTED;
+        int userId = VUserHandle.getUserId(uid);
+        if (uid < 0 || TextUtils.isEmpty(permission) || isCrossUserPermission(permission)) {
+            return PackageManager.PERMISSION_DENIED;
         }
-        return VirtualCore.getPM().checkPermission(permission, StubManifest.getStubPackageName(is64bit));
+        // Limbus exposes its actual Linux UID. Preserve that UID's real platform grant;
+        // it is neither an unknown virtual UID nor a blanket permission exemption.
+        if (uid == VirtualCore.get().myUid()) {
+            return VirtualCore.getPM().checkPermission(permission, VirtualCore.get().getHostPkg());
+        }
+        if (!canCheckPermission(permission, userId)) return PackageManager.PERMISSION_DENIED;
+        synchronized (mPackages) {
+            return checkVirtualUidPermissionLocked(is64bit, permission, VUserHandle.getAppId(uid), userId);
+        }
+    }
+
+    private boolean canCheckPermission(String permission, int userId) {
+        return !TextUtils.isEmpty(permission) && !isCrossUserPermission(permission)
+                && userId >= 0 && VUserManagerService.get().exists(userId);
+    }
+
+    private static boolean isCrossUserPermission(String permission) {
+        return "android.permission.INTERACT_ACROSS_USERS".equals(permission)
+                || "android.permission.INTERACT_ACROSS_USERS_FULL".equals(permission);
+    }
+
+    private static PackageSetting installedSettings(VPackage pkg, int userId) {
+        if (pkg == null || !(pkg.mExtras instanceof PackageSetting)) return null;
+        PackageSetting settings = (PackageSetting) pkg.mExtras;
+        return settings.isInstalled(userId) ? settings : null;
+    }
+
+    /** Caller holds mPackages; permissions are shared only by installed members of this UID. */
+    private int checkVirtualUidPermissionLocked(boolean is64bit, String permission, int appId, int userId) {
+        for (VPackage pkg : mPackages.values()) {
+            PackageSetting settings = installedSettings(pkg, userId);
+            if (settings == null || settings.appId != appId || pkg.requestedPermissions == null
+                    || !pkg.requestedPermissions.contains(permission)) continue;
+            // Keep virtual custom permissions separate from platform-owned permissions.
+            if (!permission.startsWith("android.permission.") && mPermissions.containsKey(permission)) {
+                return PackageManager.PERMISSION_GRANTED;
+            }
+            return VirtualCore.getPM().checkPermission(permission, StubManifest.getStubPackageName(is64bit));
+        }
+        return PackageManager.PERMISSION_DENIED;
     }
 
     private final class ActivityIntentResolver extends IntentResolver<VPackage.ActivityIntentInfo, ResolveInfo> {

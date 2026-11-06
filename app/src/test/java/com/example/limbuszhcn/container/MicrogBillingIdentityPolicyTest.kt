@@ -10,7 +10,7 @@ import org.junit.Test
 class MicrogBillingIdentityPolicyTest {
     @Test fun generatedAuthenticatorPermissionStartsOnAndroid14() {
         for (sdk in 26..33) assertFalse("API $sdk", Policy.requiresAuthenticatorPermissionBridge(sdk))
-        for (sdk in 34..36) assertTrue("API $sdk", Policy.requiresAuthenticatorPermissionBridge(sdk))
+        for (sdk in 34..37) assertTrue("API $sdk", Policy.requiresAuthenticatorPermissionBridge(sdk))
     }
 
     @Test fun registrationBridgeRejectsDisabledOrIncompleteState() {

@@ -405,6 +405,47 @@ def install_component_probe(release, verifier, name="bybus-ui-probe.apk"):
     return digest
 
 
+def inspect_permissions(release, verifier):
+    """Run production permission services under an ordinary app UID with synthetic packages."""
+    # Root is used only by this disposable emulator's shell to retrieve the private result.
+    adb("root")
+    adb("wait-for-device", timeout=30)
+    if adb("shell", "id", "-u").strip() != "0":
+        raise RuntimeError("The isolated emulator cannot read the private probe result")
+    adb("shell", "am", "force-stop", PACKAGE)
+    digest = install_component_probe(release, verifier)
+    result_file = f"/data/user/0/{PACKAGE}/files/permission-result.json"
+    adb("shell", "rm", "-f", result_file)
+    started = adb("shell", "am", "broadcast", "--receiver-foreground", "-n",
+                  f"{PACKAGE}/{NAMESPACE}.PermissionProbeReceiver", timeout=45)
+    (OUT / "permission-start.txt").write_text(started, encoding="utf-8")
+    deadline = time.monotonic() + 45
+    while time.monotonic() < deadline:
+        raw = adb("shell", "cat", result_file, check=False)
+        if raw.lstrip().startswith("{"):
+            try:
+                result = json.loads(raw)
+            except json.JSONDecodeError:
+                time.sleep(.5)
+                continue
+            (OUT / "permission.json").write_text(raw, encoding="utf-8")
+            REPORT["permissions"] = dict(result, probe_sha256=digest)
+            if not result.get("passed"):
+                raise RuntimeError("Permission checks failed: " + str(result.get("error")))
+            if result.get("sdk") != 37 or result.get("check_count") != 22:
+                raise RuntimeError("Permission check coverage differs from the expected Android 17 scope")
+            if not all(result.get(key) for key in ("ordinary_app_uid", "production_permission_services",
+                                                  "synthetic_package_registry", "registry_restored")):
+                raise RuntimeError("Permission check environment or registry cleanup failed")
+            if not all(result["checks"].values()):
+                raise RuntimeError("Not all permission checks passed")
+            REPORT["checks"].append("22 production permission checks with real host grants and temporary virtual packages")
+            REPORT["result"] = "permission contract inspection completed; game and 70036 outcome not tested"
+            return
+        time.sleep(1)
+    raise RuntimeError("Permission contract inspection timed out")
+
+
 def inspect_service_callback(release, verifier):
     """Exercise the platform AIDL Proxy/Stub and production delegate, not a mocked ABI."""
     # Only this disposable emulator: probe builds intentionally retain debuggable=false.
@@ -1233,13 +1274,16 @@ def main():
     if "Success" not in installed:
         raise RuntimeError("APK installation did not succeed: " + installed[-1000:])
     REPORT["checks"].append("published APK signature/hash and installation")
-    if os.environ.get("RUNTIME_MODE") == "service-callback":
+    if os.environ.get("RUNTIME_MODE") in ("service-callback", "permissions"):
         adb("logcat", "-c")
         adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
         time.sleep(3)
         locate(hierarchy("release-home"), "设置与工具")
         REPORT["checks"].append("signed release main activity resumed")
-        inspect_service_callback(release, verifier)
+        if os.environ.get("RUNTIME_MODE") == "permissions":
+            inspect_permissions(release, verifier)
+        else:
+            inspect_service_callback(release, verifier)
         return
     if os.environ.get("RUNTIME_MODE") == "button-feedback":
         adb("shell", "cmd", "statusbar", "send-disable-flag", "system-icons", "clock", "notification-icons")
@@ -1363,8 +1407,8 @@ except Exception as error:
     raise
 finally:
     try:
-        if os.environ.get("RUNTIME_MODE") == "service-callback":
-            diagnostic = adb("logcat", "-d", "-t", "700", "ServiceCallbackProbe:E", "ActivityManager:I",
+        if os.environ.get("RUNTIME_MODE") in ("service-callback", "permissions"):
+            diagnostic = adb("logcat", "-d", "-t", "700", "PermissionProbe:E", "ServiceCallbackProbe:E", "ActivityManager:I",
                              "ActivityTaskManager:I", "LimbusZhCN:D", "LimbusVA:W", "*:S", timeout=15, check=False)
             (OUT / "callback-log.txt").write_text(diagnostic, encoding="utf-8")
         crashes = adb("logcat", "-d", "-b", "crash", "-t", "150", timeout=15, check=False)
