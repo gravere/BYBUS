@@ -29,6 +29,10 @@ public abstract class SettingConfig {
     public void onLimbusSafetyAlert(int callerPid, com.lody.virtual.helper.compat.LimbusSafetyAlert.Summary summary) {
     }
 
+    /** Only bounded, argument-free result classifications from the current game process. */
+    public void onLimbusPackageQueries(String summary) {
+    }
+
     public abstract String getHostPackageName();
 
     public abstract String getPluginEnginePackageName();
