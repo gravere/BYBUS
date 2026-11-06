@@ -43,6 +43,9 @@ public final class PackageQueryProbe {
         Field configField = VClient.class.getDeclaredField("clientConfig");
         configField.setAccessible(true);
         Object savedConfig = configField.get(VClient.get());
+        Field boundField = VClient.class.getDeclaredField("mBoundApplication");
+        boundField.setAccessible(true);
+        Object savedBound = boundField.get(VClient.get());
         Field serviceField = VPackageManager.class.getDeclaredField("mService");
         serviceField.setAccessible(true);
         Object savedService = serviceField.get(VPackageManager.get());
@@ -63,6 +66,15 @@ public final class PackageQueryProbe {
             configField.set(VClient.get(), config);
             serviceField.set(VPackageManager.get(), service);
             try {
+                // A shared UID does not identify which member is the running application.
+                // Model the bound app explicitly, as a real virtual process does.
+                Class<?> boundType = boundField.getType();
+                java.lang.reflect.Constructor<?> constructor = boundType.getDeclaredConstructor(VClient.class);
+                constructor.setAccessible(true);
+                Object bound = constructor.newInstance(VClient.get());
+                Field appInfo = boundType.getDeclaredField("appInfo"); appInfo.setAccessible(true);
+                appInfo.set(bound, game.applicationInfo);
+                boundField.set(VClient.get(), bound);
                 check(checks, "unknown_uid", call(new MethodProxies.GetPackagesForUid(), Integer.MAX_VALUE) == null);
                 check(checks, "negative_uid", call(new MethodProxies.GetPackagesForUid(), -1) == null);
                 String[] self = (String[]) call(new MethodProxies.GetPackagesForUid(), realUid);
@@ -106,6 +118,7 @@ public final class PackageQueryProbe {
                 check(checks, "uninstalled_name", service.getNameForUid(uid) == null);
                 check(checks, "uninstalled_signature", service.checkSignatures(GAME, GAME) == PackageManager.SIGNATURE_UNKNOWN_PACKAGE);
             } finally {
+                boundField.set(VClient.get(), savedBound);
                 serviceField.set(VPackageManager.get(), savedService);
                 configField.set(VClient.get(), savedConfig);
                 packages.remove(GAME); packages.remove(SIBLING); packages.remove(OTHER);
