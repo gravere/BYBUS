@@ -53,9 +53,11 @@ internal class MigrationModel(application: Application) : AndroidViewModel(appli
     private val runtime by lazy {
         AndroidContainerRuntimeFactory.create(context, context.filesDir.toPath().resolve("container-workspace"))
     }
-    private fun resourceTransfer(progress: (com.example.limbuszhcn.gamefs.ResourceTransferProgress) -> Unit = {}) =
-        GameResourceTransfer(runtime.storage(), context.filesDir.toPath().resolve("resource-transfers"), 1L,
+    private fun resourceTransfer(progress: (com.example.limbuszhcn.gamefs.ResourceTransferProgress) -> Unit = {}): GameResourceTransfer {
+        check(runtime.status().available) { "容器暂不可用，已保留导入恢复记录，请重新打开应用后检测" }
+        return GameResourceTransfer(runtime.storage(), context.filesDir.toPath().resolve("resource-transfers"), 1L,
             cancelled = { Thread.currentThread().isInterrupted }, progress = progress)
+    }
     var state by mutableStateOf(MigrationState(pending = MigrationAccess.preferences(context).getBoolean("pending", false)))
         private set
     init { inspect() }
@@ -74,9 +76,10 @@ internal class MigrationModel(application: Application) : AndroidViewModel(appli
                 }
                 val ours = MigrationAccess.sourceIsOurs(context)
                 if (!ours || !MigrationAccess.ready(context)) {
-                    publish(MigrationState(hasLegacy = ours,
-                        pending = MigrationAccess.preferences(context).getBoolean("pending", false),
-                        message = if (ours) "请保留旧版，先在旧版检查更新并完成一次覆盖更新，然后回来重新检测。"
+                    val pending = MigrationAccess.preferences(context).getBoolean("pending", false)
+                    publish(MigrationState(hasLegacy = ours, pending = pending, failed = pending,
+                        message = if (pending && !ours) "上次迁移尚未完成，请恢复保留原数据的旧版后重新检测。暂不能改用资源文件继续。"
+                            else if (ours) "请保留旧版，先在旧版检查更新并完成一次覆盖更新，然后回来重新检测。"
                             else "未检测到旧版，可选择已导出的资源文件。"))
                     return@execute
                 }

@@ -122,7 +122,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onOpenAppRelease = {
                         runCatching { openProjectPage(com.example.limbuszhcn.selfupdate.AppReleases.PAGE) }
-                            .onFailure { appUpdater.installationError() }
+                            .onFailure { appUpdater.releasePageError() }
                     },
                     onLaunch = model::launch,
                     onRefresh = model::refresh,
@@ -187,7 +187,7 @@ class MainActivity : ComponentActivity() {
             finish()
             return
         }
-        androidx.lifecycle.ViewModelProvider(this)[LauncherViewModel::class.java].refresh()
+        androidx.lifecycle.ViewModelProvider(this)[LauncherViewModel::class.java].resumeRefresh()
     }
 
     /** 处理复用现有 Activity 时收到的受限调试 Intent。 */

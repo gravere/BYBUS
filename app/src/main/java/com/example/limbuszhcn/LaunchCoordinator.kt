@@ -99,13 +99,14 @@ internal class LaunchCoordinator private constructor(application: Application) {
 
     private fun stage(label: String, step: Int = -1) = publish { it.copy(stage = label, launchStep = step) }
 
-    private fun perform(label: String, allowPackageUpdate: Boolean = false, task: () -> String) {
+    private fun perform(label: String, allowPackageUpdate: Boolean = false,
+        preserveFailure: Boolean = false, task: () -> String) {
         if (state.busy || exportSaveQueued) return
         if (!allowPackageUpdate && (state.gameInstallPending || state.gameInstallReview != null)) {
-            state = state.copy(updatesRequest = state.updatesRequest + 1)
+            state = state.copy(updatesRequest = nextUpdatesRequest(state))
             return
         }
-        state = state.copy(busy = true, stage = label, message = label, failed = false, launchStep = -1)
+        state = state.beginOperation(label, preserveFailure)
         worker.execute {
             val start = System.nanoTime()
             val result = runCatching { com.example.limbuszhcn.storage.OperationLock.run(app.filesDir.toPath()) {
@@ -116,8 +117,8 @@ internal class LaunchCoordinator private constructor(application: Application) {
             } }
             result.exceptionOrNull()?.let { PersistentDiagnosticLog.error(TAG, label, it) }
             PersistentDiagnosticLog.info(TAG, "Task finished stage=$label elapsedMs=${(System.nanoTime() - start) / 1_000_000} success=${result.isSuccess}")
-            publish { it.copy(busy = false, launchStep = -1, failed = result.isFailure,
-                message = result.getOrElse { error -> error.userMessage() }) }
+            publish { it.finishOperation(result.getOrElse { error -> error.userMessage() },
+                failed = result.isFailure, preserveFailure = preserveFailure) }
         }
     }
 
@@ -150,7 +151,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
 
     fun requestGameUpdates() {
         // A restored Compose screen may retain the previous process's handled request id.
-        state = state.copy(updatesRequest = maxOf(state.updatesRequest + 1, android.os.SystemClock.elapsedRealtimeNanos()))
+        state = state.copy(updatesRequest = nextUpdatesRequest(state))
         checkGameUpdate()
     }
 
@@ -161,7 +162,11 @@ internal class LaunchCoordinator private constructor(application: Application) {
         "请在容器 Google 设置中登录账号并开启应用内购买"
     }
 
-    fun refresh() = perform("正在检测游戏", allowPackageUpdate = true) {
+    private fun nextUpdatesRequest(value: LauncherUiState) =
+        nextUiRequestId(value.updatesRequest, android.os.SystemClock.elapsedRealtimeNanos())
+
+    fun refresh(preserveFailure: Boolean = false) = perform("正在检测游戏", allowPackageUpdate = true,
+        preserveFailure = preserveFailure) {
         val (container, installed) = readGameStatus()
         val nativeIssue = if (installed != null) runCatching { gameCompatibility.requireApproved() }
             .exceptionOrNull()?.message ?: "" else ""
@@ -179,7 +184,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
 
     fun preparePackageUpdate(uris: List<Uri>) {
         if (uris.isEmpty()) return
-        state = state.copy(updatesRequest = state.updatesRequest + 1)
+        state = state.copy(updatesRequest = nextUpdatesRequest(state))
         perform("读取安装包") {
             val prepared = packageUpdates.prepare(uris) { stage(it) }
             preparedUpdate = prepared
@@ -218,7 +223,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
             @Suppress("DEPRECATION")
             val confirmation = intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
             state = state.copy(gameInstallPending = true, gameInstallConfirmation = confirmation,
-                updatesRequest = state.updatesRequest + 1)
+                updatesRequest = nextUpdatesRequest(state))
             return
         }
         worker.execute {
@@ -242,7 +247,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
                     PackageInstaller.STATUS_FAILURE_INVALID -> "安装包未通过系统校验，请重新获取完整包"
                     else -> "系统安装未完成，请重新选择文件；已有资源保留"
                 },
-                updatesRequest = it.updatesRequest + 1) }
+                updatesRequest = nextUpdatesRequest(it)) }
         }
     }
 
@@ -320,15 +325,11 @@ internal class LaunchCoordinator private constructor(application: Application) {
         "已停用汉化 ${result.version}"
     }
 
-    fun exportDiagnostics() = perform("正在生成诊断包") {
-        val previous = runCatching { diagnosticExport.read() }.getOrElse {
-            diagnosticExport.discardMarker()
-            null
-        }
-        val archive = previous?.archive?.toFile() ?: run {
-            DebugLogExporter(app).export(readGameStatus().first, installer().activeInstallSummary())
-                .also { diagnosticExport.begin(it.toPath()) }
-        }
+    fun exportDiagnostics() = perform("正在生成诊断包", allowPackageUpdate = true) {
+        // An explicit new export must describe the latest failure, not a stale picker retry.
+        runCatching { diagnosticExport.complete() }.onFailure { diagnosticExport.discardMarker() }
+        val archive = DebugLogExporter(app).export(readGameStatus().first, installer().activeInstallSummary())
+            .also { diagnosticExport.begin(it.toPath()) }
         publish { it.copy(exportRequest = archive) }
         "诊断包已生成，请选择保存位置"
     }
@@ -368,7 +369,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
                 com.example.limbuszhcn.storage.OperationLock.run(app.filesDir.toPath()) {
                     val pending = diagnosticExport.read() ?: return@run null
                     if (!pending.cancelled && pending.destination == null) return@run null
-                    publish { it.copy(busy = true, stage = "正在保存诊断包") }
+                    publish { it.copy(busy = true, stage = diagnosticExportStage(pending.cancelled)) }
                     if (pending.cancelled) {
                         diagnosticExport.complete()
                         "已取消导出诊断包"

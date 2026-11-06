@@ -38,7 +38,7 @@ public class ServiceConnectionDelegate extends IServiceConnection.Stub {
     private static final String MICROG_IDENTITY_AUTHORIZATION_SERVICE =
             "org.microg.gms.auth.credentials.identity.AuthorizationService";
     private final static ArrayMap<IBinder, ServiceConnectionDelegate> DELEGATE_MAP = new ArrayMap<>();
-    private IServiceConnection mConn;
+    private final IServiceConnection mConn;
     private volatile ComponentName targetComponent;
 
     private ServiceConnectionDelegate(IServiceConnection mConn, ComponentName targetComponent) {
@@ -50,7 +50,9 @@ public class ServiceConnectionDelegate extends IServiceConnection.Stub {
         if (conn instanceof ServiceConnectionDelegate) {
             return (ServiceConnectionDelegate) conn;
         }
-        return DELEGATE_MAP.get(conn.asBinder());
+        synchronized (DELEGATE_MAP) {
+            return DELEGATE_MAP.get(conn.asBinder());
+        }
     }
 
     public static ServiceConnectionDelegate getOrCreateDelegate(IServiceConnection conn, ComponentName targetComponent) {
@@ -58,27 +60,31 @@ public class ServiceConnectionDelegate extends IServiceConnection.Stub {
             return (ServiceConnectionDelegate) conn;
         }
         final IBinder binder = conn.asBinder();
-        ServiceConnectionDelegate delegate = DELEGATE_MAP.get(binder);
-        if (delegate == null) {
+        synchronized (DELEGATE_MAP) {
+            ServiceConnectionDelegate delegate = DELEGATE_MAP.get(binder);
+            if (delegate != null) {
+                // A framework connection may be reused, including with a cleared target.
+                delegate.targetComponent = targetComponent;
+                return delegate;
+            }
+            final ServiceConnectionDelegate created = new ServiceConnectionDelegate(conn, targetComponent);
+            DELEGATE_MAP.put(binder, created);
             try {
                 binder.linkToDeath(new DeathRecipient() {
                     @Override
                     public void binderDied() {
-                        DELEGATE_MAP.remove(binder);
+                        synchronized (DELEGATE_MAP) {
+                            if (DELEGATE_MAP.get(binder) == created) DELEGATE_MAP.remove(binder);
+                        }
                         binder.unlinkToDeath(this, 0);
                     }
                 }, 0);
             } catch (RemoteException e) {
-                e.printStackTrace();
+                // A dead Binder must not leave a cached connection that can never deliver.
+                if (DELEGATE_MAP.get(binder) == created) DELEGATE_MAP.remove(binder);
             }
-            delegate = new ServiceConnectionDelegate(conn, targetComponent);
-            DELEGATE_MAP.put(binder, delegate);
-        } else {
-            // LoadedApk may reuse the same IServiceConnection binder. Keep the resolved target
-            // current (including clearing it) so a previous bind cannot affect this callback.
-            delegate.targetComponent = targetComponent;
+            return created;
         }
-        return delegate;
     }
 
     @Override
@@ -92,13 +98,16 @@ public class ServiceConnectionDelegate extends IServiceConnection.Stub {
 
     // Exact Android 16 QPR2+ signature. Object/Any here would not override the framework method.
     public void connected(ComponentName name, IBinder service, IBinderSession session, boolean dead) throws RemoteException {
-        service = wrapLimbusPlayBillingService(name, service);
-        service = wrapLimbusGmsServiceBroker(name, service);
-        ComponentName deliveryComponent = targetComponent != null ? targetComponent : name;
+        // One callback must use one target even if another thread rebinds or clears it.
+        final ComponentName target = targetComponent;
+        service = wrapLimbusPlayBillingService(name, service, target);
+        service = wrapLimbusGmsServiceBroker(name, service, target);
+        ComponentName deliveryComponent = target != null ? target : name;
         ServiceConnectionCompat.connected(mConn, deliveryComponent, service, session, dead);
     }
 
-    private IBinder wrapLimbusPlayBillingService(ComponentName connectedComponent, IBinder service) {
+    private IBinder wrapLimbusPlayBillingService(ComponentName connectedComponent, IBinder service,
+                                               ComponentName targetComponent) {
         if (service == null || !LIMBUS_PACKAGE.equals(VClient.get().getCurrentPackage())) {
             return service;
         }
@@ -164,7 +173,8 @@ public class ServiceConnectionDelegate extends IServiceConnection.Stub {
                 && PLAY_BILLING_BINDER_DESCRIPTOR.equals(binderDescriptor);
     }
 
-    private IBinder wrapLimbusGmsServiceBroker(ComponentName connectedComponent, IBinder service) {
+    private IBinder wrapLimbusGmsServiceBroker(ComponentName connectedComponent, IBinder service,
+                                             ComponentName targetComponent) {
         if (service == null || !LIMBUS_PACKAGE.equals(VClient.get().getCurrentPackage())) {
             return service;
         }

@@ -52,6 +52,10 @@ public final class MigrationArchive {
                 || relative.startsWith("virtual/data/user_de/0/"+pkg+"/")
                 || relative.startsWith("virtual/storage/emulated/0/Android/data/"+pkg+"/");
     }
+    /** These files bind absolute paths and process receipts to their original host. */
+    private static boolean runtimeIndexState(String relative) {
+        return relative.startsWith("files/translation-cache/translation-index/");
+    }
     public static Path resolve(Path root, String relative) throws IOException {
         if (!allowed(relative)) throw new IOException("迁移包含不支持的文件路径");
         Path base=root.toAbsolutePath().normalize(), target=base.resolve(relative).normalize();
@@ -74,7 +78,7 @@ public final class MigrationArchive {
                 Path file=iterator.next();
                 if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) continue;
                 String relative=base.relativize(file).toString().replace(File.separatorChar, '/');
-                if (!allowed(relative)) continue;
+                if (!allowed(relative) || runtimeIndexState(relative)) continue;
                 resolve(base, relative);
                 long size=Files.size(file);
                 if (size<0 || size>MAX_TOTAL-total || entries.size()==MAX_FILES) throw new IOException("迁移数据超出支持范围");
@@ -145,7 +149,7 @@ public final class MigrationArchive {
                 String relative=input.readUTF(); long size=input.readLong();
                 Path target=resolve(root,relative);
                 if (!paths.add(relative) || size<0 || size>total-copied) throw new IOException("迁移文件清单不正确");
-                Files.createDirectories(target.getParent());
+                if (!runtimeIndexState(relative)) Files.createDirectories(target.getParent());
                 MessageDigest hash=sha256(); long remaining=size;
                 try (FileOutputStream output=new FileOutputStream(pending.toFile())) {
                     while (remaining>0) {
@@ -159,7 +163,10 @@ public final class MigrationArchive {
                     output.getFD().sync();
                 }
                 // Atomic replacement leaves an earlier imported file intact on failure.
-                Files.move(pending,target,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);
+                // Older compatible providers may still send their host's runtime state.
+                // Consume and verify those entries without replacing this host's state.
+                if (runtimeIndexState(relative)) Files.delete(pending);
+                else Files.move(pending,target,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);
             }
             if (copied!=total || input.readInt()!=MAGIC || input.read()!=-1) throw new IOException("迁移数据未完整结束");
             progress.update(copied,total);

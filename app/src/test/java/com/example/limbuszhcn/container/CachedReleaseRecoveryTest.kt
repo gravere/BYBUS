@@ -10,6 +10,8 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.Properties
+import kotlin.io.path.readText
 import kotlin.io.path.writeText
 
 class CachedReleaseRecoveryTest {
@@ -69,5 +71,51 @@ class CachedReleaseRecoveryTest {
         archive.writeText("broken")
         assertThrows(IllegalStateException::class.java) { installer().verifyCachedForLaunch() }
         assertEquals("100", installer().activeInstallSummary()!!.version)
+    }
+
+    @Test fun damagedIndexMetadataIsRebuiltFromVerifiedCacheInsteadOfRepeatedlyFailing() {
+        cached("100")
+        resources()
+        assertTrue(installer().verifyCachedForLaunch().indexActivated)
+        val root = cache.resolve("translation-index")
+        val index = Path.of(root.resolve("active-index.path").readText().trim())
+        val metadata = index.parent.resolve("manifest.properties")
+        val valid = Files.readAllBytes(metadata)
+        val originalIndex = Files.readAllBytes(index)
+        val corruptions = listOf<(Properties) -> Unit>(
+            { it.remove("availableSourceFileCount") },
+            { it.setProperty("sourceRecordCount", "invalid") },
+            { it.setProperty("candidateSourceFileCount", "-1") },
+            { it.setProperty("availableSourceFileCount", "2") }
+        )
+        for (corrupt in corruptions) {
+            val damaged = Properties().apply { valid.inputStream().use(::load) }
+            corrupt(damaged)
+            Files.newOutputStream(metadata).use { damaged.store(it, "Damaged metadata fixture") }
+            assertNull(TranslationIndexStore(root).activeManifest())
+            val repaired = installer().verifyCachedForLaunch()
+            assertTrue(repaired.indexActivated)
+            assertFalse(repaired.reusedIndex)
+            assertEquals(1, repaired.availableSourceFiles)
+            assertArrayEquals(originalIndex, Files.readAllBytes(index))
+            assertTrue(installer().verifyCachedForLaunch().reusedIndex)
+        }
+    }
+
+    @Test fun offlineRebuildRetainsItsReasonWhenThePreviousIndexIsPreserved() {
+        cached("100")
+        resources()
+        installer().verifyCachedForLaunch()
+        val index = Path.of(cache.resolve("translation-index/active-index.path").readText().trim())
+        val previous = Files.readAllBytes(index)
+        localize.resolve("jp/JP_MainUIText.json").writeText(
+            """{"dataList":[{"id":2,"content":"更新後の説明"}]}""")
+        val result = installer().verifyCachedForLaunch()
+        assertFalse(result.indexActivated)
+        assertTrue(result.previousIndexPreserved)
+        assertNotNull(result.pendingReason)
+        assertEquals(0, result.availableSourceFiles)
+        assertTrue(installer().activeInstallSummary()!!.indexActivated)
+        assertArrayEquals(previous, Files.readAllBytes(index))
     }
 }

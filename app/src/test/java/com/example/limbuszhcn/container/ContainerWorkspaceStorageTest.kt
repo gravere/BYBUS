@@ -29,6 +29,20 @@ class ContainerWorkspaceStorageTest {
     }
 
     @Test
+    fun reportsJapaneseResourcesEvenWithoutAnEnglishDirectory() {
+        val localize = Files.createTempDirectory("limbus-jp-probe").resolve("Localize")
+        Files.createDirectories(localize.resolve("jp/story"))
+        localize.resolve("jp/story/JP_Story.JSON").writeText("{}")
+        localize.resolve("RemoteLocalizeFileList.json").writeText("{}")
+        val probe = ContainerWorkspaceStorage(localize).probe()
+        assertFalse(probe.exists)
+        assertEquals(0, probe.jsonFileCount)
+        assertTrue(probe.japaneseExists)
+        assertEquals(1, probe.japaneseJsonFileCount)
+        assertTrue(probe.remoteListPresent)
+    }
+
+    @Test
     fun installsPatchToExistingPrefixedFile() {
         val root = Files.createTempDirectory("limbus-container-test")
         val localize = root.resolve("Localize")

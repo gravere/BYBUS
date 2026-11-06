@@ -115,6 +115,7 @@ private fun LegacySourceCard(state: MigrationState, onMigrate: () -> Unit, onOpe
             Text(when {
                 state.ready -> "游戏资源与账号配置"
                 state.hasLegacy -> "在旧版完成一次覆盖更新，再回来检测。"
+                state.pending -> "需要保留原数据的旧版才能继续这次迁移。"
                 else -> "安装着旧版时，这里会自动识别。"
             }, style = MaterialTheme.typography.bodyMedium, color = C.Muted)
         }

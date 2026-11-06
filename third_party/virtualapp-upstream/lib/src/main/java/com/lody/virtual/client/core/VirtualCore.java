@@ -122,9 +122,10 @@ public final class VirtualCore {
     private ProcessType processType;
     private boolean isHostPulginApp;
     private IAppManager mService;
-    private boolean isStartUp;
+    private volatile boolean isStartUp;
     private PackageInfo mHostPkgInfo;
-    private ConditionVariable mInitLock;
+    private volatile ConditionVariable mInitLock;
+    private volatile Throwable startupFailure;
     private AppCallback mAppCallback;
     private TaskDescriptionDelegate mTaskDescriptionDelegate;
     private SettingConfig mConfig;
@@ -249,9 +250,9 @@ public final class VirtualCore {
     }
 
     public void waitStartup() {
-        if (mInitLock != null) {
-            mInitLock.block();
-        }
+        ConditionVariable gate = mInitLock;
+        if (gate != null) gate.block();
+        if (!isStartUp) throw new IllegalStateException("VirtualCore startup incomplete", startupFailure);
     }
 
     public int getUidForSharedUser(String sharedUserName) {
@@ -279,6 +280,20 @@ public final class VirtualCore {
                 throw new IllegalStateException("VirtualCore.startup() must called in main thread.");
             }
             mInitLock = new ConditionVariable();
+            startupFailure = null;
+            try {
+                startupInternal(context, config);
+                isStartUp = true;
+            } catch (Throwable error) {
+                startupFailure = error;
+                throw error;
+            } finally {
+                mInitLock.open();
+            }
+        }
+    }
+
+    private void startupInternal(Context context, SettingConfig config) throws Throwable {
             mConfig = config;
             String packageName = config.getHostPackageName();
             String packageName64 = config.getPluginEnginePackageName();
@@ -337,7 +352,6 @@ public final class VirtualCore {
             invocationStubManager.init();
             invocationStubManager.injectAll();
             ContextFixer.fixContext(context);
-            isStartUp = true;
 
             //xdja 屏蔽‘不兼容api’对话框    (进一步确保）    暂时屏蔽，观察效果。
             /*try {
@@ -347,8 +361,6 @@ public final class VirtualCore {
                 e.printStackTrace();
             }*/
 
-            mInitLock.open();
-        }
     }
 
     public void waitForEngine() {

@@ -65,6 +65,8 @@ class LocalizeSnapshotExporter(
                 appendLine("bytes=$totalBytes")
                 appendLine("probe.exists=${probe.exists}")
                 appendLine("probe.enJsonFileCount=${probe.jsonFileCount}")
+                appendLine("probe.jpExists=${probe.japaneseExists}")
+                appendLine("probe.jpJsonFileCount=${probe.japaneseJsonFileCount}")
                 appendLine("probe.remoteListPresent=${probe.remoteListPresent}")
             },
             Charsets.UTF_8
