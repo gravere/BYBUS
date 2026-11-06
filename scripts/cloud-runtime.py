@@ -432,7 +432,7 @@ def inspect_permissions(release, verifier):
             REPORT["permissions"] = dict(result, probe_sha256=digest)
             if not result.get("passed"):
                 raise RuntimeError("Permission checks failed: " + str(result.get("error")))
-            expected_sdk = {"android13": 33, "android17": 37}[REPORT["profile"]]
+            expected_sdk = {"android11": 30, "android17": 37}[REPORT["profile"]]
             if result.get("sdk") != expected_sdk or result.get("check_count") != 22:
                 raise RuntimeError("Permission check coverage differs from the expected platform scope")
             if not all(result.get(key) for key in ("ordinary_app_uid", "production_permission_services",
