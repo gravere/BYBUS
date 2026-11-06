@@ -93,6 +93,14 @@ class LimbusZhCNApplication : Application() {
 
         override fun isHideForegroundNotification(): Boolean = true
 
+        override fun onLimbusSafetyAlert(callerPid: Int, summary: com.lody.virtual.helper.compat.LimbusSafetyAlert.Summary) {
+            val root = VirtualCore.get().context.filesDir.toPath().resolve("translation-cache/translation-index")
+            val recorded = runCatching {
+                com.example.limbuszhcn.container.RuntimeReceipt(root).recordSafetyAlert(callerPid, summary)
+            }.getOrDefault(false)
+            PersistentDiagnosticLog.warn("LimbusSafety", "gamePid=$callerPid recorded=$recorded $summary")
+        }
+
         /**
          * 构建可被 Android 识别的容器前台通知。
          *
