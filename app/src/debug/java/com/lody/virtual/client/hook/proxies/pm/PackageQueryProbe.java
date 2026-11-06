@@ -170,6 +170,11 @@ public final class PackageQueryProbe {
 
     private static Object call(MethodProxy proxy, Object... args) throws Throwable {
         for (Method method : Class.forName("android.content.pm.IPackageManager").getMethods()) {
+            // Modern IPackageManager adds userId to the two-package signature query.
+            if (method.getName().equals("checkSignatures") && proxy.getMethodName().equals("checkSignatures")
+                    && method.getParameterTypes().length == 3 && args.length == 2) {
+                args = Arrays.copyOf(args, 3); args[2] = 0;
+            }
             if (method.getName().equals(proxy.getMethodName()) && method.getParameterTypes().length == args.length) {
                 Class<?>[] types = method.getParameterTypes();
                 for (int i = 0; i < args.length; i++) if (types[i] == long.class && args[i] instanceof Integer) args[i] = ((Integer) args[i]).longValue();

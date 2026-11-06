@@ -1317,7 +1317,8 @@ class MethodProxies {
 
         @Override
         public Object call(Object who, Method method, Object... args) throws Throwable {
-            if (args.length == 2 && args[0] instanceof String && args[1] instanceof String) {
+            if ((args.length == 2 || (args.length == 3 && args[2] instanceof Integer))
+                    && args[0] instanceof String && args[1] instanceof String) {
                 String pkgNameOne = (String) args[0], pkgNameTwo = (String) args[1];
                 return VPackageManager.get().checkSignatures(pkgNameOne, pkgNameTwo);
             }
