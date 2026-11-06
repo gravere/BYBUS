@@ -88,6 +88,29 @@ class StartupTranslationTest {
         assertEquals("100", installer.activeInstallSummary()!!.version)
     }
 
+    @Test fun partiallyPairedBundledTableKeepsProvenRowsWithoutClaimingFullReadiness() {
+        val (patch, manifest) = inputs()
+        fun table(count: Int, text: String) = (1..count).joinToString(",", "{\"dataList\":[", "]}") {
+            "{\"id\":$it,\"content\":\"$text$it\"}"
+        }
+        write(patch.resolve("LoginUIText.json"), table(8, "已核对提示"))
+        val apk = root.resolve("partial-assets.apk")
+        ZipOutputStream(Files.newOutputStream(apk)).use {
+            it.putNextEntry(ZipEntry("assets/bin/Data/" + "1".repeat(32)))
+            it.write(BundledBattleHintsTest().fixture(table(10, "ログインの説明"), "JP_LoginUIText"))
+            it.closeEntry()
+        }
+        val summary = ContainerPatchInstaller(cache, ContainerWorkspaceStorage(localize), { listOf(apk.toString()) })
+            .activateRedirect(patch, manifest)
+        assertFalse(summary.indexActivated)
+        assertTrue(summary.startupIndexAvailable)
+        assertEquals(0, summary.availableSourceFiles)
+        val store = TranslationIndexStore(index)
+        assertEquals("8", store.bootstrapManifest()!!.getProperty("sourceRecordCount"))
+        assertNull(store.activeManifest())
+        assertEquals("startup", store.selectRuntimeIndex())
+    }
+
     @Test fun corruptOrStaleBootstrapIsNotSelectedAndDisableClearsEveryPointer() {
         val (patch, manifest) = inputs()
         write(localize.resolve("jp/JP_LoginUIText.json"), source(0))
