@@ -170,6 +170,9 @@ internal class AppUpdateController(private val app: Application) {
     fun installationError() {
         state = state.copy(error = "暂时无法打开系统安装程序，可在 GitHub 发行页面下载")
     }
+    fun releasePageError() {
+        state = state.copy(error = "暂时无法打开浏览器，请安装或启用浏览器后重试")
+    }
     fun installationPermissionNeeded() {
         state = state.copy(message = "允许安装后，返回此页点击「安装更新」")
     }

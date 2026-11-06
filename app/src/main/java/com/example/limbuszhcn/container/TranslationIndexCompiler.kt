@@ -456,11 +456,23 @@ internal class TranslationIndexStore(private val root: Path) {
     private fun validatedManifest(directory: Path, allowPreviousSchema: Boolean = false): Properties? = runCatching {
         val indexFile = directory.resolve(INDEX_FILE)
         val manifest = directory.resolve(MANIFEST_FILE)
-        if (!Files.isRegularFile(indexFile) || !Files.isRegularFile(manifest)) return null
+        if (!Files.isRegularFile(indexFile) || !Files.isRegularFile(manifest) || Files.size(manifest) > 16 * 1024) return null
         val properties = Properties().apply { manifest.inputStream().use(::load) }
         val schema = properties.getProperty("schema")?.toIntOrNull()
         if ((schema != INDEX_SCHEMA && !(allowPreviousSchema && schema == INDEX_SCHEMA - 1)) ||
             properties.getProperty("indexSha256") != indexFile.sha256()) return null
+        if (properties.getProperty("version").isNullOrBlank()) return null
+        if (schema == INDEX_SCHEMA) {
+            // A valid binary digest alone does not make the metadata safe to reuse.
+            // Reject the whole generation so activate() repairs it from verified inputs.
+            if (properties.getProperty("indexKind") !in setOf("full", "startup") ||
+                properties.getProperty("inputSha256").isNullOrBlank() ||
+                properties.getProperty("archiveSha256").isNullOrBlank()) return null
+            val counts = COUNT_KEYS.associateWith { key ->
+                properties.getProperty(key)?.toIntOrNull()?.takeIf { it >= 0 } ?: return null
+            }
+            if (counts.getValue("availableSourceFileCount") > counts.getValue("candidateSourceFileCount")) return null
+        }
         properties
     }.getOrNull()
 
@@ -551,6 +563,8 @@ internal class TranslationIndexStore(private val root: Path) {
         private const val MANIFEST_FILE = "manifest.properties"
         // 稀疏上下文只保存同文异译；完整原文必须参与键，绝不按裸 id 替换。
         private const val INDEX_SCHEMA = 9
+        private val COUNT_KEYS = listOf("uniqueEntryCount", "termEntryCount", "contextualEntryCount",
+            "sourceRecordCount", "conflictCount", "dominantEntryCount", "candidateSourceFileCount", "availableSourceFileCount")
         private val INDEX_MAGIC = byteArrayOf('L'.code.toByte(), 'Z'.code.toByte(), 'T'.code.toByte(), 'I'.code.toByte(), '1'.code.toByte(), 0)
     }
 }

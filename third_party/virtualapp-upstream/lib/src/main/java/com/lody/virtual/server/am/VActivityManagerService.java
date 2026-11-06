@@ -132,20 +132,21 @@ public class VActivityManagerService extends IActivityManager.Stub {
 
     @Override
     public int startActivity(Intent intent, ActivityInfo info, IBinder resultTo, Bundle options, String resultWho, int requestCode, int userId) {
-        synchronized (this) {
-            // Capture before the alert process starts: its UI can disappear with the game.
-            // Never unpack other apps' intents (including GMS Binder/Parcelable payloads).
-            if (info != null && intent != null && LimbusSafetyAlert.isTarget(info.packageName, info.name, intent.getAction())
-                    && LimbusSafetyAlert.matches(
-                    getInitialPackage(VBinder.getCallingPid()), getAppProcessName(VBinder.getCallingPid()),
-                    info.packageName, info.name, intent.getAction())) {
-                try {
-                    VirtualCore.getConfig().onLimbusSafetyAlert(VBinder.getCallingPid(),
-                            LimbusSafetyAlert.summarize(intent.getIntExtra("type", -1), intent.getStringExtra("msg")));
-                } catch (RuntimeException error) {
-                    Log.w("LimbusVA", "Safety alert metadata unavailable: " + error.getClass().getSimpleName());
-                }
+        // Keep the original Binder caller and capture before the alert UI can disappear.
+        // The callback persists bounded metadata; disk I/O must not hold the activity lock.
+        // Never unpack other apps' intents (including GMS Binder/Parcelable payloads).
+        final int callerPid = VBinder.getCallingPid();
+        if (info != null && intent != null && LimbusSafetyAlert.isTarget(info.packageName, info.name, intent.getAction())
+                && LimbusSafetyAlert.matches(getInitialPackage(callerPid), getAppProcessName(callerPid),
+                info.packageName, info.name, intent.getAction())) {
+            try {
+                VirtualCore.getConfig().onLimbusSafetyAlert(callerPid,
+                        LimbusSafetyAlert.summarize(intent.getIntExtra("type", -1), intent.getStringExtra("msg")));
+            } catch (RuntimeException error) {
+                Log.w("LimbusVA", "Safety alert metadata unavailable: " + error.getClass().getSimpleName());
             }
+        }
+        synchronized (this) {
             Log.i("LimbusVA", "VAMS.startActivity userId=" + userId
                     + " callingUid=" + VBinder.getCallingUid()
                     + " callingPid=" + VBinder.getCallingPid()
@@ -1329,15 +1330,15 @@ public class VActivityManagerService extends IActivityManager.Stub {
         if (intent == null) {
             return "null";
         }
-        Bundle extras = intent.getExtras();
+        // Inspecting keySet may unparcel guest-only classes in this server process.
+        // Logging must never make an otherwise valid Activity request fail.
         return "action=" + intent.getAction()
                 + " component=" + intent.getComponent()
                 + " package=" + intent.getPackage()
                 + " flags=0x" + Integer.toHexString(intent.getFlags())
-                + " data=" + intent.getData()
+                + " scheme=" + intent.getScheme()
                 + " type=" + intent.getType()
-                + " categories=" + intent.getCategories()
-                + " extras=" + (extras == null ? null : extras.keySet());
+                + " categories=" + intent.getCategories();
     }
 
     private static String describeActivityInfoForLimbus(ActivityInfo info) {

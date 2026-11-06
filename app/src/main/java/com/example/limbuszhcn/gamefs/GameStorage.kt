@@ -19,7 +19,9 @@ interface GameStorage {
 data class GameStorageProbe(
     val exists: Boolean,
     val jsonFileCount: Int,
-    val remoteListPresent: Boolean
+    val remoteListPresent: Boolean,
+    val japaneseExists: Boolean = false,
+    val japaneseJsonFileCount: Int = 0
 )
 
 data class PatchInstallSummary(

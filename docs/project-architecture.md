@@ -93,6 +93,11 @@ App-version notices use the independent metadata-only foreground check described
 
 ## Startup latency and handoff (2026-10-12)
 
+Service connection wrappers serialize cache creation and Binder-death removal.
+Each callback snapshots its resolved target once for billing, broker and Activity
+delivery, so a concurrent rebind cannot change the target halfway through a callback.
+Dead Binder registration failures are not retained in the cache.
+
 The launch button stays busy through preparation and the actual VirtualApp Activity
 handoff. `startActivity` accepting an Intent is not completion: the launch worker
 waits for the existing per-Intent `UiCallback.onAppOpened` from the requested game
@@ -188,6 +193,14 @@ in `ContainerPatchInstaller.TEXT_FIELDS`. Do not change metadata fields such as
 `id`, `personalityid`, `voicefile`, `usage`, `model`, or icon/resource keys.
 
 ## Localization Preparation
+
+An active index must have a valid generation digest and complete, nonnegative
+metadata before it can authorize cached compilation reuse. Missing or malformed
+current-schema metadata invalidates that generation, which is rebuilt from the
+verified archive and source files; previous-schema generations may only be retained
+for cleanup/rollback bookkeeping, never reused for launch. The operation summary
+keeps its preservation reason when an offline check retains an older full index.
+Current activation state and the result of the latest attempt are separate facts.
 
 Once the game has entered the post-login main flow and downloaded
 `Localize/en`, use the debug snapshot exporter to copy a read-only archive of
@@ -486,6 +499,11 @@ exact legacy profiles can impose narrower conditions. The device report and
 launch errors describe the applicable boundary. Unknown game structures fail closed.
 
 ## Notes
+
+Container startup always releases its initialization gate, including on failure.
+Provider initialization then returns the original failure instead of waiting forever
+or continuing with a partially initialized engine. The gate signals completion,
+not success; callers must use `waitStartup()` to check the result.
 
 ### Google Play update checks and links
 
