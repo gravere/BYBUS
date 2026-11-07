@@ -31,7 +31,8 @@ public final class PackageManagerStub extends MethodInvocationProxy<MethodInvoca
     private static final String GAME = "com.ProjectMoon.LimbusCompany";
     private static final PackageQueryTrace TRACE = new PackageQueryTrace();
 
-    private static void record(Method method, boolean proxied, Object result, Throwable error) {
+    /** Shared with the separate permission service; does not receive or retain query arguments. */
+    public static void recordQueryResult(Method method, boolean proxied, Object result, Throwable error) {
         ApplicationInfo current = VClient.get().getCurrentApplicationInfo();
         if (current != null && GAME.equals(current.packageName))
             TRACE.record(method.getName(), proxied, result, error);
@@ -54,7 +55,7 @@ public final class PackageManagerStub extends MethodInvocationProxy<MethodInvoca
     public PackageManagerStub() {
         super(new MethodInvocationStub<IInterface>(ActivityThread.sPackageManager.get()) {
             @Override protected void onInvocationResult(Method method, boolean proxied, Object result, Throwable error) {
-                record(method, proxied, result, error);
+                recordQueryResult(method, proxied, result, error);
             }
         });
     }
@@ -85,7 +86,7 @@ public final class PackageManagerStub extends MethodInvocationProxy<MethodInvoca
         ActivityThread.sPackageManager.set(hookedPM);
         BinderInvocationStub pmHookBinder = new BinderInvocationStub(getInvocationStub().getBaseInterface()) {
             @Override protected void onInvocationResult(Method method, boolean proxied, Object result, Throwable error) {
-                record(method, proxied, result, error);
+                recordQueryResult(method, proxied, result, error);
             }
         };
         pmHookBinder.copyMethodProxies(getInvocationStub());
