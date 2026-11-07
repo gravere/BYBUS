@@ -109,6 +109,10 @@ VirtualApp 接入状态:
   `startForeground`。旧版通过第二个 `HiddenForeNotification` 服务隐藏通知的方案既不会
   提升 server 进程优先级，也会在 Android 12+ 后台重启时触发
   `ForegroundServiceStartNotAllowedException`，导致 `:x` server 死亡并连带退出全部容器进程。
+- 即使请求启动已被接受，Android 12+ 也可能在服务实际提升时撤销后台启动资格。
+  `KeepAliveService` 只对这项明确拒绝停止自身并返回 `START_NOT_STICKY`，不能让异常
+  退出整个容器服务进程，也不能在后台反复自启。其他异常仍按原路径报告。用户下一次
+  主动启动游戏时再请求一次前台服务；不增加权限、不打开后台设置或伪造前台状态。
 - Redmi/Android 12 真机在 Limbus `v1.107.1` 上已验证:容器游戏可通过 `PlayVideo -> PlayWarningAnim -> PlayDone` 并进入完整标题页。最终黑屏根因是 arm64 `getcwd` hook 把 raw syscall 返回的路径字节数 `2` 暴露给 il2cpp,随后触发 `strlen(0x2)` 并破坏 Addressables 运行时路径;恢复 libc 的缓冲区指针返回语义后,`RuntimeData is null` 和 FMOD 资源缺失错误均消失。
 ### Android 13 网络状态与 AppOps 调用身份
 
