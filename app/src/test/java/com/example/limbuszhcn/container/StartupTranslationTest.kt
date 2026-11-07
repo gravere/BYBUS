@@ -64,12 +64,14 @@ class StartupTranslationTest {
         assertTrue(Files.isRegularFile(Path.of(runtime)))
 
         manifest.entries.forEachIndexed { i, e -> write(localize.resolve("jp/JP_" + e.cachePath), source(i)) }
-        val complete = installer.activateRedirect(patch, manifest)
+        // Model the next launcher process after the game downloaded its resources.
+        val nextLaunch = ContainerPatchInstaller(cache, ContainerWorkspaceStorage(localize), { listOf(apk.toString()) })
+        val complete = nextLaunch.activateRedirect(patch, manifest)
         assertTrue(complete.indexActivated)
         assertEquals("full", store.selectRuntimeIndex())
         assertFalse(Files.exists(index.resolve(TranslationIndexStore.BOOTSTRAP_POINTER)))
         assertFalse(index.resolve(TranslationIndexStore.RUNTIME_POINTER).readText().contains("bootstrap-"))
-        assertTrue(installer.activateRedirect(patch, manifest).reusedIndex)
+        assertTrue(nextLaunch.activateRedirect(patch, manifest).reusedIndex)
         assertEquals(source(0), localize.resolve("jp/JP_LoginUIText.json").readText())
     }
 

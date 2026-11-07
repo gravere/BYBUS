@@ -281,10 +281,19 @@ public class VPackageManagerService extends IPackageManager.Stub {
         flags = updateFlagsNought(flags);
         PackageInfo packageInfo = PackageParserEx.generatePackageInfo(p, flags,
                 ps.firstInstallTime, ps.lastUpdateTime, ps.readUserState(userId), userId);
-        if (packageInfo != null) {
-            return packageInfo;
+        if (packageInfo != null && packageInfo.requestedPermissions != null) {
+            final boolean pluginEngine = ps.isRunPluginProcess();
+            for (int i = 0; i < packageInfo.requestedPermissions.length; i++) {
+                int permissionFlags = packageInfo.requestedPermissionsFlags[i]
+                        & ~PackageInfo.REQUESTED_PERMISSION_GRANTED;
+                if (checkPermission(pluginEngine, packageInfo.requestedPermissions[i],
+                        p.packageName, userId) == PackageManager.PERMISSION_GRANTED) {
+                    permissionFlags |= PackageInfo.REQUESTED_PERMISSION_GRANTED;
+                }
+                packageInfo.requestedPermissionsFlags[i] = permissionFlags;
+            }
         }
-        return null;
+        return packageInfo;
     }
 
     private int updateFlagsNought(int flags) {
