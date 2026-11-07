@@ -527,13 +527,6 @@ public class PackageParserEx {
         p.applicationInfo.flags |= flags;
     }
 
-    private static boolean isAppPermissionEnable(String pkg, String perName) {
-        if (!VirtualCore.get().checkSelfPermission(perName, false)) {
-            return false;
-        }
-        return com.xdja.zs.VAppPermissionManagerService.get().getAppPermissionEnable(pkg, perName);
-    }
-
     public static PackageInfo generatePackageInfo(VPackage p, int flags, long firstInstallTime, long lastUpdateTime, PackageUserState state, int userId) {
         if (!checkUseInstalledOrHidden(state, flags)) {
             return null;
@@ -553,11 +546,6 @@ public class PackageParserEx {
         }
         pi.firstInstallTime = firstInstallTime;
         pi.lastUpdateTime = lastUpdateTime;
-        if (p.requestedPermissions != null && !p.requestedPermissions.isEmpty()) {
-            String[] requestedPermissions = new String[p.requestedPermissions.size()];
-            p.requestedPermissions.toArray(requestedPermissions);
-            pi.requestedPermissions = requestedPermissions;
-        }
         if ((flags & PackageManager.GET_GIDS) != 0) {
             pi.gids = PackageParserCompat.GIDS;
         }
@@ -646,7 +634,8 @@ public class PackageParserEx {
                 for (int i = 0; i < N; i++) {
                     final String perm = p.requestedPermissions.get(i);
                     pi.requestedPermissions[i] = perm;
-                    pi.requestedPermissionsFlags[i] = isAppPermissionEnable(pi.packageName, perm) ? PackageInfo.REQUESTED_PERMISSION_GRANTED : 0;
+                    // Grant state is filled by the package service for the queried user.
+                    // Enterprise feature toggles are not Android permission grants.
                 }
             }
         }

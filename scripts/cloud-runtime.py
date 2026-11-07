@@ -435,7 +435,7 @@ def inspect_permissions(release, verifier, package_queries=False):
             if not result.get("passed"):
                 raise RuntimeError("Permission checks failed: " + str(result.get("error")))
             expected_sdk = {"android11": 30, "android17": 37}[REPORT["profile"]]
-            if result.get("sdk") != expected_sdk or result.get("check_count") != (30 if package_queries else 22):
+            if result.get("sdk") != expected_sdk or result.get("check_count") != (40 if package_queries else 22):
                 raise RuntimeError("Permission check coverage differs from the expected platform scope")
             if not all(result.get(key) for key in ("ordinary_app_uid", "production_package_proxies" if package_queries else "production_permission_services",
                                                   "synthetic_package_registry", "registry_restored")):
@@ -443,7 +443,9 @@ def inspect_permissions(release, verifier, package_queries=False):
             if not all(result["checks"].values()):
                 raise RuntimeError("Not all permission checks passed")
             if package_queries:
-                REPORT["checks"].append("30 production package proxy/registry checks; synthetic metadata, no real game")
+                if not result.get("permission_metadata_consistent"):
+                    raise RuntimeError("Package permission metadata checks did not pass")
+                REPORT["checks"].append("40 production package proxy/registry checks including permission metadata; synthetic packages, no real game")
                 REPORT["result"] = "package query inspection completed; game and 70036 outcome not tested"
                 return
             if len(result.get("authenticator_checks", {})) != 4 or not all(result["authenticator_checks"].values()):
