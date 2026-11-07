@@ -120,6 +120,8 @@ class VirtualAppContainerRuntime(
         bridge.logGameLocalizeDiagnostics(LocalContainerRuntime.GAME_PACKAGE)
         // This method is invoked by the host launch worker, before the guest main thread exists.
         measureStartup("font_validation") { com.lody.virtual.helper.compat.LimbusTranslationAssets.prepare(context) }
+        // Retry a prior background-policy rejection only for this explicit game launch.
+        com.lody.virtual.client.stub.KeepAliveService.requestStart(context)
         measureStartup("activity_handoff") { bridge.launch(LocalContainerRuntime.GAME_PACKAGE) }
     }
 

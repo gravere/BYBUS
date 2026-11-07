@@ -445,6 +445,7 @@ def inspect_permissions(release, verifier, package_queries=False):
             if package_queries:
                 if not result.get("permission_metadata_consistent"):
                     raise RuntimeError("Package permission metadata checks did not pass")
+                inspect_framework_permissions()
                 REPORT["checks"].append("40 production package proxy/registry checks including permission metadata; synthetic packages, no real game")
                 REPORT["result"] = "package query inspection completed; game and 70036 outcome not tested"
                 return
@@ -456,6 +457,53 @@ def inspect_permissions(release, verifier, package_queries=False):
             return
         time.sleep(1)
     raise RuntimeError("Permission contract inspection timed out")
+
+
+def inspect_framework_permissions():
+    """Use public Android APIs in a real guest process; keep the temporary registry in the server."""
+    def probe(receiver, stem, stage=None):
+        result_file = f"/data/user/0/{PACKAGE}/files/{stem}-result.json"
+        adb("shell", "rm", "-f", result_file)
+        args = ["shell", "am", "broadcast", "--receiver-foreground", "-n", f"{PACKAGE}/{NAMESPACE}.{receiver}"]
+        if stage:
+            args += ["--es", "stage", stage]
+        adb(*args, timeout=45)
+        deadline = time.monotonic() + 45
+        while time.monotonic() < deadline:
+            raw = adb("shell", "cat", result_file, check=False)
+            if raw.lstrip().startswith("{"):
+                try:
+                    result = json.loads(raw)
+                except json.JSONDecodeError:
+                    time.sleep(.5)
+                    continue
+                (OUT / f"{stem}.json").write_text(raw, encoding="utf-8")
+                if not result.get("passed"):
+                    raise RuntimeError(f"{stem}: {result.get('error')}")
+                return result
+            time.sleep(.5)
+        raise RuntimeError(f"{stem} timed out")
+
+    try:
+        prepared = probe("PackageQueryProbeReceiver", "framework-prepare", "framework-prepare")
+        if not prepared.get("prepared"):
+            raise RuntimeError("Framework permission fixture was not prepared")
+        result = probe("FrameworkPermissionProbeReceiver", "framework-permission")
+        REPORT["framework_permissions"] = result
+        expected = {"android11": (30, 13), "android17": (37, 15)}[REPORT["profile"]]
+        if (result.get("sdk"), result.get("check_count")) != expected:
+            raise RuntimeError("Public framework permission coverage differs from the expected scope")
+        if not all(result.get(key) for key in ("public_framework_api", "separate_guest_process",
+                                               "server_over_binder", "ordinary_app_uid", "client_restored")):
+            raise RuntimeError("Public permission checks did not use the required runtime boundary")
+        if not all(result["checks"].values()):
+            raise RuntimeError("Public permission checks failed")
+    finally:
+        cleanup = probe("PackageQueryProbeReceiver", "framework-cleanup", "framework-cleanup")
+        REPORT["framework_permission_registry_restored"] = cleanup.get("registry_restored", False)
+        if not REPORT["framework_permission_registry_restored"]:
+            raise RuntimeError("Framework permission fixture cleanup failed")
+    REPORT["checks"].append("Public Android package/context permission queries from separate guest process agree with server metadata; no real game")
 
 
 def inspect_service_callback(release, verifier):

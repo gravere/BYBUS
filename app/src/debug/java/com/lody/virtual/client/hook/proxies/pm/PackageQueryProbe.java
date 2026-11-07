@@ -33,6 +33,40 @@ public final class PackageQueryProbe {
     private static final String SIBLING = "io.github.gravere.query.fixture.shared";
     private static final String OTHER = "io.github.gravere.query.fixture.other";
     private static final String ABSENT = "io.github.gravere.query.fixture.absent";
+    private static VPackage frameworkGame, frameworkOther;
+
+    /** Held only until the separate guest-process public-API probe completes. No files or installs. */
+    public static JSONObject frameworkRegistry(Context context, boolean prepare) throws Exception {
+        require(VActivityManager.get().getSystemPid() == Process.myPid(), "server process");
+        Field registry = VPackageManagerService.class.getDeclaredField("mPackages");
+        registry.setAccessible(true);
+        @SuppressWarnings("unchecked") Map<String, VPackage> packages =
+                (Map<String, VPackage>) registry.get(VPackageManagerService.get());
+        synchronized (packages) {
+            if (prepare) {
+                require(frameworkGame == null && frameworkOther == null, "no active framework fixture");
+                require(!packages.containsKey(GAME) && !packages.containsKey(OTHER), "empty framework namespace");
+                int uid = 19001;
+                while (used(packages, uid) || used(packages, uid + 1)
+                        || uid == Process.myUid() || uid + 1 == Process.myUid()) uid += 2;
+                require(uid < 19990, "available framework UID");
+                frameworkGame = fixture(context, GAME, uid, new byte[]{1, 2});
+                frameworkGame.requestedPermissions.addAll(Arrays.asList(
+                        "android.permission.INTERNET", "android.permission.ACCOUNT_MANAGER"));
+                frameworkOther = fixture(context, OTHER, uid + 1, new byte[]{3, 4});
+                packages.put(GAME, frameworkGame); packages.put(OTHER, frameworkOther);
+                return new JSONObject().put("passed", true).put("prepared", true);
+            }
+            if (frameworkGame != null) {
+                require(packages.get(GAME) == frameworkGame && packages.get(OTHER) == frameworkOther,
+                        "framework fixture ownership");
+                packages.remove(GAME); packages.remove(OTHER);
+                frameworkGame = null; frameworkOther = null;
+            }
+            require(!packages.containsKey(GAME) && !packages.containsKey(OTHER), "framework registry restored");
+            return new JSONObject().put("passed", true).put("registry_restored", true);
+        }
+    }
 
     public static JSONObject inspect(Context context) throws Throwable {
         require(VActivityManager.get().getSystemPid() == Process.myPid(), "server process");

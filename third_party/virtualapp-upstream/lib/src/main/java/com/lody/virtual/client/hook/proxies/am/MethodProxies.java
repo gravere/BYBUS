@@ -2015,6 +2015,25 @@ class MethodProxies {
 
     }
 
+    static class CheckPermissionForDevice extends CheckPermission {
+        @Override public String getMethodName() { return "checkPermissionForDevice"; }
+
+        @Override public boolean isEnable() {
+            return super.isEnable() && "com.ProjectMoon.LimbusCompany".equals(getAppPkg());
+        }
+
+        @Override public Object call(Object who, Method method, Object... args) throws Throwable {
+            Class<?>[] types = method.getParameterTypes();
+            if (method.getReturnType() != int.class || types.length != 4
+                    || types[0] != String.class || types[1] != int.class
+                    || types[2] != int.class || types[3] != int.class) {
+                return method.invoke(who, args);
+            }
+            if ((Integer) args[3] != 0) return PackageManager.PERMISSION_DENIED;
+            return super.call(who, method, args);
+        }
+    }
+
     static class CheckPermissionWithToken extends MethodProxy {
 
         @Override

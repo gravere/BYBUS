@@ -17,6 +17,28 @@
 计算已授予位，保留其他标志。不带 `GET_PERMISSIONS` 时两组权限数组均为空。
 该修正不授予新的系统权限，也不修改 Google Authenticator 的局部授权边界。
 
+Android 的公开 `PackageManager.checkPermission` 不始终调用 `IPackageManager`。
+Android 11 使用独立 `IPermissionManager` 的三参数查询；Android 15 起使用包名在前、
+带持久设备 ID 的四参数查询。游戏访客进程必须同时接入这条只读查询路径，仍调用同一个
+虚拟权限服务。按完整参数类型区分新旧顺序，不按两个字符串的位置猜测，也不把新
+接口当成旧接口。UID 查询同样区分两参数和三参数签名。非默认虚拟设备不属于容器
+权限模型，不能因此返回默认设备的授权。授予、撤销和账号服务接口保持平台原路径。
+
+这项接入只安装在访客进程，查询接管仅对已绑定的游戏启用；Google 等其他访客、
+宿主和容器服务进程保留原查询。同步进程内
+`ActivityThread` 的权限服务引用，并仅禁用本进程的包权限结果缓存，避免绑定访客前
+缓存的系统结果覆盖绑定后的容器结果。Android 新增 `checkPermissionForDevice` 的
+默认设备查询复用现有 ActivityManager 权限判断，不授予额外权限。
+
+回归必须在独立访客进程通过 Android 公开 `Context.getPackageManager().checkPermission`
+读取结果，并与服务进程内临时包的权限元数据比较。直接调用容器内部方法只能覆盖
+服务自身，不能证明公开框架入口已接通。测试覆盖绑定前后、声明与未声明、未知包、
+特权权限、UID 与非默认设备；临时注册表在检查后清理，不读取真实账号或游戏资源。
+build 79 的实际诊断仍出现 70036；新路径的验证不能代替该设备的游戏启动结果。
+
+框架依据：[Android 11 ApplicationPackageManager](https://github.com/aosp-mirror/platform_frameworks_base/blob/android11-release/core/java/android/app/ApplicationPackageManager.java)、
+[Android 16 PermissionManager](https://github.com/aosp-mirror/platform_frameworks_base/blob/android16-release/core/java/android/permission/PermissionManager.java)。
+
 首次启动尚无日文下载资源时，继续只启用经配对验证的启动索引；资源下载完成后
 自动在下一次启动编译全量索引。安全提示中断首次下载时，缺少全量资源不能单独
 证明目录错误，不得通过降低配对覆盖门槛来宣称汉化已就绪。

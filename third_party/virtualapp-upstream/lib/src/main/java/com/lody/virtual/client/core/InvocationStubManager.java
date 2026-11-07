@@ -168,6 +168,9 @@ public final class InvocationStubManager {
             addInjector(new ActivityManagerStub());
             addInjector(new PackageManagerStub());
             addInjector(HCallbackStub.getDefault());
+            if (Build.VERSION.SDK_INT >= 30) {
+                addInjector(new com.lody.virtual.client.hook.proxies.permission.PermissionManagerStub());
+            }
             addInjector(new ISmsStub());
             addInjector(new ISubStub());
             addInjector(new DropBoxManagerStub());
