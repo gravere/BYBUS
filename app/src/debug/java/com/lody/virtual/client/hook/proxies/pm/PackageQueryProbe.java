@@ -112,6 +112,7 @@ public final class PackageQueryProbe {
                 check(checks, "versioned_latest", call(new MethodProxies.GetPackageInfoVersioned(), new VersionedPackage(GAME, PackageManager.VERSION_CODE_HIGHEST), 0, 0) != null);
                 check(checks, "versioned_mismatch", call(new MethodProxies.GetPackageInfoVersioned(), new VersionedPackage(GAME, 4098), 0, 0) == null);
                 check(checks, "versioned_visibility", call(new MethodProxies.GetPackageInfoVersioned(), new VersionedPackage(context.getPackageName(), PackageManager.VERSION_CODE_HIGHEST), 0, 0) == null);
+                verifyPermissionMetadata(checks, service, game, other);
                 ((PackageSetting) game.mExtras).setInstalled(0, false);
                 check(checks, "uninstalled_uid", service.getPackagesForUid(uid) == null);
                 check(checks, "uninstalled_package_uid", service.getPackageUid(GAME, 0) == -1);
@@ -128,11 +129,81 @@ public final class PackageQueryProbe {
         verifyPassiveObserver(checks);
         return new JSONObject().put("passed", true).put("sdk", Build.VERSION.SDK_INT)
                 .put("production_package_proxies", true).put("synthetic_package_registry", true)
+                .put("permission_metadata_consistent", true)
                 .put("registry_restored", true).put("ordinary_app_uid", Process.myUid() >= 10000)
                 .put("check_count", checks.length()).put("checks", checks);
     }
 
     public interface ObserverFixture { String value(); void fail(); }
+
+    private static void verifyPermissionMetadata(JSONObject checks, VPackageManagerService service,
+                                                  VPackage game, VPackage other) throws Throwable {
+        final String internet = "android.permission.INTERNET";
+        final String accountManager = "android.permission.ACCOUNT_MANAGER";
+        final String unknown = "android.permission.BYBUS_UNDECLARED_FIXTURE";
+        game.requestedPermissions.addAll(Arrays.asList(internet, accountManager, unknown));
+        other.requestedPermissions.add(internet);
+        // This is the previous metadata path's real feature-switch dependency, not a mock.
+        // INTERNET is granted by Android while the unrelated switch defaults to false.
+        check(checks, "legacy_feature_switch_differs_from_permission",
+                VirtualCore.get().checkSelfPermission(internet, false)
+                && !com.xdja.zs.VAppPermissionManagerService.get().getAppPermissionEnable(GAME, internet)
+                && service.checkPermission(false, internet, GAME, 0) == PackageManager.PERMISSION_GRANTED);
+        PackageInfo single = (PackageInfo) call(new MethodProxies.GetPackageInfo(), GAME, PackageManager.GET_PERMISSIONS, 0);
+        check(checks, "permission_metadata_granted", granted(single, internet));
+        check(checks, "permission_metadata_denied", !granted(single, accountManager)
+                && service.checkPermission(false, accountManager, GAME, 0) == PackageManager.PERMISSION_DENIED);
+        check(checks, "permission_metadata_unknown", !granted(single, unknown));
+        PackageInfo without = (PackageInfo) call(new MethodProxies.GetPackageInfo(), GAME, 0, 0);
+        check(checks, "permission_metadata_requires_flag", without.requestedPermissions == null
+                && without.requestedPermissionsFlags == null);
+        List<?> listed = list(call(new MethodProxies.GetInstalledPackages(), PackageManager.GET_PERMISSIONS, 0));
+        PackageInfo listedGame = null, listedOther = null;
+        for (Object entry : listed) {
+            PackageInfo info = (PackageInfo) entry;
+            if (GAME.equals(info.packageName)) listedGame = info;
+            if (OTHER.equals(info.packageName)) listedOther = info;
+        }
+        check(checks, "permission_metadata_list", samePermissions(single, listedGame)
+                && granted(listedOther, internet));
+        PackageInfo versioned = (PackageInfo) call(new MethodProxies.GetPackageInfoVersioned(),
+                new VersionedPackage(GAME, 4097), PackageManager.GET_PERMISSIONS, 0);
+        check(checks, "permission_metadata_versioned", samePermissions(single, versioned));
+        for (String permission : single.requestedPermissions) {
+            require(granted(single, permission) == (service.checkPermission(false, permission, GAME, 0)
+                    == PackageManager.PERMISSION_GRANTED), "per-entry metadata agreement");
+        }
+        check(checks, "permission_metadata_matches_query", true);
+        PackageSetting settings = (PackageSetting) game.mExtras;
+        settings.setInstalled(0, false);
+        try {
+            PackageInfo removed = service.getPackageInfo(GAME,
+                    PackageManager.GET_PERMISSIONS | PackageManager.MATCH_UNINSTALLED_PACKAGES, 0);
+            check(checks, "permission_metadata_removed_user", removed != null && !granted(removed, internet));
+        } finally {
+            settings.setInstalled(0, true);
+        }
+        other.requestedPermissions.clear();
+        PackageInfo empty = service.getPackageInfo(OTHER, PackageManager.GET_PERMISSIONS, 0);
+        check(checks, "permission_metadata_empty", empty != null && empty.requestedPermissions == null
+                && empty.requestedPermissionsFlags == null);
+    }
+
+    private static boolean granted(PackageInfo info, String permission) {
+        require(info != null && info.requestedPermissions != null && info.requestedPermissionsFlags != null
+                && info.requestedPermissions.length == info.requestedPermissionsFlags.length, "permission arrays");
+        for (int i = 0; i < info.requestedPermissions.length; i++) {
+            if (permission.equals(info.requestedPermissions[i]))
+                return (info.requestedPermissionsFlags[i] & PackageInfo.REQUESTED_PERMISSION_GRANTED) != 0;
+        }
+        throw new AssertionError("requested permission missing");
+    }
+
+    private static boolean samePermissions(PackageInfo left, PackageInfo right) {
+        return right != null && Arrays.equals(left.requestedPermissions, right.requestedPermissions)
+                && Arrays.equals(left.requestedPermissionsFlags, right.requestedPermissionsFlags);
+    }
+
     private static void verifyPassiveObserver(JSONObject checks) throws Exception {
         final SecurityException original = new SecurityException("fixture");
         ObserverFixture target = new ObserverFixture() {
