@@ -1334,6 +1334,13 @@ def main():
     if "Success" not in installed:
         raise RuntimeError("APK installation did not succeed: " + installed[-1000:])
     REPORT["checks"].append("published APK signature/hash and installation")
+    if os.environ.get("RUNTIME_MODE") == "install-open":
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("install_open", "scripts/inspect-install-open.py")
+        inspection = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(inspection)
+        inspection.inspect(apk, adb, command, hierarchy, locate, tap, REPORT, OUT)
+        return
     if os.environ.get("RUNTIME_MODE") in ("service-callback", "permissions", "package-queries"):
         adb("logcat", "-c")
         adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
@@ -1467,9 +1474,10 @@ except Exception as error:
     raise
 finally:
     try:
-        if os.environ.get("RUNTIME_MODE") in ("service-callback", "permissions", "package-queries"):
+        if os.environ.get("RUNTIME_MODE") in ("service-callback", "permissions", "package-queries", "install-open"):
             diagnostic = adb("logcat", "-d", "-t", "700", "PermissionProbe:E", "ServiceCallbackProbe:E", "ActivityManager:I",
-                             "ActivityTaskManager:I", "LimbusZhCN:D", "LimbusVA:W", "*:S", timeout=15, check=False)
+                             "ActivityTaskManager:I", "LimbusZhCN:D", "LimbusZhCNApp:I", "LimbusVA:W",
+                             "InstallSuccess:I", "InstallLaunch:I", "BYBUSInstallProbe:I", "AndroidRuntime:E", "*:S", timeout=15, check=False)
             (OUT / "callback-log.txt").write_text(diagnostic, encoding="utf-8")
         crashes = adb("logcat", "-d", "-b", "crash", "-t", "150", timeout=15, check=False)
         (OUT / "crashes.txt").write_text(crashes, encoding="utf-8")
