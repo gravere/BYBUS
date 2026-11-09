@@ -20,6 +20,10 @@ internal object PersistentDiagnosticLog {
     private var installed = false
     private var logFile: File? = null
     private var previousExceptionHandler: Thread.UncaughtExceptionHandler? = null
+    private var installedExceptionHandler: Thread.UncaughtExceptionHandler? = null
+
+    fun ownsExceptionHandler(): Boolean = installedExceptionHandler != null &&
+        Thread.getDefaultUncaughtExceptionHandler() === installedExceptionHandler
 
     /**
      * 为当前进程安装日志文件与未捕获异常处理器。
@@ -38,15 +42,19 @@ internal object PersistentDiagnosticLog {
         val safeProcessName = processName.replace(UNSAFE_FILE_NAME, "_").take(80)
         logFile = File(directory, "runtime-$safeProcessName.log")
         previousExceptionHandler = Thread.getDefaultUncaughtExceptionHandler()
-        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+        installedExceptionHandler = Thread.UncaughtExceptionHandler { thread, error ->
             // 先同步落盘再交还 Android/目标应用的原处理器，确保 OEM 立即杀进程时仍保留最后现场。
-            error(TAG, "Uncaught exception thread=${thread.name}", error)
-            previousExceptionHandler?.uncaughtException(thread, error)
-                ?: run {
-                    Process.killProcess(Process.myPid())
-                    kotlin.system.exitProcess(10)
-                }
+            try {
+                error(TAG, "Uncaught exception thread=${thread.name}", error)
+            } finally {
+                previousExceptionHandler?.uncaughtException(thread, error)
+                    ?: run {
+                        Process.killProcess(Process.myPid())
+                        kotlin.system.exitProcess(10)
+                    }
+            }
         }
+        Thread.setDefaultUncaughtExceptionHandler(installedExceptionHandler)
         installed = true
         info(
             TAG,

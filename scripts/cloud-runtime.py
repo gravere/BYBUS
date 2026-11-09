@@ -1340,6 +1340,9 @@ def main():
         inspection = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(inspection)
         inspection.inspect(apk, adb, command, hierarchy, locate, tap, REPORT, OUT)
+        if release["draft"]:
+            install_component_probe(release, verifier)
+            inspection.inspect_crash_handlers(adb, hierarchy, locate, REPORT, OUT)
         return
     if os.environ.get("RUNTIME_MODE") in ("service-callback", "permissions", "package-queries"):
         adb("logcat", "-c")
