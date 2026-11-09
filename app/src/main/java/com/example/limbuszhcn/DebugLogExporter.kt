@@ -53,6 +53,18 @@ internal class DebugLogExporter(private val context: Context) {
                     zip.writeText("persistent/${logFile.name}", content)
                 }
             zip.writeText("logcat.txt", collectLogcat())
+            // Recover only old host/server crash records omitted by earlier diagnostic exports.
+            val legacyNames = Regex("(?:null|${Regex.escape(context.packageName.replace(':', '_') + "_x")})_\\d{4}-\\d{2}-\\d{2}-\\d{2}-\\d{2}-\\d{2}\\.log")
+            val legacyDirectory = File(context.filesDir, "saftySandBoxExceptionLog")
+            val legacyFiles = if (java.nio.file.Files.isDirectory(legacyDirectory.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS))
+                legacyDirectory.listFiles().orEmpty() else emptyArray()
+            legacyFiles.filter { java.nio.file.Files.isRegularFile(it.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS) && legacyNames.matches(it.name) }
+                .sortedByDescending(File::lastModified).take(4).forEach { file ->
+                    val text = runCatching {
+                        file.inputStream().use { String(it.readBounded(32 * 1024), Charsets.UTF_8) }
+                    }.getOrElse { "Legacy host record unavailable: ${it.javaClass.simpleName}" }
+                    zip.writeText("legacy-host/${file.name}", text.redactedAndBounded(32 * 1024))
+                }
             // Fixed, bounded runtime metadata only; never include the index or game text.
             for (name in listOf("font-state.log", "integrity-state.log", "billing-state.log")) {
                 val file = File(context.filesDir, "translation-cache/translation-index/$name")
@@ -98,6 +110,14 @@ internal class DebugLogExporter(private val context: Context) {
             appendLine("buildType=${BuildConfig.BUILD_TYPE}")
             appendLine("package=${context.packageName}")
             appendLine("uid=${Process.myUid()}")
+            appendLine("lastUpdateTime=${Instant.ofEpochMilli(packageInfo.lastUpdateTime)}")
+            appendLine("hostExceptionHandlerInstalled=${PersistentDiagnosticLog.ownsExceptionHandler()}")
+            val launcher = runCatching { context.packageManager.getLaunchIntentForPackage(context.packageName) }.getOrNull()
+            val entry = launcher?.component?.takeIf { it.packageName == context.packageName }
+                ?.let { runCatching { context.packageManager.getActivityInfo(it, 0) }.getOrNull() }
+            appendLine("launcherAvailable=${entry != null}")
+            appendLine("launcherEnabled=${entry?.enabled == true}")
+            appendLine("launcherExported=${entry?.exported == true}")
             appendLine("deviceManufacturer=${Build.MANUFACTURER}")
             appendLine("deviceBrand=${Build.BRAND}")
             appendLine("deviceModel=${Build.MODEL}")

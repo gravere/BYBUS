@@ -77,7 +77,6 @@ import com.xdja.zs.IToastCallback;
 import com.xdja.zs.IUiCallback;
 import com.xdja.zs.IVSCallback;
 import com.xdja.zs.IVSKeyCallback;
-import com.xdja.zs.exceptionRecorder;
 
 import java.io.File;
 import java.io.IOException;
@@ -523,9 +522,8 @@ public final class VirtualCore {
                 //启动时清零主进程计数器，有可能在进程崩溃时导致计数器残留计数
                 ActivityCounterManager.get().cleanPackage(VirtualCore.get().getHostPkg());
 
-                //设置异常记录
-                Thread.setDefaultUncaughtExceptionHandler(new exceptionRecorder.defaulUncaughtExceptionHandler());
-
+                // The host already installed its bounded diagnostic handler, which delegates
+                // to Android. Never replace it with the legacy recorder that swallows crashes.
                 break;
             case VAppClient:
                 initializer.onVirtualProcess();
@@ -533,16 +531,10 @@ public final class VirtualCore {
             case Server:
                 initializer.onServerProcess();
 
-                //设置异常记录
-                Thread.setDefaultUncaughtExceptionHandler(new exceptionRecorder.defaulUncaughtExceptionHandler());
-
                 break;
             case CHILD:
                 initializer.onChildProcess();
 
-                //设置异常记录
-                Thread.setDefaultUncaughtExceptionHandler(new exceptionRecorder.defaulUncaughtExceptionHandler());
-                
                 break;
         }
     }

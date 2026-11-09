@@ -36,6 +36,7 @@ class MainActivity : ComponentActivity() {
      */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        logEntry("create", restored = savedInstanceState != null)
         val migration = com.example.limbuszhcn.migration.MigrationAccess
         if (migration.preferences(this).getBoolean("pending", false) ||
             !intent.getBooleanExtra("skip_legacy_migration", false) && migration.shouldOffer(this)) {
@@ -181,6 +182,7 @@ class MainActivity : ComponentActivity() {
     /** Returning from the guest refreshes its last launch receipt. */
     override fun onResume() {
         super.onResume()
+        logEntry("resume")
         if (isFinishing) return
         if (com.example.limbuszhcn.migration.MigrationAccess.preferences(this).getBoolean("pending", false)) {
             startActivity(Intent(this, com.example.limbuszhcn.migration.MigrationActivity::class.java))
@@ -193,13 +195,14 @@ class MainActivity : ComponentActivity() {
     /** 处理复用现有 Activity 时收到的受限调试 Intent。 */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
+        logEntry("new_intent")
         if (intent.action == io.github.gravere.bybus.migration.core.MigrationArchive.IMPORT_ACTION &&
             com.example.limbuszhcn.migration.MigrationAccess.shouldOffer(this)) {
             startActivity(Intent(this, com.example.limbuszhcn.migration.MigrationActivity::class.java))
             finish()
             return
         }
-        Log.i(TAG, "MainActivity.onNewIntent pid=${Process.myPid()} taskId=$taskId intent=${intent.describeForLog()} stack=${shortStack()}")
         launchContainerGameFromDebugIntent(intent)
         if (intent.action == com.example.limbuszhcn.update.GameStores.UPDATE_ACTION)
             androidx.lifecycle.ViewModelProvider(this)[LauncherViewModel::class.java].requestGameUpdates()
@@ -209,8 +212,20 @@ class MainActivity : ComponentActivity() {
      * 销毁主界面并记录任务状态，便于定位宿主与虚拟游戏之间的生命周期切换。
      */
     override fun onDestroy() {
-        Log.i(TAG, "MainActivity.onDestroy pid=${Process.myPid()} taskId=$taskId finishing=$isFinishing changingConfigurations=$isChangingConfigurations")
+        logEntry("destroy")
         super.onDestroy()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) logEntry("focus")
+    }
+
+    private fun logEntry(stage: String, restored: Boolean = false) {
+        PersistentDiagnosticLog.info(TAG, "MainActivity entry=$stage taskId=$taskId root=$isTaskRoot " +
+            "restored=$restored finishing=$isFinishing changingConfigurations=$isChangingConfigurations " +
+            "launcher=${intent?.action == Intent.ACTION_MAIN && intent?.hasCategory(Intent.CATEGORY_LAUNCHER) == true} " +
+            "flags=0x${Integer.toHexString(intent?.flags ?: 0)}")
     }
 
     companion object {
