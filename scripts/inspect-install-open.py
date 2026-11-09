@@ -47,7 +47,9 @@ def inspect(apk, adb, command, hierarchy, locate, tap, report, out):
     locate(hierarchy("before-update"), "设置与工具")
     adb("shell", "am", "start", "-W", "-n", fixture + "/.InstallProbe", timeout=60)
     adb("push", str(apk), "/sdcard/Android/data/" + fixture + "/files/update.apk", timeout=120)
-    tap("Install BYBUS", hierarchy("installer-caller"))
+    caller = hierarchy("installer-caller")
+    label = next(n.get("text") for n in caller.iter("node") if n.get("text", "").lower() == "install bybus")
+    tap(label, caller)
     deadline = time.monotonic() + 90
     confirmed = False
     opened = False
