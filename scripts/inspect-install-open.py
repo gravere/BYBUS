@@ -39,8 +39,10 @@ def inspect(apk, adb, command, hierarchy, locate, tap, report, out):
     adb("shell", "appops", "set", fixture, "REQUEST_INSTALL_PACKAGES", "allow")
     # Leave the real application task present during replacement, like an external file-manager update.
     adb("logcat", "-c")
+    # PackageManager.getLaunchIntentForPackage returns an explicit component.
+    # A raw implicit MAIN start incorrectly adds MATCH_DEFAULT_ONLY at resolution.
     adb("shell", "am", "start", "-W", "-a", "android.intent.action.MAIN", "-c",
-        "android.intent.category.LAUNCHER", "-p", package, timeout=60)
+        "android.intent.category.LAUNCHER", "-n", package + "/com.example.limbuszhcn.MainActivity", timeout=60)
     time.sleep(2)
     locate(hierarchy("before-update"), "设置与工具")
     adb("shell", "am", "start", "-W", "-n", fixture + "/.InstallProbe", timeout=60)
