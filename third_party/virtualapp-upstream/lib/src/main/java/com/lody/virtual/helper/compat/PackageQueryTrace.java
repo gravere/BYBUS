@@ -1,14 +1,20 @@
 package com.lody.virtual.helper.compat;
 
 import java.util.ArrayDeque;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /** Bounded, argument-free summaries. Never retain package names, UIDs or exception messages. */
 public final class PackageQueryTrace {
     private final ArrayDeque<String> recent = new ArrayDeque<>(32);
     private int total;
+    private final Map<String, Integer> counts = new LinkedHashMap<>();
 
     public synchronized void record(String method, boolean proxied, Object result, Throwable error) {
         if (!supported(method)) return;
+        String route = method + ":" + (proxied ? "container" : "platform");
+        int count = counts.containsKey(route) ? counts.get(route) : 0;
+        counts.put(route, count == Integer.MAX_VALUE ? count : count + 1);
         String outcome;
         if (error != null) {
             outcome = error instanceof SecurityException ? "security_error" : "exception";
@@ -25,12 +31,17 @@ public final class PackageQueryTrace {
             outcome = "present";
         }
         if (recent.size() == 32) recent.removeFirst();
-        recent.addLast(method + ":" + (proxied ? "container" : "platform") + ":" + outcome);
+        recent.addLast(route + ":" + outcome);
         if (total < Integer.MAX_VALUE) total++;
     }
 
     public synchronized String snapshot() {
-        return "calls=" + total + " recent=" + String.join(",", recent);
+        StringBuilder summary = new StringBuilder("calls=").append(total).append(" totals=");
+        for (Map.Entry<String, Integer> entry : counts.entrySet()) {
+            if (summary.charAt(summary.length() - 1) != '=') summary.append(',');
+            summary.append(entry.getKey()).append(':').append(entry.getValue());
+        }
+        return summary.append(" recent=").append(String.join(",", recent)).toString();
     }
 
     private static boolean supported(String method) {
