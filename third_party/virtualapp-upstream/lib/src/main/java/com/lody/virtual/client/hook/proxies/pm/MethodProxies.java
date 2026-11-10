@@ -56,7 +56,6 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
-import mirror.android.content.pm.ParceledListSlice;
 
 /**
  * @author Lody
@@ -737,13 +736,13 @@ class MethodProxies {
             for (ResolveInfo item : appResult) fixLimbusOwnResolveInfo(item);
             if (shouldIsolateHostPackagesForLimbus()) {
                 if (slice) {
-                    return ParceledListSliceCompat.create(appResult);
+                    return ParceledListSliceCompat.create(appResult, method);
                 }
                 return appResult;
             }
             Object _hostResult = method.invoke(who, args);
             if (_hostResult != null) {
-                List<ResolveInfo> hostResult = slice ? (List<ResolveInfo>) ParceledListSlice.getList.call(_hostResult)
+                List<ResolveInfo> hostResult = slice ? (List<ResolveInfo>) ParceledListSliceCompat.getList(_hostResult)
                         : (List) _hostResult;
                 if (hostResult != null) {
                     Iterator<ResolveInfo> iterator = hostResult.iterator();
@@ -757,7 +756,7 @@ class MethodProxies {
                 }
             }
             if (slice) {
-                return ParceledListSliceCompat.create(appResult);
+                return ParceledListSliceCompat.create(appResult, method);
             }
             return appResult;
         }
@@ -830,21 +829,21 @@ class MethodProxies {
             Intent intent = (Intent)args[0];
             if((intent != null) && ("android.intent.action.SEND".equals(intent.getAction()) || "android.intent.action.SEND_MULTIPLE".equals(intent.getAction()) || "android.intent.action.SENDTO".equals(intent.getAction()))){
                 if (slice) {
-                    return ParceledListSliceCompat.create(appResult);
+                    return ParceledListSliceCompat.create(appResult, method);
                 }
                 return appResult;
             }
 
             if (shouldIsolateHostPackagesForLimbus()) {
                 if (slice) {
-                    return ParceledListSliceCompat.create(appResult);
+                    return ParceledListSliceCompat.create(appResult, method);
                 }
                 return appResult;
             }
 
             Object _hostResult = method.invoke(who, args);
             if (_hostResult != null) {
-                List<ResolveInfo> hostResult = slice ? (List<ResolveInfo>) ParceledListSlice.getList.call(_hostResult)
+                List<ResolveInfo> hostResult = slice ? (List<ResolveInfo>) ParceledListSliceCompat.getList(_hostResult)
                         : (List) _hostResult;
                 if (hostResult != null) {
                     Iterator<ResolveInfo> iterator = hostResult.iterator();
@@ -860,7 +859,7 @@ class MethodProxies {
                 }
             }
             if (slice) {
-                return ParceledListSliceCompat.create(appResult);
+                return ParceledListSliceCompat.create(appResult, method);
             }
             return appResult;
         }
@@ -1236,7 +1235,7 @@ class MethodProxies {
         @Override
         public Object call(Object who, Method method, Object... args) throws Throwable {
             if (ParceledListSliceCompat.isReturnParceledListSlice(method)) {
-                return ParceledListSliceCompat.create(new ArrayList<ApplicationInfo>(0));
+                return ParceledListSliceCompat.create(new ArrayList<ApplicationInfo>(0), method);
             } else {
                 return new ArrayList<ApplicationInfo>(0);
             }
@@ -1261,13 +1260,13 @@ class MethodProxies {
             for (ProviderInfo item : infos) fixLimbusOwnComponentInfo(item);
             if (shouldIsolateHostPackagesForLimbus()) {
                 if (slice) {
-                    return ParceledListSliceCompat.create(infos);
+                    return ParceledListSliceCompat.create(infos, method);
                 }
                 return infos;
             }
             Object _hostResult = method.invoke(who, args);
             if (_hostResult != null) {
-                List<ProviderInfo> hostResult = slice ? (List<ProviderInfo>) ParceledListSlice.getList.call(_hostResult)
+                List<ProviderInfo> hostResult = slice ? (List<ProviderInfo>) ParceledListSliceCompat.getList(_hostResult)
                         : (List) _hostResult;
                 Iterator<ProviderInfo> it = hostResult.iterator();
                 while (it.hasNext()) {
@@ -1282,7 +1281,7 @@ class MethodProxies {
             }
 
             if (slice) {
-                return ParceledListSliceCompat.create(infos);
+                return ParceledListSliceCompat.create(infos, method);
             }
             return infos;
         }
@@ -1573,12 +1572,12 @@ class MethodProxies {
             for (ApplicationInfo info : appInfos) fixLimbusOwnApplicationInfo(info);
             if (shouldIsolateHostPackagesForLimbus()) {
                 if (slice) {
-                    return ParceledListSliceCompat.create(appInfos);
+                    return ParceledListSliceCompat.create(appInfos, method);
                 }
                 return appInfos;
             }
             Object _hostResult = method.invoke(who, args);
-            List<ApplicationInfo> hostResult = slice ? (List<ApplicationInfo>) ParceledListSlice.getList.call(_hostResult)
+            List<ApplicationInfo> hostResult = slice ? (List<ApplicationInfo>) ParceledListSliceCompat.getList(_hostResult)
                     : (List) _hostResult;
             Iterator<ApplicationInfo> it = hostResult.iterator();
             while (it.hasNext()) {
@@ -1594,7 +1593,7 @@ class MethodProxies {
             }
             appInfos.addAll(hostResult);
             if (slice) {
-                return ParceledListSliceCompat.create(appInfos);
+                return ParceledListSliceCompat.create(appInfos, method);
             }
             return appInfos;
         }
@@ -1617,12 +1616,12 @@ class MethodProxies {
             for (PackageInfo info : packageInfos) fixLimbusOwnPackageInfo(info);
             if (shouldIsolateHostPackagesForLimbus()) {
                 if (slice) {
-                    return ParceledListSliceCompat.create(packageInfos);
+                    return ParceledListSliceCompat.create(packageInfos, method);
                 }
                 return packageInfos;
             }
             Object _hostResult = method.invoke(who, args);
-            List<PackageInfo> hostResult = slice ? (List<PackageInfo>) ParceledListSlice.getList.call(_hostResult)
+            List<PackageInfo> hostResult = slice ? (List<PackageInfo>) ParceledListSliceCompat.getList(_hostResult)
                     : (List) _hostResult;
             Iterator<PackageInfo> it = hostResult.iterator();
             while (it.hasNext()) {
@@ -1638,7 +1637,7 @@ class MethodProxies {
             }
             packageInfos.addAll(hostResult);
             if (ParceledListSliceCompat.isReturnParceledListSlice(method)) {
-                return ParceledListSliceCompat.create(packageInfos);
+                return ParceledListSliceCompat.create(packageInfos, method);
             } else {
                 return packageInfos;
             }
@@ -1667,12 +1666,12 @@ class MethodProxies {
             for (ResolveInfo item : appResult) fixLimbusOwnResolveInfo(item);
             if (shouldIsolateHostPackagesForLimbus()) {
                 if (slice) {
-                    return ParceledListSliceCompat.create(appResult);
+                    return ParceledListSliceCompat.create(appResult, method);
                 }
                 return appResult;
             }
             Object _hostResult = method.invoke(who, args);
-            List<ResolveInfo> hostResult = slice ? (List<ResolveInfo>) ParceledListSlice.getList.call(_hostResult)
+            List<ResolveInfo> hostResult = slice ? (List<ResolveInfo>) ParceledListSliceCompat.getList(_hostResult)
                     : (List) _hostResult;
             if (hostResult != null) {
                 Iterator<ResolveInfo> iterator = hostResult.iterator();
@@ -1687,7 +1686,7 @@ class MethodProxies {
                 appResult.addAll(hostResult);
             }
             if (slice) {
-                return ParceledListSliceCompat.create(appResult);
+                return ParceledListSliceCompat.create(appResult, method);
             }
             return appResult;
         }
@@ -1793,12 +1792,12 @@ class MethodProxies {
             for (ResolveInfo item : appResult) fixLimbusOwnResolveInfo(item);
             if (shouldIsolateHostPackagesForLimbus()) {
                 if (slice) {
-                    return ParceledListSliceCompat.create(appResult);
+                    return ParceledListSliceCompat.create(appResult, method);
                 }
                 return appResult;
             }
             Object _hostResult = method.invoke(who, args);
-            List<ResolveInfo> hostResult = slice ? (List<ResolveInfo>) ParceledListSlice.getList.call(_hostResult)
+            List<ResolveInfo> hostResult = slice ? (List<ResolveInfo>) ParceledListSliceCompat.getList(_hostResult)
                     : (List) _hostResult;
             if (hostResult != null) {
                 Iterator<ResolveInfo> iterator = hostResult.iterator();
@@ -1813,7 +1812,7 @@ class MethodProxies {
                 appResult.addAll(hostResult);
             }
             if (ParceledListSliceCompat.isReturnParceledListSlice(method)) {
-                return ParceledListSliceCompat.create(appResult);
+                return ParceledListSliceCompat.create(appResult, method);
             }
             return appResult;
         }

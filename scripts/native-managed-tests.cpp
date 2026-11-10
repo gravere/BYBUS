@@ -1,5 +1,6 @@
 #include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusManagedState.h"
 #include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusFontProof.h"
+#include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusTextProvenance.h"
 #include <atomic>
 #include <cassert>
 #include <codecvt>
@@ -26,6 +27,8 @@ limbus_managed::Registry<bool> g_translated_objects(g_gc, 262144);
 limbus_managed::RecentOutputs g_recent_font_outputs;
 limbus_font_proof::Catalogue g_font_catalogue;
 std::unordered_map<std::string, std::string> g_index, g_contextual_index;
+std::unordered_map<std::string, std::string> g_terms;
+thread_local std::string g_ui_text_key;
 std::atomic<uint64_t> g_contextual_hits{0}, g_acquisition_hits{0};
 // Shim the two mutex calls, not the production translation decisions.
 std::mutex g_font_state_lock;
@@ -42,6 +45,7 @@ bool utf16_to_utf8(const uint16_t *s, int32_t length, std::string *out) {
     *out = codec.to_bytes(reinterpret_cast<const char16_t *>(s), reinterpret_cast<const char16_t *>(s) + length);
     return true;
 }
+bool utf8_to_utf16(const std::string &s, std::u16string *out) { *out = codec.from_bytes(s); return true; }
 std::vector<std::unique_ptr<ManagedString>> strings;
 void *new_managed_string(const std::string &text) {
     strings.emplace_back(new ManagedString{codec.from_bytes(text)});
@@ -49,10 +53,10 @@ void *new_managed_string(const std::string &text) {
 }
 bool strip_line_height_tags(const std::string &, std::string *) { return false; }
 std::string apply_dante_line_height(const std::string &s) { return s; }
-bool translate_embedded_terms(const std::string &, std::string *) { return false; }
 bool is_usable_display_text(const std::string &) { return true; }
 bool font_ready = true;
 bool ensure_tmp_font() { return font_ready; }
+#include "runtime-terms-under-test.inc"
 
 // Generated from the current runtime, not a separate implementation of the algorithm.
 #include "runtime-translation-under-test.inc"
@@ -62,6 +66,38 @@ std::unordered_set<void *> destroyed;
 bool native_alive(void *object) { return !destroyed.count(object); }
 
 int main() {
+    {
+        std::string scene = "@story:outer";
+        try {
+            limbus_text_provenance::ScopedTextKey scope(scene, "@story:inner");
+            throw 7;
+        } catch (int value) {
+            assert(value == 7);
+        }
+        assert(scene == "@story:outer");
+    }
+    g_index["共通の台詞"] = "全局译文";
+    g_contextual_index[std::string("@story:A") + '\x1f' + "content" + '\x1f' + "共通の台詞"] = "剧情译文";
+    g_contextual_index[std::string("@story:A/dialog:8") + '\x1f' + "content" + '\x1f' + "共通の台詞"] = "本行译文";
+    assert(text(translate_managed_string(new_managed_string("共通の台詞"), "@story:A/dialog:8", "content")) == "本行译文");
+    assert(text(translate_managed_string(new_managed_string("共通の台詞"), "@story:A/dialog:9", "content")) == "剧情译文");
+    assert(text(translate_managed_string(new_managed_string("共通の台詞"), "@story:B/dialog:9", "content")) == "全局译文");
+    g_index["入場"] = "进入战斗";
+    g_contextual_index[std::string("enter") + '\x1f' + "content" + '\x1f' + "入場"] = "进入";
+    {
+        limbus_text_provenance::ScopedTextKey outer(g_ui_text_key, "enter");
+        assert(text(translate_managed_string(new_managed_string("入場"))) == "进入");
+        {
+            limbus_text_provenance::ScopedTextKey inner(g_ui_text_key, "another-button");
+            assert(text(translate_managed_string(new_managed_string("入場"))) == "进入战斗");
+        }
+        assert(g_ui_text_key == "enter");
+        assert(text(translate_managed_string(new_managed_string("入場"))) == "进入");
+        // Explicit object identities cannot inherit the enclosing UI key.
+        assert(text(translate_managed_string(new_managed_string("入場"), "other", "content")) == "进入战斗");
+    }
+    assert(g_ui_text_key.empty());
+    assert(text(translate_managed_string(new_managed_string("入場"))) == "进入战斗");
     g_index = {{"ガード", "防御"}, {"防御", "抵御"}};
     g_contextual_index[std::string("defense") + '\x1f' + "name" + '\x1f' + "防御"] = "抵御";
     g_font_catalogue.add("防御"); g_font_catalogue.add("抵御");
@@ -108,5 +144,13 @@ int main() {
         assert(state.size() == 0);
     }
     assert(handles.size() == before); // Weak owners and retained original assets released.
+    g_terms = {{"ガード", "防御"}, {"or", "或"}};
+    rebuild_term_trie();
+    std::string translated;
+    assert(translate_embedded_terms("<ガード>", &translated) && translated == "<防御>");
+    assert(translate_embedded_terms("<color=red>ガード</color>", &translated));
+    assert(translated == "<color=red>防御</color>");
+    assert(!translate_embedded_terms("<noparse>ガード</noparse>", &translated));
+    assert(!translate_embedded_terms("<color=red></color>", &translated));
     puts("Managed provenance, context order, GC/address reuse, native destruction and bounds passed");
 }

@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.lody.virtual.client.hook.proxies.pm.FrameworkPermissionProbe
+import com.lody.virtual.client.hook.proxies.pm.NativePackageQueryProbe
 import org.json.JSONObject
 import java.io.File
 
@@ -13,7 +14,10 @@ class FrameworkPermissionProbeReceiver : BroadcastReceiver() {
         val pending = goAsync()
         Thread {
             try {
-                val result = runCatching { FrameworkPermissionProbe.inspect(context) }.getOrElse {
+                val result = runCatching {
+                    if (intent.getStringExtra("stage") == "package-jni") NativePackageQueryProbe.inspect(context)
+                    else FrameworkPermissionProbe.inspect(context)
+                }.getOrElse {
                     JSONObject().put("passed", false).put("error", it.stackTraceToString().take(8000))
                 }
                 File(context.filesDir, "framework-permission-result.json").writeText(result.toString())

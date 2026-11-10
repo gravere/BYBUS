@@ -3,17 +3,117 @@
 #include <string>
 #include <string_view>
 #include <cstring>
+#include <cmath>
+#include <utility>
+#include "LimbusRichText.h"
 
 namespace limbus_text_provenance {
+inline bool skill_number(const std::string &id) {
+    return !id.empty() && id.size() <= 18 &&
+            std::all_of(id.begin(), id.end(), [](char c) { return c >= '0' && c <= '9'; });
+}
+inline std::string skill_root_key(const std::string &id) {
+    return skill_number(id) ? "@skill:" + id : std::string();
+}
+inline std::string gift_root_key(const std::string &id) {
+    return skill_number(id) ? "@ego-gift:" + id : std::string();
+}
+inline std::string gift_ability_key(const std::string &parent, const std::string &id) {
+    return parent.compare(0, 10, "@ego-gift:") == 0 &&
+            skill_number(parent.substr(10)) && skill_number(id)
+            ? parent + "/ability:" + id : std::string();
+}
+inline std::string event_root_key(const std::string &id) {
+    return skill_number(id) ? "@action-event:" + id : std::string();
+}
+inline std::string story_scene_key(std::string name) {
+    if (name.compare(0, 10, "StoryData/") == 0) name.erase(0, 10);
+    if (name.compare(0, 3, "JP_") == 0) name.erase(0, 3);
+    if (name.size() > 5 && name.compare(name.size() - 5, 5, ".json") == 0) name.resize(name.size() - 5);
+    if (name.empty() || name.size() > 96 || !std::all_of(name.begin(), name.end(), [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+    })) return {};
+    return "@story:" + name;
+}
+inline std::string story_dialog_key(const std::string &parent, const std::string &id) {
+    return parent.compare(0, 7, "@story:") == 0 && story_scene_key(parent.substr(7)) == parent &&
+            skill_number(id) ? parent + "/dialog:" + id : std::string();
+}
+inline std::string story_parent_key(const std::string &context) {
+    const auto split = context.find("/dialog:");
+    if (split == std::string::npos) return {};
+    const auto parent = context.substr(0, split);
+    return story_dialog_key(parent, context.substr(split + 8)) == context ? parent : std::string();
+}
+inline std::string guide_root_key(const std::string &id) {
+    return skill_number(id) ? "@abnormality-guide:" + id : std::string();
+}
+inline std::string event_option_key(const std::string &parent, int32_t index) {
+    return parent.compare(0, 14, "@action-event:") == 0 && skill_number(parent.substr(14)) &&
+            index >= 0 && index < 512 ? parent + "/option:" + std::to_string(index) : std::string();
+}
+inline std::string guide_story_key(const std::string &parent, const std::string &level) {
+    return parent.compare(0, 19, "@abnormality-guide:") == 0 && skill_number(parent.substr(19)) &&
+            skill_number(level) ? parent + "/level:" + level : std::string();
+}
+inline std::string rpg_dialogue_root_key(const std::string &key) {
+    if (key.empty() || key.size() > 96 || !std::all_of(key.begin(), key.end(), [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                c == '-' || c == '_' || c == '.';
+    })) return {};
+    return "@rpg-dialogue:" + key;
+}
+inline std::string rpg_dialogue_text_key(const std::string &parent, const std::string &index) {
+    return parent.compare(0, 14, "@rpg-dialogue:") == 0 && !rpg_dialogue_root_key(parent.substr(14)).empty() &&
+            skill_number(index) ? parent + "/text:" + index : std::string();
+}
+inline bool text_collection_type(const char *name, const char *element, bool dictionary) {
+    if (!name || !element) return false;
+    std::string type(name);
+    type.erase(std::remove(type.begin(), type.end(), ' '), type.end());
+    if (!dictionary && type == std::string(element) + "[]") return true;
+    static const char *const dictionaries[] = {"Dictionary", "Dictionary`2", "IReadOnlyDictionary", "IReadOnlyDictionary`2"};
+    static const char *const lists[] = {"List", "List`1", "IReadOnlyList", "IReadOnlyList`1"};
+    for (size_t i = 0; i < 4; ++i) {
+        const char *container = dictionary ? dictionaries[i] : lists[i];
+        std::string expected = std::string("System.Collections.Generic.") + container + "<" +
+                (dictionary ? "System.Int32," : "") + element + ">";
+        if (type == expected) return true;
+    }
+    return false;
+}
+inline std::string skill_child_key(const std::string &parent, const char *field,
+                                   const std::string &level, int32_t index) {
+    if (parent.empty() || !field || index < 0) return {};
+    std::string suffix;
+    if (!strcmp(field, "levelList") || !strcmp(field, "levellist")) {
+        if (!skill_number(level)) return {};
+        suffix = "/level:" + level;
+    } else if (!strcmp(field, "coinList") || !strcmp(field, "coinlist")) {
+        suffix = "/coin:" + std::to_string(index);
+    } else if (!strcmp(field, "coinDescs") || !strcmp(field, "coindescs")) {
+        suffix = "/text:" + std::to_string(index);
+    } else return {};
+    return parent.size() + suffix.size() <= 256 ? parent + suffix : std::string();
+}
+class ScopedTextKey {
+    std::string &current;
+    std::string previous;
+public:
+    ScopedTextKey(std::string &slot, std::string key)
+        : current(slot), previous(std::move(slot)) { current = std::move(key); }
+    ~ScopedTextKey() { current = std::move(previous); }
+    ScopedTextKey(const ScopedTextKey &) = delete;
+    ScopedTextKey &operator=(const ScopedTextKey &) = delete;
+};
 inline bool explicit_line_break(std::string_view text) {
     if (text.find_first_of("\r\n") != std::string_view::npos) return true;
     for (size_t i = 0; i + 3 < text.size(); ++i) {
-        if (text.substr(i, 9) == "<noparse>") {
-            auto end = text.find("</noparse>", i + 9);
-            if (end == std::string_view::npos) break;
-            i = end + 9 - 1;
-        } else if (text[i] == '<' && (text[i + 1] == 'b' || text[i + 1] == 'B') &&
-                   (text[i + 2] == 'r' || text[i + 2] == 'R') && text[i + 3] == '>') return true;
+        auto tag = limbus_rich_text::tag_at(text, i);
+        if (!tag.end || tag.closing) continue;
+        if (limbus_rich_text::equal_ascii(tag.name, "noparse"))
+            i = limbus_rich_text::literal_end(text, tag.end) - 1;
+        else if (limbus_rich_text::equal_ascii(tag.name, "br")) return true;
     }
     return false;
 }
@@ -22,8 +122,18 @@ inline bool explicit_line_break(std::string_view text) {
 inline bool single_line_label(size_t visible, bool explicit_break, bool original_no_wrap,
                               float rect_height, float font_size, int overflow = -1) {
     // Preserve Masking, Truncate, ScrollRect, Page and Linked modes (TMP 3).
-    return overflow < 2 && visible <= 48 && !explicit_break && (original_no_wrap ||
-            (rect_height > 0 && font_size > 0 && rect_height <= font_size * 1.8f));
+    if (overflow >= 2 || visible > 48 || explicit_break) return false;
+    if (rect_height > 0 && font_size > 0)
+        return rect_height <= font_size * 1.8f;
+    return original_no_wrap;
+}
+inline float nominal_font_size(float current, bool auto_sizing, float maximum) {
+    return auto_sizing && std::isfinite(maximum) && maximum > 0 ? maximum : current;
+}
+inline float readable_minimum(float maximum, float original_minimum) {
+    float floor = std::max(9.0f, maximum * 0.8f);
+    if (std::isfinite(original_minimum) && original_minimum > floor) floor = original_minimum;
+    return std::min(maximum, floor);
 }
 // These IL2CPP parameters occupy one general-purpose register on the supported
 // arm64 profile. Floating-point and arbitrary value types require typed wrappers.

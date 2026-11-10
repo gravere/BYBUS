@@ -3,6 +3,7 @@ package com.lody.virtual.helper.compat;
 import java.util.ArrayDeque;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.List;
 
 /** Bounded, argument-free summaries. Never retain package names, UIDs or exception messages. */
 public final class PackageQueryTrace {
@@ -27,6 +28,10 @@ public final class PackageQueryTrace {
                     : value >= -8 && value <= 8 ? "code_" + value : "integer";
         } else if (result instanceof String[]) {
             outcome = ((String[]) result).length == 0 ? "empty" : "packages";
+        } else if ((method.equals("getInstalledPackages") || method.equals("getInstalledApplications"))
+                && result instanceof List) {
+            int size = ((List<?>) result).size();
+            outcome = size == 0 ? "list_empty" : size == 1 ? "list_single" : "list_multiple";
         } else {
             outcome = "present";
         }

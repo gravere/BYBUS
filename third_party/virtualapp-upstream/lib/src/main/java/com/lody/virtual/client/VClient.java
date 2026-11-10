@@ -757,7 +757,10 @@ public final class VClient extends IVClient.Stub {
                 limbusScanner.start();
             }
             try {
-                mInitialApplication = LoadedApk.makeApplication.call(data.info, false, null);
+                mInitialApplication = LoadedApk.makeApplication.callWithException(data.info, false, null);
+                if (mInitialApplication == null) {
+                    throw new IllegalStateException("Application creation returned no instance");
+                }
             } finally {
                 if (limbusScannerRunning != null) {
                     limbusScannerRunning.set(false);

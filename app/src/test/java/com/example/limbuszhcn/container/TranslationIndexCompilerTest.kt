@@ -15,6 +15,41 @@ import kotlin.io.path.readText
 
 class TranslationIndexCompilerTest {
     @Test
+    fun skillConditionsKeepSkillLevelAndCoinIdentity() {
+        val source = """{"dataList":[{"id":100,"levelList":[{"level":1,"desc":"同じ説明","coinlist":[{"coindescs":[{"desc":"条件"}]}]},{"level":4,"desc":"同じ説明"}]},{"id":200,"levelList":[{"level":1,"desc":"同じ説明"}]}]}"""
+        val target = """{"dataList":[{"id":200,"levelList":[{"level":1,"desc":"技能乙说明"}]},{"id":100,"levelList":[{"level":4,"desc":"强化说明"},{"level":1,"desc":"初始说明","coinlist":[{"coindescs":[{"desc":"硬币条件"}]}]}]}]}"""
+        val paired = TranslationJsonPairer.pair("jp/JP_Skills_Test.json", source, target)
+        assertEquals(4, paired.records.size)
+        val compiler = TranslationIndexCompiler().apply { paired.records.forEach(::add) }.compile("v", "archive")
+        fun description(id: String) = compiler.contextualEntries[
+            TranslationIndexCompiler.contextKey(id, "desc", "同じ説明")]
+        assertEquals("初始说明", description("@skill:100/level:1"))
+        assertEquals("强化说明", description("@skill:100/level:4"))
+        assertEquals("技能乙说明", description("@skill:200/level:1"))
+        assertEquals("@skill:100/level:1/coin:0/text:0", paired.records.single { it.source == "条件" }.stableId)
+        assertNull(compiler.uniqueEntries["同じ説明"])
+        val changedCoinCount = target.replace("[{\"desc\":\"硬币条件\"}]", "[{\"desc\":\"硬币条件\"},{\"desc\":\"新增\"}]")
+        assertTrue(TranslationJsonPairer.pair("jp/JP_Skills_Test.json", source, changedCoinCount)
+            .records.none { it.source == "条件" })
+        // Other tables must never acquire a skill identity just because a field is called levelList.
+        assertTrue(TranslationJsonPairer.pair("jp/JP_Other.json", source, target)
+            .records.none { it.stableId?.startsWith("@skill:") == true })
+    }
+
+    @Test
+    fun decorativeMarkupCannotCreateTermsFromAngleBracketProseOrLiteralTags() {
+        val result = TranslationIndexCompiler().apply {
+            add(record("JP_Bufs.json", "literal", "name", "<敵>攻撃", "<敌人>攻击"))
+            add(record("JP_Bufs.json", "noparse", "name", "<noparse><b>防御</b></noparse>", "<noparse><b>抵御</b></noparse>"))
+            add(record("JP_Bufs.json", "color", "name", "<color=red>回避</color>", "<color=red>闪避</color>"))
+        }.compile("v", "archive")
+        assertNull(result.termEntries["攻撃"])
+        assertNull(result.termEntries["防御"])
+        assertEquals("闪避", result.termEntries["回避"])
+        assertEquals("<敌人>攻击", result.uniqueEntries["<敵>攻撃"])
+    }
+
+    @Test
     fun numericLabelsRequireResourceContextAndCannotRewriteTimers() {
         val inputs = listOf("30", "04:30", "133 / 133", "251.91", "<color=yellow>30</color>")
         val compiled = TranslationIndexCompiler().apply {
@@ -370,6 +405,37 @@ class TranslationIndexCompilerTest {
         assertEquals("提示甲", compiler.uniqueEntries["提示"])
         assertEquals("提示乙", compiler.contextualEntries[TranslationIndexCompiler.contextKey("other", "content", "提示")])
         assertNull(TranslationIndexCompiler.contextKey("bad\u001fid", "content", "同文"))
+    }
+
+    @Test
+    fun keepsSkillNameWhenDerivedGlossaryUsesAnotherSpelling() {
+        val index = TranslationIndexCompiler().apply {
+            add(record("JP_Skills.json", "skill", "name", "急襲", "突击")
+                .copy(stableId = "@skill:1/level:1"))
+            add(record("JP_Bufs.json", "buff", "name", "[急襲]", "[突袭]")
+                .copy(stableId = "@buf:1"))
+        }.compile("1", "archive")
+        assertEquals("突袭", index.uniqueEntries["急襲"])
+        assertEquals("突击", index.contextualEntries[
+            TranslationIndexCompiler.contextKey("@skill:1/level:1", "name", "急襲")])
+    }
+
+    @Test
+    fun separatesStatusAndBattleKeywordWithSameIdAndOriginal() {
+        val compiler = TranslationIndexCompiler()
+        for ((file, target) in listOf("Bufs" to "防御等级+2", "BattleKeywords_Mirror5" to "防御等级 +2")) {
+            TranslationJsonPairer.pair("jp/JP_$file.json",
+                """{"dataList":[{"id":"MD512","desc":"防御レベル +2"}]}""",
+                """{"dataList":[{"id":"MD512","desc":"$target"}]}""")
+                .records.forEach(compiler::add)
+        }
+        val index = compiler.compile("1", "archive")
+        assertEquals("防御等级+2", index.contextualEntries[
+            TranslationIndexCompiler.contextKey("@buf:MD512", "desc", "防御レベル +2")])
+        assertEquals("防御等级 +2", index.contextualEntries[
+            TranslationIndexCompiler.contextKey("@battle-keyword:MD512", "desc", "防御レベル +2")])
+        assertNull(index.contextualEntries[
+            TranslationIndexCompiler.contextKey("MD512", "desc", "防御レベル +2")])
     }
 
     @Test

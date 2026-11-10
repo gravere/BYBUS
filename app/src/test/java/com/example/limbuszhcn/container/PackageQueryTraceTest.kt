@@ -5,6 +5,22 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PackageQueryTraceTest {
+    @Test fun installedListShapeIsRecordedWithoutReadingItsElements() {
+        val trace = PackageQueryTrace()
+        trace.record("getInstalledPackages", true, emptyList<Any>(), null)
+        trace.record("getInstalledApplications", true, listOf("private.package"), null)
+        val inaccessibleContents = object : AbstractList<Any>() {
+            override val size = 243
+            override fun get(index: Int): Any = error("Do not read application identities")
+        }
+        trace.record("getInstalledPackages", true, inaccessibleContents, null)
+        val summary = trace.snapshot()
+        assertTrue(summary.contains("getInstalledPackages:container:list_empty"))
+        assertTrue(summary.contains("getInstalledApplications:container:list_single"))
+        assertTrue(summary.contains("getInstalledPackages:container:list_multiple"))
+        assertFalse(summary.contains("private"))
+        assertFalse(summary.contains("243"))
+    }
     @Test fun metadataNeverContainsIdentityOrExceptionMessages() {
         val trace = PackageQueryTrace()
         trace.record("getPackagesForUid", true, arrayOf("private.package"), null)

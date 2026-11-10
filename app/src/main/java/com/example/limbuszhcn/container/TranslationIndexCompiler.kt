@@ -20,7 +20,7 @@ import kotlin.io.path.readText
 import kotlin.io.path.outputStream
 import kotlin.io.path.writeText
 
-internal const val TRANSLATION_COMPILER_REVISION = "jp-pairing-11"
+internal const val TRANSLATION_COMPILER_REVISION = "jp-pairing-12"
 
 /**
  * 表示一条从官方日文显示字段到中文显示字段的结构化配对记录。
@@ -138,17 +138,6 @@ internal class TranslationIndexCompiler {
         bySource.toSortedMap().forEach { (source, occurrences) ->
             val translations = occurrences.groupingBy(TranslationIndexRecord::translation).eachCount()
             val numeric = isNumericLiteral(source)
-            if (translations.size > 1 || numeric || source in translatedOutputs) {
-                occurrences.mapNotNull { record ->
-                    contextKey(record.stableId, record.field, source)?.let { it to record.translation }
-                }.groupBy({ it.first }, { it.second }).toSortedMap().forEach { (key, targets) ->
-                    // Even a dominant global spelling must not overwrite a different,
-                    // unambiguous translation attached to this exact resource entry.
-                    val distinct = targets.distinct()
-                    (distinct.singleOrNull() ?: source.takeIf { it in distinct })
-                        ?.let { contextual[key] = it }
-                }
-            }
             val resolved = if (source in unchangedSources) source else resolveTranslation(translations)
             // Identity guards for conflicting spellings are also needed at TMP's
             // unscoped boundary. Plain Latin/kana-only identity records need no rule.
@@ -191,6 +180,28 @@ internal class TranslationIndexCompiler {
                     // TMP 最终只提供字符串、没有资源 ID。发生同文异译时，以下载包的
                     // Buff/战斗关键词词典作为界面格式化后的唯一权威译名。
                     unique[source] = translation
+                }
+            }
+        }
+        // A derived glossary spelling may replace the unscoped rule even when
+        // complete records were unambiguous (e.g. a skill name inside a tag).
+        // Keep each identified record's full-text spelling after that resolution.
+        bySource.forEach { (source, occurrences) ->
+            val global = unique[source]
+            if (occurrences.map { it.translation }.distinct().size > 1 ||
+                isNumericLiteral(source) || source in translatedOutputs ||
+                (global != null && occurrences.any { global != it.translation })) {
+                occurrences.flatMap { record ->
+                    // Retain the older unambiguous line-ID fallback when the
+                    // runtime cannot acquire a complete scenario identity.
+                    val story = record.stableId?.let { STORY_CONTEXT.matchEntire(it)?.groupValues }
+                    listOfNotNull(record.stableId, story?.get(1), story?.get(2)?.takeIf(String::isNotEmpty)).distinct().mapNotNull { id ->
+                        contextKey(id, record.field, source)?.let { it to record.translation }
+                    }
+                }.groupBy({ it.first }, { it.second }).toSortedMap().forEach { (key, targets) ->
+                    val distinct = targets.distinct()
+                    (distinct.singleOrNull() ?: source.takeIf { it in distinct })
+                        ?.let { contextual[key] = it }
                 }
             }
         }
@@ -253,8 +264,8 @@ internal class TranslationIndexCompiler {
         return buildSet {
             candidateTerm(source, translation)?.let(::add)
             candidateTerm(
-                RICH_TEXT_TAG.replace(source, ""),
-                RICH_TEXT_TAG.replace(translation, "")
+                stripDecorativeTags(source),
+                stripDecorativeTags(translation)
             )?.let(::add)
             val sourceBracketTerms = SQUARE_BRACKET_CONTENT.findAll(source)
                 .map { match -> match.groupValues[1] }
@@ -276,8 +287,8 @@ internal class TranslationIndexCompiler {
         source: String,
         translation: String
     ): Set<Pair<String, String>> {
-        val sourceLines = RICH_TEXT_TAG.replace(source, "").lines()
-        val translationLines = RICH_TEXT_TAG.replace(translation, "").lines()
+        val sourceLines = stripDecorativeTags(source).lines()
+        val translationLines = stripDecorativeTags(translation).lines()
         if (sourceLines.size != translationLines.size) return emptySet()
         return buildSet {
             sourceLines.zip(translationLines).forEach { (sourceLine, translationLine) ->
@@ -313,7 +324,7 @@ internal class TranslationIndexCompiler {
     }
 
     private fun isNumericLiteral(value: String): Boolean {
-        val text = RICH_TEXT_TAG.replace(value, "").filterNot(Char::isWhitespace)
+        val text = stripDecorativeTags(value).filterNot(Char::isWhitespace)
         return text.length in 1..64 && text.any { it in '0'..'9' } &&
             text.all { it in '0'..'9' || it in "+-.,:/%()" }
     }
@@ -333,10 +344,20 @@ internal class TranslationIndexCompiler {
     }
 
     companion object {
+        private val STORY_CONTEXT = Regex("^(@story:[A-Za-z0-9_-]{1,96})(?:/dialog:([0-9]{1,18}))?$")
         fun contextKey(id: String?, field: String, source: String): String? =
             id?.takeIf { it.isNotBlank() && it.length <= 256 && it.none { char -> char.code < 32 } }
                 ?.let { "$it\u001f$field\u001f$source" }
-        private val RICH_TEXT_TAG = Regex("<[^>]+>")
+        // Angle-bracket dialogue is visible prose. Strip only known decoration;
+        // literal blocks, font/sprite controls and unknown tags stay opaque to
+        // derived terms instead of creating a different standalone phrase.
+        private fun stripDecorativeTags(value: String): String =
+            if (NO_PARSE.containsMatchIn(value)) value else DECORATION_TAG.replace(value, "")
+        private val NO_PARSE = Regex("</?noparse\\s*>", RegexOption.IGNORE_CASE)
+        private val DECORATION_TAG = Regex(
+            "</?(?:b|i|u|s|color|alpha|size|line-height|cspace|mspace|voffset|mark|smallcaps|uppercase|lowercase|allcaps)(?:=[^<>\\r\\n]{1,100})?>|<#[0-9a-f]{6}(?:[0-9a-f]{2})?>",
+            RegexOption.IGNORE_CASE
+        )
         private val SQUARE_BRACKET_CONTENT = Regex("\\[([^\\[\\]]+)]")
         private val LEADING_BULLET = Regex("^\\s*[-·•]\\s*")
         private val CLAUSE_DELIMITERS = setOf('、', '，', ',', '：', ':')
