@@ -25,6 +25,16 @@ Android 17 的 `IPackageManager.getInstalledPackages` 返回 `PackageInfoList`�
 `ClassCastException`，栈位于系统 `ApplicationPackageManager.getInstalledPackagesAsUser`。
 证据：[修复前运行记录](https://github.com/gravere/BYBUS/actions/runs/42862487414)。
 
+修复后的同一生产代理通过 Android 11（8 项）及 Android 17（13 项）的公开 Java/JNI
+用例，包括旧式参数、新版 Flags、原生附加线程、跨进程注册记录，以及空／单项／多项
+具体平台类型的 Parcel 往返；应用元数据保留，临时注册记录与进程身份在结束时恢复。
+证据：[修复后运行记录](https://github.com/gravere/BYBUS/actions/runs/42864872885)。
+这些用例运行于普通应用 UID；测试夹具只进入 debug 构建，正式 APK 不包含夹具原生库。
+
+游戏构建 488 的只读分析显示，其 70036 路径会检查上述列表查询的 JNI 异常、列表长度
+与包名读取结果。此次修复消除了在 Android 17 实际复现的查询异常，未更改游戏检查、
+注册成员或包可见范围；该云端用例不启动游戏，受影响真机的完整启动仍需实际运行确认。
+
 依据：[AOSP Android 17 PackageInfoList](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/android17-release/core/java/android/content/pm/PackageInfoList.java)、
 [IPackageManager](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/android17-release/core/java/android/content/pm/IPackageManager.aidl)。
 
@@ -46,8 +56,8 @@ Android 17 的 `IPackageManager.getInstalledPackages` 返回 `PackageInfoList`�
   参数、签名或异常消息。游戏主进程发起已有安全提示时输出摘要，不改变原调用、
   返回结果、提示或进程退出行为。诊断失败不能阻断业务调用。
 
-这些是容器接口自身的正确性修复。现有 70036 诊断没有给出具体失败调用，不能把
-接口回归检查通过等同于真实游戏启动恢复。未知保护结构和游戏 APK 不在此次修改范围。
+这些是容器接口自身的正确性修复。70036 还可对应其他查询失败，不能把
+接口回归检查通过等同于所有设备的真实游戏启动恢复。未知保护结构和游戏 APK 不在此次修改范围。
 
 参考：[Android PackageManager](https://developer.android.com/reference/android/content/pm/PackageManager)、
 [AOSP ApplicationPackageManager](https://github.com/aosp-mirror/platform_frameworks_base/blob/master/core/java/android/app/ApplicationPackageManager.java)。
