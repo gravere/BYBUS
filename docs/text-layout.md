@@ -31,6 +31,11 @@ UI 加载器的两种确切 `SetText()` 入口在原函数调用期间按 `key` 
 译名覆盖技能的正式名称。旧 Unity UI.Text 同样使用原始字号上限与可读下限，
 避免按字数估算宽度把中文缩到 7 号；正文按有效高度换行。
 
+E.G.O 饰品的 `simpleDesc` 是带 `abilityID` 的子对象列表。按饰品 ID 与能力 ID
+共同配对，不能仅按数组位置选择另一条能力说明；只有重复记录两侧各自完全相同时
+才能合并处理。原生层只沿 `TextData_EgoGift.simpleDesc` 到
+`TextData_EgoGiftAbility` 传递身份，保留能力编号和其他非显示字段。
+
 中文基准字体继续使用随包提供的 Sarasa Gothic SC Bold。TMP 的原始 fontStyle、
 fontWeight 以及译源中的 b、i、u、color、size 标记保持原义；正文、条件小字与
 技能标题的字号分别取对应控件，不统一覆盖为一个固定字号。材质转换保留原有

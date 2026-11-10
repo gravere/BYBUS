@@ -95,6 +95,8 @@ std::unordered_map<std::string, std::string> g_terms;
 std::unordered_map<std::string, std::string> g_contextual_index;
 thread_local std::string g_ui_text_key;
 void *g_skill_text_class = nullptr;
+void *g_ego_gift_text_class = nullptr;
+void *g_ego_gift_ability_class = nullptr;
 void *g_buf_text_class = nullptr;
 void *g_battle_keyword_text_class = nullptr;
 std::atomic<uint64_t> g_contextual_hits{0};
@@ -969,19 +971,19 @@ void translate_display_string_collection(void *collection, bool array, const std
 
 void translate_object_string_fields(void *instance, bool story_dialog = false,
                                     std::vector<std::string> *translated_fields = nullptr,
-                                    const std::string &skill_context = {}) {
+                                    const std::string &object_context = {}) {
     if (instance == nullptr || g_object_get_class == nullptr || g_class_get_parent == nullptr ||
         g_class_get_fields == nullptr || g_field_get_name == nullptr ||
         g_field_get_type == nullptr || g_field_get_value == nullptr ||
         g_field_set_value == nullptr || g_type_get_name == nullptr || g_il2cpp_free == nullptr) {
         return;
     }
-    std::string stable_id = !skill_context.empty() ? skill_context : g_contextual_index.empty() ? std::string() :
+    std::string stable_id = !object_context.empty() ? object_context : g_contextual_index.empty() ? std::string() :
             read_text_object_id(instance, story_dialog ? "OriginalId" : "id");
     if (!story_dialog && stable_id.empty() && !g_contextual_index.empty()) {
         stable_id = read_text_object_id(instance, "key");
     }
-    if (!story_dialog && skill_context.empty() && !stable_id.empty()) {
+    if (!story_dialog && object_context.empty() && !stable_id.empty()) {
         void *klass = g_object_get_class(instance);
         if (g_buf_text_class && klass == g_buf_text_class) stable_id = "@buf:" + stable_id;
         else if (g_battle_keyword_text_class && klass == g_battle_keyword_text_class)
@@ -1063,16 +1065,20 @@ bool is_nested_text_field(const char *name) {
 void translate_object_graph_impl(void *instance, int depth,
                                  std::unordered_set<void *> *visited,
                                  std::vector<std::string> *translated_fields,
-                                 const std::string &skill_context = {}) {
+                                 const std::string &object_context = {}) {
     if (instance == nullptr || depth > 4 || visited == nullptr ||
         !visited->insert(instance).second) {
         return;
     }
-    std::string scope = skill_context;
+    std::string scope = object_context;
     if (scope.empty() && g_skill_text_class && g_object_get_class &&
         g_object_get_class(instance) == g_skill_text_class) {
         scope = limbus_text_provenance::skill_root_key(read_text_object_id(instance));
     }
+    const bool gift = g_ego_gift_text_class && g_object_get_class &&
+            g_object_get_class(instance) == g_ego_gift_text_class;
+    if (scope.empty() && gift)
+        scope = limbus_text_provenance::gift_root_key(read_text_object_id(instance));
     translate_object_string_fields(instance, false, translated_fields, scope);
     if (g_object_get_class == nullptr || g_class_get_parent == nullptr ||
         g_class_get_fields == nullptr || g_field_get_name == nullptr ||
@@ -1086,7 +1092,8 @@ void translate_object_graph_impl(void *instance, int depth,
         const void *field = nullptr;
         while ((field = g_class_get_fields(klass, &iterator)) != nullptr) {
             const char *field_name = g_field_get_name(field);
-            if (!is_nested_text_field(field_name)) continue;
+            const bool gift_abilities = gift && field_name && strcmp(field_name, "simpleDesc") == 0;
+            if (!is_nested_text_field(field_name) && !gift_abilities) continue;
             void *list = nullptr;
             g_field_get_value(instance, field, &list);
             void *list_class = list == nullptr ? nullptr : g_object_get_class(list);
@@ -1114,6 +1121,12 @@ void translate_object_graph_impl(void *instance, int depth,
                     const bool is_level = strcmp(field_name, "levelList") == 0 || strcmp(field_name, "levellist") == 0;
                     auto child_scope = limbus_text_provenance::skill_child_key(scope, field_name,
                             is_level ? read_text_object_id(child, "level") : std::string(), index);
+                    if (gift_abilities) {
+                        if (!g_ego_gift_ability_class || g_object_get_class(child) != g_ego_gift_ability_class)
+                            continue;
+                        child_scope = limbus_text_provenance::gift_ability_key(scope,
+                                read_text_object_id(child, "abilityID"));
+                    }
                     translate_object_graph_impl(child, depth + 1, visited, translated_fields, child_scope);
                 }
             }
@@ -3088,6 +3101,10 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             ui_text_data_class = class_from_name(image, "", "TextData_UI");
         if (g_skill_text_class == nullptr)
             g_skill_text_class = class_from_name(image, "", "TextData_Skill");
+        if (g_ego_gift_text_class == nullptr)
+            g_ego_gift_text_class = class_from_name(image, "", "TextData_EgoGift");
+        if (g_ego_gift_ability_class == nullptr)
+            g_ego_gift_ability_class = class_from_name(image, "", "TextData_EgoGiftAbility");
         if (g_buf_text_class == nullptr)
             g_buf_text_class = class_from_name(image, "", "TextData_Buf");
         if (g_battle_keyword_text_class == nullptr)

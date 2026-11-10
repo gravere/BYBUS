@@ -128,11 +128,18 @@ def inspect(adb, command, hierarchy, locate, tap, report, out, verifier):
         raise RuntimeError("Game split installation failed")
     adb("shell", "am", "force-stop", HOST)
     adb("logcat", "-b", "all", "-c")
-    component = adb("shell", "cmd", "package", "resolve-activity", "--brief", GAME).strip().splitlines()[-1]
+    component = adb("shell", "cmd", "package", "resolve-activity", "--brief",
+                    "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER",
+                    "-p", GAME).strip().splitlines()[-1]
     if not component.startswith(GAME + "/"):
         raise RuntimeError("Official launcher activity unresolved")
-    adb("shell", "am", "start", "-W", "-n", component, timeout=90, check=False)
+    launch = adb("shell", "am", "start", "-W", "-a", "android.intent.action.MAIN",
+                 "-c", "android.intent.category.LAUNCHER", "-n", component, timeout=90, check=False)
+    (out / "official-launch.txt").write_text(sanitize(launch), encoding="utf-8")
     report["official_startup"] = observe_startup(adb, out, "official-startup", 40)
+    report["official_startup"]["launch_status_ok"] = re.search(r"Status:\s+ok", launch) is not None
+    exits = adb("shell", "dumpsys", "activity", "exit-info", GAME, timeout=20, check=False)
+    (out / "official-exits.txt").write_text(sanitize(exits[-16000:]), encoding="utf-8")
     # Stop at the title/login/alert page; do not download user resources or log in.
     adb("shell", "am", "force-stop", GAME)
     adb("logcat", "-b", "all", "-c")

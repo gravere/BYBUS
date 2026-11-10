@@ -15,6 +15,14 @@ inline bool skill_number(const std::string &id) {
 inline std::string skill_root_key(const std::string &id) {
     return skill_number(id) ? "@skill:" + id : std::string();
 }
+inline std::string gift_root_key(const std::string &id) {
+    return skill_number(id) ? "@ego-gift:" + id : std::string();
+}
+inline std::string gift_ability_key(const std::string &parent, const std::string &id) {
+    return parent.compare(0, 10, "@ego-gift:") == 0 &&
+            skill_number(parent.substr(10)) && skill_number(id)
+            ? parent + "/ability:" + id : std::string();
+}
 inline std::string skill_child_key(const std::string &parent, const char *field,
                                    const std::string &level, int32_t index) {
     if (parent.empty() || !field || index < 0) return {};

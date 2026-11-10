@@ -52,7 +52,8 @@ internal object TranslationJsonPairer {
     private fun collect(original: Any?, translated: Any?, path: String, context: String,
                         records: MutableList<TranslationIndexRecord>, depth: Int,
                         displayArray: String? = null, arrayOwnerId: String? = null,
-                        skillContext: String? = null, skillRelation: String? = null) {
+                        skillContext: String? = null, skillRelation: String? = null,
+                        giftContext: String? = null) {
         require(depth <= 64) { "Resource nesting exceeds limit" }
         when {
             original is JSONObject && translated is JSONObject -> {
@@ -68,10 +69,22 @@ internal object TranslationJsonPairer {
                             it == "Skills.json" || it.startsWith("Skills_")
                         }
                 }?.let { "@skill:$it" }
-                val stableId = skillRoot ?: directId?.let { tableIdentity(path, it) }
+                val giftRoot = giftContext ?: directId?.takeIf { id ->
+                    id.isSkillNumber() && path.substringAfterLast('/').removePrefix("JP_").let {
+                        it == "EGOgift.json" || it.startsWith("EGOgift_") || it.startsWith("EGOgift-")
+                    }
+                }?.let { "@ego-gift:$it" }
+                val stableId = skillRoot ?: giftRoot ?: directId?.let { tableIdentity(path, it) }
                 original.keys().forEach { field ->
                     val source = original.opt(field)
                     val target = translated.opt(field)
+                    if (field == "simpleDesc" && giftRoot != null && !giftRoot.contains('/')) {
+                        if (source is JSONArray && target is JSONArray) {
+                            collectGiftAbilities(source, target, path, "$objectContext.$field",
+                                records, depth + 1, giftRoot)
+                        }
+                        return@forEach
+                    }
                     if (source is String && target is String && source.isNotBlank() && target.isNotBlank() &&
                         TranslationTextPolicy.isDisplayField(field) &&
                         TranslationTextPolicy.isUsableDisplayText(source) && TranslationTextPolicy.isUsableDisplayText(target)) {
@@ -135,6 +148,48 @@ internal object TranslationJsonPairer {
                         skillContext = nestedSkill)
                 }
             }
+        }
+    }
+
+    private fun collectGiftAbilities(original: JSONArray, translated: JSONArray, path: String,
+                                     context: String, records: MutableList<TranslationIndexRecord>,
+                                     depth: Int, parent: String) {
+        fun groups(array: JSONArray) = (0 until array.length()).mapNotNull { index ->
+            array.optJSONObject(index)?.let { row ->
+                row.opt("abilityID")?.toString()?.takeIf { it.isSkillNumber() }?.let { it to row }
+            }
+        }.groupBy({ it.first }, { it.second })
+        val sources = groups(original)
+        val targets = groups(translated)
+        for (index in 0 until original.length()) {
+            val source = original.optJSONObject(index) ?: continue
+            val id = source.opt("abilityID")?.toString()?.takeIf { it.isSkillNumber() } ?: continue
+            val sourceGroup = sources.getValue(id)
+            val targetGroup = targets[id].orEmpty()
+            if (targetGroup.isEmpty() || sourceGroup.any { !equivalentJson(it, source) }) continue
+            val target = targetGroup.first()
+            if (targetGroup.any { !equivalentJson(it, target) }) continue
+            // Ability IDs are metadata, not a license to pair changed structures.
+            fun metadata(row: JSONObject) = JSONObject().apply {
+                row.keys().forEach { key -> if (!TranslationTextPolicy.isDisplayField(key)) put(key, row.get(key)) }
+            }
+            if (!equivalentJson(metadata(source), metadata(target))) continue
+            collect(source, target, path, "$context[$index]", records, depth + 1,
+                giftContext = "$parent/ability:$id")
+        }
+    }
+
+    private fun equivalentJson(left: Any?, right: Any?, depth: Int = 0): Boolean {
+        if (depth > 64) return false
+        return when {
+            left is JSONObject && right is JSONObject -> {
+                val keys = left.keys().asSequence().toSet()
+                keys == right.keys().asSequence().toSet() &&
+                    keys.all { equivalentJson(left.opt(it), right.opt(it), depth + 1) }
+            }
+            left is JSONArray && right is JSONArray -> left.length() == right.length() &&
+                (0 until left.length()).all { equivalentJson(left.opt(it), right.opt(it), depth + 1) }
+            else -> left == right
         }
     }
 

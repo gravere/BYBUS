@@ -25,6 +25,7 @@ import com.lody.virtual.client.env.VirtualRuntime;
 import com.lody.virtual.client.fixer.ComponentFixer;
 import com.lody.virtual.helper.collection.ArrayMap;
 import com.lody.virtual.helper.compat.BuildCompat;
+import com.lody.virtual.helper.compat.ContainerAbiCompat;
 import com.lody.virtual.helper.compat.NativeLibraryHelperCompat;
 import com.lody.virtual.helper.compat.PackageParserCompat;
 import com.lody.virtual.helper.utils.FileUtils;
@@ -412,6 +413,28 @@ public class PackageParserEx {
                     // 对无原生库或“双 ABI”虚拟包回退到设备可执行的 64 位 ABI。
                     ApplicationInfoL.primaryCpuAbi.set(ai, Build.SUPPORTED_64_BIT_ABIS[0]);
                 }
+            }
+            // PackageManager already selected the engine ABI when installing it.
+            // SUPPORTED_ABIS[0] is the device preference, not that selected ABI
+            // (for example x86_64 on an ARM-translating emulator).
+            try {
+                ApplicationInfo engine = is64bit
+                        ? VirtualCore.get().getUnHookPackageManager().getApplicationInfo(
+                            config.getPluginEnginePackageName(), 0)
+                        : VirtualCore.get().getHostApplicationInfo();
+                if (engine != null) {
+                    String engineAbi = ApplicationInfoL.primaryCpuAbi.get(engine);
+                    String selected = ContainerAbiCompat.primaryAbi(engineAbi, Build.SUPPORTED_ABIS,
+                            ApplicationInfoL.primaryCpuAbi.get(ai));
+                    ApplicationInfoL.primaryCpuAbi.set(ai, selected);
+                    if (engineAbi != null && engineAbi.equals(selected)) {
+                        ApplicationInfoL.secondaryCpuAbi.set(ai,
+                                ps.flag == PackageSetting.FLAG_RUN_BOTH_32BIT_64BIT
+                                        ? ApplicationInfoL.secondaryCpuAbi.get(engine) : null);
+                    }
+                }
+            } catch (PackageManager.NameNotFoundException ignored) {
+                // Keep the existing ABI choice if an optional engine is unavailable.
             }
         }
 

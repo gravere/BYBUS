@@ -33,6 +33,11 @@ int main() {
     assert(!contains_translated_field("环指 父辈", "<color=red>环指 父辈</color>"));
     using namespace limbus_text_provenance;
     assert(skill_root_key("100") == "@skill:100");
+    assert(gift_root_key("9827") == "@ego-gift:9827");
+    assert(gift_ability_key("@ego-gift:9827", "98271") == "@ego-gift:9827/ability:98271");
+    assert(gift_ability_key("@skill:9827", "98271").empty());
+    assert(gift_ability_key("@ego-gift:9827/ability:98271", "98271").empty());
+    assert(gift_ability_key("@ego-gift:9827", "unknown").empty());
     assert(skill_root_key("not-an-id").empty());
     assert(skill_child_key("@skill:100", "levelList", "4", 0) == "@skill:100/level:4");
     assert(skill_child_key("@skill:100/level:1", "coinlist", "", 0) == "@skill:100/level:1/coin:0");
