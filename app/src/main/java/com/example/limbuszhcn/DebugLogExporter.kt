@@ -53,6 +53,8 @@ internal class DebugLogExporter(private val context: Context) {
                     zip.writeText("persistent/${logFile.name}", content)
                 }
             zip.writeText("logcat.txt", collectLogcat())
+            zip.writeText("process-starts.txt", SystemStartupDiagnostics.collect(context))
+            zip.writeText("app-install.txt", com.example.limbuszhcn.selfupdate.AppUpdateInstaller(context).summary())
             // Recover only old host/server crash records omitted by earlier diagnostic exports.
             val legacyNames = Regex("(?:null|${Regex.escape(context.packageName.replace(':', '_') + "_x")})_\\d{4}-\\d{2}-\\d{2}-\\d{2}-\\d{2}-\\d{2}\\.log")
             val legacyDirectory = File(context.filesDir, "saftySandBoxExceptionLog")
@@ -229,6 +231,7 @@ internal class DebugLogExporter(private val context: Context) {
                 appendLine("process=${reason.processName}")
                 appendLine("reason=${exitReasonName(reason.reason)}(${reason.reason})")
                 appendLine("status=${reason.status}")
+                appendLine("checkpoint=${SystemStartupDiagnostics.exitCheckpoint(reason.processStateSummary)}")
                 appendLine("importance=${reason.importance}")
                 appendLine("pssKb=${reason.pss}")
                 appendLine("rssKb=${reason.rss}")

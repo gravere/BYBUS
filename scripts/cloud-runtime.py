@@ -1334,15 +1334,16 @@ def main():
     if "Success" not in installed:
         raise RuntimeError("APK installation did not succeed: " + installed[-1000:])
     REPORT["checks"].append("published APK signature/hash and installation")
-    if os.environ.get("RUNTIME_MODE") == "install-open":
+    if os.environ.get("RUNTIME_MODE") in ("install-open", "startup-records"):
         import importlib.util
         spec = importlib.util.spec_from_file_location("install_open", "scripts/inspect-install-open.py")
         inspection = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(inspection)
-        inspection.inspect(apk, adb, command, hierarchy, locate, tap, REPORT, OUT)
-        if release["draft"]:
-            install_component_probe(release, verifier)
-            inspection.inspect_crash_handlers(adb, hierarchy, locate, REPORT, OUT)
+        if os.environ.get("RUNTIME_MODE") == "startup-records":
+            inspection.inspect_startup_records(adb, hierarchy, locate, REPORT, OUT, release, verifier, install_component_probe)
+        else:
+            inspection.inspect(apk, adb, command, hierarchy, locate, tap, REPORT, OUT,
+                               release, request, verifier, install_component_probe)
         return
     if os.environ.get("RUNTIME_MODE") in ("service-callback", "permissions", "package-queries"):
         adb("logcat", "-c")
@@ -1477,7 +1478,7 @@ except Exception as error:
     raise
 finally:
     try:
-        if os.environ.get("RUNTIME_MODE") in ("service-callback", "permissions", "package-queries", "install-open"):
+        if os.environ.get("RUNTIME_MODE") in ("service-callback", "permissions", "package-queries", "install-open", "startup-records"):
             diagnostic = adb("logcat", "-d", "-t", "700", "PermissionProbe:E", "ServiceCallbackProbe:E", "ActivityManager:I",
                              "ActivityTaskManager:I", "LimbusZhCN:D", "LimbusZhCNApp:I", "LimbusVA:W",
                              "InstallSuccess:I", "InstallLaunch:I", "BYBUSInstallProbe:I", "AndroidRuntime:E", "*:S", timeout=15, check=False)
