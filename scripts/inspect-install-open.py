@@ -53,6 +53,19 @@ def inspect(apk, adb, command, hierarchy, locate, tap, report, out,
         text = adb("shell", "dumpsys", "package", PACKAGE)
         return int(re.search(r"\bversionCode=(\d+)\b", text).group(1))
 
+    def root_shell():
+        adb("root")
+        adb("wait-for-device", timeout=30)
+        if adb("shell", "id", "-u").strip() != "0":
+            raise RuntimeError("Cannot read disposable emulator evidence")
+
+    def push_external(path):
+        # Android 11 FUSE assigns app-specific storage access through the shell identity.
+        # A root adbd push can leave a file the provider cannot read.
+        adb("unroot")
+        adb("wait-for-device", timeout=30)
+        adb("push", str(apk), path, timeout=120)
+
     def wait_home(stem):
         deadline = time.monotonic() + 35
         while True:
@@ -76,6 +89,11 @@ def inspect(apk, adb, command, hierarchy, locate, tap, report, out,
             tree = hierarchy(stem)
             buttons = {n.get("text", "").lower(): n for n in tree.iter("node")
                        if n.get("clickable") == "true" and n.get("enabled") == "true"}
+            if any("problem parsing" in n.get("text", "").lower() for n in tree.iter("node")):
+                (out / (stem + "-error.txt")).write_text(adb("logcat", "-d", "-t", "800",
+                    "PackageInstaller:I", "InstallStart:I", "InstallStaging:I", "PackageUtil:I",
+                    "PackageInstallerActivity:I", "BYBUSInstallProbe:I", "AndroidRuntime:E", "*:S"), encoding="utf-8")
+                raise RuntimeError("Installer could not parse the fixture-provided APK")
             if not confirmed:
                 action = next((name for name in ("update", "install") if name in buttons), None)
                 if action:
@@ -105,10 +123,7 @@ def inspect(apk, adb, command, hierarchy, locate, tap, report, out,
     report["launcher_entries"] = dict(implicit=True, explicit=True)
 
     # Root reads fixture evidence only in this empty emulator, never in a user's environment.
-    adb("root")
-    adb("wait-for-device", timeout=30)
-    if adb("shell", "id", "-u").strip() != "0":
-        raise RuntimeError("Cannot read disposable emulator evidence")
+    root_shell()
 
     previous = None
     if release["draft"]:
@@ -137,15 +152,18 @@ def inspect(apk, adb, command, hierarchy, locate, tap, report, out,
     wait_home("before-external-update")
     sentinel = Path(os.environ["RUNNER_TEMP"]) / "upgrade-sentinel.txt"
     sentinel.write_text("BYBUS_CLOUD_UPGRADE_SENTINEL", encoding="ascii")
-    sentinel_path = "/data/user/0/" + PACKAGE + "/files/upgrade-sentinel.txt"
+    # Use an existing app-created directory; adb push must never create root-owned app directories.
+    sentinel_path = "/data/user/0/" + PACKAGE + "/no_backup/diagnostics/upgrade-sentinel.txt"
+    adb("shell", "test", "-d", str(Path(sentinel_path).parent))
     adb("push", str(sentinel), sentinel_path)
     fixture = build_external_fixture(adb, command)
     adb("shell", "am", "start", "-W", "-n", fixture + "/.InstallProbe", timeout=60)
-    adb("push", str(apk), "/sdcard/Android/data/" + fixture + "/files/update.apk", timeout=120)
+    push_external("/sdcard/Android/data/" + fixture + "/files/update.apk")
     tree = hierarchy("external-caller")
     label = next(n.get("text") for n in tree.iter("node") if n.get("text", "").lower() == "install bybus")
     tap(label, tree)
     drive_installer("external-update")
+    root_shell()
     if version() != target_code or adb("shell", "cat", sentinel_path).strip() != sentinel.read_text():
         raise RuntimeError("External replacement did not preserve version or fixture data")
     report["install_open"] = dict(passed=True, from_code=base_code, to_code=target_code,
@@ -160,8 +178,9 @@ def inspect(apk, adb, command, hierarchy, locate, tap, report, out,
             raise RuntimeError("In-app fixture must have a lower package version")
         adb("shell", "appops", "set", PACKAGE, "REQUEST_INSTALL_PACKAGES", "allow")
         adb("shell", "am", "start", "-W", "-n", PROBE, timeout=60)
-        adb("push", str(apk), "/sdcard/Android/data/" + PACKAGE + "/files/update.apk", timeout=120)
+        adb("shell", "test", "-d", str(Path(sentinel_path).parent))
         adb("push", str(sentinel), sentinel_path)
+        push_external("/sdcard/Android/data/" + PACKAGE + "/files/update.apk")
 
         def tap_fixture(stem):
             tree = hierarchy(stem)
@@ -171,6 +190,7 @@ def inspect(apk, adb, command, hierarchy, locate, tap, report, out,
 
         tap_fixture("in-app-caller")
         drive_installer("in-app-cancel", cancel=True)
+        root_shell()
         deadline = time.monotonic() + 20
         cancelled_path = "/data/user/0/" + PACKAGE + "/files/install-returned.txt"
         while True:
