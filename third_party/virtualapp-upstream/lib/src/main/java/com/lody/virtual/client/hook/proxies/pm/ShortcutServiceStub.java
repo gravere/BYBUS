@@ -32,7 +32,6 @@ import java.util.List;
 import java.util.Set;
 
 import mirror.android.content.pm.IShortcutService;
-import mirror.android.content.pm.ParceledListSlice;
 
 /**
  * @author Lody
@@ -73,7 +72,7 @@ public class ShortcutServiceStub extends BinderInvocationProxy {
         addMethodProxy(new ReplaceCallingPkgMethodProxy("getManifestShortcuts") {
             @Override
             public Object call(Object who, Method method, Object... args){
-                return ParceledListSliceCompat.create(new ArrayList<ShortcutInfo>());
+                return ParceledListSliceCompat.create(new ArrayList<ShortcutInfo>(), method);
             }
         });
 
@@ -115,7 +114,7 @@ public class ShortcutServiceStub extends BinderInvocationProxy {
                     List<ShortcutInfo> result = new ArrayList<>();
                     List list;
                     try {
-                        list = ParceledListSlice.getList.call(paramValue);
+                        list = ParceledListSliceCompat.getList(paramValue);
                     } catch (Throwable e) {
                         return defValue;
                     }
@@ -132,7 +131,7 @@ public class ShortcutServiceStub extends BinderInvocationProxy {
                             }
                         }
                     }
-                    args[infoIndex] = ParceledListSliceCompat.create(result);
+                    args[infoIndex] = ParceledListSliceCompat.createLike(result, paramValue);
                 }
                 return method.invoke(who, args);
             }
@@ -153,9 +152,9 @@ public class ShortcutServiceStub extends BinderInvocationProxy {
                 //ParceledListSlice<ShortcutInfo>
                 List<ShortcutInfo> result = new ArrayList<>();
                 if (!getConfig().isAllowCreateShortcut()) {
-                    return ParceledListSliceCompat.create(result);
+                    return ParceledListSliceCompat.create(result, method);
                 }
-                List list = ParceledListSlice.getList.call(parceledListSlice);
+                List list = ParceledListSliceCompat.getList(parceledListSlice);
                 if (list != null) {
                     for (int i = list.size() - 1; i >= 0; i--) {
                         Object obj = list.get(i);
@@ -169,7 +168,7 @@ public class ShortcutServiceStub extends BinderInvocationProxy {
                         }
                     }
                 }
-                return ParceledListSliceCompat.create(result);
+                return ParceledListSliceCompat.create(result, method);
             }
             return null;
         }

@@ -6,7 +6,7 @@ on:
       mode:
         description: Inspection scope
         type: choice
-        options: [ui, launch, install-open, install-open-legacy, startup-records, release-update, external-install, button-ui, button-feedback, detail-rest, row-feedback, service-callback, service-callback-new, service-cache, permissions, permissions-legacy, package-queries, updates, repairs, resources, migration-ui, interaction-ui, disclosure-ui, runtime]
+        options: [ui, launch, game-startup, package-jni, install-open, install-open-legacy, startup-records, release-update, external-install, button-ui, button-feedback, detail-rest, row-feedback, service-callback, service-callback-new, service-cache, permissions, permissions-legacy, package-queries, updates, repairs, resources, migration-ui, interaction-ui, disclosure-ui, runtime]
         default: ui
       candidate:
         description: Inspect the staged release matching this branch
@@ -32,10 +32,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        profile: ${{ fromJSON((inputs.mode == 'release-update' || inputs.mode == 'external-install') && '["android16"]' || (inputs.mode == 'permissions-legacy' || inputs.mode == 'install-open-legacy') && '["android11"]' || (inputs.mode == 'permissions' || inputs.mode == 'package-queries' || inputs.mode == 'install-open' || inputs.mode == 'startup-records') && '["android11","android17"]' || inputs.mode == 'service-callback-new' && '["android17"]' || inputs.mode == 'service-callback' && '["android15","android17"]' || inputs.mode != 'runtime' && '["android15"]' || '["android11","experimental16k"]') }}
+        profile: ${{ fromJSON((inputs.mode == 'release-update' || inputs.mode == 'external-install') && '["android16"]' || (inputs.mode == 'permissions-legacy' || inputs.mode == 'install-open-legacy') && '["android11"]' || (inputs.mode == 'permissions' || inputs.mode == 'package-queries' || inputs.mode == 'package-jni' || inputs.mode == 'install-open' || inputs.mode == 'startup-records') && '["android11","android17"]' || (inputs.mode == 'service-callback-new' || inputs.mode == 'game-startup') && '["android17"]' || inputs.mode == 'service-callback' && '["android15","android17"]' || inputs.mode != 'runtime' && '["android11","experimental16k"]') }}
     env:
       RUNTIME_PROFILE: ${{ matrix.profile }}
-      ANDROID_IMAGE: ${{ matrix.profile == 'android17' && 'system-images;android-37.0;google_apis;x86_64' || matrix.profile == 'android16' && 'system-images;android-36;google_apis;x86_64' || matrix.profile == 'android15' && 'system-images;android-35;google_apis;x86_64' || matrix.profile == 'android11' && 'system-images;android-30;google_apis;x86_64' || 'system-images;android-35;google_apis_ps16k;x86_64' }}
+      ANDROID_IMAGE: ${{ matrix.profile == 'android17' && (inputs.mode == 'game-startup' && 'system-images;android-37.0;google_apis_playstore;x86_64' || 'system-images;android-37.0;google_apis;x86_64') || matrix.profile == 'android16' && 'system-images;android-36;google_apis;x86_64' || matrix.profile == 'android15' && 'system-images;android-35;google_apis;x86_64' || matrix.profile == 'android11' && 'system-images;android-30;google_apis;x86_64' || 'system-images;android-35;google_apis_ps16k;x86_64' }}
       RUNTIME_MODE: ${{ inputs.mode == 'permissions-legacy' && 'permissions' || inputs.mode == 'install-open-legacy' && 'install-open' || (inputs.mode == 'service-callback-new' || inputs.mode == 'service-cache') && 'service-callback' || inputs.mode }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -49,6 +49,9 @@ jobs:
           trap 'printf "Environment setup failed at line %s\n" "$LINENO" > runtime-output/setup-error.txt' ERR
           test -e /dev/kvm
           sudo setfacl -m "u:$(id -u):rw" /dev/kvm
+          # Required even with -no-audio by the emulator binary on minimal runners.
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libpulse0
           sdk_bin="$ANDROID_HOME/cmdline-tools/latest/bin"
           if [ ! -x "$sdk_bin/sdkmanager" ]; then
             for sdk_candidate in "$ANDROID_HOME"/cmdline-tools/*/bin; do
@@ -68,12 +71,28 @@ jobs:
           export ANDROID_AVD_HOME="$RUNNER_TEMP/bybus-avd"
           mkdir -p "$ANDROID_AVD_HOME"
           printf 'ANDROID_AVD_HOME=%s\n' "$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
-          sdkmanager --install emulator "$ANDROID_IMAGE"
+          # Hosted runners already include an emulator. Updating it on every
+          # inspection can spend the whole job downloading an unrelated release.
+          if [ ! -x "$ANDROID_HOME/emulator/emulator" ]; then
+            timeout 480 sdkmanager --install emulator
+          fi
+          "$ANDROID_HOME/emulator/emulator" -version > runtime-output/emulator-version.txt
+          timeout 480 sdkmanager --install "$ANDROID_IMAGE"
           printf 'no\n' | avdmanager create avd -n bybus-runtime -k "$ANDROID_IMAGE"
           expected_target=$(cut -d ';' -f 2 <<< "$ANDROID_IMAGE")
           grep -Fx "target=$expected_target" "$ANDROID_AVD_HOME/bybus-runtime.ini" > runtime-output/avd-target.txt
           printf '\nhw.lcd.width=720\nhw.lcd.height=1560\nhw.lcd.density=320\ndisk.dataPartition.size=4G\n' >> "$ANDROID_AVD_HOME/bybus-runtime.avd/config.ini"
+          if [ "$RUNTIME_MODE" = game-startup ]; then
+            printf 'disk.dataPartition.size=8G\n' >> "$ANDROID_AVD_HOME/bybus-runtime.avd/config.ini"
+          fi
           "$ANDROID_HOME/emulator/emulator" -accel-check > runtime-output/acceleration.txt
+          # User builds seed their trusted emulator key at first boot. Generate
+          # it before the emulator starts, not when the first test calls adb.
+          mkdir -p "$HOME/.android"
+          if [ ! -s "$HOME/.android/adbkey.pub" ]; then
+            adb keygen "$HOME/.android/adbkey"
+          fi
+          adb start-server
           graphics_mode=swiftshader_indirect
           if [ "$RUNTIME_PROFILE" = android17 ]; then graphics_mode=software; fi
           "$ANDROID_HOME/emulator/emulator" -avd bybus-runtime -accel on -memory 3072 -cores 2 -no-window -no-audio -no-snapshot -no-boot-anim -gpu "$graphics_mode" -camera-back none -camera-front none > "$RUNNER_TEMP/bybus-emulator.log" 2>&1 &
@@ -83,6 +102,13 @@ jobs:
           RUNTIME_CANDIDATE: ${{ inputs.candidate }}
         run: python3 scripts/cloud-runtime.py
       - name: Save runtime evidence
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "$RUNNER_TEMP/bybus-emulator.log" ]; then
+            tail -c 131072 "$RUNNER_TEMP/bybus-emulator.log" > runtime-output/emulator-log.txt
+          fi
+      - name: Upload runtime evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

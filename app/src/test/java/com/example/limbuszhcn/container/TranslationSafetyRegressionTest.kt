@@ -146,7 +146,7 @@ class TranslationSafetyRegressionTest {
         val target = """[{"id":12,"model":"speaker-b","content":"乙的台词"},{"id":11,"model":"speaker-a","content":"甲的台词"}]"""
         val result = TranslationJsonPairer.pair("jp/StoryData/JP_E715B.json", source, target)
         assertEquals(listOf("甲的台词"), result.records.map { it.translation })
-        assertEquals(listOf("11"), result.records.map { it.stableId })
+        assertEquals(listOf("@story:E715B/dialog:11"), result.records.map { it.stableId })
         assertEquals(listOf("content"), result.records.map { it.field })
         // Repeated matching models offer no additional evidence and must be rejected.
         assertTrue(TranslationJsonPairer.pair("story", source.replace("speaker-b", "speaker-a"), target).records.isEmpty())

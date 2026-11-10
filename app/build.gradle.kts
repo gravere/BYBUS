@@ -48,8 +48,8 @@ android {
         minSdk = 26
         targetSdk = 35
         // 显示版本使用 BYBUS 命名；内部版本号保持递增，确保旧版可直接覆盖升级。
-        versionCode = 82
-        versionName = "v1.0.39"
+        versionCode = 83
+        versionName = "v1.0.40"
         // 版本页随资源更新，避免 Kotlin 增量编译保留旧的 BuildConfig 内联常量。
         resValue("string", "app_version_name", requireNotNull(versionName))
 
@@ -97,6 +97,9 @@ android {
         buildConfig = true
     }
     sourceSets.getByName("main").assets.srcDir(compactAssets)
+    // Optional JNI API fixture, built explicitly by scripts/build-jni-probe.py.
+    // It is absent from the production source set and Release APK.
+    sourceSets.getByName("debug").jniLibs.srcDir(layout.buildDirectory.dir("generated/jniProbe"))
     androidResources {
         ignoreAssetsPatterns.add("ChineseFont.ttf")
         noCompress.add("xz")

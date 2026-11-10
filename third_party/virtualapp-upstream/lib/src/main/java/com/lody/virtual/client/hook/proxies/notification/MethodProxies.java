@@ -22,7 +22,6 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 
-import mirror.android.content.pm.ParceledListSlice;
 
 /**
  * @author Lody
@@ -42,14 +41,14 @@ class MethodProxies {
         @Override
         public boolean beforeCall(Object who, Method method, Object... args) {
             if (args.length > 1 && ParceledListSliceCompat.isParceledListSlice(args[1])) {
-                List<NotificationChannelGroup> list = (List<NotificationChannelGroup>) ParceledListSlice.getList.call(args[1]);
+                List<NotificationChannelGroup> list = (List<NotificationChannelGroup>) ParceledListSliceCompat.getList(args[1]);
                 List<NotificationChannelGroup> newList = new ArrayList<>();
                 for (NotificationChannelGroup old : list) {
                     String id = VNotificationManager.get().dealNotificationGroup(old.getId(), getAppPkg(), getAppUserId());
                     NotificationChannelGroup group = new NotificationChannelGroup(id, old.getName());
                     newList.add(group);
                 }
-                args[1] = ParceledListSliceCompat.create(newList);
+                args[1] = ParceledListSliceCompat.createLike(newList, args[1]);
             }
             return super.beforeCall(who, method, args);
         }
@@ -108,7 +107,7 @@ class MethodProxies {
         public Object call(Object who, Method method, Object... args) throws Throwable {
             Object ret = super.call(who, method, args);
             boolean slice = ParceledListSliceCompat.isReturnParceledListSlice(method);
-            List<NotificationChannelGroup> list = slice ? (List<NotificationChannelGroup>) ParceledListSlice.getList.call(ret)
+            List<NotificationChannelGroup> list = slice ? (List<NotificationChannelGroup>) ParceledListSliceCompat.getList(ret)
                     : (List) ret;
             if (list != null) {
                 for (int i = list.size() - 1; i >= 0; i--) {
@@ -121,7 +120,7 @@ class MethodProxies {
                 }
             }
             if (slice) {
-                return ParceledListSliceCompat.create(list);
+                return ParceledListSliceCompat.create(list, method);
             } else {
                 return list;
             }
@@ -144,7 +143,7 @@ class MethodProxies {
         @Override
         public boolean beforeCall(Object who, Method method, Object... args) {
             if (args.length > 1 && ParceledListSliceCompat.isParceledListSlice(args[1])) {
-                List<NotificationChannel> list = (List<NotificationChannel>) ParceledListSlice.getList.call(args[1]);
+                List<NotificationChannel> list = (List<NotificationChannel>) ParceledListSliceCompat.getList(args[1]);
                 List<NotificationChannel> newList = new ArrayList<>();
                 for (NotificationChannel old : list) {
                     String id = VNotificationManager.get().dealNotificationChannel(old.getId(), getAppPkg(), getAppUserId());
@@ -171,7 +170,7 @@ class MethodProxies {
                         newList.add(old);
                     }
                 }
-                args[1] = ParceledListSliceCompat.create(newList);
+                args[1] = ParceledListSliceCompat.createLike(newList, args[1]);
             }
             return super.beforeCall(who, method, args);
         }
@@ -189,7 +188,7 @@ class MethodProxies {
         public Object call(Object who, Method method, Object... args) throws Throwable {
             Object result = super.call(who, method, args);
             boolean slice = ParceledListSliceCompat.isReturnParceledListSlice(method);
-            List<NotificationChannel> list = slice ? (List<NotificationChannel>) ParceledListSlice.getList.call(result)
+            List<NotificationChannel> list = slice ? (List<NotificationChannel>) ParceledListSliceCompat.getList(result)
                     : (List) result;
             if (list != null) {
                 for (int i = list.size() - 1; i >= 0; i--) {
@@ -202,7 +201,7 @@ class MethodProxies {
                 }
             }
             if (slice) {
-                return ParceledListSliceCompat.create(list);
+                return ParceledListSliceCompat.create(list, method);
             } else {
                 return list;
             }
@@ -439,7 +438,7 @@ class MethodProxies {
             }
             Object list = super.call(who, method, args);
             boolean slice = ParceledListSliceCompat.isReturnParceledListSlice(method);
-            List<StatusBarNotification> resultList = slice ? (List<StatusBarNotification>) ParceledListSlice.getList.call(list)
+            List<StatusBarNotification> resultList = slice ? (List<StatusBarNotification>) ParceledListSliceCompat.getList(list)
                     : (List) list;
             if (resultList != null) {
                 for (int i = resultList.size() - 1; i >= 0; i--) {
@@ -452,7 +451,7 @@ class MethodProxies {
                 }
             }
             if (slice) {
-                return ParceledListSliceCompat.create(resultList);
+                return ParceledListSliceCompat.create(resultList, method);
             } else {
                 return resultList;
             }

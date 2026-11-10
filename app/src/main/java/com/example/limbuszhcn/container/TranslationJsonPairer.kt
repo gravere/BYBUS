@@ -51,26 +51,67 @@ internal object TranslationJsonPairer {
 
     private fun collect(original: Any?, translated: Any?, path: String, context: String,
                         records: MutableList<TranslationIndexRecord>, depth: Int,
-                        displayArray: String? = null, arrayOwnerId: String? = null) {
+                        displayArray: String? = null, arrayOwnerId: String? = null,
+                        skillContext: String? = null, skillRelation: String? = null,
+                        objectScope: String? = null) {
         require(depth <= 64) { "Resource nesting exceeds limit" }
         when {
             original is JSONObject && translated is JSONObject -> {
                 val identity = identity(original)
                 if (identity != null && identity != identity(translated)) return
                 val objectContext = identity?.let { "$context[$it]" } ?: context
-                val stableId = listOf("id", "key").firstNotNullOfOrNull { name ->
+                val directId = listOf("id", "key").firstNotNullOfOrNull { name ->
                     original.opt(name).takeIf { it is String || it is Number }?.toString()
                 }
+                val skillRoot = skillContext ?: directId?.takeIf { id ->
+                    id.isSkillNumber() && original.optJSONArray("levelList") != null &&
+                        path.substringAfterLast('/').removePrefix("JP_").let {
+                            it == "Skills.json" || it.startsWith("Skills_")
+                        }
+                }?.let { "@skill:$it" }
+                val tableScope = objectScope ?: directId?.let { id ->
+                    when {
+                        id.isSkillNumber() && belongsTo(path, "EGOgift") -> "@ego-gift:$id"
+                        id.isSkillNumber() && belongsTo(path, "ActionEvents") -> "@action-event:$id"
+                        id.isSkillNumber() && belongsTo(path, "AbnormalityGuides") -> "@abnormality-guide:$id"
+                        id.length in 1..96 && id.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it in "-_." } &&
+                            belongsTo(path, "rpg-loc-dialogue") -> "@rpg-dialogue:$id"
+                        else -> null
+                    }
+                }
+                val storyScope = path.takeIf { it.substringBeforeLast('/', "").endsWith("/StoryData") }
+                        ?.substringAfterLast('/')?.removePrefix("JP_")?.removeSuffix(".json")
+                        ?.takeIf { it.length in 1..96 && it.all { c -> c in 'a'..'z' || c in 'A'..'Z' || c in '0'..'9' || c in "_-" } }
+                        ?.let { scene -> "@story:$scene" + (directId?.takeIf { it.isSkillNumber() }?.let { "/dialog:$it" } ?: "") }
+                val stableId = skillRoot ?: tableScope ?: storyScope ?: directId?.let { tableIdentity(path, it) }
                 original.keys().forEach { field ->
                     val source = original.opt(field)
                     val target = translated.opt(field)
+                    if (field == "simpleDesc" && tableScope?.startsWith("@ego-gift:") == true && !tableScope.contains('/')) {
+                        if (source is JSONArray && target is JSONArray) {
+                            collectGiftAbilities(source, target, path, "$objectContext.$field",
+                                records, depth + 1, tableScope)
+                        }
+                        return@forEach
+                    }
+                    val eventOptions = field == "options" && tableScope?.startsWith("@action-event:") == true
+                    val guideStories = field == "storyList" && tableScope?.startsWith("@abnormality-guide:") == true
+                    val rpgDialogue = field == "texts" && tableScope?.startsWith("@rpg-dialogue:") == true
+                    if ((eventOptions || guideStories || rpgDialogue) && tableScope != null && !tableScope.contains('/')) {
+                        if (source is JSONArray && target is JSONArray) {
+                            collectTableChildren(source, target, path, "$objectContext.$field", records,
+                                depth + 1, tableScope, if (guideStories) "level" else if (rpgDialogue) "index" else null)
+                        }
+                        return@forEach
+                    }
                     if (source is String && target is String && source.isNotBlank() && target.isNotBlank() &&
                         TranslationTextPolicy.isDisplayField(field) &&
                         TranslationTextPolicy.isUsableDisplayText(source) && TranslationTextPolicy.isUsableDisplayText(target)) {
                         records += TranslationIndexRecord(path, objectContext, field, source, target, stableId)
                     } else if (source is JSONObject || source is JSONArray) {
                         collect(source, target, path, "$objectContext.$field", records, depth + 1,
-                            field.takeIf { it in TranslationTextPolicy.STRING_ARRAY_FIELDS }, stableId)
+                            field.takeIf { it in TranslationTextPolicy.STRING_ARRAY_FIELDS }, stableId,
+                            skillRoot.takeIf { field.lowercase() in SKILL_CHILD_FIELDS }, field.lowercase())
                     }
                 }
             }
@@ -113,10 +154,107 @@ internal object TranslationJsonPairer {
                     } else if (original.length() == translated.length()) {
                         translated.opt(index).takeUnless { it is JSONObject && identity(it) != null }
                     } else null
-                    collect(source, target, path, "$context[$index]", records, depth + 1)
+                    val nestedSkill = skillContext?.let { parent ->
+                        when (skillRelation) {
+                            "levellist" -> (source as? JSONObject)?.opt("level")?.toString()
+                                ?.takeIf { it.isSkillNumber() }?.let { "$parent/level:$it" }
+                            "coinlist" -> "$parent/coin:$index"
+                            "coindescs" -> "$parent/text:$index"
+                            else -> null
+                        }
+                    }?.takeIf { it.length <= 256 }
+                    collect(source, target, path, "$context[$index]", records, depth + 1,
+                        skillContext = nestedSkill)
                 }
             }
         }
+    }
+
+    private fun collectGiftAbilities(original: JSONArray, translated: JSONArray, path: String,
+                                     context: String, records: MutableList<TranslationIndexRecord>,
+                                     depth: Int, parent: String) {
+        fun groups(array: JSONArray) = (0 until array.length()).mapNotNull { index ->
+            array.optJSONObject(index)?.let { row ->
+                row.opt("abilityID")?.toString()?.takeIf { it.isSkillNumber() }?.let { it to row }
+            }
+        }.groupBy({ it.first }, { it.second })
+        val sources = groups(original)
+        val targets = groups(translated)
+        for (index in 0 until original.length()) {
+            val source = original.optJSONObject(index) ?: continue
+            val id = source.opt("abilityID")?.toString()?.takeIf { it.isSkillNumber() } ?: continue
+            val sourceGroup = sources.getValue(id)
+            val targetGroup = targets[id].orEmpty()
+            if (targetGroup.isEmpty() || sourceGroup.any { !equivalentJson(it, source) }) continue
+            val target = targetGroup.first()
+            if (targetGroup.any { !equivalentJson(it, target) }) continue
+            // Ability IDs are metadata, not a license to pair changed structures.
+            if (!equivalentJson(nonDisplayMetadata(source), nonDisplayMetadata(target))) continue
+            collect(source, target, path, "$context[$index]", records, depth + 1,
+                objectScope = "$parent/ability:$id")
+        }
+    }
+
+    private fun collectTableChildren(original: JSONArray, translated: JSONArray, path: String,
+                                     context: String, records: MutableList<TranslationIndexRecord>,
+                                     depth: Int, parent: String, identityField: String?) {
+        if (identityField == null && original.length() != translated.length()) return
+        fun identities(array: JSONArray) = (0 until array.length()).mapNotNull { index ->
+            array.optJSONObject(index)?.let { row ->
+                identityField?.let(row::opt)?.toString()?.takeIf { it.isSkillNumber() }?.let { it to row }
+            }
+        }.groupBy({ it.first }, { it.second })
+        val sources = if (identityField != null) identities(original) else emptyMap()
+        val targets = if (identityField != null) identities(translated) else emptyMap()
+        for (index in 0 until original.length()) {
+            val source = original.optJSONObject(index) ?: continue
+            val identity = identityField?.let(source::opt)?.toString()
+            val target = if (identityField != null) {
+                if (identity == null || sources[identity]?.size != 1) continue
+                targets[identity]?.singleOrNull() ?: continue
+            } else translated.optJSONObject(index) ?: continue
+            if (!equivalentJson(nonDisplayMetadata(source), nonDisplayMetadata(target))) continue
+            val key = when (identityField) {
+                "level" -> "$parent/level:$identity"
+                "index" -> "$parent/text:$identity"
+                else -> "$parent/option:$index"
+            }
+            collect(source, target, path, "$context[$index]", records, depth + 1, objectScope = key)
+        }
+    }
+
+    private fun nonDisplayMetadata(row: JSONObject) = JSONObject().apply {
+        row.keys().forEach { key -> if (!TranslationTextPolicy.isDisplayField(key)) put(key, row.get(key)) }
+    }
+
+    private fun equivalentJson(left: Any?, right: Any?, depth: Int = 0): Boolean {
+        if (depth > 64) return false
+        return when {
+            left is JSONObject && right is JSONObject -> {
+                val keys = left.keys().asSequence().toSet()
+                keys == right.keys().asSequence().toSet() &&
+                    keys.all { equivalentJson(left.opt(it), right.opt(it), depth + 1) }
+            }
+            left is JSONArray && right is JSONArray -> left.length() == right.length() &&
+                (0 until left.length()).all { equivalentJson(left.opt(it), right.opt(it), depth + 1) }
+            else -> left == right
+        }
+    }
+
+    private fun String.isSkillNumber(): Boolean = length in 1..18 && all { it in '0'..'9' }
+    private val SKILL_CHILD_FIELDS = setOf("levellist", "coinlist", "coindescs")
+
+    private fun tableIdentity(path: String, id: String): String {
+        return when {
+            belongsTo(path, "Bufs") -> "@buf:$id"
+            belongsTo(path, "BattleKeywords") -> "@battle-keyword:$id"
+            else -> id
+        }
+    }
+
+    private fun belongsTo(path: String, family: String): Boolean {
+        val file = path.substringAfterLast('/').removePrefix("JP_")
+        return file == "$family.json" || file.startsWith("${family}_") || file.startsWith("$family-")
     }
 
     private fun identity(value: JSONObject): String? = ID_FIELDS.firstNotNullOfOrNull { field ->

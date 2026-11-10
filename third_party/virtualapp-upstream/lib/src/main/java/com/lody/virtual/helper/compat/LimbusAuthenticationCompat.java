@@ -25,6 +25,13 @@ public final class LimbusAuthenticationCompat {
     private LimbusAuthenticationCompat() {
     }
 
+    /** A raw ARM function pointer must never replace an x86 JNI table entry. */
+    public static boolean supportsDirectArmJniTable(String[] supportedAbis) {
+        if (supportedAbis == null || supportedAbis.length == 0) return false;
+        String primary = supportedAbis[0];
+        return "arm64-v8a".equals(primary) || "armeabi-v7a".equals(primary) || "armeabi".equals(primary);
+    }
+
     /**
      * 判断当前虚拟应用是否必须跳过旧式 ART 方法内存 Hook。
      *

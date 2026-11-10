@@ -237,7 +237,11 @@ public class NativeEngine {
                     java.util.Arrays.toString(Build.SUPPORTED_ABIS));
             if ("com.ProjectMoon.LimbusCompany".equals(VClient.get().getCurrentPackage())) {
                 nativeHookLimbusProcessExit();
-                nativeHookLimbusFindClass();
+                if (LimbusAuthenticationCompat.supportsDirectArmJniTable(Build.SUPPORTED_ABIS)) {
+                    nativeHookLimbusFindClass();
+                } else {
+                    VLog.w(TAG, "Keep platform JNI table for translated ARM runtime");
+                }
             }
             sFlag = true;
             return;

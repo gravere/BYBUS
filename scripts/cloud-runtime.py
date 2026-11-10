@@ -67,18 +67,31 @@ def request(url, maximum, asset=False):
 def ready():
     deadline = time.monotonic() + 300
     streak = 0
+    last_state = {}
     while time.monotonic() < deadline:
         try:
             user = adb("shell", "am", "get-started-user-state", "0", timeout=12).strip()
             services = [adb("shell", "service", "check", s, timeout=8) for s in ("package", "activity", "window")]
+            last_state = dict(user=user, services=services)
             ok = user == "RUNNING_UNLOCKED" and all("found" in s.lower() and "not found" not in s.lower() for s in services)
             streak = streak + 1 if ok else 0
             if streak == 2:
                 REPORT["user_state"] = user
                 return
-        except (RuntimeError, subprocess.TimeoutExpired):
+        except (RuntimeError, subprocess.TimeoutExpired) as error:
+            last_state = dict(error=str(error))
             streak = 0
         time.sleep(3)
+    REPORT["boot_last_state"] = last_state
+    for name, args in (
+        ("boot-devices.txt", ("adb", "devices", "-l")),
+        ("boot-properties.txt", ("adb", "-s", "emulator-5554", "shell", "getprop")),
+        ("boot-log.txt", ("adb", "-s", "emulator-5554", "logcat", "-d", "-b", "all", "-t", "300")),
+    ):
+        try:
+            (OUT / name).write_text(command(*args, timeout=10, check=False), encoding="utf-8")
+        except subprocess.TimeoutExpired:
+            pass
     raise RuntimeError("Android did not reach a stable unlocked state within five minutes")
 
 
@@ -459,7 +472,7 @@ def inspect_permissions(release, verifier, package_queries=False):
     raise RuntimeError("Permission contract inspection timed out")
 
 
-def inspect_framework_permissions():
+def inspect_framework_permissions(package_jni=False):
     """Use public Android APIs in a real guest process; keep the temporary registry in the server."""
     def probe(receiver, stem, stage=None):
         result_file = f"/data/user/0/{PACKAGE}/files/{stem}-result.json"
@@ -488,8 +501,17 @@ def inspect_framework_permissions():
         prepared = probe("PackageQueryProbeReceiver", "framework-prepare", "framework-prepare")
         if not prepared.get("prepared"):
             raise RuntimeError("Framework permission fixture was not prepared")
-        result = probe("FrameworkPermissionProbeReceiver", "framework-permission")
-        REPORT["framework_permissions"] = result
+        result = probe("FrameworkPermissionProbeReceiver", "framework-permission", "package-jni" if package_jni else None)
+        REPORT["jni_package_queries" if package_jni else "framework_permissions"] = result
+        if package_jni:
+            expected = {"android11": (30, 8), "android17": (37, 13)}[REPORT["profile"]]
+            if (result.get("sdk"), result.get("check_count")) != expected or result.get("game_started") is not False:
+                raise RuntimeError("JNI package API fixture scope differs from the expected platform")
+            if not all(result.get(key) for key in ("ordinary_app_uid", "server_over_binder", "native_attached_thread", "client_restored")):
+                raise RuntimeError("JNI fixture did not use the required process boundary")
+            if not all(result["checks"].values()):
+                raise RuntimeError("JNI package API checks failed")
+            return
         expected = {"android11": (30, 13), "android17": (37, 15)}[REPORT["profile"]]
         if (result.get("sdk"), result.get("check_count")) != expected:
             raise RuntimeError("Public framework permission coverage differs from the expected scope")
@@ -1334,6 +1356,25 @@ def main():
     if "Success" not in installed:
         raise RuntimeError("APK installation did not succeed: " + installed[-1000:])
     REPORT["checks"].append("published APK signature/hash and installation")
+    if os.environ.get("RUNTIME_MODE") == "package-jni":
+        adb("root")
+        adb("wait-for-device", timeout=30)
+        if adb("shell", "id", "-u").strip() != "0":
+            raise RuntimeError("Disposable emulator cannot retrieve the private fixture report")
+        adb("shell", "am", "force-stop", PACKAGE)
+        digest = install_component_probe(release, verifier)
+        REPORT["jni_probe_sha256"] = digest
+        inspect_framework_permissions(package_jni=True)
+        REPORT["checks"].append("Public Java/JNI package-list and concrete parcel checks across server Binder and attached native thread")
+        REPORT["result"] = "JNI package API inspection completed; no game or protection library started"
+        return
+    if os.environ.get("RUNTIME_MODE") == "game-startup":
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("game_startup", "scripts/inspect-game-startup.py")
+        inspection = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(inspection)
+        inspection.inspect(adb, command, hierarchy, locate, tap, REPORT, OUT, verifier)
+        return
     if os.environ.get("RUNTIME_MODE") in ("install-open", "startup-records", "release-update", "external-install"):
         import importlib.util
         spec = importlib.util.spec_from_file_location("install_open", "scripts/inspect-install-open.py")

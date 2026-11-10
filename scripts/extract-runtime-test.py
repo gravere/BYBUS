@@ -21,3 +21,17 @@ end = source.index("\nbool is_unity_main_thread() {", start)
 start = source.index("bool is_unity_main_thread() {")
 end = source.index("bool invoke_float_getter(", start)
 (output / "runtime-font-init-under-test.inc").write_text(source[start:end], encoding="utf-8")
+start = source.index("void apply_translated_tmp_style(")
+end = source.index("\nvoid *apply_tmp_component_layout_markup(", start)
+(output / "runtime-layout-under-test.inc").write_text(source[start:end], encoding="utf-8")
+start = source.index("void apply_translated_ui_style(")
+end = source.index("\nvoid *prepare_ui_text(", start)
+(output / "runtime-ui-layout-under-test.inc").write_text(source[start:end], encoding="utf-8")
+start = source.index("struct TermTrieNode {")
+end = source.index("\nbool g_configured", start)
+pieces = [source[start:end]]
+for signature in ("bool contains_japanese_kana(", "void rebuild_term_trie(", "bool translate_embedded_terms("):
+    start = source.index(signature)
+    end = source.index("\n}", start) + 2
+    pieces.append(source[start:end])
+(output / "runtime-terms-under-test.inc").write_text("\n\n".join(pieces), encoding="utf-8")

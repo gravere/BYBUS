@@ -19,6 +19,7 @@ import com.lody.virtual.helper.compat.BuildCompat;
 import com.lody.virtual.helper.utils.Reflect;
 import com.lody.virtual.helper.compat.LimbusSafetyAlert;
 import com.lody.virtual.helper.compat.PackageQueryTrace;
+import com.lody.virtual.helper.compat.ParceledListSliceCompat;
 import java.lang.reflect.Method;
 
 import mirror.android.app.ActivityThread;
@@ -34,8 +35,19 @@ public final class PackageManagerStub extends MethodInvocationProxy<MethodInvoca
     /** Shared with the separate permission service; does not receive or retain query arguments. */
     public static void recordQueryResult(Method method, boolean proxied, Object result, Throwable error) {
         ApplicationInfo current = VClient.get().getCurrentApplicationInfo();
-        if (current != null && GAME.equals(current.packageName))
+        if (current != null && GAME.equals(current.packageName)) {
+            if (error == null && (method.getName().equals("getInstalledPackages")
+                    || method.getName().equals("getInstalledApplications"))
+                    && ParceledListSliceCompat.isParceledListSlice(result)) {
+                try {
+                    Object list = ParceledListSliceCompat.getList(result);
+                    if (list instanceof java.util.List) result = list;
+                } catch (Throwable ignored) {
+                    // A passive observer must preserve both the returned object and its exception.
+                }
+            }
             TRACE.record(method.getName(), proxied, result, error);
+        }
     }
 
     /** Called in the game process, before dispatch; never reads the alert's extras. */

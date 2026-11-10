@@ -11,6 +11,15 @@ import org.junit.Test
  * 验证登录辅助进程和 Firebase Auth 浏览器回调只命中已确认的精确兼容边界。
  */
 class LimbusAuthenticationCompatTest {
+    @Test
+    fun nativeBridgeCannotInstallAnArmPointerInTheHostJniTable() {
+        assertTrue(LimbusAuthenticationCompat.supportsDirectArmJniTable(arrayOf("arm64-v8a", "armeabi-v7a")))
+        assertTrue(LimbusAuthenticationCompat.supportsDirectArmJniTable(arrayOf("armeabi-v7a")))
+        assertFalse(LimbusAuthenticationCompat.supportsDirectArmJniTable(arrayOf("x86_64", "arm64-v8a")))
+        assertFalse(LimbusAuthenticationCompat.supportsDirectArmJniTable(arrayOf("x86", "armeabi-v7a")))
+        assertFalse(LimbusAuthenticationCompat.supportsDirectArmJniTable(emptyArray()))
+        assertFalse(LimbusAuthenticationCompat.supportsDirectArmJniTable(null))
+    }
     /** 验证游戏、microG 与 FakeStore 均不会进入不兼容的旧式 ART VM Hook。 */
     @Test
     fun skipsLegacyVmHookOnlyForConfirmedAuthenticationPackages() {

@@ -264,6 +264,8 @@ public final class PackageQueryProbe {
         pkg.applicationInfo = new ApplicationInfo(context.getApplicationInfo());
         pkg.applicationInfo.packageName = name; pkg.applicationInfo.uid = uid;
         pkg.applicationInfo.metaData = null;
+        pkg.mAppMetaData = new android.os.Bundle();
+        pkg.mAppMetaData.putInt("bybus.fixture", 488);
         pkg.activities = new ArrayList<>(); pkg.receivers = new ArrayList<>(); pkg.providers = new ArrayList<>();
         pkg.services = new ArrayList<>(); pkg.instrumentation = new ArrayList<>(); pkg.permissions = new ArrayList<>();
         pkg.permissionGroups = new ArrayList<>(); pkg.requestedPermissions = new ArrayList<>(); pkg.protectedBroadcasts = new ArrayList<>();
