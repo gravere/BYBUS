@@ -93,6 +93,10 @@ void append_native_metadata(const char *name, const char *entry) {
 std::unordered_map<std::string, std::string> g_index;
 std::unordered_map<std::string, std::string> g_terms;
 std::unordered_map<std::string, std::string> g_contextual_index;
+thread_local std::string g_ui_text_key;
+void *g_skill_text_class = nullptr;
+void *g_buf_text_class = nullptr;
+void *g_battle_keyword_text_class = nullptr;
 std::atomic<uint64_t> g_contextual_hits{0};
 // 部分人格列表会把汉化包标题中的换行压成空格或直接移除；该索引只保存由包内译文
 // 推导出的原始分行，让运行时兼容不同页面，而无需硬编码任何人格名称或译文。
@@ -485,13 +489,11 @@ bool translate_embedded_terms(const std::string &source, std::string *output) {
         // TMP rich-text markup is control data, not display text.  In
         // particular, an ASCII term such as "or" must never rewrite the tail
         // of <color> into <col或>, which makes TMP display the broken tag.
-        if (source[offset] == '<') {
-            size_t tag_end = source.find('>', offset + 1);
-            if (tag_end != std::string::npos) {
-                output->append(source, offset, tag_end - offset + 1);
-                offset = tag_end + 1;
-                continue;
-            }
+        size_t tag_end = limbus_rich_text::protected_end(source, offset);
+        if (tag_end > offset) {
+            output->append(source, offset, tag_end - offset);
+            offset = tag_end;
+            continue;
         }
         size_t node = 0;
         size_t best_end = offset;
@@ -752,8 +754,11 @@ void *translate_managed_string(void *managed_text, const std::string &stable_id 
     if (already_translated) return managed_text;
     std::unordered_map<std::string, std::string>::const_iterator match = g_index.find(source);
     std::string translated;
-    auto context = stable_id.empty() || display_field == nullptr ? g_contextual_index.end() :
-            g_contextual_index.find(stable_id + '\x1f' + display_field + '\x1f' + source);
+    const bool scoped_ui = stable_id.empty() && display_field == nullptr && !g_ui_text_key.empty();
+    const std::string &context_id = scoped_ui ? g_ui_text_key : stable_id;
+    const char *context_field = scoped_ui ? "content" : display_field;
+    auto context = context_id.empty() || context_field == nullptr ? g_contextual_index.end() :
+            g_contextual_index.find(context_id + '\x1f' + context_field + '\x1f' + source);
     // Copies of released Chinese strings are stable independent of lookup order.
     // Compiler contexts disambiguate original JP fields that share those bytes.
     if (context == g_contextual_index.end()) {
@@ -848,7 +853,7 @@ bool is_display_string_field(const char *name) {
 }
 
 // Read identity through IL2CPP metadata. No guessed offsets, resource-wide id
-// replacement, or inherited JSON path: a match also requires field and full source.
+// replacement, or guessed layout: a match also requires field and full source.
 std::string read_text_object_id(void *instance, const char *identity_name = "id") {
     for (void *klass = g_object_get_class(instance); klass != nullptr;
          klass = g_class_get_parent(klass)) {
@@ -963,17 +968,24 @@ void translate_display_string_collection(void *collection, bool array, const std
 }
 
 void translate_object_string_fields(void *instance, bool story_dialog = false,
-                                    std::vector<std::string> *translated_fields = nullptr) {
+                                    std::vector<std::string> *translated_fields = nullptr,
+                                    const std::string &skill_context = {}) {
     if (instance == nullptr || g_object_get_class == nullptr || g_class_get_parent == nullptr ||
         g_class_get_fields == nullptr || g_field_get_name == nullptr ||
         g_field_get_type == nullptr || g_field_get_value == nullptr ||
         g_field_set_value == nullptr || g_type_get_name == nullptr || g_il2cpp_free == nullptr) {
         return;
     }
-    std::string stable_id = g_contextual_index.empty() ? std::string() :
+    std::string stable_id = !skill_context.empty() ? skill_context : g_contextual_index.empty() ? std::string() :
             read_text_object_id(instance, story_dialog ? "OriginalId" : "id");
     if (!story_dialog && stable_id.empty() && !g_contextual_index.empty()) {
         stable_id = read_text_object_id(instance, "key");
+    }
+    if (!story_dialog && skill_context.empty() && !stable_id.empty()) {
+        void *klass = g_object_get_class(instance);
+        if (g_buf_text_class && klass == g_buf_text_class) stable_id = "@buf:" + stable_id;
+        else if (g_battle_keyword_text_class && klass == g_battle_keyword_text_class)
+            stable_id = "@battle-keyword:" + stable_id;
     }
     for (void *klass = g_object_get_class(instance); klass != nullptr;
          klass = g_class_get_parent(klass)) {
@@ -1050,12 +1062,18 @@ bool is_nested_text_field(const char *name) {
 
 void translate_object_graph_impl(void *instance, int depth,
                                  std::unordered_set<void *> *visited,
-                                 std::vector<std::string> *translated_fields) {
+                                 std::vector<std::string> *translated_fields,
+                                 const std::string &skill_context = {}) {
     if (instance == nullptr || depth > 4 || visited == nullptr ||
         !visited->insert(instance).second) {
         return;
     }
-    translate_object_string_fields(instance, false, translated_fields);
+    std::string scope = skill_context;
+    if (scope.empty() && g_skill_text_class && g_object_get_class &&
+        g_object_get_class(instance) == g_skill_text_class) {
+        scope = limbus_text_provenance::skill_root_key(read_text_object_id(instance));
+    }
+    translate_object_string_fields(instance, false, translated_fields, scope);
     if (g_object_get_class == nullptr || g_class_get_parent == nullptr ||
         g_class_get_fields == nullptr || g_field_get_name == nullptr ||
         g_field_get_value == nullptr || g_class_get_method == nullptr ||
@@ -1093,7 +1111,10 @@ void translate_object_graph_impl(void *instance, int depth,
                 exception = nullptr;
                 void *child = g_runtime_invoke(item_method, list, args, &exception);
                 if (exception == nullptr && child != nullptr) {
-                    translate_object_graph_impl(child, depth + 1, visited, translated_fields);
+                    const bool is_level = strcmp(field_name, "levelList") == 0 || strcmp(field_name, "levellist") == 0;
+                    auto child_scope = limbus_text_provenance::skill_child_key(scope, field_name,
+                            is_level ? read_text_object_id(child, "level") : std::string(), index);
+                    translate_object_graph_impl(child, depth + 1, visited, translated_fields, child_scope);
                 }
             }
         }
@@ -1126,6 +1147,31 @@ void *finish_formatted_translation(void *result, const std::vector<std::string> 
 }
 
 typedef void *(*acquisition0_fn)(void *, const void *);
+typedef void *(*skill_level_fn)(void *, int32_t, const void *);
+skill_level_fn g_original_skill_level = nullptr;
+void *replacement_skill_level(void *instance, int32_t level, const void *method) {
+    std::vector<std::string> fields;
+    translate_object_graph(instance, &fields);
+    return g_original_skill_level(instance, level, method);
+}
+// Static conversion has one explicit reference argument, not an instance plus
+// that argument. Preserve identity before the UI model becomes an unscoped string.
+acquisition0_fn g_original_ui_text_implicit = nullptr;
+void *replacement_ui_text_implicit(void *data, const void *method) {
+    std::vector<std::string> fields;
+    translate_object_graph(data, &fields);
+    return finish_formatted_translation(g_original_ui_text_implicit(data, method), fields);
+}
+typedef void (*ui_loader_fn)(void *, const void *);
+ui_loader_fn g_original_ui_loader = nullptr, g_original_ui_parameter_loader = nullptr;
+void replacement_ui_loader(void *instance, const void *method) {
+    limbus_text_provenance::ScopedTextKey scope(g_ui_text_key, read_text_object_id(instance, "key"));
+    g_original_ui_loader(instance, method);
+}
+void replacement_ui_parameter_loader(void *instance, const void *method) {
+    limbus_text_provenance::ScopedTextKey scope(g_ui_text_key, read_text_object_id(instance, "key"));
+    g_original_ui_parameter_loader(instance, method);
+}
 typedef void *(*rpg_format_fn)(void *, void *, const void *);
 rpg_format_fn g_original_rpg_format = nullptr;
 
@@ -2146,20 +2192,7 @@ void restore_ui_component_state(void *instance) {
 }
 
 size_t count_visible_codepoints(const std::string &text) {
-    size_t count = 0;
-    for (size_t offset = 0; offset < text.size();) {
-        // 富文本标签不占显示宽度，不能让颜色、样式参数把短标签误判成长正文。
-        if (text[offset] == '<') {
-            size_t tag_end = text.find('>', offset + 1);
-            if (tag_end != std::string::npos) {
-                offset = tag_end + 1;
-                continue;
-            }
-        }
-        unsigned char byte = static_cast<unsigned char>(text[offset++]);
-        if ((byte & 0xc0) != 0x80) ++count;
-    }
-    return count;
+    return limbus_rich_text::visible_codepoints(text);
 }
 
 void apply_translated_tmp_style(void *instance, void *managed_text,
@@ -2196,8 +2229,11 @@ void apply_translated_tmp_style(void *instance, void *managed_text,
     bool personality_group_name = component_name == "[Text]GroupName";
     bool formation_deck_label = component_name == "[Text]Deck" &&
             parent_name == "[Image]Mask";
+    const float nominal_size = limbus_text_provenance::nominal_font_size(state.font_size,
+            state.has_auto_sizing && state.auto_sizing,
+            state.has_font_size_max ? state.font_size_max : 0.0f);
     bool single_line = limbus_text_provenance::single_line_label(visible_length, has_explicit_break,
-            state.has_word_wrapping && !state.word_wrapping, rect.height, state.font_size,
+            state.has_word_wrapping && !state.word_wrapping, rect.height, nominal_size,
             state.has_overflow_mode ? state.overflow_mode : -1);
     if (state.has_overflow_mode && state.overflow_mode >= 2) return;
 
@@ -2205,17 +2241,16 @@ void apply_translated_tmp_style(void *instance, void *managed_text,
         // 页签、技能名和横幅必须保持单行。之前只启用自动字号却没有关闭换行，
         // TMP 会先把中文拆成数行，再被一行高的遮罩裁成黄块或黑块。
         invoke_bool_setter(g_tmp_set_word_wrapping_info, instance, false);
-        // Ellipsis 与自动字号配合：先在可读字号范围内缩小，仍放不下时才显示省略号。
-        // 战斗技能名因此不会换出第二行，也不会为了显示全名缩成难以辨认的小字。
-        invoke_int_setter(g_tmp_set_overflow_mode_info, instance,
-                          rect.valid ? 1 : 0);  // 有有效宽度时 Ellipsis，否则 Overflow。
-        float scale = visible_length <= 8 ? 1.0f :
-                (visible_length <= 20 ? 0.96f : 0.90f);
+        // Do not introduce ellipsis into a label that did not have it originally.
+        if (state.has_overflow_mode)
+            invoke_int_setter(g_tmp_set_overflow_mode_info, instance, state.overflow_mode);
         // 左侧编队槽原始字号为 30，在手机上辨识度不足；该控件高度由遮罩动态提供，
         // 因此固定为用户指定的 35，避免自动字号再次把长编队名缩小。
-        float maximum = formation_deck_label ? 35.0f : state.font_size * scale;
+        // Same-style controls keep the same nominal size regardless of label length.
+        float maximum = formation_deck_label ? 35.0f : nominal_size;
         float minimum = formation_deck_label ? 35.0f :
-                std::min(maximum, std::max(9.0f, state.font_size * 0.55f));
+                limbus_text_provenance::readable_minimum(maximum,
+                        state.has_font_size_min ? state.font_size_min : 0.0f);
         invoke_float_setter(g_tmp_set_font_size_min_info, instance, minimum);
         invoke_float_setter(g_tmp_set_font_size_max_info, instance, maximum);
         invoke_float_setter(g_tmp_set_font_size_info, instance, maximum);
@@ -2232,12 +2267,15 @@ void apply_translated_tmp_style(void *instance, void *managed_text,
         // The title's explicit line-height already controls its paragraph spacing.
         invoke_float_setter(g_tmp_set_line_spacing_info, instance, 0.0f);
     } else {
-        // 长说明恢复页面原有换行与溢出策略，字号不再统一缩小 8%；正文优先保持可读。
-        if (state.has_word_wrapping) {
-            invoke_bool_setter(g_tmp_set_word_wrapping_info, instance, state.word_wrapping);
-        }
+        // A tall body frame must wrap even if its original Latin/Japanese text
+        // used no-wrap auto sizing. Unknown geometry keeps the existing policy.
+        const bool body_wrap = has_explicit_break || rect.height > nominal_size * 1.8f ||
+                (state.has_word_wrapping && state.word_wrapping);
+        if (state.has_word_wrapping || body_wrap)
+            invoke_bool_setter(g_tmp_set_word_wrapping_info, instance, body_wrap);
         if (state.has_overflow_mode) {
-            invoke_int_setter(g_tmp_set_overflow_mode_info, instance, state.overflow_mode);
+            invoke_int_setter(g_tmp_set_overflow_mode_info, instance,
+                    body_wrap && state.overflow_mode == 1 ? 0 : state.overflow_mode);
         }
         if (state.has_line_spacing) {
             invoke_float_setter(g_tmp_set_line_spacing_info, instance, state.line_spacing);
@@ -2245,13 +2283,13 @@ void apply_translated_tmp_style(void *instance, void *managed_text,
         if (state.has_auto_sizing) {
             invoke_bool_setter(g_tmp_set_auto_sizing_info, instance, state.auto_sizing);
         }
-        if (state.has_font_size_min) {
-            invoke_float_setter(g_tmp_set_font_size_min_info, instance, state.font_size_min);
+        if (state.has_auto_sizing && state.auto_sizing) {
+            invoke_float_setter(g_tmp_set_font_size_max_info, instance, nominal_size);
+            invoke_float_setter(g_tmp_set_font_size_min_info, instance,
+                    limbus_text_provenance::readable_minimum(nominal_size,
+                        state.has_font_size_min ? state.font_size_min : 0.0f));
         }
-        if (state.has_font_size_max) {
-            invoke_float_setter(g_tmp_set_font_size_max_info, instance, state.font_size_max);
-        }
-        invoke_float_setter(g_tmp_set_font_size_info, instance, state.font_size * 0.98f);
+        invoke_float_setter(g_tmp_set_font_size_info, instance, nominal_size);
     }
 
     uint64_t decisions = g_layout_decisions.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -2413,22 +2451,22 @@ void apply_translated_ui_style(void *instance, void *managed_text,
             text.find('\r') != std::string::npos;
     bool short_text = visible_length <= 48;
     ComponentRect rect = read_component_rect(instance, g_ui_get_rect_transform_info);
+    const int32_t nominal_size = static_cast<int32_t>(limbus_text_provenance::nominal_font_size(
+            static_cast<float>(state.font_size), state.has_resize_best_fit && state.resize_best_fit,
+            state.has_resize_max_size ? static_cast<float>(state.resize_max_size) : 0.0f));
+    const int32_t minimum_size = static_cast<int32_t>(std::ceil(limbus_text_provenance::readable_minimum(
+            static_cast<float>(nominal_size),
+            state.has_resize_min_size ? static_cast<float>(state.resize_min_size) : 0.0f)));
     bool single_line = limbus_text_provenance::single_line_label(visible_length, has_explicit_break,
             state.has_horizontal_overflow && state.horizontal_overflow == 1, rect.height,
-            static_cast<float>(state.font_size));
+            static_cast<float>(nominal_size));
 
     if (single_line) {
-        // 旧 UI.Text 没有 TMP 的单行自动缩放。根据矩形宽度直接计算安全字号，
-        // 然后关闭换行和裁切，保证横幅与页签不会只剩零碎笔画。
-        float scale = 1.0f;
-        if (rect.valid && visible_length > 0) {
-            float estimated_width = static_cast<float>(visible_length * state.font_size);
-            scale = std::min(1.0f, rect.width / std::max(1.0f, estimated_width));
-        }
-        int32_t safe_size = std::max(7, static_cast<int32_t>(
-                static_cast<float>(state.font_size) * scale * 0.96f));
-        invoke_bool_setter(g_ui_set_resize_best_fit_info, instance, false);
-        invoke_int_setter(g_ui_set_font_size_info, instance, safe_size);
+        // Use Unity's real glyph metrics instead of a character-count estimate.
+        invoke_int_setter(g_ui_set_resize_min_size_info, instance, minimum_size);
+        invoke_int_setter(g_ui_set_resize_max_size_info, instance, nominal_size);
+        invoke_int_setter(g_ui_set_font_size_info, instance, nominal_size);
+        invoke_bool_setter(g_ui_set_resize_best_fit_info, instance, true);
         invoke_int_setter(g_ui_set_horizontal_overflow_info, instance, 1);  // Overflow.
         invoke_int_setter(g_ui_set_vertical_overflow_info, instance, 1);    // Overflow.
         if (state.has_line_spacing) {
@@ -2438,27 +2476,28 @@ void apply_translated_ui_style(void *instance, void *managed_text,
     } else if (short_text && has_explicit_break) {
         // 汉化包明确含换行时保留原字号，并用 Unity UI 的行高倍率拉开上下距离。
         invoke_bool_setter(g_ui_set_resize_best_fit_info, instance, false);
-        invoke_int_setter(g_ui_set_font_size_info, instance, state.font_size);
+        invoke_int_setter(g_ui_set_font_size_info, instance, nominal_size);
         invoke_int_setter(g_ui_set_horizontal_overflow_info, instance, 0);  // Wrap.
         invoke_int_setter(g_ui_set_vertical_overflow_info, instance, 1);    // Overflow.
         invoke_float_setter(g_ui_set_line_spacing_info, instance,
                             state.has_line_spacing ? std::max(1.24f, state.line_spacing) : 1.24f);
     } else {
-        // 正文保留游戏原排版，避免为了塞进一屏而缩成难以阅读的小字。
+        // Tall body controls wrap even when the original used no-wrap shrinking.
         if (state.has_resize_best_fit) {
             invoke_bool_setter(
                     g_ui_set_resize_best_fit_info, instance, state.resize_best_fit);
         }
         if (state.has_resize_min_size) {
             invoke_int_setter(
-                    g_ui_set_resize_min_size_info, instance, state.resize_min_size);
+                    g_ui_set_resize_min_size_info, instance, minimum_size);
         }
         if (state.has_resize_max_size) {
             invoke_int_setter(
-                    g_ui_set_resize_max_size_info, instance, state.resize_max_size);
+                    g_ui_set_resize_max_size_info, instance, nominal_size);
         }
         if (state.has_horizontal_overflow) {
             invoke_int_setter(g_ui_set_horizontal_overflow_info, instance,
+                              has_explicit_break || rect.height > nominal_size * 1.8f ? 0 :
                               state.horizontal_overflow);
         }
         if (state.has_vertical_overflow) {
@@ -2468,7 +2507,7 @@ void apply_translated_ui_style(void *instance, void *managed_text,
         if (state.has_line_spacing) {
             invoke_float_setter(g_ui_set_line_spacing_info, instance, state.line_spacing);
         }
-        invoke_int_setter(g_ui_set_font_size_info, instance, state.font_size);
+        invoke_int_setter(g_ui_set_font_size_info, instance, nominal_size);
     }
 }
 
@@ -2990,6 +3029,8 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
     void *tmp_settings_class = nullptr;
     void *tmp_material_manager_class = nullptr;
     void *rpg_format_class = nullptr;
+    void *ui_text_data_class = nullptr;
+    void *ui_loader_class = nullptr, *ui_parameter_loader_class = nullptr;
     const void *get_language_method = nullptr;
     const void *get_global_language_method = nullptr;
     void *get_language_class = nullptr;
@@ -3043,6 +3084,18 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         if (story_dialog_class == nullptr) {
             story_dialog_class = class_from_name(image, "StorySystem", "Dialog");
         }
+        if (ui_text_data_class == nullptr)
+            ui_text_data_class = class_from_name(image, "", "TextData_UI");
+        if (g_skill_text_class == nullptr)
+            g_skill_text_class = class_from_name(image, "", "TextData_Skill");
+        if (g_buf_text_class == nullptr)
+            g_buf_text_class = class_from_name(image, "", "TextData_Buf");
+        if (g_battle_keyword_text_class == nullptr)
+            g_battle_keyword_text_class = class_from_name(image, "", "TextData_BattleKeywords");
+        if (ui_loader_class == nullptr)
+            ui_loader_class = class_from_name(image, "", "UITextDataLoader");
+        if (ui_parameter_loader_class == nullptr)
+            ui_parameter_loader_class = class_from_name(image, "", "UITextDataLoaderWithParameters");
         if (announcer_ui_class == nullptr)
             announcer_ui_class = class_from_name(image, "BattleUI.Announcer", "BattleAnnouncerUI");
         if (choice_scroll_class == nullptr)
@@ -3762,6 +3815,64 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 field_get_name != nullptr && field_get_type != nullptr &&
                 field_get_value != nullptr && field_set_value != nullptr;
         if (acquisition_ready) {
+            const void *skill_level = find_method_by_signature(
+                    g_skill_text_class, "GetSkillTextByGaksungLevel", "System.Int32");
+            uint32_t skill_flags = 0;
+            if (skill_level && method_get_class && method_is_generic &&
+                method_get_class(skill_level) == g_skill_text_class && !method_is_generic(skill_level) &&
+                !(method_get_flags(skill_level, &skill_flags) & 0x0010u)) {
+                char *return_name = type_get_name(method_get_return_type(skill_level));
+                const bool correct_type = return_name && strcmp(return_name, "TextData_SkillPerLevel") == 0;
+                if (return_name) il2cpp_free(return_name);
+                void *pointer = nullptr;
+                memcpy(&pointer, skill_level, sizeof(pointer));
+                if (correct_type && has_inline_hook_space(g_skill_text_class, pointer)) {
+                    hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement_skill_level),
+                            reinterpret_cast<void **>(&g_original_skill_level));
+                    if (g_original_skill_level) acquisition_pointers.insert(pointer);
+                }
+            }
+            append_native_metadata("font-state.log", g_original_skill_level ? "skill_level_context=1" : "skill_level_context=0");
+            auto hook_ui_loader = [&](void *klass, ui_loader_fn replacement, ui_loader_fn *original) {
+                const void *entry = find_method_by_signature(klass, "SetText", "");
+                uint32_t flags = 0;
+                if (!entry || !method_get_class || !method_is_generic || method_get_class(entry) != klass ||
+                    method_is_generic(entry) || (method_get_flags(entry, &flags) & 0x0010u)) return;
+                char *return_name = type_get_name(method_get_return_type(entry));
+                const bool returns_void = return_name && strcmp(return_name, "System.Void") == 0;
+                if (return_name) il2cpp_free(return_name);
+                void *pointer = nullptr;
+                memcpy(&pointer, entry, sizeof(pointer));
+                if (!returns_void || acquisition_pointers.count(pointer) || !has_inline_hook_space(klass, pointer)) return;
+                hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement), reinterpret_cast<void **>(original));
+                if (*original) acquisition_pointers.insert(pointer);
+            };
+            hook_ui_loader(ui_loader_class, replacement_ui_loader, &g_original_ui_loader);
+            hook_ui_loader(ui_parameter_loader_class, replacement_ui_parameter_loader, &g_original_ui_parameter_loader);
+            char ui_loaders[80];
+            snprintf(ui_loaders, sizeof(ui_loaders), "ui_loader=%d ui_parameter_loader=%d",
+                     g_original_ui_loader != nullptr, g_original_ui_parameter_loader != nullptr);
+            append_native_metadata("font-state.log", ui_loaders);
+            const void *implicit_method = find_method_by_signature(
+                    ui_text_data_class, "op_Implicit", "TextData_UI");
+            uint32_t implicit_flags = 0;
+            if (implicit_method && method_get_class && method_is_generic &&
+                method_get_class(implicit_method) == ui_text_data_class &&
+                !method_is_generic(implicit_method) &&
+                (method_get_flags(implicit_method, &implicit_flags) & 0x0010u)) {
+                char *return_name = type_get_name(method_get_return_type(implicit_method));
+                const bool returns_string = return_name && strcmp(return_name, "System.String") == 0;
+                if (return_name) il2cpp_free(return_name);
+                void *pointer = nullptr;
+                memcpy(&pointer, implicit_method, sizeof(pointer));
+                if (returns_string && has_inline_hook_space(ui_text_data_class, pointer)) {
+                    hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement_ui_text_implicit),
+                            reinterpret_cast<void **>(&g_original_ui_text_implicit));
+                    if (g_original_ui_text_implicit) acquisition_pointers.insert(pointer);
+                }
+            }
+            append_native_metadata("font-state.log", g_original_ui_text_implicit ?
+                    "ui_text_implicit=1" : "ui_text_implicit=0");
             for (const AcquisitionTarget &target : acquisition_targets) {
                 void *iterator = nullptr;
                 const void *method = nullptr;

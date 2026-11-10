@@ -2,6 +2,14 @@
 
 本文从 AGENTS.md 拆出,记录 VirtualApp 接入状态、设备实测结论和 Limbus 专项兼容细节。AGENTS.md 只保留架构边界和当前关键判断。
 
+## ARM 转译中的 JNI 边界
+
+Android 17 x86_64 的独立模拟环境已捕获：直接把 ARM `new_limbus_FindClass` 指针
+写入平台 JNI 表，会让 x86 libjavacore 在抛出正常文件访问异常时跳入不可执行的 ARM
+地址，发生 SIGSEGV。只有主 ABI 为 ARM 时才安装该表项；支持的 ABI 列表尾部包含
+ARM 不代表平台 JNI 表也是 ARM。转译环境保留平台表和已有 Java 类加载路径。
+此问题发生在游戏 Application 之前，与实体 ARM 设备的 70036 分开判断。
+
 ## 服务连接回调签名
 
 `IServiceConnection.connected` 在旧系统使用两个参数，Android 8 起增加 `dead`，Android 16 QPR2 的框架又在 `dead` 前增加可空 `IBinderSession`。厂商可能回移接口，必须检查实际方法签名，不能只按 SDK 分支。容器接收端同时实现这三种精确签名；发回系统 `LoadedApk` 连接时选择系统真实接口，并原样传递组件、服务 Binder、会话和断开标志。会话与服务 Binder 不可混淆，也不能吞掉转发异常。

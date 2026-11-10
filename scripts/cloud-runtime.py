@@ -1334,6 +1334,13 @@ def main():
     if "Success" not in installed:
         raise RuntimeError("APK installation did not succeed: " + installed[-1000:])
     REPORT["checks"].append("published APK signature/hash and installation")
+    if os.environ.get("RUNTIME_MODE") == "game-startup":
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("game_startup", "scripts/inspect-game-startup.py")
+        inspection = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(inspection)
+        inspection.inspect(adb, command, hierarchy, locate, tap, REPORT, OUT, verifier)
+        return
     if os.environ.get("RUNTIME_MODE") in ("install-open", "startup-records", "release-update", "external-install"):
         import importlib.util
         spec = importlib.util.spec_from_file_location("install_open", "scripts/inspect-install-open.py")

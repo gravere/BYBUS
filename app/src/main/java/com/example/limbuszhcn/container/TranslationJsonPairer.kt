@@ -51,16 +51,24 @@ internal object TranslationJsonPairer {
 
     private fun collect(original: Any?, translated: Any?, path: String, context: String,
                         records: MutableList<TranslationIndexRecord>, depth: Int,
-                        displayArray: String? = null, arrayOwnerId: String? = null) {
+                        displayArray: String? = null, arrayOwnerId: String? = null,
+                        skillContext: String? = null, skillRelation: String? = null) {
         require(depth <= 64) { "Resource nesting exceeds limit" }
         when {
             original is JSONObject && translated is JSONObject -> {
                 val identity = identity(original)
                 if (identity != null && identity != identity(translated)) return
                 val objectContext = identity?.let { "$context[$it]" } ?: context
-                val stableId = listOf("id", "key").firstNotNullOfOrNull { name ->
+                val directId = listOf("id", "key").firstNotNullOfOrNull { name ->
                     original.opt(name).takeIf { it is String || it is Number }?.toString()
                 }
+                val skillRoot = skillContext ?: directId?.takeIf { id ->
+                    id.isSkillNumber() && original.optJSONArray("levelList") != null &&
+                        path.substringAfterLast('/').removePrefix("JP_").let {
+                            it == "Skills.json" || it.startsWith("Skills_")
+                        }
+                }?.let { "@skill:$it" }
+                val stableId = skillRoot ?: directId?.let { tableIdentity(path, it) }
                 original.keys().forEach { field ->
                     val source = original.opt(field)
                     val target = translated.opt(field)
@@ -70,7 +78,8 @@ internal object TranslationJsonPairer {
                         records += TranslationIndexRecord(path, objectContext, field, source, target, stableId)
                     } else if (source is JSONObject || source is JSONArray) {
                         collect(source, target, path, "$objectContext.$field", records, depth + 1,
-                            field.takeIf { it in TranslationTextPolicy.STRING_ARRAY_FIELDS }, stableId)
+                            field.takeIf { it in TranslationTextPolicy.STRING_ARRAY_FIELDS }, stableId,
+                            skillRoot.takeIf { field.lowercase() in SKILL_CHILD_FIELDS }, field.lowercase())
                     }
                 }
             }
@@ -113,9 +122,33 @@ internal object TranslationJsonPairer {
                     } else if (original.length() == translated.length()) {
                         translated.opt(index).takeUnless { it is JSONObject && identity(it) != null }
                     } else null
-                    collect(source, target, path, "$context[$index]", records, depth + 1)
+                    val nestedSkill = skillContext?.let { parent ->
+                        when (skillRelation) {
+                            "levellist" -> (source as? JSONObject)?.opt("level")?.toString()
+                                ?.takeIf { it.isSkillNumber() }?.let { "$parent/level:$it" }
+                            "coinlist" -> "$parent/coin:$index"
+                            "coindescs" -> "$parent/text:$index"
+                            else -> null
+                        }
+                    }?.takeIf { it.length <= 256 }
+                    collect(source, target, path, "$context[$index]", records, depth + 1,
+                        skillContext = nestedSkill)
                 }
             }
+        }
+    }
+
+    private fun String.isSkillNumber(): Boolean = length in 1..18 && all { it in '0'..'9' }
+    private val SKILL_CHILD_FIELDS = setOf("levellist", "coinlist", "coindescs")
+
+    private fun tableIdentity(path: String, id: String): String {
+        val file = path.substringAfterLast('/').removePrefix("JP_")
+        fun belongsTo(family: String) = file == "$family.json" ||
+            file.startsWith("${family}_") || file.startsWith("$family-")
+        return when {
+            belongsTo("Bufs") -> "@buf:$id"
+            belongsTo("BattleKeywords") -> "@battle-keyword:$id"
+            else -> id
         }
     }
 

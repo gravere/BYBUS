@@ -3,17 +3,50 @@
 #include <string>
 #include <string_view>
 #include <cstring>
+#include <cmath>
+#include <utility>
+#include "LimbusRichText.h"
 
 namespace limbus_text_provenance {
+inline bool skill_number(const std::string &id) {
+    return !id.empty() && id.size() <= 18 &&
+            std::all_of(id.begin(), id.end(), [](char c) { return c >= '0' && c <= '9'; });
+}
+inline std::string skill_root_key(const std::string &id) {
+    return skill_number(id) ? "@skill:" + id : std::string();
+}
+inline std::string skill_child_key(const std::string &parent, const char *field,
+                                   const std::string &level, int32_t index) {
+    if (parent.empty() || !field || index < 0) return {};
+    std::string suffix;
+    if (!strcmp(field, "levelList") || !strcmp(field, "levellist")) {
+        if (!skill_number(level)) return {};
+        suffix = "/level:" + level;
+    } else if (!strcmp(field, "coinList") || !strcmp(field, "coinlist")) {
+        suffix = "/coin:" + std::to_string(index);
+    } else if (!strcmp(field, "coinDescs") || !strcmp(field, "coindescs")) {
+        suffix = "/text:" + std::to_string(index);
+    } else return {};
+    return parent.size() + suffix.size() <= 256 ? parent + suffix : std::string();
+}
+class ScopedTextKey {
+    std::string &current;
+    std::string previous;
+public:
+    ScopedTextKey(std::string &slot, std::string key)
+        : current(slot), previous(std::move(slot)) { current = std::move(key); }
+    ~ScopedTextKey() { current = std::move(previous); }
+    ScopedTextKey(const ScopedTextKey &) = delete;
+    ScopedTextKey &operator=(const ScopedTextKey &) = delete;
+};
 inline bool explicit_line_break(std::string_view text) {
     if (text.find_first_of("\r\n") != std::string_view::npos) return true;
     for (size_t i = 0; i + 3 < text.size(); ++i) {
-        if (text.substr(i, 9) == "<noparse>") {
-            auto end = text.find("</noparse>", i + 9);
-            if (end == std::string_view::npos) break;
-            i = end + 9 - 1;
-        } else if (text[i] == '<' && (text[i + 1] == 'b' || text[i + 1] == 'B') &&
-                   (text[i + 2] == 'r' || text[i + 2] == 'R') && text[i + 3] == '>') return true;
+        auto tag = limbus_rich_text::tag_at(text, i);
+        if (!tag.end || tag.closing) continue;
+        if (limbus_rich_text::equal_ascii(tag.name, "noparse"))
+            i = limbus_rich_text::literal_end(text, tag.end) - 1;
+        else if (limbus_rich_text::equal_ascii(tag.name, "br")) return true;
     }
     return false;
 }
@@ -22,8 +55,18 @@ inline bool explicit_line_break(std::string_view text) {
 inline bool single_line_label(size_t visible, bool explicit_break, bool original_no_wrap,
                               float rect_height, float font_size, int overflow = -1) {
     // Preserve Masking, Truncate, ScrollRect, Page and Linked modes (TMP 3).
-    return overflow < 2 && visible <= 48 && !explicit_break && (original_no_wrap ||
-            (rect_height > 0 && font_size > 0 && rect_height <= font_size * 1.8f));
+    if (overflow >= 2 || visible > 48 || explicit_break) return false;
+    if (rect_height > 0 && font_size > 0)
+        return rect_height <= font_size * 1.8f;
+    return original_no_wrap;
+}
+inline float nominal_font_size(float current, bool auto_sizing, float maximum) {
+    return auto_sizing && std::isfinite(maximum) && maximum > 0 ? maximum : current;
+}
+inline float readable_minimum(float maximum, float original_minimum) {
+    float floor = std::max(9.0f, maximum * 0.8f);
+    if (std::isfinite(original_minimum) && original_minimum > floor) floor = original_minimum;
+    return std::min(maximum, floor);
 }
 // These IL2CPP parameters occupy one general-purpose register on the supported
 // arm64 profile. Floating-point and arbitrary value types require typed wrappers.
