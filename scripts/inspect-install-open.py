@@ -1,13 +1,19 @@
-"""Cloud-only system installer inspection using the untouched signed BYBUS APK."""
+"""Disposable-cloud installation checks. Never connect a user's device."""
 from pathlib import Path
-import os
+import hashlib
 import json
+import os
 import re
 import time
 import zipfile
 
+PACKAGE = "io.github.gravere.bybus"
+MAIN = PACKAGE + "/com.example.limbuszhcn.MainActivity"
+PROBE = PACKAGE + "/com.example.limbuszhcn.InstallFlowProbeActivity"
+CERT = "d50bbcfb234692d5d5f90427499158608c5a4c13adb7f99a78d9b5f1af44d55b"
 
-def inspect(apk, adb, command, hierarchy, locate, tap, report, out):
+
+def build_external_fixture(adb, command):
     sdk = Path(os.environ["ANDROID_HOME"])
     build = sdk / "build-tools/35.0.0"
     android = sdk / "platforms/android-35/android.jar"
@@ -26,113 +32,267 @@ def inspect(apk, adb, command, hierarchy, locate, tap, report, out):
     with zipfile.ZipFile(unsigned, "a") as archive:
         archive.write(work / "classes.dex", "classes.dex")
     key = work / "temporary.jks"
-    # Throwaway fixture identity generated only on this ephemeral runner.
     command("keytool", "-genkeypair", "-keystore", str(key), "-alias", "probe", "-keyalg", "RSA",
             "-storepass", "temporary", "-keypass", "temporary", "-dname", "CN=Disposable probe", "-validity", "1")
     probe = work / "probe.apk"
     command(str(build / "apksigner"), "sign", "--ks", str(key), "--ks-pass", "pass:temporary",
             "--out", str(probe), str(unsigned))
     fixture = "io.github.gravere.bybus.installprobe"
-    package = "io.github.gravere.bybus"
-    installed = adb("install", "--no-streaming", str(probe), timeout=90)
-    if "Success" not in installed:
+    if "Success" not in adb("install", "--no-streaming", str(probe), timeout=90):
         raise RuntimeError("Installer fixture installation failed")
     adb("shell", "appops", "set", fixture, "REQUEST_INSTALL_PACKAGES", "allow")
-    # Leave the real application task present during replacement, like an external file-manager update.
-    adb("logcat", "-c")
-    # PackageManager.getLaunchIntentForPackage returns an explicit component.
-    # A raw implicit MAIN start incorrectly adds MATCH_DEFAULT_ONLY at resolution.
-    adb("shell", "am", "start", "-W", "-a", "android.intent.action.MAIN", "-c",
-        "android.intent.category.LAUNCHER", "-n", package + "/com.example.limbuszhcn.MainActivity", timeout=60)
-    time.sleep(2)
-    locate(hierarchy("before-update"), "设置与工具")
-    adb("shell", "am", "start", "-W", "-n", fixture + "/.InstallProbe", timeout=60)
-    adb("push", str(apk), "/sdcard/Android/data/" + fixture + "/files/update.apk", timeout=120)
-    caller = hierarchy("installer-caller")
-    label = next(n.get("text") for n in caller.iter("node") if n.get("text", "").lower() == "install bybus")
-    tap(label, caller)
-    deadline = time.monotonic() + 90
-    confirmed = False
-    opened = False
-    while time.monotonic() < deadline:
-        tree = hierarchy("installer-state")
-        buttons = {n.get("text", "").lower(): n for n in tree.iter("node")
-                   if n.get("clickable") == "true" and n.get("enabled") == "true"}
-        if not confirmed:
-            action = next((name for name in ("update", "install") if name in buttons), None)
-            if action:
-                tap(buttons[action].get("text"), tree)
-                confirmed = True
-                report["installer_confirmation_clicked"] = True
-                continue
-        elif "open" in buttons:
-            (out / "before-installer-open.txt").write_text(adb("shell", "dumpsys", "activity", "activities"), encoding="utf-8")
-            tap(buttons["open"].get("text"), tree)
-            opened = True
-            report["installer_open_clicked"] = True
-            break
-        time.sleep(1)
-    if not opened:
-        raise RuntimeError("System installer did not expose an Open action after confirmation")
-    # Replacement cold-start can take several seconds on the ARM translation image.
-    # Wait for the actual first app frame, not merely the installer's disappearing window.
-    deadline = time.monotonic() + 30
-    while True:
-        tree = hierarchy("after-installer-open")
-        try:
-            locate(tree, "设置与工具")
-            break
-        except RuntimeError:
-            if time.monotonic() >= deadline:
+    return fixture
+
+
+def inspect(apk, adb, command, hierarchy, locate, tap, report, out,
+            release, request, verifier, install_probe):
+    if os.environ.get("GITHUB_ACTIONS") != "true" or adb("shell", "getprop", "ro.kernel.qemu").strip() != "1":
+        raise RuntimeError("Installation fixtures are restricted to the disposable CI emulator")
+
+    def version():
+        text = adb("shell", "dumpsys", "package", PACKAGE)
+        return int(re.search(r"\bversionCode=(\d+)\b", text).group(1))
+
+    def root_shell():
+        adb("root")
+        adb("wait-for-device", timeout=30)
+        if adb("shell", "id", "-u").strip() != "0":
+            raise RuntimeError("Cannot read disposable emulator evidence")
+
+    def provide_fixture_apk(package):
+        # Android 11 scoped storage blocks shell access to Android/data. Seed only an
+        # existing fixture cache and restore its real owner/label before app code reads it.
+        if package not in (PACKAGE, "io.github.gravere.bybus.installprobe"):
+            raise RuntimeError("Unknown fixture package")
+        root_shell()
+        directory = "/data/user/0/" + package + "/cache"
+        adb("shell", "test", "-d", directory)
+        owner = adb("shell", "stat", "-c", "%u:%g", directory).strip()
+        if not re.fullmatch(r"[1-9][0-9]{4,}:[1-9][0-9]{4,}", owner):
+            raise RuntimeError("Fixture cache was not created by the application UID")
+        path = directory + "/update.apk"
+        adb("push", str(apk), path, timeout=120)
+        adb("shell", "chown", owner, path)
+        adb("shell", "restorecon", "-F", path)
+
+    def wait_home(stem):
+        deadline = time.monotonic() + 35
+        while True:
+            try:
+                locate(hierarchy(stem), "设置与工具")
                 break
+            except RuntimeError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(1)
+        tasks = adb("shell", "dumpsys", "activity", "activities")
+        (out / (stem + "-tasks.txt")).write_text(tasks, encoding="utf-8")
+        resumed = [line for line in tasks.splitlines() if "ResumedActivity" in line or "topResumedActivity" in line]
+        if not any(MAIN in line for line in resumed):
+            raise RuntimeError("BYBUS homepage is not resumed")
+
+    def drive_installer(stem, cancel=False):
+        deadline = time.monotonic() + 100
+        confirmed = False
+        while time.monotonic() < deadline:
+            tree = hierarchy(stem)
+            buttons = {n.get("text", "").lower(): n for n in tree.iter("node")
+                       if n.get("clickable") == "true" and n.get("enabled") == "true"}
+            if any("problem parsing" in n.get("text", "").lower() for n in tree.iter("node")):
+                (out / (stem + "-error.txt")).write_text(adb("logcat", "-d", "-t", "800",
+                    "PackageInstaller:I", "InstallStart:I", "InstallStaging:I", "PackageUtil:I",
+                    "PackageInstallerActivity:I", "BYBUSInstallProbe:I", "AndroidRuntime:E", "*:S"), encoding="utf-8")
+                raise RuntimeError("Installer could not parse the fixture-provided APK")
+            if not confirmed:
+                action = next((name for name in ("update", "install") if name in buttons), None)
+                if action:
+                    tasks = adb("shell", "dumpsys", "activity", "activities")
+                    (out / (stem + "-tasks.txt")).write_text(tasks, encoding="utf-8")
+                    if stem.startswith("in-app"):
+                        top = next(line for line in tasks.splitlines() if "topResumedActivity" in line or "mResumedActivity" in line)
+                        task = int(re.search(r"\bt(\d+)\b", top).group(1))
+                        if task == report["in_app_source_task"]:
+                            raise RuntimeError("Self-update installer still shares the caller's task")
+                        report["in_app_installer_task"] = task
+                    if cancel:
+                        tap(buttons["cancel"].get("text"), tree)
+                        return
+                    tap(buttons[action].get("text"), tree)
+                    confirmed = True
+                    continue
+            elif "open" in buttons:
+                tap(buttons["open"].get("text"), tree)
+                wait_home(stem + "-opened")
+                return
             time.sleep(1)
-    tasks = adb("shell", "dumpsys", "activity", "activities")
-    (out / "after-installer-open.txt").write_text(tasks, encoding="utf-8")
-    (out / "installer-log.txt").write_text(adb("logcat", "-d", "-t", "1200", "ActivityTaskManager:I",
-        "ActivityManager:I", "PackageInstaller:I", "InstallSuccess:I", "InstallLaunch:I", "BYBUSInstallProbe:I",
-        "LimbusZhCNApp:I", "LimbusZhCN:I", "AndroidRuntime:E", "*:S"), encoding="utf-8")
-    locate(tree, "设置与工具")
-    resumed = [line.strip() for line in tasks.splitlines() if "ResumedActivity" in line or "topResumedActivity" in line]
-    if not any(package + "/com.example.limbuszhcn.MainActivity" in line for line in resumed):
-        raise RuntimeError("Open did not resume the BYBUS main activity")
-    report["install_open"] = dict(passed=True, external_caller=True, actual_installer_ui=True,
-        same_version_replacement=True, bybus_main_resumed=True, game_launched=False, vivo_installer_tested=False)
-    report["checks"].append("System installer: same signed APK replacement, Open button and BYBUS home resumed")
-    report["result"] = "installer Open inspection completed; vivo behavior and 70036 not tested"
+        report["installer_failure"] = dict(stage=stem, installed_code=version(), confirmed=confirmed)
+        raise RuntimeError("Installer did not complete " + stem)
+
+    target_code = version()
+    adb("logcat", "-c")
+    # Exercise the real implicit call; never replace this check with an explicit component.
+    result = adb("shell", "am", "start", "-W", "-a", "android.intent.action.MAIN", "-c",
+                 "android.intent.category.LAUNCHER", "-p", PACKAGE, timeout=60)
+    if "Error" in result or "unable to resolve" in result:
+        raise RuntimeError("Implicit MAIN/LAUNCHER entry did not resolve")
+    wait_home("implicit-main")
+    adb("shell", "am", "start", "-W", "-n", MAIN, timeout=60)
+    wait_home("explicit-main")
+    report["launcher_entries"] = dict(implicit=True, explicit=True)
+
+    # Root reads fixture evidence only in this empty emulator, never in a user's environment.
+    root_shell()
+
+    previous = None
+    if release["draft"]:
+        previous = json.loads(request("https://api.github.com/repos/gravere/BYBUS/releases/latest", 512 * 1024))
+        assets = {a["name"]: a for a in previous["assets"]}
+        sums = request(assets["SHA256SUMS.txt"]["url"], 32 * 1024, asset=True).decode()
+        digest = re.findall(r"^([a-f0-9]{64})\s+\*?BYBUS-Android\.apk\s*$", sums, re.M)
+        data = request(assets["BYBUS-Android.apk"]["url"], 200 * 1024 * 1024, asset=True)
+        if len(digest) != 1 or hashlib.sha256(data).hexdigest() != digest[0] or len(data) != assets["BYBUS-Android.apk"]["size"]:
+            raise RuntimeError("Previous release APK digest mismatch")
+        base = Path(os.environ["RUNNER_TEMP"]) / "previous-BYBUS.apk"
+        base.write_bytes(data)
+        del data
+        signatures = command(str(verifier), "verify", "--print-certs", str(base), timeout=60)
+        if set(re.findall(r"Signer #\d+ certificate SHA-256 digest: ([a-f0-9]+)", signatures)) != {CERT}:
+            raise RuntimeError("Previous release signer mismatch")
+        adb("uninstall", PACKAGE)
+        if "Success" not in adb("install", "--no-streaming", str(base), timeout=150):
+            raise RuntimeError("Could not install the previous official release")
+        report["previous_release"] = dict(tag=previous["tag_name"], sha256=digest[0])
+
+    base_code = version()
+    if previous and base_code >= target_code:
+        raise RuntimeError("Cross-version inspection requires a newer candidate")
+    adb("shell", "am", "start", "-W", "-n", MAIN, timeout=60)
+    wait_home("before-external-update")
+    sentinel = Path(os.environ["RUNNER_TEMP"]) / "upgrade-sentinel.txt"
+    sentinel.write_text("BYBUS_CLOUD_UPGRADE_SENTINEL", encoding="ascii")
+    # Use an existing app-created directory; adb push must never create root-owned app directories.
+    sentinel_path = "/data/user/0/" + PACKAGE + "/no_backup/diagnostics/upgrade-sentinel.txt"
+    adb("shell", "test", "-d", str(Path(sentinel_path).parent))
+    adb("push", str(sentinel), sentinel_path)
+    fixture = build_external_fixture(adb, command)
+    adb("shell", "am", "start", "-W", "-n", fixture + "/.InstallProbe", timeout=60)
+    provide_fixture_apk(fixture)
+    tree = hierarchy("external-caller")
+    label = next(n.get("text") for n in tree.iter("node") if n.get("text", "").lower() == "install bybus")
+    tap(label, tree)
+    drive_installer("external-update")
+    root_shell()
+    if version() != target_code or adb("shell", "cat", sentinel_path).strip() != sentinel.read_text():
+        raise RuntimeError("External replacement did not preserve version or fixture data")
+    report["install_open"] = dict(passed=True, from_code=base_code, to_code=target_code,
+        external_caller=True, actual_installer_ui=True, same_version_replacement=base_code == target_code,
+        data_preserved=True, bybus_main_resumed=True, game_launched=False, vivo_installer_tested=False)
+
+    if release["draft"]:
+        adb("uninstall", PACKAGE)
+        fixture_digest = install_probe(release, verifier, "bybus-install-base.apk")
+        fixture_code = version()
+        if fixture_code >= target_code:
+            raise RuntimeError("In-app fixture must have a lower package version")
+        adb("shell", "appops", "set", PACKAGE, "REQUEST_INSTALL_PACKAGES", "allow")
+        adb("shell", "am", "start", "-W", "-n", PROBE, timeout=60)
+        adb("shell", "test", "-d", str(Path(sentinel_path).parent))
+        adb("push", str(sentinel), sentinel_path)
+        provide_fixture_apk(PACKAGE)
+
+        def tap_fixture(stem):
+            tree = hierarchy(stem)
+            tasks = adb("shell", "dumpsys", "activity", "activities")
+            top = next(line for line in tasks.splitlines() if "topResumedActivity" in line or "mResumedActivity" in line)
+            report["in_app_source_task"] = int(re.search(r"\bt(\d+)\b", top).group(1))
+            label = next(n.get("text") for n in tree.iter("node")
+                         if n.get("text", "").lower() == "install verified update")
+            tap(label, tree)
+
+        tap_fixture("in-app-caller")
+        drive_installer("in-app-cancel", cancel=True)
+        root_shell()
+        deadline = time.monotonic() + 20
+        cancelled_path = "/data/user/0/" + PACKAGE + "/files/install-returned.txt"
+        while True:
+            cancelled = adb("shell", "cat", cancelled_path, check=False)
+            if "phase=RETURNED" in cancelled:
+                break
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Installer cancellation was not delivered")
+            time.sleep(1)
+        if "outcome=not-updated" not in cancelled or version() != fixture_code:
+            raise RuntimeError("Cancellation was incorrectly reported as installed")
+        (out / "cancelled-install.txt").write_text(cancelled, encoding="utf-8")
+
+        tap_fixture("in-app-retry")
+        drive_installer("in-app-update")
+        receipt_path = "/data/user/0/" + PACKAGE + "/no_backup/diagnostics/app-install.properties"
+        deadline = time.monotonic() + 15
+        while True:
+            receipt = adb("shell", "cat", receipt_path)
+            if re.search(r"firstHomeFrameAt=[1-9][0-9]*", receipt):
+                break
+            if time.monotonic() >= deadline:
+                raise RuntimeError("New process did not record the committed home frame")
+            time.sleep(1)
+        if version() != target_code or f"observedCode={target_code}" not in receipt or adb("shell", "cat", sentinel_path).strip() != sentinel.read_text():
+            raise RuntimeError("In-app replacement lost version, receipt or fixture data")
+        (out / "completed-install.properties").write_text(receipt, encoding="utf-8")
+        report["in_app_update"] = dict(passed=True, from_code=fixture_code, to_code=target_code,
+            source="current-source Debug fixture with lower package version", fixture_sha256=fixture_digest,
+            cancel_returned=True, retry_installed=True, data_preserved=True, new_process_first_frame=True,
+            installer_in_separate_task=True)
+
+        inspect_startup_records(adb, hierarchy, locate, report, out, release, verifier, install_probe,
+                                home_present=True, expected_phase="INSTALLER_HANDOFF")
+
+    (out / "installer-log.txt").write_text(adb("logcat", "-d", "-t", "1500", "ActivityTaskManager:I",
+        "ActivityManager:I", "PackageInstaller:I", "InstallSuccess:I", "LimbusZhCNApp:I", "LimbusZhCN:I",
+        "AndroidRuntime:E", "*:S"), encoding="utf-8")
+    report["checks"].append("Implicit and explicit launcher entries, actual system installer Open and retained fixture data")
+    report["result"] = "installation checks completed; OEM behavior and 70036 not tested"
 
 
-def inspect_crash_handlers(adb, hierarchy, locate, report, out):
-    package = "io.github.gravere.bybus"
-    namespace = "com.example.limbuszhcn"
+def inspect_startup_records(adb, hierarchy, locate, report, out, release, verifier, install_probe,
+                            home_present=False, expected_phase="HOME_FRAME"):
+    """Check only the public startup/exit APIs after installation flows have passed."""
+    if os.environ.get("GITHUB_ACTIONS") != "true" or adb("shell", "getprop", "ro.kernel.qemu").strip() != "1":
+        raise RuntimeError("Startup fixture is restricted to the disposable CI emulator")
+    if not home_present:
+        adb("shell", "am", "start", "-W", "-n", MAIN, timeout=60)
+        locate(hierarchy("startup-home"), "设置与工具")
+    # Replacing a foreground app on Android 17 starts a SystemUI package-update
+    # activity that may relaunch Main and race the probe. Stop the fixture first.
+    adb("shell", "am", "force-stop", PACKAGE)
+    diagnostic_digest = install_probe(release, verifier)
     adb("root")
     adb("wait-for-device", timeout=30)
-    if adb("shell", "id", "-u").strip() != "0":
-        raise RuntimeError("Cannot retrieve the isolated emulator's private diagnostic evidence")
-    evidence = {}
-    for name, activity, suffix in [("host", "AppCrashProbeActivity", ""), ("server", "ServerCrashProbeActivity", "_x")]:
-        adb("logcat", "-c")
-        adb("shell", "am", "start", "-W", "-n", package + "/" + namespace + "." + activity, check=False)
-        time.sleep(2)
-        result = json.loads(adb("shell", "cat", "/data/user/0/" + package + "/files/crash-probe-" + name + ".json"))
-        persistent = adb("shell", "cat", "/data/user/0/" + package + "/no_backup/diagnostics/runtime-" + package + suffix + ".log", check=False)
-        system = adb("logcat", "-d", "-b", "crash")
-        (out / ("expected-crash-" + name + ".txt")).write_text(system, encoding="utf-8")
-        (out / ("persistent-crash-" + name + ".txt")).write_text(persistent, encoding="utf-8")
-        if not result["owned_handler"] or not result["expected_crash"]:
-            raise RuntimeError(name + " exception handler was replaced")
-        if "BYBUS_EXPECTED_DIAGNOSTIC_CRASH" not in persistent or "Uncaught exception thread=main" not in persistent:
-            raise RuntimeError(name + " exception did not reach bounded persistent diagnostics")
-        if "FATAL EXCEPTION: main" not in system or "BYBUS_EXPECTED_DIAGNOSTIC_CRASH" not in system:
-            raise RuntimeError(name + " exception was swallowed instead of reaching Android")
-        running = adb("shell", "ps", "-A", "-o", "PID").split()
-        if not running or running[0] != "PID" or not all(pid.isdecimal() for pid in running[1:]):
-            raise RuntimeError("Could not read the isolated emulator's process inventory")
-        if str(result["pid"]) in running[1:]:
-            raise RuntimeError(name + " process survived an unhandled exception")
-        evidence[name] = dict(owned_handler=True, persisted=True, delegated_to_android=True, process_exited=True)
-        adb("logcat", "-c")
-    adb("shell", "am", "start", "-W", "-n", package + "/" + namespace + ".MainActivity", timeout=60)
-    time.sleep(2)
-    locate(hierarchy("after-expected-crashes"), "设置与工具")
-    report["crash_handler_checks"] = dict(passed=True, expected_crashes=2, processes=evidence, home_reopened=True)
-    report["checks"].append("Two intentional Debug crashes: persisted, Android handler preserved, process exits and home can reopen")
+    # This Activity intentionally finishes before drawing a window. am -W would
+    # wait for a frame that does not exist; wait for its result file instead.
+    launch = adb("shell", "am", "start", "-n", PROBE, "--es", "mode", "diagnostics",
+                 "--es", "private_fixture", "BYBUS_SHOULD_NOT_BE_EXPORTED", timeout=30)
+    (out / "startup-probe-launch.txt").write_text(launch, encoding="utf-8")
+    deadline = time.monotonic() + 30
+    while True:
+        raw = adb("shell", "cat", "/data/user/0/" + PACKAGE + "/files/startup-probe.json", check=False)
+        if raw.strip().startswith("{"):
+            result = json.loads(raw)
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Startup diagnostic probe did not write its result")
+        time.sleep(1)
+    (out / "startup-diagnostics.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    if "BYBUS_SHOULD_NOT_BE_EXPORTED" in json.dumps(result):
+        raise RuntimeError("Startup diagnostics leaked Intent extras")
+    if result["sdk"] >= 35:
+        if "state=first-frame-drawn" not in result["starts"] or "mainComponent=true" not in result["starts"]:
+            raise RuntimeError("Own startup history is missing the rendered main entry")
+    elif "unavailable: startup history requires" not in result["starts"]:
+        raise RuntimeError("Older Android did not report the API fallback")
+    if not any(expected_phase in e["checkpoint"] for e in result["exits"]):
+        raise RuntimeError("The previous process checkpoint was not retained")
+    report["startup_diagnostics"] = dict(passed=True, startup_api=result["sdk"] >= 35,
+        exit_checkpoint=True, checkpoint_phase=expected_phase, intent_extras_exported=False, probe_sha256=diagnostic_digest)
+    report["checks"].append("Own startup history, first frame, historical exit checkpoint and Intent filtering")
+    report["result"] = "startup diagnostics completed; no game or account accessed"

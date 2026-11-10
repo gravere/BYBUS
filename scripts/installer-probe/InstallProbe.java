@@ -22,10 +22,12 @@ public final class InstallProbe extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        getExternalFilesDir(null).mkdirs();
+        getCacheDir().mkdirs();
         Button install = new Button(this);
         install.setText("Install BYBUS");
         install.setOnClickListener(view -> {
+            File source = new File(getCacheDir(), "update.apk");
+            Log.i("BYBUSInstallProbe", "fixture bytes=" + source.length() + " readable=" + source.canRead());
             Intent request = new Intent(Intent.ACTION_VIEW).setDataAndType(APK, "application/vnd.android.package-archive")
                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             request.setClipData(ClipData.newRawUri("BYBUS", APK));
@@ -45,7 +47,7 @@ public final class InstallProbe extends Activity {
         @Override public boolean onCreate() { return true; }
         private File checkedFile(Uri uri) {
             if (!APK.equals(uri)) throw new IllegalArgumentException("Unknown file");
-            return new File(getContext().getExternalFilesDir(null), "update.apk");
+            return new File(getContext().getCacheDir(), "update.apk");
         }
         @Override public String getType(Uri uri) { checkedFile(uri); return "application/vnd.android.package-archive"; }
         @Override public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {

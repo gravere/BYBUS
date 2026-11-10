@@ -6,7 +6,7 @@ on:
       mode:
         description: Inspection scope
         type: choice
-        options: [ui, launch, install-open, button-ui, button-feedback, detail-rest, row-feedback, service-callback, service-callback-new, service-cache, permissions, permissions-legacy, package-queries, updates, repairs, resources, migration-ui, interaction-ui, disclosure-ui, runtime]
+        options: [ui, launch, install-open, install-open-legacy, startup-records, button-ui, button-feedback, detail-rest, row-feedback, service-callback, service-callback-new, service-cache, permissions, permissions-legacy, package-queries, updates, repairs, resources, migration-ui, interaction-ui, disclosure-ui, runtime]
         default: ui
       candidate:
         description: Inspect the staged release matching this branch
@@ -32,11 +32,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        profile: ${{ fromJSON(inputs.mode == 'permissions-legacy' && '["android11"]' || (inputs.mode == 'permissions' || inputs.mode == 'package-queries') && '["android11","android17"]' || (inputs.mode == 'service-callback-new' || inputs.mode == 'install-open') && '["android17"]' || inputs.mode == 'service-callback' && '["android15","android17"]' || inputs.mode != 'runtime' && '["android15"]' || '["android11","experimental16k"]') }}
+        profile: ${{ fromJSON((inputs.mode == 'permissions-legacy' || inputs.mode == 'install-open-legacy') && '["android11"]' || (inputs.mode == 'permissions' || inputs.mode == 'package-queries' || inputs.mode == 'install-open' || inputs.mode == 'startup-records') && '["android11","android17"]' || inputs.mode == 'service-callback-new' && '["android17"]' || inputs.mode == 'service-callback' && '["android15","android17"]' || inputs.mode != 'runtime' && '["android15"]' || '["android11","experimental16k"]') }}
     env:
       RUNTIME_PROFILE: ${{ matrix.profile }}
       ANDROID_IMAGE: ${{ matrix.profile == 'android17' && 'system-images;android-37.0;google_apis;x86_64' || matrix.profile == 'android15' && 'system-images;android-35;google_apis;x86_64' || matrix.profile == 'android11' && 'system-images;android-30;google_apis;x86_64' || 'system-images;android-35;google_apis_ps16k;x86_64' }}
-      RUNTIME_MODE: ${{ inputs.mode == 'permissions-legacy' && 'permissions' || (inputs.mode == 'service-callback-new' || inputs.mode == 'service-cache') && 'service-callback' || inputs.mode }}
+      RUNTIME_MODE: ${{ inputs.mode == 'permissions-legacy' && 'permissions' || inputs.mode == 'install-open-legacy' && 'install-open' || (inputs.mode == 'service-callback-new' || inputs.mode == 'service-cache') && 'service-callback' || inputs.mode }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
