@@ -97,6 +97,9 @@ android {
         buildConfig = true
     }
     sourceSets.getByName("main").assets.srcDir(compactAssets)
+    // Optional JNI API fixture, built explicitly by scripts/build-jni-probe.py.
+    // It is absent from the production source set and Release APK.
+    sourceSets.getByName("debug").jniLibs.srcDir(layout.buildDirectory.dir("generated/jniProbe"))
     androidResources {
         ignoreAssetsPatterns.add("ChineseFont.ttf")
         noCompress.add("xz")
