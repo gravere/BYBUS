@@ -244,25 +244,55 @@ def inspect(apk, adb, command, hierarchy, locate, tap, report, out,
             cancel_returned=True, retry_installed=True, data_preserved=True, new_process_first_frame=True,
             installer_in_separate_task=True)
 
-        diagnostic_digest = install_probe(release, verifier)
-        adb("shell", "am", "start", "-W", "-n", PROBE, "--es", "mode", "diagnostics",
-            "--es", "private_fixture", "BYBUS_SHOULD_NOT_BE_EXPORTED", timeout=60)
-        result = json.loads(adb("shell", "cat", "/data/user/0/" + PACKAGE + "/files/startup-probe.json"))
-        if "BYBUS_SHOULD_NOT_BE_EXPORTED" in json.dumps(result):
-            raise RuntimeError("Startup diagnostics leaked Intent extras")
-        if result["sdk"] >= 35:
-            if "state=first-frame-drawn" not in result["starts"] or "mainComponent=true" not in result["starts"]:
-                raise RuntimeError("Own startup history is missing the rendered main entry")
-        elif "unavailable: startup history requires" not in result["starts"]:
-            raise RuntimeError("Older Android did not report the API fallback")
-        if not any("INSTALLER_HANDOFF" in e["checkpoint"] for e in result["exits"]):
-            raise RuntimeError("Process replacement did not retain the installer checkpoint")
-        (out / "startup-diagnostics.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
-        report["startup_diagnostics"] = dict(passed=True, startup_api=result["sdk"] >= 35,
-            exit_checkpoint=True, intent_extras_exported=False, probe_sha256=diagnostic_digest)
+        inspect_startup_records(adb, hierarchy, locate, report, out, release, verifier, install_probe,
+                                home_present=True, expected_phase="INSTALLER_HANDOFF")
 
     (out / "installer-log.txt").write_text(adb("logcat", "-d", "-t", "1500", "ActivityTaskManager:I",
         "ActivityManager:I", "PackageInstaller:I", "InstallSuccess:I", "LimbusZhCNApp:I", "LimbusZhCN:I",
         "AndroidRuntime:E", "*:S"), encoding="utf-8")
     report["checks"].append("Implicit and explicit launcher entries, actual system installer Open and retained fixture data")
     report["result"] = "installation checks completed; OEM behavior and 70036 not tested"
+
+
+def inspect_startup_records(adb, hierarchy, locate, report, out, release, verifier, install_probe,
+                            home_present=False, expected_phase="HOME_FRAME"):
+    """Check only the public startup/exit APIs after installation flows have passed."""
+    if os.environ.get("GITHUB_ACTIONS") != "true" or adb("shell", "getprop", "ro.kernel.qemu").strip() != "1":
+        raise RuntimeError("Startup fixture is restricted to the disposable CI emulator")
+    if not home_present:
+        adb("shell", "am", "start", "-W", "-n", MAIN, timeout=60)
+        locate(hierarchy("startup-home"), "设置与工具")
+    # Replacing a foreground app on Android 17 starts a SystemUI package-update
+    # activity that may relaunch Main and race the probe. Stop the fixture first.
+    adb("shell", "am", "force-stop", PACKAGE)
+    diagnostic_digest = install_probe(release, verifier)
+    adb("root")
+    adb("wait-for-device", timeout=30)
+    # This Activity intentionally finishes before drawing a window. am -W would
+    # wait for a frame that does not exist; wait for its result file instead.
+    launch = adb("shell", "am", "start", "-n", PROBE, "--es", "mode", "diagnostics",
+                 "--es", "private_fixture", "BYBUS_SHOULD_NOT_BE_EXPORTED", timeout=30)
+    (out / "startup-probe-launch.txt").write_text(launch, encoding="utf-8")
+    deadline = time.monotonic() + 30
+    while True:
+        raw = adb("shell", "cat", "/data/user/0/" + PACKAGE + "/files/startup-probe.json", check=False)
+        if raw.strip().startswith("{"):
+            result = json.loads(raw)
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Startup diagnostic probe did not write its result")
+        time.sleep(1)
+    (out / "startup-diagnostics.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    if "BYBUS_SHOULD_NOT_BE_EXPORTED" in json.dumps(result):
+        raise RuntimeError("Startup diagnostics leaked Intent extras")
+    if result["sdk"] >= 35:
+        if "state=first-frame-drawn" not in result["starts"] or "mainComponent=true" not in result["starts"]:
+            raise RuntimeError("Own startup history is missing the rendered main entry")
+    elif "unavailable: startup history requires" not in result["starts"]:
+        raise RuntimeError("Older Android did not report the API fallback")
+    if not any(expected_phase in e["checkpoint"] for e in result["exits"]):
+        raise RuntimeError("The previous process checkpoint was not retained")
+    report["startup_diagnostics"] = dict(passed=True, startup_api=result["sdk"] >= 35,
+        exit_checkpoint=True, checkpoint_phase=expected_phase, intent_extras_exported=False, probe_sha256=diagnostic_digest)
+    report["checks"].append("Own startup history, first frame, historical exit checkpoint and Intent filtering")
+    report["result"] = "startup diagnostics completed; no game or account accessed"
