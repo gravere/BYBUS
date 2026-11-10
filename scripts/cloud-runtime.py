@@ -1334,12 +1334,14 @@ def main():
     if "Success" not in installed:
         raise RuntimeError("APK installation did not succeed: " + installed[-1000:])
     REPORT["checks"].append("published APK signature/hash and installation")
-    if os.environ.get("RUNTIME_MODE") in ("install-open", "startup-records", "release-update"):
+    if os.environ.get("RUNTIME_MODE") in ("install-open", "startup-records", "release-update", "external-install"):
         import importlib.util
         spec = importlib.util.spec_from_file_location("install_open", "scripts/inspect-install-open.py")
         inspection = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(inspection)
-        if os.environ.get("RUNTIME_MODE") == "release-update":
+        if os.environ.get("RUNTIME_MODE") == "external-install":
+            inspection.inspect_external_install(apk, adb, command, hierarchy, locate, tap, REPORT, OUT)
+        elif os.environ.get("RUNTIME_MODE") == "release-update":
             inspection.inspect_release_update(adb, command, hierarchy, locate, tap, REPORT, OUT,
                                               release, request, verifier)
         elif os.environ.get("RUNTIME_MODE") == "startup-records":
@@ -1481,7 +1483,7 @@ except Exception as error:
     raise
 finally:
     try:
-        if os.environ.get("RUNTIME_MODE") in ("service-callback", "permissions", "package-queries", "install-open", "startup-records", "release-update"):
+        if os.environ.get("RUNTIME_MODE") in ("service-callback", "permissions", "package-queries", "install-open", "startup-records", "release-update", "external-install"):
             diagnostic = adb("logcat", "-d", "-t", "700", "PermissionProbe:E", "ServiceCallbackProbe:E", "ActivityManager:I",
                              "ActivityTaskManager:I", "LimbusZhCN:D", "LimbusZhCNApp:I", "LimbusVA:W",
                              "InstallSuccess:I", "InstallLaunch:I", "BYBUSInstallProbe:I", "AndroidRuntime:E", "*:S", timeout=15, check=False)
