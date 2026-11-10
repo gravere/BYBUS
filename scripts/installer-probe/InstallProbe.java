@@ -31,7 +31,8 @@ public final class InstallProbe extends Activity {
             Intent request = new Intent(Intent.ACTION_VIEW).setDataAndType(APK, "application/vnd.android.package-archive")
                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             request.setClipData(ClipData.newRawUri("BYBUS", APK));
-            startActivityForResult(request, 1);
+            if (getIntent().getBooleanExtra("request_result", true)) startActivityForResult(request, 1);
+            else startActivity(request);
         });
         setContentView(install);
     }
