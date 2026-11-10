@@ -2,7 +2,6 @@ package com.example.limbuszhcn
 
 import android.app.Activity
 import android.app.ActivityManager
-import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.widget.Button
@@ -25,7 +24,7 @@ class InstallFlowProbeActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         installer = AppUpdateInstaller(applicationContext)
-        getExternalFilesDir(null)?.mkdirs()
+        cacheDir.mkdirs()
         if (intent.getStringExtra("mode") == "diagnostics") {
             val exits = JSONArray()
             if (Build.VERSION.SDK_INT >= 30) getSystemService(ActivityManager::class.java)
@@ -48,7 +47,7 @@ class InstallFlowProbeActivity : Activity() {
                 status.text = "Verifying update"
                 Thread({
                     runCatching {
-                        val source = File(getExternalFilesDir(null), "update.apk")
+                        val source = File(cacheDir, "update.apk")
                         val file = File(cacheDir, "app-update/probe-update.apk")
                         file.parentFile!!.mkdirs()
                         source.copyTo(file, overwrite = true)
@@ -61,7 +60,7 @@ class InstallFlowProbeActivity : Activity() {
                         installer.prepare(file, release)
                         file
                     }.fold(onSuccess = { file -> runOnUiThread {
-                        runCatching { startActivityForResult(installer.intent(file), 1) }.onFailure {
+                        runCatching { startActivity(installer.intent(file)) }.onFailure {
                             installer.failed(); status.text = "Failed: ${it.javaClass.simpleName}"
                         }
                         isEnabled = true
@@ -79,11 +78,10 @@ class InstallFlowProbeActivity : Activity() {
         })
     }
 
-    @Deprecated("Fixture uses the same framework activity-result handoff as the production contract")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 1) {
-            val installed = installer.returned()
+    override fun onResume() {
+        super.onResume()
+        if (isFinishing) return
+        installer.onHostResumed()?.let { installed ->
             status.text = "Installer returned; installed=$installed"
             File(filesDir, "install-returned.txt").writeText(installer.summary())
         }

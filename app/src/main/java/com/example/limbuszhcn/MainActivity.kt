@@ -62,9 +62,6 @@ class MainActivity : ComponentActivity() {
         setContent {
             val state = model.state
             val appUpdater = model.appUpdater
-            val appInstaller = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-                appUpdater.installationReturned()
-            }
             val packagePicker = rememberLauncherForActivityResult(
                 ActivityResultContracts.OpenMultipleDocuments(), model::preparePackageUpdate)
             val resumed = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
@@ -91,7 +88,7 @@ class MainActivity : ComponentActivity() {
                 if (resumed.value) appUpdater.installRequest?.let { file ->
                     appUpdater.installationOpened()
                     runCatching {
-                        appInstaller.launch(appUpdater.installerIntent(file))
+                        startActivity(appUpdater.installerIntent(file))
                     }.onFailure { appUpdater.installationError() }
                 }
             }
@@ -206,7 +203,10 @@ class MainActivity : ComponentActivity() {
             finish()
             return
         }
-        androidx.lifecycle.ViewModelProvider(this)[LauncherViewModel::class.java].resumeRefresh()
+        androidx.lifecycle.ViewModelProvider(this)[LauncherViewModel::class.java].apply {
+            appUpdater.resumeInstallation()
+            resumeRefresh()
+        }
     }
 
     /** 处理复用现有 Activity 时收到的受限调试 Intent。 */

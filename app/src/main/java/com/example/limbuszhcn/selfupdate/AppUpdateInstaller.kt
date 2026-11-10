@@ -11,6 +11,7 @@ import java.io.File
 /** The foreground handoff shared by the UI and the disposable cloud fixture. */
 internal class AppUpdateInstaller(private val context: Context) {
     private val journal = AppInstallJournal(File(context.noBackupFilesDir, "diagnostics/app-install.properties").toPath())
+    private var awaitingReturn = false
 
     fun prepare(file: File, release: AppRelease) {
         AppUpdatePackage.verify(context, file, release)
@@ -20,15 +21,19 @@ internal class AppUpdateInstaller(private val context: Context) {
     fun intent(file: File): Intent {
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.app-updates", file)
         val intent = Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
             .apply { clipData = ClipData.newRawUri("BYBUS", uri) }
         record { journal.phase(AppInstallJournal.Phase.DISPATCHED, System.currentTimeMillis()) }
         SystemStartupDiagnostics.checkpoint(context, SystemStartupDiagnostics.Phase.INSTALLER_HANDOFF)
+        awaitingReturn = true
         return intent
     }
 
-    fun returned(): Long {
-        val installed = AppUpdatePackage.installedCode(context)
+    /** A new-task installer has no Activity result. Reconcile only when the host returns. */
+    fun onHostResumed(): Long? {
+        if (!awaitingReturn) return null
+        awaitingReturn = false
+        val installed = runCatching { AppUpdatePackage.installedCode(context) }.getOrNull() ?: return null
         record {
             journal.phase(AppInstallJournal.Phase.RETURNED, System.currentTimeMillis())
             journal.observe(installed, System.currentTimeMillis())
@@ -36,7 +41,10 @@ internal class AppUpdateInstaller(private val context: Context) {
         return installed
     }
 
-    fun failed() = record { journal.phase(AppInstallJournal.Phase.DISPATCH_FAILED, System.currentTimeMillis()) }
+    fun failed() {
+        awaitingReturn = false
+        record { journal.phase(AppInstallJournal.Phase.DISPATCH_FAILED, System.currentTimeMillis()) }
+    }
 
     fun observe(homeFrame: Boolean = false) = record {
         journal.observe(AppUpdatePackage.installedCode(context), System.currentTimeMillis(), homeFrame)

@@ -174,8 +174,8 @@ internal class AppUpdateController(private val app: Application) {
     }
 
     fun installationOpened() { installRequest = null }
-    fun installationReturned() {
-        val installed = installer.returned()
+    fun resumeInstallation() {
+        val installed = installer.onHostResumed() ?: return
         val target = state.release?.versionCode
         if (target != null && installed >= target) {
             readyFile = null

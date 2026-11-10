@@ -59,12 +59,21 @@ def inspect(apk, adb, command, hierarchy, locate, tap, report, out,
         if adb("shell", "id", "-u").strip() != "0":
             raise RuntimeError("Cannot read disposable emulator evidence")
 
-    def push_external(path):
-        # Android 11 FUSE assigns app-specific storage access through the shell identity.
-        # A root adbd push can leave a file the provider cannot read.
-        adb("unroot")
-        adb("wait-for-device", timeout=30)
+    def provide_fixture_apk(package):
+        # Android 11 scoped storage blocks shell access to Android/data. Seed only an
+        # existing fixture cache and restore its real owner/label before app code reads it.
+        if package not in (PACKAGE, "io.github.gravere.bybus.installprobe"):
+            raise RuntimeError("Unknown fixture package")
+        root_shell()
+        directory = "/data/user/0/" + package + "/cache"
+        adb("shell", "test", "-d", directory)
+        owner = adb("shell", "stat", "-c", "%u:%g", directory).strip()
+        if not re.fullmatch(r"[1-9][0-9]{4,}:[1-9][0-9]{4,}", owner):
+            raise RuntimeError("Fixture cache was not created by the application UID")
+        path = directory + "/update.apk"
         adb("push", str(apk), path, timeout=120)
+        adb("shell", "chown", owner, path)
+        adb("shell", "restorecon", "-F", path)
 
     def wait_home(stem):
         deadline = time.monotonic() + 35
@@ -97,6 +106,14 @@ def inspect(apk, adb, command, hierarchy, locate, tap, report, out,
             if not confirmed:
                 action = next((name for name in ("update", "install") if name in buttons), None)
                 if action:
+                    tasks = adb("shell", "dumpsys", "activity", "activities")
+                    (out / (stem + "-tasks.txt")).write_text(tasks, encoding="utf-8")
+                    if stem.startswith("in-app"):
+                        top = next(line for line in tasks.splitlines() if "topResumedActivity" in line or "mResumedActivity" in line)
+                        task = int(re.search(r"\bt(\d+)\b", top).group(1))
+                        if task == report["in_app_source_task"]:
+                            raise RuntimeError("Self-update installer still shares the caller's task")
+                        report["in_app_installer_task"] = task
                     if cancel:
                         tap(buttons["cancel"].get("text"), tree)
                         return
@@ -108,6 +125,7 @@ def inspect(apk, adb, command, hierarchy, locate, tap, report, out,
                 wait_home(stem + "-opened")
                 return
             time.sleep(1)
+        report["installer_failure"] = dict(stage=stem, installed_code=version(), confirmed=confirmed)
         raise RuntimeError("Installer did not complete " + stem)
 
     target_code = version()
@@ -158,7 +176,7 @@ def inspect(apk, adb, command, hierarchy, locate, tap, report, out,
     adb("push", str(sentinel), sentinel_path)
     fixture = build_external_fixture(adb, command)
     adb("shell", "am", "start", "-W", "-n", fixture + "/.InstallProbe", timeout=60)
-    push_external("/sdcard/Android/data/" + fixture + "/files/update.apk")
+    provide_fixture_apk(fixture)
     tree = hierarchy("external-caller")
     label = next(n.get("text") for n in tree.iter("node") if n.get("text", "").lower() == "install bybus")
     tap(label, tree)
@@ -180,10 +198,13 @@ def inspect(apk, adb, command, hierarchy, locate, tap, report, out,
         adb("shell", "am", "start", "-W", "-n", PROBE, timeout=60)
         adb("shell", "test", "-d", str(Path(sentinel_path).parent))
         adb("push", str(sentinel), sentinel_path)
-        push_external("/sdcard/Android/data/" + PACKAGE + "/files/update.apk")
+        provide_fixture_apk(PACKAGE)
 
         def tap_fixture(stem):
             tree = hierarchy(stem)
+            tasks = adb("shell", "dumpsys", "activity", "activities")
+            top = next(line for line in tasks.splitlines() if "topResumedActivity" in line or "mResumedActivity" in line)
+            report["in_app_source_task"] = int(re.search(r"\bt(\d+)\b", top).group(1))
             label = next(n.get("text") for n in tree.iter("node")
                          if n.get("text", "").lower() == "install verified update")
             tap(label, tree)
@@ -220,7 +241,8 @@ def inspect(apk, adb, command, hierarchy, locate, tap, report, out,
         (out / "completed-install.properties").write_text(receipt, encoding="utf-8")
         report["in_app_update"] = dict(passed=True, from_code=fixture_code, to_code=target_code,
             source="current-source Debug fixture with lower package version", fixture_sha256=fixture_digest,
-            cancel_returned=True, retry_installed=True, data_preserved=True, new_process_first_frame=True)
+            cancel_returned=True, retry_installed=True, data_preserved=True, new_process_first_frame=True,
+            installer_in_separate_task=True)
 
         diagnostic_digest = install_probe(release, verifier)
         adb("shell", "am", "start", "-W", "-n", PROBE, "--es", "mode", "diagnostics",
