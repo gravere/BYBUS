@@ -13,6 +13,132 @@ PROBE = PACKAGE + "/com.example.limbuszhcn.InstallFlowProbeActivity"
 CERT = "d50bbcfb234692d5d5f90427499158608c5a4c13adb7f99a78d9b5f1af44d55b"
 
 
+def inspect_release_update(adb, command, hierarchy, locate, tap, report, out, release, request, verifier):
+    """Observe the previous unmodified release updating itself through its real UI."""
+    if os.environ.get("GITHUB_ACTIONS") != "true" or adb("shell", "getprop", "ro.kernel.qemu").strip() != "1":
+        raise RuntimeError("Release update inspection requires the disposable CI emulator")
+    if release["draft"] or release["prerelease"]:
+        raise RuntimeError("The historical app must see the actual public update, not a draft")
+
+    def version():
+        return int(re.search(r"\bversionCode=(\d+)\b", adb("shell", "dumpsys", "package", PACKAGE)).group(1))
+
+    def texts(tree):
+        return {n.get(key, "") for n in tree.iter("node") for key in ("text", "content-desc")}
+
+    def wait_label(label, stem, seconds=60):
+        deadline = time.monotonic() + seconds
+        while True:
+            tree = hierarchy(stem)
+            labels = texts(tree)
+            if any(message in value for message in ("GitHub 暂时限制", "连接超时", "暂时无法连接 GitHub", "下载文件校验失败")
+                   for value in labels):
+                raise RuntimeError("Real update UI reported a network or verification error; see " + stem + ".xml")
+            try:
+                locate(tree, label)
+                return tree
+            except RuntimeError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("Real update UI did not reach " + label)
+                time.sleep(4)
+
+    target_code = version()
+    releases = json.loads(request("https://api.github.com/repos/gravere/BYBUS/releases?per_page=20", 1024 * 1024))
+    older = [(int(match.group(1)), item) for item in releases
+             if not item["draft"] and not item["prerelease"]
+             and (match := re.fullmatch(r"v[\d.]+-build\.(\d+)", item["tag_name"]))
+             and int(match.group(1)) < target_code]
+    if not older:
+        raise RuntimeError("No retained historical release available")
+    base_code, previous = max(older, key=lambda item: item[0])
+    assets = [a for a in previous["assets"] if re.fullmatch(r"BYBUS-v[\d.]+-arm64-v8a\.apk", a["name"])]
+    if len(assets) != 1:
+        raise RuntimeError("Previous release has no unambiguous full APK")
+    asset = assets[0]
+    body = request(asset["url"], 200 * 1024 * 1024, asset=True)
+    digest = hashlib.sha256(body).hexdigest()
+    if asset.get("digest") != "sha256:" + digest or len(body) != asset["size"]:
+        raise RuntimeError("Historical release digest mismatch")
+    base = Path(os.environ["RUNNER_TEMP"]) / "previous-BYBUS.apk"
+    base.write_bytes(body)
+    del body
+    signatures = command(str(verifier), "verify", "--print-certs", str(base), timeout=60)
+    if set(re.findall(r"Signer #\d+ certificate SHA-256 digest: ([a-f0-9]+)", signatures)) != {CERT}:
+        raise RuntimeError("Historical release signer mismatch")
+    adb("uninstall", PACKAGE)
+    if "Success" not in adb("install", "--no-streaming", str(base), timeout=150) or version() != base_code:
+        raise RuntimeError("Could not install historical production APK")
+    observation = dict(from_code=base_code, to_code=target_code, source_tag=previous["tag_name"],
+        source_sha256=digest, source="unmodified historical Release APK, actual MainActivity update UI",
+        game_launched=False, account_accessed=False, debug_fixture_used=False,
+        installer_confirmed=False, installed=False, open_clicked=False, stable_home=False)
+    report["release_update"] = observation
+    adb("shell", "appops", "set", PACKAGE, "REQUEST_INSTALL_PACKAGES", "allow")
+    adb("logcat", "-c")
+    adb("shell", "am", "start", "-W", "-n", MAIN, timeout=60)
+    tap("设置与工具", wait_label("设置与工具", "release-old-home"))
+    tap("更新", wait_label("更新", "release-old-settings"))
+    tap("检查应用更新", wait_label("检查应用更新", "release-old-updates"))
+    tap("下载更新", wait_label("下载更新", "release-update-found", 90))
+    tree = wait_label("安装更新", "release-update-downloaded", 240)
+    tasks = adb("shell", "dumpsys", "activity", "activities")
+    (out / "release-update-before-tasks.txt").write_text(tasks, encoding="utf-8")
+    top = next(line for line in tasks.splitlines() if "topResumedActivity" in line or "mResumedActivity" in line)
+    observation["source_task"] = int(re.search(r"\bt(\d+)\b", top).group(1))
+    tap("安装更新", tree)
+
+    deadline = time.monotonic() + 100
+    installed_at = None
+    while time.monotonic() < deadline:
+        tree = hierarchy("release-system-installer")
+        labels = texts(tree)
+        buttons = {n.get("text", "").lower(): n for n in tree.iter("node")
+                   if n.get("clickable") == "true" and n.get("enabled") == "true"}
+        if not observation["installer_confirmed"]:
+            confirm = next((word for word in ("update", "install") if word in buttons), None)
+            if confirm:
+                tasks = adb("shell", "dumpsys", "activity", "activities")
+                (out / "release-system-installer-tasks.txt").write_text(tasks, encoding="utf-8")
+                top = next(line for line in tasks.splitlines() if "topResumedActivity" in line or "mResumedActivity" in line)
+                observation["installer_task"] = int(re.search(r"\bt(\d+)\b", top).group(1))
+                tap(buttons[confirm].get("text"), tree)
+                observation["installer_confirmed"] = True
+                continue
+        else:
+            if version() == target_code:
+                observation["installed"] = True
+                if installed_at is None:
+                    installed_at = time.monotonic()
+            if "open" in buttons:
+                tap(buttons["open"].get("text"), tree)
+                observation["open_clicked"] = True
+                try:
+                    wait_label("设置与工具", "release-update-opened", 30)
+                    time.sleep(5)
+                    locate(hierarchy("release-update-stable"), "设置与工具")
+                    tasks = adb("shell", "dumpsys", "activity", "activities")
+                    (out / "release-update-after-tasks.txt").write_text(tasks, encoding="utf-8")
+                    observation["stable_home"] = any(MAIN in line for line in tasks.splitlines()
+                        if "topResumedActivity" in line or "mResumedActivity" in line)
+                except RuntimeError:
+                    observation["stable_home"] = False
+                break
+            if installed_at is not None and time.monotonic() - installed_at >= 20:
+                break
+        time.sleep(2)
+    observation["installed_code"] = version()
+    (out / "release-update-end-tasks.txt").write_text(adb("shell", "dumpsys", "activity", "activities"), encoding="utf-8")
+    observation["outcome"] = (
+        "open_reached_stable_home" if observation["stable_home"] else
+        "open_did_not_reach_stable_home" if observation["open_clicked"] else
+        "installer_open_missing_after_replacement" if observation["installed"] else "installation_not_completed")
+    report["result"] = "historical production update observed: " + observation["outcome"]
+    if not observation["installer_confirmed"] or not observation["installed"]:
+        raise RuntimeError("Historical production update did not reach package replacement")
+    if not observation["open_clicked"] or not observation["stable_home"]:
+        raise RuntimeError("Historical production update did not open a stable home: " + observation["outcome"])
+
+
 def build_external_fixture(adb, command):
     sdk = Path(os.environ["ANDROID_HOME"])
     build = sdk / "build-tools/35.0.0"
@@ -42,6 +168,91 @@ def build_external_fixture(adb, command):
         raise RuntimeError("Installer fixture installation failed")
     adb("shell", "appops", "set", fixture, "REQUEST_INSTALL_PACKAGES", "allow")
     return fixture
+
+
+def inspect_external_install(apk, adb, command, hierarchy, locate, tap, report, out):
+    """Install the full release from an ordinary external caller, before any BYBUS launch."""
+    if os.environ.get("GITHUB_ACTIONS") != "true" or adb("shell", "getprop", "ro.kernel.qemu").strip() != "1":
+        raise RuntimeError("External installation requires the disposable CI emulator")
+
+    def version():
+        match = re.search(r"\bversionCode=(\d+)\b", adb("shell", "dumpsys", "package", PACKAGE))
+        return int(match.group(1)) if match else None
+
+    target_code = version()
+    if not target_code:
+        raise RuntimeError("Release version is unknown")
+    adb("uninstall", PACKAGE)
+    fixture = build_external_fixture(adb, command)
+    adb("shell", "am", "start", "-W", "-n", fixture + "/.InstallProbe", "--ez", "request_result", "false", timeout=60)
+    adb("root")
+    adb("wait-for-device", timeout=30)
+    directory = "/data/user/0/" + fixture + "/cache"
+    owner = adb("shell", "stat", "-c", "%u:%g", directory).strip()
+    if not re.fullmatch(r"[1-9][0-9]{4,}:[1-9][0-9]{4,}", owner):
+        raise RuntimeError("External caller cache ownership is invalid")
+    adb("push", str(apk), directory + "/update.apk", timeout=120)
+    adb("shell", "chown", owner, directory + "/update.apk")
+    adb("shell", "restorecon", "-F", directory + "/update.apk")
+    adb("unroot")
+    adb("wait-for-device", timeout=30)
+    adb("logcat", "-c")
+    cases = []
+    report["external_full_install"] = cases
+    for mode in ("fresh", "full-overwrite"):
+        case = dict(mode=mode, target_code=target_code, prior_installed_code=version(),
+            source="external ordinary startActivity with original full Release APK",
+            confirmed=False, open_clicked=False, stable_home=False,
+            game_launched=False, account_accessed=False)
+        cases.append(case)
+        if mode == "full-overwrite":
+            tap("设置与工具", hierarchy("full-overwrite-home"))
+            tap("更新", hierarchy("full-overwrite-settings"))
+            locate(hierarchy("full-overwrite-source-page"), "检查应用更新")
+            # Keep the production update sheet in the task history during replacement.
+            adb("shell", "am", "start", "-W", "-n", fixture + "/.InstallProbe", "--ez", "request_result", "false", timeout=60)
+        caller = hierarchy(mode + "-external-caller")
+        install_label = next(n.get("text") for n in caller.iter("node")
+                             if n.get("text", "").lower() == "install bybus")
+        tap(install_label, caller)
+        deadline = time.monotonic() + 100
+        while time.monotonic() < deadline:
+            tree = hierarchy(mode + "-system-installer")
+            buttons = {n.get("text", "").lower(): n for n in tree.iter("node")
+                       if n.get("clickable") == "true" and n.get("enabled") == "true"}
+            if not case["confirmed"]:
+                confirm = next((word for word in ("install", "update") if word in buttons), None)
+                if confirm:
+                    (out / (mode + "-installer-tasks.txt")).write_text(adb("shell", "dumpsys", "activity", "activities"), encoding="utf-8")
+                    tap(buttons[confirm].get("text"), tree)
+                    case["confirmed"] = True
+            elif "open" in buttons:
+                tap(buttons["open"].get("text"), tree)
+                case["open_clicked"] = True
+                home_deadline = time.monotonic() + 30
+                while time.monotonic() < home_deadline:
+                    try:
+                        locate(hierarchy(mode + "-opened"), "设置与工具")
+                        time.sleep(5)
+                        locate(hierarchy(mode + "-stable"), "设置与工具")
+                        tasks = adb("shell", "dumpsys", "activity", "activities")
+                        (out / (mode + "-opened-tasks.txt")).write_text(tasks, encoding="utf-8")
+                        case["stable_home"] = any(MAIN in line for line in tasks.splitlines()
+                            if "topResumedActivity" in line or "mResumedActivity" in line)
+                        break
+                    except RuntimeError:
+                        time.sleep(3)
+                break
+            time.sleep(2)
+        case["installed_code"] = version()
+        (out / (mode + "-end-tasks.txt")).write_text(adb("shell", "dumpsys", "activity", "activities"), encoding="utf-8")
+        if not case["confirmed"] or case["installed_code"] != target_code:
+            raise RuntimeError("External full installation did not complete: " + mode)
+        case["outcome"] = "stable_home" if case["stable_home"] else "no_stable_home_after_install"
+        if not case["stable_home"]:
+            report["result"] = "external full installation observed: " + mode + " did not reach stable home"
+            raise RuntimeError("External full installation did not open a stable home: " + mode)
+    report["result"] = "external fresh/full overwrite Open reached stable home in this emulator"
 
 
 def inspect(apk, adb, command, hierarchy, locate, tap, report, out,
