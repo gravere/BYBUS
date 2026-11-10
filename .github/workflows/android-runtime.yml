@@ -86,6 +86,13 @@ jobs:
             printf 'disk.dataPartition.size=8G\n' >> "$ANDROID_AVD_HOME/bybus-runtime.avd/config.ini"
           fi
           "$ANDROID_HOME/emulator/emulator" -accel-check > runtime-output/acceleration.txt
+          # User builds seed their trusted emulator key at first boot. Generate
+          # it before the emulator starts, not when the first test calls adb.
+          mkdir -p "$HOME/.android"
+          if [ ! -s "$HOME/.android/adbkey.pub" ]; then
+            adb keygen "$HOME/.android/adbkey"
+          fi
+          adb start-server
           graphics_mode=swiftshader_indirect
           if [ "$RUNTIME_PROFILE" = android17 ]; then graphics_mode=software; fi
           "$ANDROID_HOME/emulator/emulator" -avd bybus-runtime -accel on -memory 3072 -cores 2 -no-window -no-audio -no-snapshot -no-boot-anim -gpu "$graphics_mode" -camera-back none -camera-front none > "$RUNNER_TEMP/bybus-emulator.log" 2>&1 &
