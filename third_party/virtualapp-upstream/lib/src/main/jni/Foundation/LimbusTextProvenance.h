@@ -23,6 +23,65 @@ inline std::string gift_ability_key(const std::string &parent, const std::string
             skill_number(parent.substr(10)) && skill_number(id)
             ? parent + "/ability:" + id : std::string();
 }
+inline std::string event_root_key(const std::string &id) {
+    return skill_number(id) ? "@action-event:" + id : std::string();
+}
+inline std::string story_scene_key(std::string name) {
+    if (name.compare(0, 10, "StoryData/") == 0) name.erase(0, 10);
+    if (name.compare(0, 3, "JP_") == 0) name.erase(0, 3);
+    if (name.size() > 5 && name.compare(name.size() - 5, 5, ".json") == 0) name.resize(name.size() - 5);
+    if (name.empty() || name.size() > 96 || !std::all_of(name.begin(), name.end(), [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+    })) return {};
+    return "@story:" + name;
+}
+inline std::string story_dialog_key(const std::string &parent, const std::string &id) {
+    return parent.compare(0, 7, "@story:") == 0 && story_scene_key(parent.substr(7)) == parent &&
+            skill_number(id) ? parent + "/dialog:" + id : std::string();
+}
+inline std::string story_parent_key(const std::string &context) {
+    const auto split = context.find("/dialog:");
+    if (split == std::string::npos) return {};
+    const auto parent = context.substr(0, split);
+    return story_dialog_key(parent, context.substr(split + 8)) == context ? parent : std::string();
+}
+inline std::string guide_root_key(const std::string &id) {
+    return skill_number(id) ? "@abnormality-guide:" + id : std::string();
+}
+inline std::string event_option_key(const std::string &parent, int32_t index) {
+    return parent.compare(0, 14, "@action-event:") == 0 && skill_number(parent.substr(14)) &&
+            index >= 0 && index < 512 ? parent + "/option:" + std::to_string(index) : std::string();
+}
+inline std::string guide_story_key(const std::string &parent, const std::string &level) {
+    return parent.compare(0, 19, "@abnormality-guide:") == 0 && skill_number(parent.substr(19)) &&
+            skill_number(level) ? parent + "/level:" + level : std::string();
+}
+inline std::string rpg_dialogue_root_key(const std::string &key) {
+    if (key.empty() || key.size() > 96 || !std::all_of(key.begin(), key.end(), [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                c == '-' || c == '_' || c == '.';
+    })) return {};
+    return "@rpg-dialogue:" + key;
+}
+inline std::string rpg_dialogue_text_key(const std::string &parent, const std::string &index) {
+    return parent.compare(0, 14, "@rpg-dialogue:") == 0 && !rpg_dialogue_root_key(parent.substr(14)).empty() &&
+            skill_number(index) ? parent + "/text:" + index : std::string();
+}
+inline bool text_collection_type(const char *name, const char *element, bool dictionary) {
+    if (!name || !element) return false;
+    std::string type(name);
+    type.erase(std::remove(type.begin(), type.end(), ' '), type.end());
+    if (!dictionary && type == std::string(element) + "[]") return true;
+    static const char *const dictionaries[] = {"Dictionary", "Dictionary`2", "IReadOnlyDictionary", "IReadOnlyDictionary`2"};
+    static const char *const lists[] = {"List", "List`1", "IReadOnlyList", "IReadOnlyList`1"};
+    for (size_t i = 0; i < 4; ++i) {
+        const char *container = dictionary ? dictionaries[i] : lists[i];
+        std::string expected = std::string("System.Collections.Generic.") + container + "<" +
+                (dictionary ? "System.Int32," : "") + element + ">";
+        if (type == expected) return true;
+    }
+    return false;
+}
 inline std::string skill_child_key(const std::string &parent, const char *field,
                                    const std::string &level, int32_t index) {
     if (parent.empty() || !field || index < 0) return {};

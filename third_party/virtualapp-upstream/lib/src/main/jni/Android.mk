@@ -12,7 +12,8 @@ endif
 
 LOCAL_CFLAGS += -Wno-error=format-security -fpermissive -O2
 LOCAL_CFLAGS += -DLOG_TAG=\"VA++\"
-LOCAL_CFLAGS += -fno-rtti -fno-exceptions
+LOCAL_CFLAGS += -fno-rtti
+LOCAL_CPP_FEATURES := exceptions
 LOCAL_CPPFLAGS += -std=c++11
 
 LOCAL_C_INCLUDES += $(MAIN_LOCAL_PATH)

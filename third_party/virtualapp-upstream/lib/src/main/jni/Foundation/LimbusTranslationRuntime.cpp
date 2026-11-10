@@ -2,6 +2,9 @@
 #include "LimbusCodeIntegrityCompat.h"
 #include "LimbusUiLabels.h"
 #include "LimbusTextProvenance.h"
+#if !defined(__EXCEPTIONS) && !defined(__cpp_exceptions)
+#error "Localization scopes require C++ exception cleanup across game calls"
+#endif
 #include "LimbusFontProof.h"
 #include "LimbusFlowTextProof.h"
 #include "LimbusManagedState.h"
@@ -94,9 +97,16 @@ std::unordered_map<std::string, std::string> g_index;
 std::unordered_map<std::string, std::string> g_terms;
 std::unordered_map<std::string, std::string> g_contextual_index;
 thread_local std::string g_ui_text_key;
+thread_local std::string g_story_scene_key;
 void *g_skill_text_class = nullptr;
 void *g_ego_gift_text_class = nullptr;
 void *g_ego_gift_ability_class = nullptr;
+void *g_action_event_text_class = nullptr;
+void *g_event_option_text_class = nullptr;
+void *g_abnormality_guide_class = nullptr;
+void *g_abnormality_story_class = nullptr;
+void *g_rpg_dialogue_class = nullptr;
+void *g_rpg_dialogue_text_class = nullptr;
 void *g_buf_text_class = nullptr;
 void *g_battle_keyword_text_class = nullptr;
 std::atomic<uint64_t> g_contextual_hits{0};
@@ -761,6 +771,10 @@ void *translate_managed_string(void *managed_text, const std::string &stable_id 
     const char *context_field = scoped_ui ? "content" : display_field;
     auto context = context_id.empty() || context_field == nullptr ? g_contextual_index.end() :
             g_contextual_index.find(context_id + '\x1f' + context_field + '\x1f' + source);
+    if (context == g_contextual_index.end() && context_field != nullptr) {
+        const auto scene = limbus_text_provenance::story_parent_key(context_id);
+        if (!scene.empty()) context = g_contextual_index.find(scene + '\x1f' + context_field + '\x1f' + source);
+    }
     // Copies of released Chinese strings are stable independent of lookup order.
     // Compiler contexts disambiguate original JP fields that share those bytes.
     if (context == g_contextual_index.end()) {
@@ -980,6 +994,10 @@ void translate_object_string_fields(void *instance, bool story_dialog = false,
     }
     std::string stable_id = !object_context.empty() ? object_context : g_contextual_index.empty() ? std::string() :
             read_text_object_id(instance, story_dialog ? "OriginalId" : "id");
+    if (story_dialog && !g_story_scene_key.empty()) {
+        const auto scoped = limbus_text_provenance::story_dialog_key(g_story_scene_key, stable_id);
+        stable_id = scoped.empty() ? g_story_scene_key : scoped;
+    }
     if (!story_dialog && stable_id.empty() && !g_contextual_index.empty()) {
         stable_id = read_text_object_id(instance, "key");
     }
@@ -1037,6 +1055,17 @@ void translate_object_string_fields(void *instance, bool story_dialog = false,
 }
 
 typedef void (*story_dialog_ctor_fn)(void *, int32_t, int32_t, void *, void *, float, const void *);
+typedef void *(*story_scenario_fn)(void *, void *, int32_t, const void *);
+story_scenario_fn g_original_story_scenario = nullptr;
+void *replacement_story_scenario(void *instance, void *scenario_id, int32_t language, const void *method) {
+    std::string identity;
+    const int32_t length = scenario_id && g_string_length ? g_string_length(scenario_id) : 0;
+    if (length > 0 && length <= 120 && g_string_chars)
+        utf16_to_utf8(g_string_chars(scenario_id), length, &identity);
+    limbus_text_provenance::ScopedTextKey scope(g_story_scene_key,
+            limbus_text_provenance::story_scene_key(identity));
+    return g_original_story_scenario(instance, scenario_id, language, method);
+}
 story_dialog_ctor_fn g_original_story_dialog_ctor = nullptr;
 std::atomic<uint64_t> g_story_dialog_hits{0};
 
@@ -1079,6 +1108,18 @@ void translate_object_graph_impl(void *instance, int depth,
             g_object_get_class(instance) == g_ego_gift_text_class;
     if (scope.empty() && gift)
         scope = limbus_text_provenance::gift_root_key(read_text_object_id(instance));
+    const bool action_event = g_action_event_text_class && g_object_get_class &&
+            g_object_get_class(instance) == g_action_event_text_class;
+    const bool guide = g_abnormality_guide_class && g_object_get_class &&
+            g_object_get_class(instance) == g_abnormality_guide_class;
+    const bool rpg_dialogue = g_rpg_dialogue_class && g_object_get_class &&
+            g_object_get_class(instance) == g_rpg_dialogue_class;
+    if (scope.empty() && action_event)
+        scope = limbus_text_provenance::event_root_key(read_text_object_id(instance));
+    if (scope.empty() && guide)
+        scope = limbus_text_provenance::guide_root_key(read_text_object_id(instance));
+    if (scope.empty() && rpg_dialogue)
+        scope = limbus_text_provenance::rpg_dialogue_root_key(read_text_object_id(instance, "key"));
     translate_object_string_fields(instance, false, translated_fields, scope);
     if (g_object_get_class == nullptr || g_class_get_parent == nullptr ||
         g_class_get_fields == nullptr || g_field_get_name == nullptr ||
@@ -1093,7 +1134,10 @@ void translate_object_graph_impl(void *instance, int depth,
         while ((field = g_class_get_fields(klass, &iterator)) != nullptr) {
             const char *field_name = g_field_get_name(field);
             const bool gift_abilities = gift && field_name && strcmp(field_name, "simpleDesc") == 0;
-            if (!is_nested_text_field(field_name) && !gift_abilities) continue;
+            const bool guide_stories = guide && field_name && strcmp(field_name, "storyList") == 0;
+            const bool event_options = action_event && field_name && strcmp(field_name, "options") == 0;
+            const bool rpg_lines = rpg_dialogue && field_name && strcmp(field_name, "texts") == 0;
+            if (!is_nested_text_field(field_name) && !gift_abilities && !guide_stories && !rpg_lines) continue;
             void *list = nullptr;
             g_field_get_value(instance, field, &list);
             void *list_class = list == nullptr ? nullptr : g_object_get_class(list);
@@ -1126,6 +1170,23 @@ void translate_object_graph_impl(void *instance, int depth,
                             continue;
                         child_scope = limbus_text_provenance::gift_ability_key(scope,
                                 read_text_object_id(child, "abilityID"));
+                    }
+                    if (event_options) {
+                        if (!g_event_option_text_class || g_object_get_class(child) != g_event_option_text_class)
+                            continue;
+                        child_scope = limbus_text_provenance::event_option_key(scope, index);
+                    }
+                    if (guide_stories) {
+                        if (!g_abnormality_story_class || g_object_get_class(child) != g_abnormality_story_class)
+                            continue;
+                        child_scope = limbus_text_provenance::guide_story_key(scope,
+                                read_text_object_id(child, "level"));
+                    }
+                    if (rpg_lines) {
+                        if (!g_rpg_dialogue_text_class || g_object_get_class(child) != g_rpg_dialogue_text_class)
+                            continue;
+                        child_scope = limbus_text_provenance::rpg_dialogue_text_key(scope,
+                                read_text_object_id(child, "index"));
                     }
                     translate_object_graph_impl(child, depth + 1, visited, translated_fields, child_scope);
                 }
@@ -1160,7 +1221,27 @@ void *finish_formatted_translation(void *result, const std::vector<std::string> 
 }
 
 typedef void *(*acquisition0_fn)(void *, const void *);
+acquisition0_fn g_original_event_options = nullptr;
+acquisition0_fn g_original_guide_stories = nullptr;
+acquisition0_fn g_original_guide_dictionary = nullptr;
+void *replacement_event_options(void *instance, const void *method) {
+    translate_object_graph(instance, nullptr);
+    return g_original_event_options(instance, method);
+}
+void *replacement_guide_stories(void *instance, const void *method) {
+    translate_object_graph(instance, nullptr);
+    return g_original_guide_stories(instance, method);
+}
+void *replacement_guide_dictionary(void *instance, const void *method) {
+    translate_object_graph(instance, nullptr);
+    return g_original_guide_dictionary(instance, method);
+}
 typedef void *(*skill_level_fn)(void *, int32_t, const void *);
+skill_level_fn g_original_rpg_dialogue_data = nullptr;
+void *replacement_rpg_dialogue_data(void *instance, int32_t index, const void *method) {
+    translate_object_graph(instance, nullptr);
+    return g_original_rpg_dialogue_data(instance, index, method);
+}
 skill_level_fn g_original_skill_level = nullptr;
 void *replacement_skill_level(void *instance, int32_t level, const void *method) {
     std::vector<std::string> fields;
@@ -3026,6 +3107,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
     const void *tmp_set_text_string_method = nullptr;
     void *tmp_text_class = nullptr;
     void *story_dialog_class = nullptr;
+    void *story_data_class = nullptr;
     void *announcer_ui_class = nullptr;
     void *choice_scroll_class = nullptr;
     void *choice_button_class = nullptr;
@@ -3097,6 +3179,8 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         if (story_dialog_class == nullptr) {
             story_dialog_class = class_from_name(image, "StorySystem", "Dialog");
         }
+        if (story_data_class == nullptr)
+            story_data_class = class_from_name(image, "StorySystem", "StoryData");
         if (ui_text_data_class == nullptr)
             ui_text_data_class = class_from_name(image, "", "TextData_UI");
         if (g_skill_text_class == nullptr)
@@ -3105,6 +3189,18 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             g_ego_gift_text_class = class_from_name(image, "", "TextData_EgoGift");
         if (g_ego_gift_ability_class == nullptr)
             g_ego_gift_ability_class = class_from_name(image, "", "TextData_EgoGiftAbility");
+        if (g_action_event_text_class == nullptr)
+            g_action_event_text_class = class_from_name(image, "", "TextData_ActionEvents");
+        if (g_event_option_text_class == nullptr)
+            g_event_option_text_class = class_from_name(image, "", "TextData_DungeonEvents_Options");
+        if (g_abnormality_guide_class == nullptr)
+            g_abnormality_guide_class = class_from_name(image, "", "TextData_AbnormalityContents");
+        if (g_abnormality_story_class == nullptr)
+            g_abnormality_story_class = class_from_name(image, "", "AbnormalityStoryStaticData");
+        if (g_rpg_dialogue_class == nullptr)
+            g_rpg_dialogue_class = class_from_name(image, "RPGSystem", "RpgLocText_Dialogue");
+        if (g_rpg_dialogue_text_class == nullptr)
+            g_rpg_dialogue_text_class = class_from_name(image, "RPGSystem", "RpgLocDialogueText");
         if (g_buf_text_class == nullptr)
             g_buf_text_class = class_from_name(image, "", "TextData_Buf");
         if (g_battle_keyword_text_class == nullptr)
@@ -3832,6 +3928,73 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 field_get_name != nullptr && field_get_type != nullptr &&
                 field_get_value != nullptr && field_set_value != nullptr;
         if (acquisition_ready) {
+            const void *scenario = find_method_by_signature(story_data_class, "GetScenario", "System.String,LOCALIZE_LANGUAGE");
+            uint32_t scenario_flags = 0;
+            if (scenario && method_get_class && method_is_generic && class_from_type && class_is_enum &&
+                class_get_field_from_name && method_get_class(scenario) == story_data_class &&
+                !method_is_generic(scenario) && !(method_get_flags(scenario, &scenario_flags) & 0x0010u)) {
+                void *language = class_from_type(method_get_param(scenario, 1));
+                const void *value_field = language && class_is_enum(language) ?
+                        class_get_field_from_name(language, "value__") : nullptr;
+                char *value_name = value_field ? type_get_name(field_get_type(value_field)) : nullptr;
+                char *return_name = type_get_name(method_get_return_type(scenario));
+                const bool correct_type = return_name && strcmp(return_name, "StorySystem.Scenario") == 0 &&
+                        value_name && strcmp(value_name, "System.Int32") == 0;
+                if (value_name) il2cpp_free(value_name);
+                if (return_name) il2cpp_free(return_name);
+                void *pointer = nullptr;
+                memcpy(&pointer, scenario, sizeof(pointer));
+                if (correct_type && has_inline_hook_space(story_data_class, pointer)) {
+                    hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement_story_scenario),
+                            reinterpret_cast<void **>(&g_original_story_scenario));
+                    if (g_original_story_scenario) acquisition_pointers.insert(pointer);
+                }
+            }
+            append_native_metadata("font-state.log", g_original_story_scenario ? "story_scenario_context=1" : "story_scenario_context=0");
+            auto hook_collection_getter = [&](void *klass, const char *name, const char *element,
+                                               bool dictionary, acquisition0_fn replacement,
+                                               acquisition0_fn *original) {
+                const void *entry = find_method_by_signature(klass, name, "");
+                uint32_t flags = 0;
+                if (!entry || !method_get_class || !method_is_generic || method_get_class(entry) != klass ||
+                    method_is_generic(entry) || (method_get_flags(entry, &flags) & 0x0010u)) return;
+                char *return_name = type_get_name(method_get_return_type(entry));
+                const bool correct_type = limbus_text_provenance::text_collection_type(return_name, element, dictionary);
+                if (return_name) il2cpp_free(return_name);
+                void *pointer = nullptr;
+                memcpy(&pointer, entry, sizeof(pointer));
+                if (!correct_type || acquisition_pointers.count(pointer) || !has_inline_hook_space(klass, pointer)) return;
+                hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement), reinterpret_cast<void **>(original));
+                if (*original) acquisition_pointers.insert(pointer);
+            };
+            hook_collection_getter(g_action_event_text_class, "GetOptions", "TextData_DungeonEvents_Options", false,
+                    replacement_event_options, &g_original_event_options);
+            hook_collection_getter(g_abnormality_guide_class, "GetStoryList", "AbnormalityStoryStaticData", false,
+                    replacement_guide_stories, &g_original_guide_stories);
+            hook_collection_getter(g_abnormality_guide_class, "GetStoryDictionary", "AbnormalityStoryStaticData", true,
+                    replacement_guide_dictionary, &g_original_guide_dictionary);
+            char collection_hooks[100];
+            snprintf(collection_hooks, sizeof(collection_hooks), "event_options_context=%d guide_list_context=%d guide_dictionary_context=%d",
+                     g_original_event_options != nullptr, g_original_guide_stories != nullptr,
+                     g_original_guide_dictionary != nullptr);
+            append_native_metadata("font-state.log", collection_hooks);
+            const void *rpg_data = find_method_by_signature(g_rpg_dialogue_class, "GetTextData", "System.Int32");
+            uint32_t rpg_flags = 0;
+            if (rpg_data && method_get_class && method_is_generic &&
+                method_get_class(rpg_data) == g_rpg_dialogue_class && !method_is_generic(rpg_data) &&
+                !(method_get_flags(rpg_data, &rpg_flags) & 0x0010u)) {
+                char *return_name = type_get_name(method_get_return_type(rpg_data));
+                const bool correct_type = return_name && strcmp(return_name, "RPGSystem.RpgLocDialogueText") == 0;
+                if (return_name) il2cpp_free(return_name);
+                void *pointer = nullptr;
+                memcpy(&pointer, rpg_data, sizeof(pointer));
+                if (correct_type && !acquisition_pointers.count(pointer) && has_inline_hook_space(g_rpg_dialogue_class, pointer)) {
+                    hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement_rpg_dialogue_data),
+                            reinterpret_cast<void **>(&g_original_rpg_dialogue_data));
+                    if (g_original_rpg_dialogue_data) acquisition_pointers.insert(pointer);
+                }
+            }
+            append_native_metadata("font-state.log", g_original_rpg_dialogue_data ? "rpg_dialogue_context=1" : "rpg_dialogue_context=0");
             const void *skill_level = find_method_by_signature(
                     g_skill_text_class, "GetSkillTextByGaksungLevel", "System.Int32");
             uint32_t skill_flags = 0;

@@ -191,8 +191,13 @@ internal class TranslationIndexCompiler {
             if (occurrences.map { it.translation }.distinct().size > 1 ||
                 isNumericLiteral(source) || source in translatedOutputs ||
                 (global != null && occurrences.any { global != it.translation })) {
-                occurrences.mapNotNull { record ->
-                    contextKey(record.stableId, record.field, source)?.let { it to record.translation }
+                occurrences.flatMap { record ->
+                    // Retain the older unambiguous line-ID fallback when the
+                    // runtime cannot acquire a complete scenario identity.
+                    val story = record.stableId?.let { STORY_CONTEXT.matchEntire(it)?.groupValues }
+                    listOfNotNull(record.stableId, story?.get(1), story?.get(2)?.takeIf(String::isNotEmpty)).distinct().mapNotNull { id ->
+                        contextKey(id, record.field, source)?.let { it to record.translation }
+                    }
                 }.groupBy({ it.first }, { it.second }).toSortedMap().forEach { (key, targets) ->
                     val distinct = targets.distinct()
                     (distinct.singleOrNull() ?: source.takeIf { it in distinct })
@@ -339,6 +344,7 @@ internal class TranslationIndexCompiler {
     }
 
     companion object {
+        private val STORY_CONTEXT = Regex("^(@story:[A-Za-z0-9_-]{1,96})(?:/dialog:([0-9]{1,18}))?$")
         fun contextKey(id: String?, field: String, source: String): String? =
             id?.takeIf { it.isNotBlank() && it.length <= 256 && it.none { char -> char.code < 32 } }
                 ?.let { "$it\u001f$field\u001f$source" }

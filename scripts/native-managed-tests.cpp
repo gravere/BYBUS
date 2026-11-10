@@ -66,6 +66,22 @@ std::unordered_set<void *> destroyed;
 bool native_alive(void *object) { return !destroyed.count(object); }
 
 int main() {
+    {
+        std::string scene = "@story:outer";
+        try {
+            limbus_text_provenance::ScopedTextKey scope(scene, "@story:inner");
+            throw 7;
+        } catch (int value) {
+            assert(value == 7);
+        }
+        assert(scene == "@story:outer");
+    }
+    g_index["共通の台詞"] = "全局译文";
+    g_contextual_index[std::string("@story:A") + '\x1f' + "content" + '\x1f' + "共通の台詞"] = "剧情译文";
+    g_contextual_index[std::string("@story:A/dialog:8") + '\x1f' + "content" + '\x1f' + "共通の台詞"] = "本行译文";
+    assert(text(translate_managed_string(new_managed_string("共通の台詞"), "@story:A/dialog:8", "content")) == "本行译文");
+    assert(text(translate_managed_string(new_managed_string("共通の台詞"), "@story:A/dialog:9", "content")) == "剧情译文");
+    assert(text(translate_managed_string(new_managed_string("共通の台詞"), "@story:B/dialog:9", "content")) == "全局译文");
     g_index["入場"] = "进入战斗";
     g_contextual_index[std::string("enter") + '\x1f' + "content" + '\x1f' + "入場"] = "进入";
     {

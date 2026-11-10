@@ -75,6 +75,17 @@ def capture(adb, out, label):
             "screenshot_requires_review": True}
 
 
+def security_evidence(logs):
+    codes = set()
+    for line in logs.splitlines():
+        if "LimbusSafety" in line:
+            match = re.search(r"\bcodes=([0-9,]+)", line)
+            if match:
+                codes.update(code for code in match[1].split(",") if re.fullmatch(r"\d{5}", code))
+        codes.update(re.findall(r"AppSealingKillProcess\[(\d{5})\]", line))
+    return sorted(codes)
+
+
 def observe_startup(adb, out, label, timeout, container=False):
     deadline = time.monotonic() + timeout
     first_game_frame = None
@@ -95,7 +106,8 @@ def observe_startup(adb, out, label, timeout, container=False):
             break
         time.sleep(1)
     result = capture(adb, out, label)
-    result.update(game_activity_seen=first_game_frame is not None, security_dialog_seen=alert_seen)
+    result.update(game_activity_seen=first_game_frame is not None, security_dialog_seen=alert_seen,
+                  security_rejection_seen=False, observed_security_codes=[])
     result["game_in_foreground_at_capture"] = any(
         (HOST + "/" in line and "ShadowActivity" in line) if container else GAME + "/" in line
         for line in result["resumed"])
@@ -106,6 +118,12 @@ def observe_startup(adb, out, label, timeout, container=False):
     if uids:
         logs = adb("logcat", "-d", "--uid=" + ",".join(uids), "-t", "1600", timeout=20)
         (out / (label + "-app-log.txt")).write_text(sanitize(logs), encoding="utf-8")
+        # A short-lived alert can disappear between activity samples. Include
+        # the existing process log so an observed rejection cannot be missed.
+        codes = security_evidence(logs)
+        result["observed_security_codes"] = codes
+        result["security_rejection_seen"] = bool(codes)
+        result["safety_70036_observed"] |= "70036" in codes
     return result
 
 
@@ -162,6 +180,6 @@ def inspect(adb, command, hierarchy, locate, tap, report, out, verifier):
         raise RuntimeError("First-run preparation did not reach game activity within the inspection window")
     for kind in ("official_startup", "container_startup"):
         status = report[kind]
-        if (status["security_dialog_seen"] or status["safety_70036_observed"] or
+        if (status["security_dialog_seen"] or status["security_rejection_seen"] or status["safety_70036_observed"] or
                 status["native_crash_observed"] or not status["game_in_foreground_at_capture"]):
             raise RuntimeError(kind + " did not remain on the game page; inspect captured evidence")
