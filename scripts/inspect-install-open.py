@@ -135,6 +135,8 @@ def inspect_release_update(adb, command, hierarchy, locate, tap, report, out, re
     report["result"] = "historical production update observed: " + observation["outcome"]
     if not observation["installer_confirmed"] or not observation["installed"]:
         raise RuntimeError("Historical production update did not reach package replacement")
+    if not observation["open_clicked"] or not observation["stable_home"]:
+        raise RuntimeError("Historical production update did not open a stable home: " + observation["outcome"])
 
 
 def build_external_fixture(adb, command):
@@ -249,7 +251,7 @@ def inspect_external_install(apk, adb, command, hierarchy, locate, tap, report, 
         case["outcome"] = "stable_home" if case["stable_home"] else "no_stable_home_after_install"
         if not case["stable_home"]:
             report["result"] = "external full installation observed: " + mode + " did not reach stable home"
-            return
+            raise RuntimeError("External full installation did not open a stable home: " + mode)
     report["result"] = "external fresh/full overwrite Open reached stable home in this emulator"
 
 
