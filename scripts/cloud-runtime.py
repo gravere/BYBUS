@@ -67,18 +67,31 @@ def request(url, maximum, asset=False):
 def ready():
     deadline = time.monotonic() + 300
     streak = 0
+    last_state = {}
     while time.monotonic() < deadline:
         try:
             user = adb("shell", "am", "get-started-user-state", "0", timeout=12).strip()
             services = [adb("shell", "service", "check", s, timeout=8) for s in ("package", "activity", "window")]
+            last_state = dict(user=user, services=services)
             ok = user == "RUNNING_UNLOCKED" and all("found" in s.lower() and "not found" not in s.lower() for s in services)
             streak = streak + 1 if ok else 0
             if streak == 2:
                 REPORT["user_state"] = user
                 return
-        except (RuntimeError, subprocess.TimeoutExpired):
+        except (RuntimeError, subprocess.TimeoutExpired) as error:
+            last_state = dict(error=str(error))
             streak = 0
         time.sleep(3)
+    REPORT["boot_last_state"] = last_state
+    for name, args in (
+        ("boot-devices.txt", ("adb", "devices", "-l")),
+        ("boot-properties.txt", ("adb", "-s", "emulator-5554", "shell", "getprop")),
+        ("boot-log.txt", ("adb", "-s", "emulator-5554", "logcat", "-d", "-b", "all", "-t", "300")),
+    ):
+        try:
+            (OUT / name).write_text(command(*args, timeout=10, check=False), encoding="utf-8")
+        except subprocess.TimeoutExpired:
+            pass
     raise RuntimeError("Android did not reach a stable unlocked state within five minutes")
 
 

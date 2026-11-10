@@ -96,6 +96,13 @@ jobs:
         run: python3 scripts/cloud-runtime.py
       - name: Save runtime evidence
         if: always()
+        shell: bash
+        run: |
+          if [ -f "$RUNNER_TEMP/bybus-emulator.log" ]; then
+            tail -c 131072 "$RUNNER_TEMP/bybus-emulator.log" > runtime-output/emulator-log.txt
+          fi
+      - name: Upload runtime evidence
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: bybus-runtime-${{ matrix.profile }}
