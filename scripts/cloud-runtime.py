@@ -1339,10 +1339,8 @@ def main():
         spec = importlib.util.spec_from_file_location("install_open", "scripts/inspect-install-open.py")
         inspection = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(inspection)
-        inspection.inspect(apk, adb, command, hierarchy, locate, tap, REPORT, OUT)
-        if release["draft"]:
-            install_component_probe(release, verifier)
-            inspection.inspect_crash_handlers(adb, hierarchy, locate, REPORT, OUT)
+        inspection.inspect(apk, adb, command, hierarchy, locate, tap, REPORT, OUT,
+                           release, request, verifier, install_component_probe)
         return
     if os.environ.get("RUNTIME_MODE") in ("service-callback", "permissions", "package-queries"):
         adb("logcat", "-c")

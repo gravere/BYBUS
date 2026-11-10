@@ -23,6 +23,7 @@ internal data class AppUpdateState(val installedCode: Long, val busy: Boolean = 
 /** A separate worker: app update requests never block the game preparation queue. */
 internal class AppUpdateController(private val app: Application) {
     private val repository = AppUpdateRepository(File(app.cacheDir, "app-update"))
+    private val installer = AppUpdateInstaller(app)
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "bybus-app-update") }
     private val main = Handler(Looper.getMainLooper())
     private val generation = AtomicLong()
@@ -48,7 +49,16 @@ internal class AppUpdateController(private val app: Application) {
     var installRequest by mutableStateOf<File?>(null)
         private set
 
-    init { preferences.edit().remove("retryAt").apply() }
+    init {
+        preferences.edit().remove("retryAt").apply()
+        worker.submit { installer.observe() }
+    }
+
+    fun homeFrameCommitted() {
+        if (!closed) worker.submit { installer.observe(homeFrame = true) }
+    }
+
+    fun installerIntent(file: File): android.content.Intent = installer.intent(file)
 
     fun checkForNotice() {
         if (closed || checkingNotice || state.busy || state.ready || installRequest != null ||
@@ -157,7 +167,7 @@ internal class AppUpdateController(private val app: Application) {
         state = state.copy(busy = true, message = "正在准备安装", error = null)
         task = worker.submit {
             try {
-                AppUpdatePackage.verify(app, file, release)
+                installer.prepare(file, release)
                 publish(id) { state = state.copy(busy = false, message = "请在系统页面确认安装"); installRequest = file }
             } catch (error: Exception) { publish(id) { readyFile = null; state = state.copy(ready = false); failed(error) } }
         }
@@ -165,9 +175,17 @@ internal class AppUpdateController(private val app: Application) {
 
     fun installationOpened() { installRequest = null }
     fun installationReturned() {
-        if (state.ready) state = state.copy(message = "安装包已保留，可继续安装")
+        val installed = installer.returned()
+        val target = state.release?.versionCode
+        if (target != null && installed >= target) {
+            readyFile = null
+            installRequest = null
+            state = state.copy(installedCode = installed, busy = false, ready = false, progress = null,
+                error = null, message = "已完成更新")
+        } else if (state.ready) state = state.copy(message = "尚未完成更新，安装包已保留")
     }
     fun installationError() {
+        installer.failed()
         state = state.copy(error = "暂时无法打开系统安装程序，可在 GitHub 发行页面下载")
     }
     fun releasePageError() {

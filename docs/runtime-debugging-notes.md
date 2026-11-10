@@ -4,6 +4,28 @@
 
 ## 宿主异常与安装后打开
 
+首页保留唯一 `MAIN/LAUNCHER` 入口，并接受 `DEFAULT`，使限定到本包的隐式启动与桌面
+显式启动均能解析；不新增跳板、后台自动拉起或启动权限。隐式入口缺失可以独立复现，
+但不能据此认定某个 OEM 安装器一定使用了这种调用方式。
+
+Android 15 起，诊断导出读取本应用最近最多 16 条 `ApplicationStartInfo`，区分系统已接受、
+启动失败与首帧已绘制；只保留进程类别、PID、状态编号和单调时钟时间，不读取 Intent 的
+extras、URI、来源账号或第三方组件名。系统记录可能被淘汰或尚未生成，空记录不等于启动
+从未发生。Android 11 起用不超过 128 字节的固定阶段标记补充历史退出原因；限流或接口
+失败只影响诊断。首帧标记在真正提交绘制后写入，不能把 `onResume` 当作画面已出现。
+
+应用内更新在 APK 完整校验后原子保存一份有界安装记录。准备、交给安装器、安装器返回、
+实际版本变更和新版首页首帧分别记录；返回码不能代替版本核对。进程被更新替换后，新进程
+从本机 PackageManager 对账。记录不保存 APK 路径、URL 或用户数据，也不自动继续安装。
+这些信息随用户主动导出的诊断包提供，不接入自动上传服务，不要求用户连接 ADB。
+
+70036 与宿主入口故障分开判断。系统启动历史只能帮助解释进程启动与退出，不能给出
+第三方安全检查的内部判据，也不能用于宣称安全检查已经通过。
+
+接口依据：[隐式 Intent 匹配](https://developer.android.com/guide/components/intents-filters)、
+[ApplicationStartInfo](https://developer.android.com/reference/android/app/ApplicationStartInfo)、
+[进程退出阶段摘要](https://developer.android.com/reference/android/app/ActivityManager#setProcessStateSummary(byte[]))。
+
 宿主在 `attachBaseContext` 安装的有界脱敏异常记录器必须保留到初始化结束，记录后继续
 交给 Android 原异常处理器。VirtualCore 不得用只写原始文件、不转发异常的旧企业记录器
 替换它，否则主线程退出后进程可能仍留存，系统崩溃记录和常规诊断也会缺失。

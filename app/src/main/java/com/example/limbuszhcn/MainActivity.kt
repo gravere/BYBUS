@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.core.view.doOnPreDraw
 import com.example.limbuszhcn.container.AndroidContainerRuntimeFactory
 import com.example.limbuszhcn.container.AndroidInstalledGameImporter
 import com.example.limbuszhcn.container.ContainerPatchInstaller
@@ -37,6 +38,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         logEntry("create", restored = savedInstanceState != null)
+        SystemStartupDiagnostics.checkpoint(this, SystemStartupDiagnostics.Phase.MAIN_ENTRY)
         val migration = com.example.limbuszhcn.migration.MigrationAccess
         if (migration.preferences(this).getBoolean("pending", false) ||
             !intent.getBooleanExtra("skip_legacy_migration", false) && migration.shouldOffer(this)) {
@@ -89,10 +91,7 @@ class MainActivity : ComponentActivity() {
                 if (resumed.value) appUpdater.installRequest?.let { file ->
                     appUpdater.installationOpened()
                     runCatching {
-                        val uri = androidx.core.content.FileProvider.getUriForFile(this@MainActivity, "$packageName.app-updates", file)
-                        appInstaller.launch(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
-                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            .apply { clipData = android.content.ClipData.newRawUri("BYBUS", uri) })
+                        appInstaller.launch(appUpdater.installerIntent(file))
                     }.onFailure { appUpdater.installationError() }
                 }
             }
@@ -164,6 +163,24 @@ class MainActivity : ComponentActivity() {
                             .onFailure(model::showError)
                     }
                 )
+            }
+        }
+        recordFirstHomeFrame(model)
+    }
+
+    private fun recordFirstHomeFrame(model: LauncherViewModel) {
+        window.decorView.doOnPreDraw { view ->
+            if (android.os.Build.VERSION.SDK_INT >= 29 && view.isHardwareAccelerated) {
+                view.viewTreeObserver.registerFrameCommitCallback {
+                    if (!isDestroyed && !isFinishing) {
+                        PersistentDiagnosticLog.info(TAG, "MainActivity home_frame=committed")
+                        SystemStartupDiagnostics.checkpoint(this, SystemStartupDiagnostics.Phase.HOME_FRAME)
+                        model.appUpdater.homeFrameCommitted()
+                    }
+                }
+            } else {
+                // A pre-draw callback is not proof of a committed frame on older renderers.
+                PersistentDiagnosticLog.info(TAG, "MainActivity home_frame=pre_draw_only")
             }
         }
     }
