@@ -12,7 +12,9 @@ import com.lody.virtual.client.core.VirtualCore;
 import com.lody.virtual.client.ipc.VActivityManager;
 import com.lody.virtual.client.ipc.VPackageManager;
 import com.lody.virtual.remote.ClientConfig;
+import com.lody.virtual.helper.compat.ParceledListSliceCompat;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.List;
 import org.json.JSONObject;
 
@@ -54,6 +56,33 @@ public final class NativePackageQueryProbe {
                 require(item.metaData != null && item.metaData.getInt("bybus.fixture") == 488, "application metadata round trip");
             }
             checks.put("java_metadata_lists", true);
+            // Exercise the concrete framework return type, including its real parcel format.
+            Method installedMethod = null;
+            for (Method method : Class.forName("android.content.pm.IPackageManager").getMethods()) {
+                if (method.getName().equals("getInstalledPackages")) installedMethod = method;
+            }
+            require(installedMethod != null, "framework installed-packages contract");
+            for (int count : new int[]{0, 1, 2}) {
+                Object slice = ParceledListSliceCompat.create(packages.subList(0, count), installedMethod);
+                require(installedMethod.getReturnType().isInstance(slice), "exact declared Binder return type");
+                android.os.Parcel parcel = android.os.Parcel.obtain();
+                try {
+                    ((android.os.Parcelable) slice).writeToParcel(parcel, 0);
+                    parcel.setDataPosition(0);
+                    android.os.Parcelable.Creator<?> creator = (android.os.Parcelable.Creator<?>)
+                            slice.getClass().getField("CREATOR").get(null);
+                    Object restored = creator.createFromParcel(parcel);
+                    List<?> list = ParceledListSliceCompat.getList(restored);
+                    require(restored.getClass() == slice.getClass() && list.size() == count, "concrete slice parcel round trip");
+                    for (Object item : list) {
+                        require(((PackageInfo) item).applicationInfo.metaData.getInt("bybus.fixture") == 488,
+                                "metadata preserved in concrete parcel format");
+                    }
+                    require(ParceledListSliceCompat.createLike(list, slice).getClass() == slice.getClass(),
+                            "argument wrapper preserves concrete class");
+                } finally { parcel.recycle(); }
+                checks.put("slice_roundtrip_" + count, true);
+            }
             for (boolean typed : new boolean[]{false, true}) {
                 if (typed && Build.VERSION.SDK_INT < 33) continue;
                 if (typed) {

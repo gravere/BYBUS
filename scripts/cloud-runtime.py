@@ -504,7 +504,8 @@ def inspect_framework_permissions(package_jni=False):
         result = probe("FrameworkPermissionProbeReceiver", "framework-permission", "package-jni" if package_jni else None)
         REPORT["jni_package_queries" if package_jni else "framework_permissions"] = result
         if package_jni:
-            if result.get("sdk") != 37 or result.get("check_count") != 10 or result.get("game_started") is not False:
+            expected = {"android11": (30, 8), "android17": (37, 13)}[REPORT["profile"]]
+            if (result.get("sdk"), result.get("check_count")) != expected or result.get("game_started") is not False:
                 raise RuntimeError("JNI package API fixture scope differs from the expected platform")
             if not all(result.get(key) for key in ("ordinary_app_uid", "server_over_binder", "native_attached_thread", "client_restored")):
                 raise RuntimeError("JNI fixture did not use the required process boundary")
@@ -1364,7 +1365,7 @@ def main():
         digest = install_component_probe(release, verifier)
         REPORT["jni_probe_sha256"] = digest
         inspect_framework_permissions(package_jni=True)
-        REPORT["checks"].append("10 public Java/JNI package-list checks across server Binder and attached native thread")
+        REPORT["checks"].append("Public Java/JNI package-list and concrete parcel checks across server Binder and attached native thread")
         REPORT["result"] = "JNI package API inspection completed; no game or protection library started"
         return
     if os.environ.get("RUNTIME_MODE") == "game-startup":

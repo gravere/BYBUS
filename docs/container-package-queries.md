@@ -12,6 +12,22 @@
 JNI 使用游戏构建 488 所用的 GET_META_DATA、List.size/get 及包名字段访问约定；不加载
 游戏保护库、不修改其检查结果。该用例只证明接口链路，不代替实际游戏启动验证。
 
+Android 17 的 `IPackageManager.getInstalledPackages` 返回 `PackageInfoList`，它继承
+`ParceledListSlice<PackageInfo>`。以返回类严格等于 `ParceledListSlice` 判断类型，会误走
+普通 List 分支；Java 动态代理随后在返回位置转换失败。这发生在 InvocationHandler
+返回之后，因此旧的内部查询摘要可以是 present，而公开 API/JNI 实际收到异常。
+列表适配须识别继承关系并按接口声明的具体返回类构造，保留空列表、真实成员及元数据；
+不按 Android 版本猜类型，不把构造失败吞成空列表。安全检查及宿主包可见范围保持原约定。
+父类中的公开 `getList()` 也必须能读取；仅扫描子类 declared methods 的旧镜像在这里会
+缺失方法。读取与构造均保留具体平台类型，不能用兼容读取掩盖错误的返回类型。
+
+修复前的独立 Android 17 用例已复现 `ArrayList` 到 `PackageInfoList` 的
+`ClassCastException`，栈位于系统 `ApplicationPackageManager.getInstalledPackagesAsUser`。
+证据：[修复前运行记录](https://github.com/gravere/BYBUS/actions/runs/42862487414)。
+
+依据：[AOSP Android 17 PackageInfoList](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/android17-release/core/java/android/content/pm/PackageInfoList.java)、
+[IPackageManager](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/android17-release/core/java/android/content/pm/IPackageManager.aidl)。
+
 应用身份查询必须保持 Android API 的返回约定，不能用“查询失败时返回当前游戏”或
 “两个参数相等就签名匹配”代替实际注册记录。
 

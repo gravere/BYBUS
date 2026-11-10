@@ -40,7 +40,7 @@ public final class PackageManagerStub extends MethodInvocationProxy<MethodInvoca
                     || method.getName().equals("getInstalledApplications"))
                     && ParceledListSliceCompat.isParceledListSlice(result)) {
                 try {
-                    Object list = mirror.android.content.pm.ParceledListSlice.getList.callWithException(result);
+                    Object list = ParceledListSliceCompat.getList(result);
                     if (list instanceof java.util.List) result = list;
                 } catch (Throwable ignored) {
                     // A passive observer must preserve both the returned object and its exception.

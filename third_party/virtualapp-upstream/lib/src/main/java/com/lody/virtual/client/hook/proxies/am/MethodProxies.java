@@ -116,7 +116,6 @@ import mirror.android.app.IActivityManager;
 import mirror.android.app.LoadedApk;
 import mirror.android.content.ContentProviderHolderOreo;
 import mirror.android.content.IIntentReceiverJB;
-import mirror.android.content.pm.ParceledListSlice;
 import mirror.android.content.pm.UserInfo;
 import android.widget.Toast;
 
@@ -241,7 +240,7 @@ class MethodProxies {
             Object _infos = method.invoke(who, args);
             boolean slice = ParceledListSliceCompat.isReturnParceledListSlice(method);
             //noinspection unchecked
-            List<ActivityManager.RecentTaskInfo> infos = slice ? (List<ActivityManager.RecentTaskInfo>) ParceledListSlice.getList.call(_infos)
+            List<ActivityManager.RecentTaskInfo> infos = slice ? (List<ActivityManager.RecentTaskInfo>) ParceledListSliceCompat.getList(_infos)
                     : (List) _infos;
             Iterator<ActivityManager.RecentTaskInfo> it = infos.iterator();
             while (it.hasNext()){
@@ -274,7 +273,7 @@ class MethodProxies {
                 }
             }
             if(slice){
-                return ParceledListSliceCompat.create(infos);
+                return ParceledListSliceCompat.create(infos, method);
             }
             return _infos;
         }
@@ -294,7 +293,7 @@ class MethodProxies {
             if (isAppProcess()) {
                 Log.i("LimbusVA", "Return empty historical process exit reasons for virtual app=" + getAppPkg());
                 if (ParceledListSliceCompat.isReturnParceledListSlice(method)) {
-                    return ParceledListSliceCompat.create(Collections.emptyList());
+                    return ParceledListSliceCompat.create(Collections.emptyList(), method);
                 }
                 return Collections.emptyList();
             }
