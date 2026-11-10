@@ -209,7 +209,10 @@ def inspect_external_install(apk, adb, command, hierarchy, locate, tap, report, 
             locate(hierarchy("full-overwrite-source-page"), "检查应用更新")
             # Keep the production update sheet in the task history during replacement.
             adb("shell", "am", "start", "-W", "-n", fixture + "/.InstallProbe", "--ez", "request_result", "false", timeout=60)
-        tap("Install BYBUS", hierarchy(mode + "-external-caller"))
+        caller = hierarchy(mode + "-external-caller")
+        install_label = next(n.get("text") for n in caller.iter("node")
+                             if n.get("text", "").lower() == "install bybus")
+        tap(install_label, caller)
         deadline = time.monotonic() + 100
         while time.monotonic() < deadline:
             tree = hierarchy(mode + "-system-installer")
