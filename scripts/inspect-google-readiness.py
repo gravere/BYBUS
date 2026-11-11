@@ -14,7 +14,7 @@ def redact_checkin(text):
     return re.sub(r'(?i)((?:android[_ ]?id|security[_ ]?token)\s*[=:]\s*)[0-9a-fx-]+', r'\1[redacted]', text)
 
 
-def inspect(api, release, verifier, windows_only=False, settings_only=False):
+def inspect(api, release, verifier, windows_only=False, settings_only=False, session_only=False):
     adb, out, report = api['adb'], api['OUT'], api['REPORT']
     package, namespace = api['PACKAGE'], api['NAMESPACE']
     # adbd can close the transport while restarting as root; verify the resulting UID.
@@ -43,6 +43,10 @@ def inspect(api, release, verifier, windows_only=False, settings_only=False):
         raise RuntimeError('Google fixture timed out: ' + stage)
 
     try:
+        if session_only:
+            inspect_session(api, probe)
+            report['result'] = 'Existing virtual task background/resume inspection completed'
+            return
         report['billing_capability'] = probe('billing')
         assert report['billing_capability']['device_registered'] is True
         report['checks'].append('first real Google check-in completed before billing capability; provider ID and success time both present (values not exported)')
@@ -102,6 +106,34 @@ def inspect(api, release, verifier, windows_only=False, settings_only=False):
         adb('shell', 'wm', 'size', 'reset', check=False)
         adb('shell', 'wm', 'user-rotation', 'free', check=False)
         (out / 'google-readiness-log.txt').write_text(redact_checkin(adb('logcat', '-d', '-v', 'threadtime', '-t', '2500', check=False)), encoding='utf-8')
+
+
+def inspect_session(api, probe):
+    adb, report = api['adb'], api['REPORT']
+    probe('login')
+    time.sleep(4)
+    tree = api['capture']('session-login-before')
+    assert any(n.get('resource-id') == 'com.google.android.gms:id/next_button' for n in tree.iter('node'))
+    before = probe('session-snapshot')
+    assert before['pids'] and before['tasks'], 'live guest missing before background switch'
+    adb('shell', 'input', 'keyevent', 'KEYCODE_HOME')
+    time.sleep(2)
+    adb('shell', 'am', 'start', '-W', '-n', f"{api['PACKAGE']}/{api['NAMESPACE']}.MainActivity", timeout=30)
+    time.sleep(3)
+    background = probe('session-snapshot')
+    assert background['pids'] == before['pids'] and background['tasks'] == before['tasks']
+    resumed = probe('session-resume')
+    assert resumed['resumed'] is True
+    assert resumed['pids'] == before['pids'] and resumed['tasks'] == before['tasks']
+    time.sleep(2)
+    tree = api['capture']('session-login-returned')
+    assert any(n.get('resource-id') == 'com.google.android.gms:id/next_button' and n.get('enabled') == 'true'
+               for n in tree.iter('node')), 'existing guest task did not become visible'
+    after = probe('session-snapshot')
+    assert after['pids'] == before['pids'] and after['tasks'] == before['tasks']
+    report['existing_session'] = dict(before=before, background=background, resumed=resumed, after=after)
+    report['checks'].append('real virtual Google Activity survived Home -> BYBUS -> AppTask.moveToFront with identical guest PIDs/task IDs and visible controls')
+    report['session_scope'] = 'shared container/system task route; no Unity game, account or payment exercised'
 
 
 def inspect_settings(api, probe):

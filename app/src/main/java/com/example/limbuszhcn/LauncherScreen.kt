@@ -252,6 +252,7 @@ internal fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefre
         state.busy -> when (state.launchStep) {
             0 -> LaunchAction.Prepare; 1 -> LaunchAction.Translate; 2 -> LaunchAction.Starting; else -> LaunchAction.Working
         }
+        state.canResumeGame -> LaunchAction.Resume
         state.container == null && !state.failed -> LaunchAction.Detecting
         needsDetection -> LaunchAction.Detect
         state.compatibility?.isSupported == false -> LaunchAction.DeviceStatus
@@ -265,7 +266,7 @@ internal fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefre
         LaunchButton(action, enabled = state.container != null || state.failed,
             step = state.launchStep, animated = animated, feedback = feedback,
             status = if (state.busy) state.stage else feedback.orEmpty(),
-            onClick = { when { needsDetection -> onRefresh(); canLaunch -> onLaunch(); else -> onDetails() } })
+            onClick = { when { state.canResumeGame -> onLaunch(); needsDetection -> onRefresh(); canLaunch -> onLaunch(); else -> onDetails() } })
         if (state.failed && !state.busy) {
             TextButton(onClick = onDetails, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)) {
                 LauncherGlyph(Glyph.Info, C.Error, Modifier.size(16.dp))

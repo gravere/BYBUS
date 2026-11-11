@@ -33,6 +33,12 @@ interface ContainerRuntime {
      */
     fun launchGame()
 
+    /** An existing live task can return without replacing its active translation snapshot. */
+    fun hasRunningGame(): Boolean = false
+
+    /** False means no live task; errors must not silently trigger a destructive cold launch. */
+    fun resumeGameIfRunning(): Boolean = false
+
     /** Stop the guest before mutating its installation or translation snapshot. */
     fun stopGame() {}
 }

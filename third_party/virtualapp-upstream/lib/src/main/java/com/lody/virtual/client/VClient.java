@@ -860,6 +860,7 @@ public final class VClient extends IVClient.Stub {
             }
             @Override
             public void onActivityResumed(Activity activity) {
+                logGameLifecycle(activity, "resume");
                 // Limbus 是面向普通玩家的游戏，不应继承上游企业容器的防截屏策略。
                 // 这里先清除 Activity 当前状态；窗口会话层还会拦截游戏稍后的重复设置。
                 if (LIMBUS_PACKAGE_NAME.equals(activity.getPackageName())) {
@@ -881,9 +882,10 @@ public final class VClient extends IVClient.Stub {
                 }
             }
             @Override
-            public void onActivityPaused(Activity activity) { }
+            public void onActivityPaused(Activity activity) { logGameLifecycle(activity, "pause"); }
             @Override
             public void onActivityStopped(Activity activity) {
+                logGameLifecycle(activity, "stop");
                 ActivityCounterManager.get().activityCountReduce(activity.getPackageName(),activity.getClass().getName(),android.os.Process.myPid());
                 countOfActivity--;
             }
@@ -891,7 +893,17 @@ public final class VClient extends IVClient.Stub {
             public void onActivitySaveInstanceState(Activity activity, Bundle bundle) { }
             @Override
             public void onActivityDestroyed(Activity activity) {
-
+                logGameLifecycle(activity, "destroy");
+            }
+            private void logGameLifecycle(Activity activity, String event) {
+                if (!LIMBUS_PACKAGE_NAME.equals(activity.getPackageName())) return;
+                // Existing bounded per-process log persistence captures this without game data.
+                try {
+                    Log.i("LimbusVA", "GameActivity event=" + event + " pid=" + android.os.Process.myPid()
+                            + " taskId=" + activity.getTaskId() + " root=" + activity.isTaskRoot()
+                            + " finishing=" + activity.isFinishing()
+                            + " changingConfig=" + activity.isChangingConfigurations());
+                } catch (RuntimeException ignored) { }
             }
         });
         Log.i("LimbusVA", "VClient.bindApplication after register lifecycle");

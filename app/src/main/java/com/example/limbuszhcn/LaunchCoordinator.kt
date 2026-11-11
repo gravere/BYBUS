@@ -29,6 +29,7 @@ internal data class LauncherUiState(
     val container: ContainerStatus? = null,
     val installedVersion: Long? = null,
     val installedVersionName: String? = null,
+    val canResumeGame: Boolean = false,
     val nativeCompatibilityIssue: String? = null,
     val gameUpdate: GameUpdateCatalog = GameUpdateCatalog(),
     val installSource: GameInstallSource = GameInstallSource(),
@@ -135,8 +136,9 @@ internal class LaunchCoordinator private constructor(application: Application) {
         val name = runCatching { AndroidInstalledGameImporter.installedVersionName(app.packageManager) }.getOrNull()
         val source = if (installed != null) GameStores.installedSource(app) else GameInstallSource()
         val preferred = GameUpdateSource.fromKey(updatePreferences.getString("preferred", null)) ?: GameStores.sourceFor(source)
+        val canResume = runtime.hasRunningGame()
         publish { it.copy(container = container, installedVersion = installed, installedVersionName = name,
-            installSource = source, preferredGameSource = preferred) }
+            installSource = source, preferredGameSource = preferred, canResumeGame = canResume) }
         return container to installed
     }
 
@@ -229,7 +231,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
 
     fun installPackageUpdate() = perform("准备系统安装", allowPackageUpdate = true) {
         require(app.packageManager.canRequestPackageInstalls()) { "请在系统设置中允许 BYBUS 安装应用" }
-        runtime.stopGame()
+        stopGame()
         if (packageUpdates.hasSession()) packageUpdates.resume()
         else {
             val prepared = requireNotNull(preparedUpdate) { "请重新选择安装包" }
@@ -301,17 +303,28 @@ internal class LaunchCoordinator private constructor(application: Application) {
 
     private fun receipt() = com.example.limbuszhcn.container.RuntimeReceipt(app.filesDir.toPath().resolve("translation-cache/translation-index"))
 
+    private fun stopGame() {
+        runtime.stopGame()
+        publish { it.copy(canResumeGame = false) }
+    }
+
     fun launch(prepareResources: Boolean = false) {
         // A Play/DNS outage must not stall the existing translation/launch path.
         checkGameUpdate(force = true)
         perform("准备启动") {
+            stage("返回游戏", 2)
+            if (runtime.resumeGameIfRunning()) {
+                publish { it.copy(canResumeGame = true) }
+                return@perform "已返回游戏"
+            }
+            publish { it.copy(canResumeGame = false) }
             stage("检查游戏兼容性", 0)
             val localCandidate = com.example.limbuszhcn.update.TranslationRepository(
                 app.filesDir.toPath().resolve("translation-cache")).hasLaunchCandidate()
             val metadata = releaseCheck.start(if (localCandidate) 4_000 else 15_000)
             val approvedBuild = measureStartup("compatibility") { gameCompatibility.requireApproved() }
             measureStartup("game_sync") { prepareGame() }
-            measureStartup("stop_previous_game") { runtime.stopGame() }
+            measureStartup("stop_previous_game") { stopGame() }
             val patch = installer(metadata::await) { stage(it, 1) }
             stage("检查零协更新并校验汉化文件", 1)
             val update = runCatching { patch.installFromGitHub(RELEASE_URL) }
@@ -340,6 +353,8 @@ internal class LaunchCoordinator private constructor(application: Application) {
             val runtimeStatus = receipt().status()
             publish { it.copy(runtimeStatus = runtimeStatus) }
             measureStartup("container_launch") { runtime.launchGame() }
+            val canResume = runtime.hasRunningGame()
+            publish { it.copy(canResumeGame = canResume) }
             if (update.isFailure) "${update.exceptionOrNull()!!.updateFailureLabel()}；${summary.description()}；游戏已打开"
             else "${summary.description()}；游戏已打开"
         }
@@ -347,7 +362,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
 
     fun updateTranslation() = perform("检查零协更新并校验汉化文件") {
         require(readGameStatus().first.gameImported) { "请先启动一次游戏以准备容器" }
-        runtime.stopGame()
+        stopGame()
         val patch = installer()
         val summary = patch.installFromGitHub(RELEASE_URL)
         val active = if (summary.indexActivated) summary else patch.activeInstallSummary()
@@ -362,7 +377,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
         }
         val result = runCatching {
             progress(0, "正在重新同步游戏")
-            runtime.stopGame()
+            stopGame()
             prepareGame(force = true)
             progress(1, "正在校验中文字体")
             com.lody.virtual.helper.compat.LimbusTranslationAssets.prepare(app)
@@ -390,7 +405,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
         val result = runCatching {
             publish { it.copy(clearing = DataClearState(running = true)) }
             check(readGameStatus().first.available) { "容器暂不可用，请稍后重试" }
-            runtime.stopGame()
+            stopGame()
             installer().uninstallLatest()
             preparationPreferences.edit().remove("pending").apply()
             publish { it.copy(translation = null, resourcePreparation = null, repair = RepairState()) }
