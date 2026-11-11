@@ -52,6 +52,9 @@ void *invoke(const void *method, void *object, void **args, void **) {
 auto g_runtime_invoke = invoke;
 bool ensure_tmp_font() { return true; }
 void *translate_managed_string(void *s) { return s; }
+std::u16string font_input;
+void *new_managed_string(const std::string &s) { font_input = codec.from_bytes(s); return &font_input; }
+std::unordered_set<void *> prepared_targets;
 bool is_translated_managed_string(void *s) {
     return s && g_font_catalogue.contains(codec.to_bytes(*static_cast<std::u16string *>(s)));
 }
@@ -63,12 +66,16 @@ void (*g_original_choice_clear)(void *, const void *);
 void (*g_original_choice_button)(void *, int32_t, void *, void *, const void *);
 #include "runtime-flow-under-test.inc"
 
+void *prepare_tmp_text(void *target, void *text, bool restore) {
+    assert(!restore && is_choice_text(target, text)); prepared_targets.insert(target); return text;
+}
+
 int calls = 0;
 void *expected_target, *expected_input;
 std::u16string probe;
 void *read(void *, void *target, void *input, const void *) {
     assert(target == expected_target && input == expected_input);
-    assert(is_choice_text(target, &probe)); ++calls; return input;
+    assert(is_choice_text(target, &probe) && prepared_targets.count(target)); ++calls; return input;
 }
 void set(void *owner, void *, const void *) {
     assert(is_choice_text(static_cast<Object *>(owner)->body, &probe)); ++calls;

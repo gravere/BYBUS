@@ -225,15 +225,38 @@ internal object TranslationJsonPairer {
             val id = source.opt("abilityID")?.toString()?.takeIf { it.isSkillNumber() } ?: continue
             val sourceGroup = sources.getValue(id)
             val targetGroup = targets[id].orEmpty()
-            if (targetGroup.isEmpty() || sourceGroup.any { !equivalentJson(it, source) }) continue
-            val target = targetGroup.first()
-            if (targetGroup.any { !equivalentJson(it, target) }) continue
+            if (targetGroup.isEmpty()) continue
+            val target = if (sourceGroup.all { equivalentJson(it, source) } &&
+                targetGroup.all { equivalentJson(it, targetGroup.first()) }) targetGroup.first()
+            else {
+                // Repeated ability IDs can carry DIFFERENT effects. A unique set
+                // of explicit status tokens/numbers identifies one display leaf;
+                // neither array order nor the ability ID alone can do that.
+                val fingerprint = giftEffectFingerprint(source) ?: continue
+                if (sourceGroup.count { giftEffectFingerprint(it) == fingerprint } != 1) continue
+                targetGroup.filter { giftEffectFingerprint(it) == fingerprint }.singleOrNull() ?: continue
+            }
             // Ability IDs are metadata, not a license to pair changed structures.
             if (!equivalentJson(nonDisplayMetadata(source), nonDisplayMetadata(target))) continue
             collect(source, target, path, "$context[$index]", records, depth + 1,
                 objectScope = "$parent/ability:$id", edits = edits)
         }
     }
+
+    private fun giftEffectFingerprint(row: JSONObject): List<String>? {
+        val text = row.opt("simpleDesc") as? String ?: return null
+        if (text.length > 4096 || text.contains("<noparse", ignoreCase = true)) return null
+        // Remove formatting, not visible text; numbers inside tags are colors,
+        // sizes or link identifiers and cannot identify gameplay effects.
+        val visible = text.replace(Regex("<[^>]*>"), "")
+        val tokens = GIFT_STATUS.findAll(visible).map { "status:${it.value}" }.toList()
+        val numbers = GIFT_NUMBER.findAll(visible.replace(GIFT_STATUS, " "))
+            .map { "number:${it.value.removePrefix("+")}" }.toList()
+        return (tokens + numbers).sorted().takeIf { it.isNotEmpty() && it.size <= 64 }
+    }
+
+    private val GIFT_STATUS = Regex("\\[[A-Za-z][A-Za-z0-9_]*]")
+    private val GIFT_NUMBER = Regex("(?<![A-Za-z0-9_])[-+]?\\d+(?:\\.\\d+)?%?")
 
     private fun collectTableChildren(original: JSONArray, translated: JSONArray, path: String,
                                      context: String, records: MutableList<TranslationIndexRecord>,

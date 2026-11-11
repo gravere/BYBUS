@@ -23,6 +23,8 @@ bool is_translated_managed_string(void *s) {
     return known_results.count(text) || catalogue.contains(text);
 }
 bool remember_translated_text(void *, const std::string &s) { known_results.insert(s); return true; }
+void *raw_source = nullptr, *translated_input = nullptr;
+void *translate_managed_string(void *s) { return s && s == raw_source ? translated_input : s; }
 using One = void *(*)(void *, const void *);
 using All = void *(*)(void *, bool, const void *);
 using Color = void *(*)(void *, void *, const void *);
@@ -63,6 +65,12 @@ int main() {
         assert(r == &output && is_translated_managed_string(r));
     }
     auto saved_input = input, saved_output = output;
+    // The raw Japanese getter result must reach the formatter already translated.
+    auto japanese = codec.from_bytes("[命中時] 対象に出血2を付与");
+    raw_source = &japanese; translated_input = &input; known_results.clear();
+    assert(replacement_rich_text_one<0>(&japanese, &expected_method) == &output);
+    assert(is_translated_managed_string(&output));
+    raw_source = translated_input = nullptr;
     input = output; output += u"<link=\"Buff\"></link>";
     auto nested = replacement_rich_text_one<1>(&input, &expected_method);
     assert(nested == &output && is_translated_managed_string(nested));

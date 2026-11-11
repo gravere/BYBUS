@@ -20,7 +20,7 @@ import kotlin.io.path.readText
 import kotlin.io.path.outputStream
 import kotlin.io.path.writeText
 
-internal const val TRANSLATION_COMPILER_REVISION = "jp-pairing-12"
+internal const val TRANSLATION_COMPILER_REVISION = "jp-pairing-13"
 
 /**
  * 表示一条从官方日文显示字段到中文显示字段的结构化配对记录。
