@@ -144,7 +144,7 @@ private fun AboutPane() {
     DetailSection("游戏更新与数据缓存") {
         Column(Modifier.padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("保留系统安装的游戏，从原渠道更新后，BYBUS 会自动同步。", style = MaterialTheme.typography.bodyMedium)
-            Text("游戏资源在 BYBUS 内下载一次即可。覆盖更新 BYBUS 会保留资源与登录信息；卸载或清除数据会删除它们。", style = MaterialTheme.typography.bodyMedium)
+            Text("游戏资源在 BYBUS 内下载一次即可。覆盖更新 BYBUS 会保留资源与登录信息；卸载或在系统设置中清除 BYBUS 数据会删除它们。", style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
