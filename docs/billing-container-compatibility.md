@@ -21,8 +21,9 @@ Google 组件就绪必须同时满足 APK 身份和所选 ABI 原生库的名称
 其固定版本源码对应 `VendingPreferences.isBillingEnabled` 为 false。启动成功、存在账号
 不能证明付款开关和设备注册已完成。宿主提供独立的 Google 账号与付款状态页，只读取
 容器内同一 SettingsProvider 的付款开关、注册开关与注册完成布尔状态；不读取 Token，
-不显示或记录账号名称、设备标识。启用付款只在用户点击时写入该 Provider 并读回确认，
-再触发原 microG 注册广播，不伪造注册成功，不改计费响应，不覆盖用户主动关闭的设置。
+不显示或记录账号名称、设备标识。Google 组件完成校验与安装后，默认启用付款和设备注册，
+经同一 Provider 读回确认；已有安装也自动补齐关闭的开关。仅在开关缺失时写入，未注册时
+触发原 microG 注册广播，网络注册异步完成，不阻塞游戏等待联网。不伪造注册成功或改写计费响应。
 
 
 启动时的购买失败提示与商品价格缺失须检查真实计费返回码，不能按结算页面取消故障处理。
@@ -50,8 +51,8 @@ API 36。原身份、接口和反射结构检查仍保留，Android 8–13 沿�
 绑定所有权独立于 authenticator Binder 记录：空 Binder、服务死亡和绑定期间会话关闭
 都要释放成功建立的连接，不能因 Binder 已为空而跳过 unbind。
 
-首次使用仍需在容器内登录账号，并在 Google 设置中开启设备注册和应用内购买。
-已登录游戏、已安装组件和计费就绪是不同状态；检查与更新不得覆盖用户主动关闭的设置。
+首次使用仍需在容器内登录账号，设备注册和应用内购买由 BYBUS 默认开启。
+已登录游戏、已安装组件和计费就绪是不同状态；状态页显示真实注册结果，账号与付款仍由用户确认。
 
 接口依据：[Android 14 authenticator AIDL](https://github.com/aosp-mirror/platform_frameworks_base/blob/android14-release/core/java/android/accounts/IAccountAuthenticator.aidl)、
 [Android 14 权限调用](https://github.com/aosp-mirror/platform_frameworks_base/blob/android14-release/core/java/android/accounts/AbstractAccountAuthenticator.java)。

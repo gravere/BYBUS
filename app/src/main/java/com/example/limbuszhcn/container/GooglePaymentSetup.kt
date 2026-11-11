@@ -50,17 +50,23 @@ internal class GooglePaymentSetup(private val context: Context) {
         return GooglePaymentState(billing, registration.first, registration.second, account)
     }
 
-    /** Explicit UI action only; never called by launch, update or status refresh. */
-    fun enable(): GooglePaymentState {
-        client().use { client ->
-            client.update(VENDING, ContentValues().apply { put(BILLING, true) }, null, null)
-            client.update(CHECKIN, ContentValues().apply { put(ENABLED, true) }, null, null)
+    /** Local, idempotent defaults after verified component installation; no network wait. */
+    fun ensureEnabled(): GooglePaymentState {
+        val state = client().use { client ->
+            val before = read(client)
+            if (!before.billingEnabled)
+                client.update(VENDING, ContentValues().apply { put(BILLING, true) }, null, null)
+            if (!before.registrationEnabled)
+                client.update(CHECKIN, ContentValues().apply { put(ENABLED, true) }, null, null)
             val state = read(client)
             check(state.billingEnabled && state.registrationEnabled) { "付款设置未保存，请重试" }
+            state
         }
-        VActivityManager.get().sendBroadcast(Intent().setComponent(ComponentName("com.google.android.gms",
-            "org.microg.gms.checkin.TriggerReceiver")), 0)
-        return read()
+        if (!state.registered) {
+            VActivityManager.get().sendBroadcast(Intent().setComponent(ComponentName("com.google.android.gms",
+                "org.microg.gms.checkin.TriggerReceiver")), 0)
+        }
+        return state
     }
 
     private companion object {

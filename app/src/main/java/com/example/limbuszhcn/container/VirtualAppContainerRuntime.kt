@@ -90,10 +90,9 @@ class VirtualAppContainerRuntime(
         bridge.openGoogleSettings()
     }
 
-    fun googlePaymentState(enable: Boolean = false): GooglePaymentState {
+    fun googlePaymentState(): GooglePaymentState {
         bridge.ensureGoogleAppsInstalled()
-        val setup = GooglePaymentSetup(context)
-        return if (enable) setup.enable() else setup.read()
+        return GooglePaymentSetup(context).read()
     }
 
     /**
@@ -302,6 +301,9 @@ private class VirtualAppBridge(
             File(info.apkPath)
         }
         microgConfig.markMigrationCompleted(installedApks)
+        // New installs and existing disabled defaults share the same verified provider path.
+        // Device registration runs asynchronously; launching never waits for Google network I/O.
+        GooglePaymentSetup(context).ensureEnabled()
         return components.map { it.second.packageName }
     }
 

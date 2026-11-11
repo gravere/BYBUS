@@ -3,8 +3,10 @@ package com.example.limbuszhcn
 import android.app.Activity
 import android.content.ComponentName
 import android.content.Context
+import android.content.ContentValues
 import android.content.Intent
 import android.content.ServiceConnection
+import android.net.Uri
 import android.os.*
 import android.widget.TextView
 import com.example.limbuszhcn.container.AndroidContainerRuntimeFactory
@@ -41,17 +43,21 @@ class GoogleReadinessProbeActivity : Activity() {
                     }
                     "settings" -> { runtime.openGoogleSettings(); JSONObject().put("result", "settings_opened") }
                     else -> {
-                        val before = runtime.googlePaymentState()
-                        check(!before.hasAccount && !before.billingEnabled) { "fresh emulator required" }
+                        val first = runtime.googlePaymentState()
+                        check(!first.hasAccount && first.billingEnabled && first.registrationEnabled)
+                        val defaults = capability()
+                        check(defaults.all { it == 0 }) { "fresh install defaults unavailable" }
+                        disableForUpgradeFixture()
                         val disabled = capability()
                         check(disabled.all { it == 3 }) { "disabled service must return its real error" }
-                        val enabled = runtime.googlePaymentState(enable = true)
+                        val enabled = runtime.googlePaymentState()
                         check(enabled.billingEnabled && enabled.registrationEnabled && !enabled.hasAccount)
                         val available = capability()
                         check(available.all { it == 0 }) { "enabled service capability still unavailable" }
                         val reread = runtime.googlePaymentState()
                         check(reread.billingEnabled && reread.registrationEnabled && !reread.hasAccount)
                         JSONObject().put("result", "passed").put("disabled_codes", JSONArray(disabled))
+                            .put("default_codes", JSONArray(defaults)).put("automatic_upgrade_repair", true)
                             .put("enabled_codes", JSONArray(available)).put("accounts_accessed", false)
                             .put("purchase_requested", false).put("provider_readback", true)
                     }
@@ -60,6 +66,20 @@ class GoogleReadinessProbeActivity : Activity() {
             File(filesDir, "google-readiness.json").writeText(result.toString(2))
             runOnUiThread { output.text = "GOOGLE_READINESS_" + result.getString("result").uppercase() }
         }.start()
+    }
+
+    private fun disableForUpgradeFixture() {
+        val authority = "com.google.android.gms.microg.settings"
+        val info = requireNotNull(VPackageManager.get().resolveContentProvider(authority, 0, 0))
+        check(info.packageName == "com.google.android.gms")
+        val provider = requireNotNull(VActivityManager.get().acquireProviderClient(0, info))
+        val client = requireNotNull(if (Build.VERSION.SDK_INT >= 29)
+            mirror.android.content.ContentProviderClientQ.ctor.newInstance(contentResolver, provider, authority, false)
+        else mirror.android.content.ContentProviderClientJB.ctor.newInstance(contentResolver, provider, false))
+        client.use {
+            it.update(Uri.parse("content://$authority/vending"), ContentValues().apply { put("vending_billing", false) }, null, null)
+            it.update(Uri.parse("content://$authority/check-in"), ContentValues().apply { put("checkin_enable_service", false) }, null, null)
+        }
     }
 
     private fun capability(): List<Int> {

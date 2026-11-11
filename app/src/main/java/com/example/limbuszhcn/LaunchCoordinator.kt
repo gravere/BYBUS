@@ -164,14 +164,14 @@ internal class LaunchCoordinator private constructor(application: Application) {
         val virtualRuntime = runtime as? com.example.limbuszhcn.container.VirtualAppContainerRuntime
             ?: error("当前容器不支持 Google 账号设置")
         virtualRuntime.openGoogleSettings()
-        "请在容器 Google 设置中登录账号并开启应用内购买"
+        "商店服务已启用，请在容器 Google 设置中登录账号"
     }
 
     fun checkGooglePayment(enable: Boolean = false) = perform(if (enable) "启用付款服务" else "检查付款设置") {
         val result = runCatching {
             val virtual = runtime as? com.example.limbuszhcn.container.VirtualAppContainerRuntime
                 ?: error("当前容器不支持 Google 账号设置")
-            virtual.googlePaymentState(enable)
+            virtual.googlePaymentState()
         }
         publish { it.copy(googlePayment = result.getOrNull(), googlePaymentIssue = result.exceptionOrNull()?.userMessage()) }
         val payment = result.getOrThrow()

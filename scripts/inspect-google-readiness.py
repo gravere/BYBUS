@@ -32,13 +32,13 @@ def inspect(api, release, verifier, windows_only=False):
         raise RuntimeError('Google fixture timed out: ' + stage)
 
     try:
+        report['billing_capability'] = probe('billing')
+        report['checks'].append('real billing: fresh defaults supported 0; old disabled error 3 -> automatic repair -> supported 0; same provider persisted')
         if windows_only:
             inspect_window_fixture(api)
             inspect_settings(api, probe)
             report['result'] = 'Remaining Google windows and settings inspection completed'
             return
-        report['billing_capability'] = probe('billing')
-        report['checks'].append('real bundled billing: disabled error 3 -> explicit settings -> supported 0; same provider persisted')
         probe('login')
         prefix = 'com.android.internal.systemui.navbar.'
         overlays = adb('shell', 'cmd', 'overlay', 'list')
@@ -104,11 +104,9 @@ def inspect_settings(api, probe):
     api['tap']('Google 账号与付款', api['hierarchy']('payment-tools'))
     time.sleep(3)
     tree = api['capture']('payment-preparation-page')
-    if any(n.get('text') == '启用付款服务' for n in tree.iter('node')):
-        api['tap']('启用付款服务', tree)
-        time.sleep(3)
-        api['locate'](api['capture']('payment-enabled-page'), '已启用')
-        api['REPORT']['checks'].append('host payment setup button saved the actual enabled state')
+    api['locate'](tree, '已启用')
+    assert not any(n.get('text') == '启用付款服务' for n in tree.iter('node')), 'automatic defaults were lost'
+    api['REPORT']['checks'].append('host payment page shows service enabled without a manual switch')
     api['tap']('关闭面板', api['hierarchy']('payment-panel-close'))
     api['inspect_system_navigation']()
 
