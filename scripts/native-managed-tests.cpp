@@ -67,6 +67,7 @@ using rich_text_color_fn = void *(*)(void *, void *, const void *);
 rich_text_one_fn g_original_rich_text_one[3] = {};
 rich_text_all_fn g_original_rich_text_all = nullptr;
 rich_text_color_fn g_original_rich_text_color = nullptr;
+rich_text_color_fn g_original_rich_text_event = nullptr;
 void *(*g_original_rich_text_skill)(void *, bool, bool, const void *) = nullptr;
 #include "runtime-rich-text-under-test.inc"
 
@@ -78,6 +79,8 @@ using ruby_format_fn = void *(*)(void *, void *, const void *);
 ruby_format_fn g_original_ruby_format[3] = {};
 thread_local bool g_inside_ruby_format = false;
 bool ruby_prepared = false;
+bool ruby_layout_prepared = false;
+void finalize_tmp_text(void *, void *) { ruby_layout_prepared = true; }
 void *prepare_tmp_text(void *, void *value) {
     ruby_prepared = true;
     return translate_managed_string(value);
@@ -85,10 +88,26 @@ void *prepare_tmp_text(void *, void *value) {
 #include "runtime-ruby-under-test.inc"
 void *format_ruby(void *, void *value, const void *) {
     assert(ruby_prepared); // Font preparation must precede the formatter's measurements.
+    assert(ruby_layout_prepared);
     return new_managed_string("<pos=2><size=50%>Fabius</size><voffset=-1>" + text(value));
 }
 
 int main() {
+    // Multiple gift abilities are formatted independently, then joined by the
+    // game. The complete parts must retain identity across this final step.
+    const std::string ability1 = "使目标获得<sprite name=\"Burn\"><link=\"Burn\">烧伤</link>。";
+    const std::string ability2 = "<style=\"upgradeHighlight\">强化效果</style>\n下回合生效。";
+    g_recent_font_outputs.add(ability1);
+    g_recent_font_outputs.add(ability2);
+    assert(is_translated_managed_string(new_managed_string(ability1 + "\n\n" + ability2)));
+    assert(is_translated_managed_string(new_managed_string(ability1 + "<br>" + ability2)));
+    assert(!is_translated_managed_string(new_managed_string(ability1 + "\n未知玩家正文")));
+    assert(!is_translated_managed_string(new_managed_string("烧伤</link>。\n" + ability2)));
+    assert(!is_translated_managed_string(new_managed_string("\n\n")));
+    std::string many_abilities = ability1;
+    for (int i = 1; i < 32; ++i) many_abilities += "\n" + ability1;
+    assert(is_translated_managed_string(new_managed_string(many_abilities)));
+    assert(!is_translated_managed_string(new_managed_string(many_abilities + "\n未知效果")));
     {
         std::string scene = "@story:outer";
         try {

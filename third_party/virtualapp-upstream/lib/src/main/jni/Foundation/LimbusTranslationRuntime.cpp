@@ -235,6 +235,7 @@ typedef void *(*rich_text_skill_fn)(void *, bool, bool, const void *);
 rich_text_one_fn g_original_rich_text_one[3] = {};
 rich_text_all_fn g_original_rich_text_all = nullptr;
 rich_text_color_fn g_original_rich_text_color = nullptr;
+rich_text_color_fn g_original_rich_text_event = nullptr;
 rich_text_skill_fn g_original_rich_text_skill = nullptr;
 tmp_parse_input_fn g_original_material_write = nullptr;
 const void *g_material_writer_get_text_info = nullptr;
@@ -280,7 +281,12 @@ std::unordered_map<void *, int32_t> g_announcer_text_ids;
 typedef void *(*choice_read_fn)(void *, void *, void *, const void *);
 choice_read_fn g_original_choice_read_string = nullptr;
 choice_read_fn g_original_choice_read_list = nullptr;
+choice_read_fn g_original_choice_read_gift = nullptr;
 tmp_set_text_fn g_original_choice_set_total = nullptr;
+tmp_set_text_fn g_original_choice_set_text = nullptr;
+tmp_set_text_fn g_original_notice_set_data = nullptr;
+const void *g_notice_body_field = nullptr;
+const void *g_choice_content_field = nullptr;
 tmp_parse_input_fn g_original_choice_clear = nullptr;
 void *g_choice_result_log_class = nullptr;
 const void *g_choice_result_log_field = nullptr;
@@ -865,6 +871,9 @@ bool is_translated_managed_string(void *managed_text) {
     bool translated = g_translated_objects.find(managed_text) != nullptr ||
             g_recent_font_outputs.contains(text);
     if (!translated) translated = g_font_catalogue.contains(text);
+    if (!translated) translated = limbus_font_proof::complete_paragraphs(text, [](const std::string &part) {
+        return g_recent_font_outputs.contains(part) || g_font_catalogue.contains_atomic(part);
+    });
     pthread_mutex_unlock(&g_font_state_lock);
     return translated;
 }
@@ -1945,7 +1954,24 @@ void replacement_choice_set_total(void *instance, void *list, const void *method
         g_choice_owners[instance] = std::move(state);
         pthread_mutex_unlock(&g_font_state_lock);
     } else clear_choice_flow(instance);
+    if (g_choice_content_field) {
+        void *target = nullptr;
+        g_field_get_value(instance, g_choice_content_field, &target);
+        bind_choice_target(instance, target, text, readable && verified);
+    }
     g_original_choice_set_total(instance, list, method);
+}
+
+void replacement_choice_set_text(void *instance, void *source, const void *method) {
+    void *translated = translate_managed_string(source);
+    if (translated != source && !ensure_tmp_font()) translated = source;
+    void *target = nullptr;
+    g_field_get_value(instance, g_choice_content_field, &target);
+    // Skip/instant display can bypass the coroutine factories entirely.
+    std::string text;
+    read_flow_text(translated, &text);
+    bind_choice_target(instance, target, text, is_translated_managed_string(translated));
+    g_original_choice_set_text(instance, translated, method);
 }
 
 void *replacement_choice_read_string(void *instance, void *target, void *source, const void *method) {
@@ -1963,6 +1989,14 @@ void *replacement_choice_read_list(void *instance, void *target, void *list, con
     if (!read_choice_list(list, &text, &verified)) { text.clear(); verified = false; }
     bind_choice_target(instance, target, text, verified);
     return g_original_choice_read_list(instance, target, list, method);
+}
+
+void *replacement_choice_read_gift(void *instance, void *target, void *list, const void *method) {
+    std::string text;
+    bool verified = false;
+    if (!read_choice_list(list, &text, &verified)) { text.clear(); verified = false; }
+    bind_choice_target(instance, target, text, verified);
+    return g_original_choice_read_gift(instance, target, list, method);
 }
 
 void replacement_choice_button(void *instance, int32_t selection, void *message,
@@ -2506,7 +2540,8 @@ void apply_translated_tmp_style(void *instance, void *managed_text,
     }
 
     // The announcer's custom scroll task owns its layout, including later parses.
-    if (is_announcer_description(instance) || is_choice_text(instance) || is_ruby_text(instance) ||
+    if (is_announcer_description(instance) || is_choice_text(instance) ||
+        (is_ruby_text(instance) && limbus_text_provenance::positioned_ruby(text)) ||
         !state.has_font_size || state.font_size <= 0.0f) return;
 
     size_t visible_length = count_visible_codepoints(text);
@@ -2532,7 +2567,6 @@ void apply_translated_tmp_style(void *instance, void *managed_text,
     bool single_line = limbus_text_provenance::single_line_label(visible_length, has_explicit_break,
             state.has_word_wrapping && !state.word_wrapping, rect.height, nominal_size,
             state.has_overflow_mode ? state.overflow_mode : -1);
-    if (state.has_overflow_mode && state.overflow_mode >= 2) return;
 
     if (single_line) {
         // 页签、技能名和横幅必须保持单行。之前只启用自动字号却没有关闭换行，
@@ -2566,13 +2600,13 @@ void apply_translated_tmp_style(void *instance, void *managed_text,
     } else {
         // A tall body frame must wrap even if its original Latin/Japanese text
         // used no-wrap auto sizing. Unknown geometry keeps the existing policy.
-        const bool body_wrap = has_explicit_break || rect.height > nominal_size * 1.8f ||
+        const bool body_wrap = has_explicit_break || !short_text || rect.height > nominal_size * 1.8f ||
                 (state.has_word_wrapping && state.word_wrapping);
         if (state.has_word_wrapping || body_wrap)
             invoke_bool_setter(g_tmp_set_word_wrapping_info, instance, body_wrap);
         if (state.has_overflow_mode) {
             invoke_int_setter(g_tmp_set_overflow_mode_info, instance,
-                    body_wrap && state.overflow_mode == 1 ? 0 : state.overflow_mode);
+                    body_wrap && (state.overflow_mode == 1 || state.overflow_mode == 3) ? 0 : state.overflow_mode);
         }
         if (state.has_line_spacing) {
             invoke_float_setter(g_tmp_set_line_spacing_info, instance, state.line_spacing);
@@ -2766,6 +2800,10 @@ void *replacement_rich_text_color(void *text, void *color, const void *method) {
     return carry_rich_text_provenance(text, [&] { return g_original_rich_text_color(text, color, method); });
 }
 
+void *replacement_rich_text_event(void *text, void *arguments, const void *method) {
+    return carry_rich_text_provenance(text, [&] { return g_original_rich_text_event(text, arguments, method); });
+}
+
 void *replacement_rich_text_skill(void *text, bool gray, bool highlight, const void *method) {
     return carry_rich_text_provenance(text, [&] { return g_original_rich_text_skill(text, gray, highlight, method); });
 }
@@ -2783,6 +2821,7 @@ void *replacement_ruby_format(void *instance, void *managed_text, const void *me
     // exact formatter invocation, rather than stripping arbitrary <ruby> tags.
     void *prepared = prepare_tmp_text(instance, managed_text);
     const bool translated = is_translated_managed_string(prepared);
+    if (translated) finalize_tmp_text(instance, prepared);
     void *result = original(instance, prepared, method);
     if (!translated || !result || !g_string_length || !g_string_chars) return result;
     const auto length = g_string_length(result);
@@ -2916,6 +2955,25 @@ void replacement_tmp_set_text(void *instance, void *managed_text, const void *me
     g_original_tmp_set_text(instance, replacement, method);
     finalize_tmp_text(instance, replacement);
     observe_popup_font(instance, replacement, false);
+}
+
+void prepare_notice_body(void *target) {
+    if (!target) return;
+    // Layout-only: server notices are not in the translation catalogue. This
+    // must never grant font provenance or alter their text, links or colours.
+    invoke_bool_setter(g_tmp_set_word_wrapping_info, target, true);
+    int32_t mode = 0;
+    if (invoke_int_getter(g_tmp_get_overflow_mode_info, target, &mode) && (mode == 1 || mode == 3))
+        invoke_int_setter(g_tmp_set_overflow_mode_info, target, 0);
+}
+
+void replacement_notice_set_data(void *instance, void *source, const void *method) {
+    void *target = nullptr;
+    if (instance && g_notice_body_field && g_field_get_value)
+        g_field_get_value(instance, g_notice_body_field, &target);
+    prepare_notice_body(target);
+    g_original_notice_set_data(instance, source, method);
+    prepare_notice_body(target);
 }
 
 void replacement_tmp_parse_input(void *instance, const void *method) {
@@ -3408,7 +3466,9 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
     void *story_data_class = nullptr;
     void *announcer_ui_class = nullptr;
     void *choice_scroll_class = nullptr;
+    void *choice_gift_class = nullptr;
     void *choice_button_class = nullptr;
+    void *notice_body_class = nullptr;
     void *ui_text_class = nullptr;
     void *tmp_font_class = nullptr;
     void *unity_font_class = nullptr;
@@ -3522,6 +3582,10 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             announcer_ui_class = class_from_name(image, "BattleUI.Announcer", "BattleAnnouncerUI");
         if (choice_scroll_class == nullptr)
             choice_scroll_class = class_from_name(image, "", "ChoiceScrollViewBox");
+        if (!choice_gift_class)
+            choice_gift_class = class_from_name(image, "", "ChoiceScrollViewBoxWithEgoGift");
+        if (!notice_body_class)
+            notice_body_class = class_from_name(image, "MainUI.NoticeUI", "NoticeUIContentText");
         if (choice_button_class == nullptr)
             choice_button_class = class_from_name(image, "", "ActionChoiceButton");
         if (g_choice_result_log_class == nullptr)
@@ -4039,6 +4103,10 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                     reinterpret_cast<void *>(replacement_rich_text_one<1>), reinterpret_cast<void **>(&g_original_rich_text_one[1]));
             hook_rich("GetColorMappedLinkedString", "System.String,System.String",
                     reinterpret_cast<void *>(replacement_rich_text_color), reinterpret_cast<void **>(&g_original_rich_text_color));
+            for (const char *signature : {"System.String,System.String[]", "System.String,System.Object[]"})
+                if (!g_original_rich_text_event)
+                    hook_rich("GetTagMatchedAbChoiceLogString", signature,
+                            reinterpret_cast<void *>(replacement_rich_text_event), reinterpret_cast<void **>(&g_original_rich_text_event));
             hook_rich("GetBuffMatchedString", "System.String",
                     reinterpret_cast<void *>(replacement_rich_text_one<2>), reinterpret_cast<void **>(&g_original_rich_text_one[2]));
             hook_rich("GetSkillTagMatchedString", "System.String,System.Boolean,System.Boolean",
@@ -4053,11 +4121,11 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                             reinterpret_cast<void **>(&g_original_material_write));
             }
             char shared_hooks[128];
-            snprintf(shared_hooks, sizeof(shared_hooks), "shared_text_refresh rich=%d gift=%d sprite=%d color=%d buff=%d skill=%d material=%d",
+            snprintf(shared_hooks, sizeof(shared_hooks), "shared_text_refresh rich=%d gift=%d sprite=%d color=%d buff=%d skill=%d material=%d event=%d",
                     g_original_rich_text_all != nullptr, g_original_rich_text_one[0] != nullptr,
                     g_original_rich_text_one[1] != nullptr, g_original_rich_text_color != nullptr,
                     g_original_rich_text_one[2] != nullptr, g_original_rich_text_skill != nullptr,
-                    g_original_material_write != nullptr);
+                    g_original_material_write != nullptr, g_original_rich_text_event != nullptr);
             append_native_metadata("font-state.log", shared_hooks);
             ruby_format_fn replacements[] = {replacement_ruby_format<0>, replacement_ruby_format<1>, replacement_ruby_format<2>};
             std::unordered_map<void *, ruby_format_fn> installed;
@@ -4155,10 +4223,15 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         g_choice_result_log_field = choice_field(g_choice_result_log_class, "_resultLog", "System.String");
         g_choice_button_text_field = choice_field(choice_button_class, "tmp_button", "TMPro.TextMeshProUGUI");
         g_choice_button_result_field = choice_field(choice_button_class, "_activeResultDesc", "TMPro.TextMeshProUGUI");
+        g_notice_body_field = choice_field(notice_body_class, "tmp_main", "TMPro.TextMeshProUGUI");
+        for (const char *text_type : {"TMPro.TextMeshProUGUI", "TMPro.CustomRubyTextMeshProUGUI", "TMPro.TMP_Text"})
+            if (!g_choice_content_field) g_choice_content_field = choice_field(choice_scroll_class, "tmp_content", text_type);
+        std::unordered_map<void *, std::pair<std::string, void *>> flow_installed;
         auto hook_choice_method = [&](void *klass, const char *name, const char *signature, const char *expected_return,
                                       void *replacement, void **original) {
             const void *entry = find_method_by_signature(klass, name, signature);
-            if (!entry || !method_get_flags || !method_get_return_type || !g_object_get_instance_id_info) return;
+            if (!entry || !method_get_flags || !method_get_return_type || !g_object_get_instance_id_info ||
+                !method_get_class || method_get_class(entry) != klass || !method_is_generic || method_is_generic(entry)) return;
             uint32_t flags = 0;
             char *returns = type_get_name(method_get_return_type(entry));
             bool valid = returns && strcmp(returns, expected_return) == 0 &&
@@ -4166,9 +4239,23 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             if (returns) il2cpp_free(returns);
             void *pointer = nullptr;
             memcpy(&pointer, entry, sizeof(pointer));
-            if (valid && has_inline_hook_space(klass, pointer))
+            if (valid && has_inline_hook_space(klass, pointer)) {
+                const std::string abi = std::string(name) + ":" + expected_return + "(" + signature + ")";
+                auto alias = flow_installed.find(pointer);
+                if (alias != flow_installed.end()) {
+                    if (alias->second.first == abi) *original = alias->second.second;
+                    return;
+                }
                 hook_limbus_owned_function(pointer, replacement, original);
+                if (*original) flow_installed.emplace(pointer, std::make_pair(abi, *original));
+            }
         };
+        if (g_notice_body_field)
+            hook_choice_method(notice_body_class, "SetData", "System.String", "System.Void",
+                    reinterpret_cast<void *>(replacement_notice_set_data), reinterpret_cast<void **>(&g_original_notice_set_data));
+        if (g_choice_content_field)
+            hook_choice_method(choice_scroll_class, "SetText", "System.String", "System.Void",
+                    reinterpret_cast<void *>(replacement_choice_set_text), reinterpret_cast<void **>(&g_original_choice_set_text));
         hook_choice_method(choice_scroll_class, "ReadingOneLineAtATime", "TMPro.TextMeshProUGUI,System.String",
                 "System.Collections.IEnumerator", reinterpret_cast<void *>(replacement_choice_read_string),
                 reinterpret_cast<void **>(&g_original_choice_read_string));
@@ -4185,6 +4272,12 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 hook_choice_method(choice_scroll_class, "SetTotalContent", list_type, "System.Void",
                         reinterpret_cast<void *>(replacement_choice_set_total),
                         reinterpret_cast<void **>(&g_original_choice_set_total));
+            if (!g_original_choice_read_gift && choice_gift_class && class_get_parent &&
+                class_get_parent(choice_gift_class) == choice_scroll_class) {
+                auto signature = std::string("TMPro.TextMeshProUGUI,") + list_type;
+                hook_choice_method(choice_gift_class, "ReadingOneLineAtATime", signature.c_str(), "System.Collections.IEnumerator",
+                        reinterpret_cast<void *>(replacement_choice_read_gift), reinterpret_cast<void **>(&g_original_choice_read_gift));
+            }
         }
         if (!g_original_choice_button && g_choice_button_text_field && g_choice_button_result_field) {
             hook_choice_method(choice_button_class, "SetButtonData", "System.Int32,System.String,System.String",
@@ -4193,11 +4286,12 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         }
         hook_choice_method(choice_scroll_class, "Clear", "", "System.Void", reinterpret_cast<void *>(replacement_choice_clear),
                 reinterpret_cast<void **>(&g_original_choice_clear));
-        char choice_hooks[160];
-        snprintf(choice_hooks, sizeof(choice_hooks), "choice_flow total=%d string=%d list=%d clear=%d button=%d log_field=%d",
+        char choice_hooks[192];
+        snprintf(choice_hooks, sizeof(choice_hooks), "choice_flow total=%d string=%d list=%d clear=%d button=%d log_field=%d gift=%d direct=%d notice=%d",
                 g_original_choice_set_total != nullptr, g_original_choice_read_string != nullptr,
                 g_original_choice_read_list != nullptr, g_original_choice_clear != nullptr,
-                g_original_choice_button != nullptr, g_choice_result_log_field != nullptr);
+                g_original_choice_button != nullptr, g_choice_result_log_field != nullptr,
+                g_original_choice_read_gift != nullptr, g_original_choice_set_text != nullptr, g_original_notice_set_data != nullptr);
         append_native_metadata("font-state.log", choice_hooks);
         for (void *choice_class : {choice_scroll_class, choice_button_class}) {
         if (choice_class && class_get_methods && method_get_name && method_get_param_count &&
