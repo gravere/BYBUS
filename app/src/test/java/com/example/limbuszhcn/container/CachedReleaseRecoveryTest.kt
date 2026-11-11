@@ -47,7 +47,7 @@ class CachedReleaseRecoveryTest {
         val pending = installer().verifyCachedForLaunch()
         assertFalse(pending.indexActivated)
         assertNotNull(pending.pendingReason)
-        assertNull(installer().activeInstallSummary())
+        assertTrue(installer().activeInstallSummary()!!.liveResourcesReady)
         resources()
         val ready = installer().verifyCachedForLaunch()
         assertTrue(ready.indexActivated)

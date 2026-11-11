@@ -71,12 +71,16 @@ class ContainerPatchInstaller(
      * @return 存在有效激活状态时返回安装摘要，否则返回 `null`。
      */
     fun activeInstallSummary(): PatchInstallSummary? {
+        val live = LiveTranslationStore(cacheRoot).read()
         TranslationIndexStore(indexRoot()).activeManifest()?.let { properties ->
+            val sameRelease = live == null || live.version == properties.getProperty("version")
             return PatchInstallSummary(
-                version = properties.getProperty("version", "unknown"),
+                version = live?.version ?: properties.getProperty("version", "unknown"),
                 writtenFiles = properties.getProperty("availableSourceFileCount")
                     ?.toIntOrNull() ?: 0,
-                indexActivated = true,
+                indexActivated = sameRelease,
+                previousIndexPreserved = !sameRelease,
+                liveResourcesReady = live != null,
                 candidateSourceFiles = properties.getProperty("candidateSourceFileCount")
                     ?.toIntOrNull() ?: 0,
                 availableSourceFiles = properties.getProperty("availableSourceFileCount")
@@ -85,7 +89,8 @@ class ContainerPatchInstaller(
                     ?.toIntOrNull() ?: 0
             )
         }
-        return null
+        return live?.let { PatchInstallSummary(it.version, 0, indexActivated = false,
+            candidateSourceFiles = it.entries.size, liveResourcesReady = true) }
     }
 
     /**
@@ -124,6 +129,11 @@ class ContainerPatchInstaller(
                 "汉化清单文件超出准备目录"
             }
         }
+        onProgress("准备首次加载汉化")
+        LiveTranslationStore(cacheRoot).prepare(patchDirectory, manifest) { target ->
+            japaneseSourceFor(storage.resolvePatchTarget(target))
+                .removePrefix(storage.rootPath().replace('\\', '/').trimEnd('/') + "/")
+        }
         val store = TranslationIndexStore(indexRoot())
         val active = measureStartup("active_index_validation") { store.activeManifest() }
         val buildCache = TranslationBuildCache(indexRoot().resolve("build-receipt.properties"))
@@ -157,6 +167,7 @@ class ContainerPatchInstaller(
                 candidateSourceFiles = active.getProperty("candidateSourceFileCount").toInt(),
                 availableSourceFiles = active.getProperty("availableSourceFileCount").toInt(),
                 sourceRecordCount = active.getProperty("sourceRecordCount").toInt(),
+                liveResourcesReady = true,
                 reusedIndex = true
             )
         }
@@ -296,6 +307,7 @@ class ContainerPatchInstaller(
             sourceRecordCount = compiledIndex.sourceRecordCount,
             previousIndexPreserved = !activated && previousIndexAvailable,
             startupIndexAvailable = startupAvailable,
+            liveResourcesReady = true,
             pendingReason = when {
                 activated -> null
                 !stableInputs -> "资源正在变化，保留已有汉化，请在游戏下载结束后重试"
@@ -312,6 +324,7 @@ class ContainerPatchInstaller(
      * @return 删除或恢复文件的卸载摘要。
      */
     fun uninstallLatest(): PatchUninstallSummary {
+        LiveTranslationStore(cacheRoot).deactivate()
         val active = TranslationIndexStore(indexRoot()).activeManifest()
         TranslationIndexStore(indexRoot()).deactivate()
         Files.deleteIfExists(activeRedirectFile())

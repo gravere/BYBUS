@@ -34,6 +34,7 @@ data class PatchInstallSummary(
     val previousIndexPreserved: Boolean = false,
     val reusedIndex: Boolean = false,
     val startupIndexAvailable: Boolean = false,
+    val liveResourcesReady: Boolean = false,
     val pendingReason: String? = null
 )
 

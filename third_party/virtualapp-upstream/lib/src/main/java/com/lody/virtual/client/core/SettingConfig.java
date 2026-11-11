@@ -24,6 +24,9 @@ import com.lody.virtual.helper.compat.NotificationChannelCompat;
  * @author Lody
  */
 public abstract class SettingConfig {
+    public boolean prepareLimbusTranslationResources() { return false; }
+
+    public String translateLimbusResource(String resource, String original) { return null; }
 
     /** Already reduced to safe metadata by the server; observation must not affect activity dispatch. */
     public void onLimbusSafetyAlert(int callerPid, com.lody.virtual.helper.compat.LimbusSafetyAlert.Summary summary) {

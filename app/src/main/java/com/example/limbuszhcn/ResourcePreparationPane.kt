@@ -10,17 +10,15 @@ import com.example.limbuszhcn.ui.theme.LauncherColors as C
 @Composable
 internal fun ResourcePreparationPane(state: LauncherUiState, onPrepare: () -> Unit,
     onCheck: () -> Unit, onImport: () -> Unit) {
-    val ready = state.translation?.indexActivated == true
+    val ready = state.translation?.let { it.liveResourcesReady || it.indexActivated } == true
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        Text(if (ready) "汉化已准备好" else "还需下载游戏资源", style = MaterialTheme.typography.titleLarge)
+        Text(if (ready) "汉化已准备好" else "汉化资源尚未就绪", style = MaterialTheme.typography.titleLarge)
         Text(if (ready) "完整汉化已校验，可以启动游戏。" else
-            "零协汉化包已校验。首次使用还需要游戏的原始文本：请在游戏内完成资源下载，再返回 BYBUS，完整汉化会自动准备。",
+            "请重新检查汉化包。准备完成后即可启动，游戏资源可在首次进入时正常下载。",
             style = MaterialTheme.typography.bodyMedium, color = C.Muted)
-        if (!ready) Text("准备期间部分内容仍为原文。已有资源可通过数据迁移导入。",
-            style = MaterialTheme.typography.bodySmall, color = C.Muted)
-        Button(onClick = if (ready) onCheck else onPrepare, enabled = !state.busy,
+        Button(onClick = onCheck, enabled = !state.busy,
             modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
-            Text(if (ready) "启动汉化版" else "打开游戏下载资源")
+            Text(if (ready) "启动汉化版" else "重新准备汉化")
         }
         if (!ready) DetailActionSection("已有资源") {
             SheetAction(Glyph.Refresh, "重新检查", enabled = !state.busy, onClick = onCheck)

@@ -328,7 +328,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
                 preparationPreferences.edit().putBoolean("pending", true).apply()
                 publish { it.copy(resourcePreparationRequest = nextUiRequestId(it.resourcePreparationRequest,
                     android.os.SystemClock.elapsedRealtimeNanos())) }
-                return@perform "汉化包已校验，先完成游戏资源准备后再启动汉化版"
+                return@perform "汉化资源未通过校验，请重新检查"
             }
             if (mode == TranslationLaunchMode.Localized) preparationPreferences.edit().remove("pending").apply()
             else preparationPreferences.edit().putBoolean("pending", true).apply()
@@ -338,8 +338,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
             val runtimeStatus = receipt().description()
             publish { it.copy(runtimeStatus = runtimeStatus) }
             measureStartup("container_launch") { runtime.launchGame() }
-            if (mode == TranslationLaunchMode.ResourcePreparation) "已打开资源准备模式；下载完成后返回 BYBUS 准备完整汉化"
-            else if (update.isFailure) "${update.exceptionOrNull()!!.updateFailureLabel()}；${summary.description()}；游戏已打开"
+            if (update.isFailure) "${update.exceptionOrNull()!!.updateFailureLabel()}；${summary.description()}；游戏已打开"
             else "${summary.description()}；游戏已打开"
         }
     }
@@ -453,11 +452,12 @@ internal class LaunchCoordinator private constructor(application: Application) {
 }
 
 private fun PatchInstallSummary.description(): String = when {
+    liveResourcesReady -> "汉化 $version 已准备，游戏加载文本时自动应用"
     indexActivated && reusedIndex -> "汉化 $version 已校验，复用现有索引"
     indexActivated -> "汉化 $version 索引已保存，有效资源 $availableSourceFiles/$candidateSourceFiles"
     previousIndexPreserved -> "${pendingReason ?: "资源尚未完整"}；继续使用现有汉化"
-    startupIndexAvailable -> "已准备启动页汉化；下载完整游戏资源后，返回 BYBUS 再启动以启用完整汉化"
-    else -> "汉化包已保存，请在游戏中下载完整资源，退出后再从本应用启动"
+    startupIndexAvailable -> "启动页索引可用，完整汉化包仍需校验"
+    else -> "汉化包尚未准备完成，请重新检查"
 }
 
 private fun Throwable.updateFailureLabel(): String = when (this) {
