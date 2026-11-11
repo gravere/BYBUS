@@ -74,7 +74,8 @@ int main() {
     assert(skill_child_key("@skill:100/level:1/coin:0", "coindescs", "", 0) == "@skill:100/level:1/coin:0/text:0");
     assert(skill_child_key("@skill:100", "levelList", "", 0).empty());
     assert(skill_child_key("@skill:100", "unknown", "1", 0).empty());
-    assert(single_line_label(12, false, false, 40, 32));
+    assert(!single_line_label(12, false, false, 40, 32));
+    assert(single_line_label(12, false, true, 40, 32));
     assert(!single_line_label(12, false, false, 160, 32));
     assert(!single_line_label(12, false, false, 0, 32));
     assert(!single_line_label(12, true, true, 40, 32));
@@ -270,6 +271,16 @@ int main() {
     const std::string event = "机器人吃力地举起双臂。\n\n终端上显示出这样的话。\n\n<欢迎光临，尊敬的客人。>";
     fonts.add(event);
     limbus_font_proof::FlowProof flow;
+    // Game paragraph separators must not change component-local provenance.
+    assert(flow.assign("第一段。<br>第二段。", true));
+    assert(flow.matches("第二"));
+    assert(flow.assign("获得<sprite name=\"Burn\">烧伤增益。\n继续前进。", true));
+    assert(flow.matches("获得<sprite name=\"Burn\">烧伤"));
+    assert(!flow.matches("获得<sprite name=\"Other\">烧伤"));
+    assert(!flow.matches("获得<sprite name=\"Burn"));
+    assert(flow.assign("<style=\"upgradeHighlight\">增强后的饰品效果</style>", true));
+    assert(flow.matches("<style=\"upgradeHighlight\">增强</style>"));
+    assert(!flow.matches("<style=\"Other\">增强</style>"));
     assert(flow.assign(event, fonts.contains(event)));
     assert(flow.matches("机器人吃"));
     assert(flow.matches("机器人吃力地举起双臂。\n\n终端"));

@@ -62,6 +62,48 @@ inline std::string canonical(std::string_view input) {
     }
     return out;
 }
+// Only concatenate independently proven COMPLETE outputs at explicit paragraph
+// boundaries. Rich-text macros and sprites are retained for exact lookup.
+template<class Known>
+bool complete_paragraphs(std::string_view text, Known known) {
+    if (text.size() > 8192 || has_literal_region(text)) return false;
+    std::string lines(text);
+    for (size_t i = 0; i < lines.size();) {
+        auto tag = limbus_rich_text::tag_at(lines, i);
+        if (tag.end == i + 4 && !tag.closing && limbus_rich_text::equal_ascii(tag.name, "br")) {
+            lines.replace(i, 4, "\n"); ++i;
+        } else i = tag.end ? tag.end : i + 1;
+    }
+    std::vector<std::string_view> parts;
+    std::string_view view(lines);
+    for (size_t start = 0; start <= view.size();) {
+        const auto end = view.find('\n', start);
+        auto part = view.substr(start, end == view.npos ? view.npos : end - start);
+        if (!part.empty() && part.back() == '\r') part.remove_suffix(1);
+        parts.push_back(part);
+        if (parts.size() > 32) return false;
+        if (end == view.npos) break;
+        start = end + 1;
+    }
+    if (parts.size() < 2) return false;
+    std::vector<bool> reachable(parts.size() + 1, false);
+    reachable[0] = true;
+    unsigned budget = 256;
+    bool nonempty_proof = false;
+    for (size_t end = 1; end <= parts.size(); ++end) {
+        if (reachable[end - 1] && parts[end - 1].find_first_not_of(" \t\r") == parts[end - 1].npos) {
+            reachable[end] = true; continue;
+        }
+        std::string candidate;
+        for (size_t start = end; start-- > 0;) {
+            candidate = std::string(parts[start]) + (start + 1 < end ? "\n" + candidate : "");
+            if (!reachable[start]) continue;
+            if (!budget--) return false;
+            if (known(candidate)) { reachable[end] = true; nonempty_proof = true; break; }
+        }
+    }
+    return nonempty_proof && reachable.back();
+}
 inline bool number(std::string_view value) {
     if (value.empty() || value.size() > 64) return false;
     bool digit = false;

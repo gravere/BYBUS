@@ -122,10 +122,23 @@ inline bool explicit_line_break(std::string_view text) {
 inline bool single_line_label(size_t visible, bool explicit_break, bool original_no_wrap,
                               float rect_height, float font_size, int overflow = -1) {
     // Preserve Masking, Truncate, ScrollRect, Page and Linked modes (TMP 3).
-    if (overflow >= 2 || visible > 48 || explicit_break) return false;
+    if (overflow >= 2 || visible > 48 || explicit_break || !original_no_wrap) return false;
     if (rect_height > 0 && font_size > 0)
         return rect_height <= font_size * 1.8f;
     return original_no_wrap;
+}
+inline bool positioned_ruby(std::string_view text) {
+    for (size_t i = 0; (i = text.find('<', i)) != text.npos; ++i) {
+        auto tag = limbus_rich_text::tag_at(text, i);
+        if (tag.end && limbus_rich_text::equal_ascii(tag.name, "noparse") && !tag.closing) {
+            i = limbus_rich_text::literal_end(text, tag.end) - 1; continue;
+        }
+        if (tag.end && limbus_rich_text::equal_ascii(tag.name, "pos")) return true;
+        // Ruby is implemented by the game's subclass, not TMP's tag parser.
+        if (i + 5 < text.size() && limbus_rich_text::equal_ascii(text.substr(i + 1, 4), "ruby") &&
+            (text[i + 5] == '=' || text[i + 5] == '>' || text[i + 5] == ' ')) return true;
+    }
+    return false;
 }
 inline float nominal_font_size(float current, bool auto_sizing, float maximum) {
     return auto_sizing && std::isfinite(maximum) && maximum > 0 ? maximum : current;
