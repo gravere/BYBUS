@@ -217,7 +217,7 @@ def inspect_update_progress():
         time.sleep(5)
         adb("emu", "network", "speed", "gsm")
         adb("emu", "network", "delay", "3000")
-        tap("更新", parent)
+        tap("应用更新", parent)
         before = capture("update-progress")
         network_error = any("暂时无法连接 GitHub" in n.get("text", "") for n in before.iter("node"))
         if network_error:
@@ -240,16 +240,20 @@ def inspect_update_progress():
             locate(app_tab, original_state)
             REPORT["update_progress"] = "real check progress and cancel observed"
             REPORT["checks"].append("real check progress/cancel remain fixed while content scrolls; no APK download performed")
-        tap("更新类别：汉化资源", app_tab)
+        tap("返回上一页", app_tab)
+        parent = scroll_to_control(hierarchy("translation-parent"), "汉化资源")
+        tap("汉化资源", parent)
         translation = capture("update-translation")
         locate(translation, "尚未准备")
         locate(translation, "检查汉化更新")
         if any("检查应用更新" == n.get("content-desc") for n in translation.iter("node")):
-            raise RuntimeError("Application actions leaked into the translation tab")
-        tap("更新类别：BYBUS", translation)
+            raise RuntimeError("Application actions leaked into translation settings")
+        tap("返回上一页", translation)
+        parent = scroll_to_control(hierarchy("app-update-parent"), "应用更新", down=False)
+        tap("应用更新", parent)
         restored = hierarchy("update-app-restored")
-        locate(restored, original_state)
-        REPORT["checks"].append("update categories isolate controls and preserve app operation state")
+        locate(restored, "应用更新")
+        REPORT["checks"].append("separate app update and translation settings retain their own controls")
     finally:
         adb("emu", "network", "speed", "full", check=False)
         adb("emu", "network", "delay", "none", check=False)
@@ -674,11 +678,11 @@ def inspect_migration(release, verifier):
     REPORT["checks"].append("signed helper update retains synthetic files; private import hashes match; actual upstream APK coexists")
 
 
-def scroll_to_control(tree, label, down=True):
+def scroll_to_control(tree, label, down=True, interactive=True):
     for _ in range(6):
         try:
-            bounds = clickable_bounds(tree, label)
-            if bounds[3] - bounds[1] >= 96:
+            bounds = clickable_bounds(tree, label) if interactive else element_bounds(tree, label)
+            if bounds[3] - bounds[1] >= (96 if interactive else 32):
                 return tree
         except (RuntimeError, StopIteration):
             pass
@@ -693,10 +697,12 @@ def scroll_to_control(tree, label, down=True):
 def inspect_detail_redesign(parent):
     """Read actual release subpages and disclosures; no game or account actions."""
     pages = ["game-update-detail"]
-    tap("更新", parent)
+    tap("应用更新", parent)
     update = capture("app-update-detail")
     pages.append("app-update-detail")
-    tap("更新类别：汉化资源", update)
+    tap("返回上一页", update)
+    parent = scroll_to_control(hierarchy("details-translation-parent"), "汉化资源")
+    tap("汉化资源", parent)
     capture("translation-detail")
     pages.append("translation-detail")
     adb("shell", "input", "keyevent", "KEYCODE_BACK")
@@ -707,12 +713,10 @@ def inspect_detail_redesign(parent):
     about = capture("about-detail")
     pages.append("about-detail")
     locate(about, "返回上一页")
-    about = scroll_to_control(about, "游戏更新与数据保存")
-    tap("游戏更新与数据保存", about)
-    expanded = capture("about-expanded")
-    pages.append("about-expanded")
-    locate(expanded, "覆盖更新 BYBUS 会保留数据。游戏新版本可能需要新的兼容修复。")
-    tap("游戏更新与数据保存", scroll_to_control(expanded, "游戏更新与数据保存", down=False))
+    about = scroll_to_control(about, "保留系统安装的游戏，从原渠道更新后，BYBUS 会自动同步。", interactive=False)
+    capture("about-resource-guidance")
+    pages.append("about-resource-guidance")
+    locate(about, "保留系统安装的游戏，从原渠道更新后，BYBUS 会自动同步。")
     adb("shell", "input", "keyevent", "KEYCODE_BACK")
     parent = hierarchy("about-parent")
     locate(parent, "设置与工具")
@@ -757,16 +761,17 @@ def inspect_remaining_details(home):
         adb("shell", "cmd", "uimode", "night", night)
         adb("shell", "settings", "put", "system", "font_scale", font)
         time.sleep(2)
-        tap("使用说明", hierarchy(name + "-home"))
+        tap("设置与工具", hierarchy(name + "-home"))
+        parent = scroll_to_control(hierarchy(name + "-tools"), "使用说明与版本")
+        tap("使用说明与版本", parent)
         about = capture(name)
         pages.append(name)
         locate(about, "关闭面板")
         if font != "1.0":
-            about = scroll_to_control(about, "游戏更新与数据保存")
-            tap("游戏更新与数据保存", about)
-            capture("about-large-expanded")
-            pages.append("about-large-expanded")
-        adb("shell", "input", "keyevent", "KEYCODE_BACK")
+            about = scroll_to_control(about, "游戏更新与数据缓存", interactive=False)
+            capture("about-large-guidance")
+            pages.append("about-large-guidance")
+        tap("关闭面板", hierarchy(name + "-close"))
     adb("shell", "settings", "put", "system", "font_scale", "1.0")
     REPORT["detail_pages"] = pages
     REPORT["checks"].append("release subpages, expandable explanations, parent navigation, dark and enlarged text")
@@ -1076,8 +1081,8 @@ def inspect_system_navigation():
             raise RuntimeError("Emulator navigation overlay is unavailable: " + mode)
     home = hierarchy("before-system-navigation")
     tap("设置与工具", home)
-    tap("更新", hierarchy("tools-system-navigation"))
-    tap("更新类别：汉化资源", hierarchy("update-system-navigation"))
+    parent = scroll_to_control(hierarchy("tools-system-navigation"), "汉化资源")
+    tap("汉化资源", parent)
     cases = [("nav-gesture", "gestural", "no", "720x1560"),
              ("nav-three-button", "threebutton", "no", "720x1560"),
              ("nav-three-button-dark", "threebutton", "yes", "720x1560"),
@@ -1258,13 +1263,8 @@ def inspect_row_feedback(release, verifier, home):
     tap("使用说明", home)
     about = capture("about-feedback")
     frames.append("about-feedback")
-    edge = hold(scroll_to_control(about, "游戏更新与数据保存"), "游戏更新与数据保存", "disclosure-feedback")
-    adb("shell", "input", "tap", str(edge[2] - 4), str((edge[1] + edge[3]) // 2))
-    time.sleep(.6)
-    expanded = capture("disclosure-edge-open")
-    frames.append("disclosure-edge-open")
-    locate(expanded, "游戏可从原安装渠道更新，返回后自动识别；大资源只需在 BYBUS 内下载。")
-    tap("关闭面板", expanded)
+    locate(scroll_to_control(about, "游戏更新与数据缓存", interactive=False), "游戏更新与数据缓存")
+    tap("关闭面板", hierarchy("about-feedback-close"))
     tap("运行状态", hierarchy("feedback-home"))
     runtime = capture("runtime-feedback")
     frames.append("runtime-feedback")
@@ -1274,15 +1274,26 @@ def inspect_row_feedback(release, verifier, home):
     project = capture("project")
     frames.append("project")
     hold(scroll_to_control(project, "查看 GitHub 发布"), "查看 GitHub 发布", "project-link-feedback")
-    tap("关闭面板", project)
+    tap("关闭面板", hierarchy("project-feedback-close"))
+    tap("都市零协会", hierarchy("project-feedback-reopen"))
+    tap("项目来源：翻译进度", hierarchy("project-feedback-tabs"))
+    project = scroll_to_control(hierarchy("project-feedback-progress"), "这些统计代表什么？")
+    edge = hold(project, "这些统计代表什么？", "disclosure-feedback")
+    adb("shell", "input", "tap", str(edge[2] - 4), str((edge[1] + edge[3]) // 2))
+    time.sleep(.6)
+    expanded = capture("disclosure-edge-open")
+    frames.append("disclosure-edge-open")
+    locate(scroll_to_control(expanded, "总词条是项目收录的文本条目数，一条可能是名称，也可能是一整段对白。", interactive=False),
+           "总词条是项目收录的文本条目数，一条可能是名称，也可能是一整段对白。")
+    tap("关闭面板", hierarchy("project-feedback-expanded-close"))
     tap("设置与工具", hierarchy("feedback-settings-home"))
     settings = capture("settings")
     frames.append("settings")
-    edge = hold(settings, "更新", "settings-row-feedback")
+    edge = hold(settings, "应用更新", "settings-row-feedback")
     adb("shell", "input", "tap", str(edge[0] + 4), str((edge[1] + edge[3]) // 2))
     time.sleep(.6)
     update = hierarchy("update-edge-open")
-    locate(update, "更新类别：BYBUS")
+    locate(update, "BYBUS")
     locate(update, "返回上一页")
     tap("返回上一页", update)
     parent = hierarchy("settings-edge-return")
@@ -1292,12 +1303,13 @@ def inspect_row_feedback(release, verifier, home):
     adb("shell", "cmd", "uimode", "night", "yes")
     adb("shell", "settings", "put", "system", "font_scale", "1.5")
     time.sleep(2)
-    tap("使用说明", hierarchy("large-feedback-home"))
+    tap("都市零协会", hierarchy("large-feedback-home"))
+    tap("项目来源：翻译进度", hierarchy("large-feedback-tabs"))
     large = capture("disclosure-large-dark")
     frames.append("disclosure-large-dark")
     # The expanded contents may scroll; only exercise the visible header.
-    hold(scroll_to_control(large, "游戏更新与数据保存"), "游戏更新与数据保存", "disclosure-large-feedback")
-    tap("关闭面板", large)
+    hold(scroll_to_control(large, "这些统计代表什么？"), "这些统计代表什么？", "disclosure-large-feedback")
+    tap("关闭面板", hierarchy("large-feedback-close"))
     adb("shell", "cmd", "uimode", "night", "no")
     adb("shell", "settings", "put", "system", "font_scale", "1.0")
     time.sleep(1)
@@ -1306,7 +1318,7 @@ def inspect_row_feedback(release, verifier, home):
         "--es", "case", "download", timeout=40)
     downloading = capture("update-busy-label")
     frames.append("update-busy-label")
-    locate(downloading, "更新类别：BYBUS")
+    locate(downloading, "BYBUS")
     locate(downloading, "应用更新进度")
     if any("BYBUS · 更新中" in n.get("text", "") or "BYBUS · 更新中" in n.get("content-desc", "")
            for n in downloading.iter("node")):
