@@ -29,6 +29,7 @@ using Color = void *(*)(void *, void *, const void *);
 One g_original_rich_text_one[3] = {};
 All g_original_rich_text_all = nullptr;
 Color g_original_rich_text_color = nullptr;
+Color g_original_rich_text_event = nullptr;
 void *(*g_original_rich_text_skill)(void *, bool, bool, const void *) = nullptr;
 #include "runtime-rich-text-under-test.inc"
 
@@ -48,15 +49,17 @@ int main() {
     assert(!catalogue.contains(codec.to_bytes(output)));
     g_original_rich_text_one[0] = g_original_rich_text_one[1] = g_original_rich_text_one[2] = one;
     g_original_rich_text_all = all; g_original_rich_text_color = color;
+    g_original_rich_text_event = color;
     g_original_rich_text_skill = skill;
-    for (int n = 0; n < 6; ++n) {
+    for (int n = 0; n < 7; ++n) {
         known_results.clear();
         void *r = n == 0 ? replacement_rich_text_one<0>(&input, &expected_method) :
                   n == 1 ? replacement_rich_text_one<1>(&input, &expected_method) :
                   n == 2 ? replacement_rich_text_one<2>(&input, &expected_method) :
                   n == 3 ? replacement_rich_text_skill(&input, false, true, &expected_method) :
                   n == 4 ? replacement_rich_text_all(&input, true, &expected_method) :
-                           replacement_rich_text_color(&input, &color_argument, &expected_method);
+                  n == 5 ? replacement_rich_text_color(&input, &color_argument, &expected_method) :
+                           replacement_rich_text_event(&input, &color_argument, &expected_method);
         assert(r == &output && is_translated_managed_string(r));
     }
     auto saved_input = input, saved_output = output;
