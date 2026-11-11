@@ -1,0 +1,74 @@
+name: 更新、迁移与资源
+description: 应用更新、汉化下载、原版同步、数据迁移、修复或资源清理
+title: '[更新数据] '
+labels:
+- bug
+body:
+- type: markdown
+  attributes:
+    value: 先选正在处理哪一种内容，避免把 BYBUS 更新、原版游戏更新和汉化更新混在一起。数据异常时无需先清空或重装。
+- type: dropdown
+  id: operation
+  attributes:
+    label: 正在进行什么操作？
+    options:
+    - BYBUS 应用更新
+    - 汉化资源下载 / 更新
+    - 原版游戏更新 / 同步
+    - 首次下载游戏资源
+    - 迁移旧版 BYBUS 数据
+    - 导入资源 ZIP
+    - 修复
+    - 清除游戏资源
+    - 其他 / 不确定
+  validations:
+    required: true
+- type: textarea
+  id: what-happened
+  attributes:
+    label: 在哪一步出了问题？
+    description: 说明入口、进度或提示，以及哪些数据没有按预期保留 / 释放。
+  validations:
+    required: true
+- type: input
+  id: versions
+  attributes:
+    label: BYBUS / 游戏版本
+    placeholder: BYBUS：…；游戏：…
+    description: 填写实际版本；看不到的可写“无法查看”，还没安装游戏可写“未安装”。不用先升级才能反馈。
+  validations:
+    required: true
+- type: input
+  id: device
+  attributes:
+    label: 设备与系统
+    placeholder: 手机或平板型号 / Android 版本 / OriginOS、HyperOS 等系统版本
+    description: 填写机型、Android 版本和系统名称；不知道的部分可留空。
+  validations:
+    required: true
+- type: dropdown
+  id: entry
+  attributes:
+    label: 这次使用的入口（选填）
+    options:
+    - BYBUS 应用内操作
+    - 从 GitHub 下载完整 APK
+    - 系统商店或其他游戏安装渠道
+    - 选择本地安装包 / ZIP
+    - 其他 / 不确定
+  validations:
+    required: false
+- type: textarea
+  id: context
+  attributes:
+    label: 文件或空间信息（选填）
+    description: 已知的文件名、文件大小、剩余空间或上一个正常版本即可，不要上传游戏安装包、资源包或账号数据。
+  validations:
+    required: false
+- type: textarea
+  id: evidence
+  attributes:
+    label: 截图或诊断包（选填）
+    description: 可拖入截图、录屏或“设置与工具 → 导出诊断”生成的 ZIP；无法获取可留空。附件请遮住邮箱、账号及付款信息。
+  validations:
+    required: false

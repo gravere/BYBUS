@@ -1,0 +1,44 @@
+name: 功能与文档建议
+description: 让日常使用更省事，或指出说明中不好理解的地方
+title: '[建议] '
+labels:
+- enhancement
+body:
+- type: markdown
+  attributes:
+    value: 从实际使用场景说起即可，不必设计技术方案。README 或 About 的文字问题也可以在这里反馈。
+- type: textarea
+  id: situation
+  attributes:
+    label: 你想解决什么不便？
+    description: 描述在哪一步遇到麻烦；文档建议可贴出具体句子或链接。
+  validations:
+    required: true
+- type: textarea
+  id: desired-result
+  attributes:
+    label: 你希望怎样改进？
+    description: 说明希望达到的结果；有简单示例更好。
+  validations:
+    required: true
+- type: dropdown
+  id: area
+  attributes:
+    label: 涉及的部分（选填）
+    options:
+    - 首次使用流程
+    - 汉化与启动
+    - 账号与商店
+    - 更新与数据管理
+    - 手机 / 平板界面
+    - README / About / 使用说明
+    - 其他
+  validations:
+    required: false
+- type: textarea
+  id: context
+  attributes:
+    label: 补充材料（选填）
+    description: 可附版本、截图、草图或参考链接。
+  validations:
+    required: false

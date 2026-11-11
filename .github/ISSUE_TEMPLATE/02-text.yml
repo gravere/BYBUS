@@ -1,0 +1,77 @@
+name: 汉化与文字显示
+description: 漏译、字体深浅、字号、换行、截断或字幕滚动
+title: '[文字] '
+labels:
+- bug
+body:
+- type: markdown
+  attributes:
+    value: 重点是定位游戏里的哪段文字。不会日文、不知道正确译法，也可以反馈。BYBUS 采用零协正式译文，译源尚未完成与加载失败会分别核对。
+- type: dropdown
+  id: appearance
+  attributes:
+    label: 你看到了哪种问题？
+    multiple: true
+    options:
+    - 仍有外文 / 整页未汉化
+    - 译文含义或术语有问题
+    - 字体深浅、粗细或描边不一致
+    - 文字缩得很小
+    - 不换行、重叠或被截断
+    - 显示省略号，内容看不全
+    - 字幕或播报文字不滚动
+    - 其他
+  validations:
+    required: true
+- type: input
+  id: location
+  attributes:
+    label: 游戏中的具体位置
+    placeholder: 例如：镜像迷宫 → 事件名称 → 选项正文；或人格名称 → 技能 / 硬币描述
+    description: 填写入口、章节、人格、技能、迷宫事件或弹窗名称，能定位即可。
+  validations:
+    required: true
+- type: textarea
+  id: visible-text
+  attributes:
+    label: 当前显示与问题
+    description: 抄一小段文字，或描述截图中的异常；无需提供原文和建议译文。
+  validations:
+    required: true
+- type: input
+  id: versions
+  attributes:
+    label: BYBUS / 游戏版本
+    placeholder: BYBUS：…；游戏：…
+    description: 填写实际版本；看不到的可写“无法查看”，还没安装游戏可写“未安装”。不用先升级才能反馈。
+  validations:
+    required: true
+- type: input
+  id: device
+  attributes:
+    label: 设备与系统
+    placeholder: 手机或平板型号 / Android 版本 / OriginOS、HyperOS 等系统版本
+    description: 填写机型、Android 版本和系统名称；不知道的部分可留空。
+  validations:
+    required: true
+- type: input
+  id: translation-version
+  attributes:
+    label: 本地汉化版本（选填）
+    description: BYBUS 首页“本地汉化”中显示的版本；未准备好或无法查看可以留空。
+  validations:
+    required: false
+- type: textarea
+  id: evidence
+  attributes:
+    label: 截图或诊断包（选填）
+    description: 可拖入截图、录屏或“设置与工具 → 导出诊断”生成的 ZIP；无法获取可留空。附件请遮住邮箱、账号及付款信息。
+  validations:
+    required: false
+- type: textarea
+  id: reference
+  attributes:
+    label: 译文线索（选填）
+    description: 若已知道零协对应译文或问题影响多个页面，可补充位置或链接；不需要自行翻译。
+  validations:
+    required: false

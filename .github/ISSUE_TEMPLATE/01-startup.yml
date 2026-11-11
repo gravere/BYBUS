@@ -1,0 +1,74 @@
+name: 启动与运行
+description: 打不开 BYBUS、准备卡住、黑屏、闪退或游戏运行异常
+title: '[启动] '
+labels:
+- bug
+body:
+- type: markdown
+  attributes:
+    value: 从卡住的那一步开始说明即可。无需先卸载、清空资源或反复重启游戏。登录与商品问题请选“账号与商店”。
+- type: dropdown
+  id: stage
+  attributes:
+    label: 停在哪一步？
+    options:
+    - 打开 BYBUS 首页
+    - 识别已安装的原版游戏
+    - 准备或校验汉化
+    - 点击启动后，游戏黑屏或退出
+    - 已进入游戏后发生异常
+    - 其他 / 不确定
+  validations:
+    required: true
+- type: textarea
+  id: what-happened
+  attributes:
+    label: 发生了什么？
+    placeholder: 点击…之后出现…；错误提示是…；没有提示也可以直接说明。
+    description: 写出操作顺序、实际现象和错误提示；记得多少写多少。
+  validations:
+    required: true
+- type: input
+  id: versions
+  attributes:
+    label: BYBUS / 游戏版本
+    placeholder: BYBUS：…；游戏：…
+    description: 填写实际版本；看不到的可写“无法查看”，还没安装游戏可写“未安装”。不用先升级才能反馈。
+  validations:
+    required: true
+- type: input
+  id: device
+  attributes:
+    label: 设备与系统
+    placeholder: 手机或平板型号 / Android 版本 / OriginOS、HyperOS 等系统版本
+    description: 填写机型、Android 版本和系统名称；不知道的部分可留空。
+  validations:
+    required: true
+- type: dropdown
+  id: trigger
+  attributes:
+    label: 第一次出现是在什么时候？
+    options:
+    - 首次使用 BYBUS
+    - 更新 BYBUS 后
+    - 更新原版游戏后
+    - 下载新游戏资源或汉化后
+    - 导入或迁移数据后
+    - 之前正常，最近才出现
+    - 不确定
+  validations:
+    required: false
+- type: textarea
+  id: context
+  attributes:
+    label: 还有哪些线索？（选填）
+    description: 例如出现频率、上次正常的版本、已经尝试过的操作。无需为填表再做测试。
+  validations:
+    required: false
+- type: textarea
+  id: evidence
+  attributes:
+    label: 截图或诊断包（选填）
+    description: 可拖入截图、录屏或“设置与工具 → 导出诊断”生成的 ZIP；无法获取可留空。附件请遮住邮箱、账号及付款信息。
+  validations:
+    required: false
