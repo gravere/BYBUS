@@ -8,7 +8,7 @@ import struct
 import time
 
 
-def inspect(api, release, verifier):
+def inspect(api, release, verifier, windows_only=False):
     adb, out, report = api['adb'], api['OUT'], api['REPORT']
     package, namespace = api['PACKAGE'], api['NAMESPACE']
     adb('root'); adb('wait-for-device', timeout=30)
@@ -32,6 +32,11 @@ def inspect(api, release, verifier):
         raise RuntimeError('Google fixture timed out: ' + stage)
 
     try:
+        if windows_only:
+            inspect_window_fixture(api)
+            inspect_settings(api, probe)
+            report['result'] = 'Remaining Google windows and settings inspection completed'
+            return
         report['billing_capability'] = probe('billing')
         report['checks'].append('real bundled billing: disabled error 3 -> explicit settings -> supported 0; same provider persisted')
         probe('login')
@@ -77,19 +82,7 @@ def inspect(api, release, verifier):
         report['google_navigation'] = results
         report['checks'].append('real login buttons avoid gesture/three-button navigation on phone/tablet portrait/landscape; bottom-left click delivered')
         inspect_window_fixture(api)
-        # Native microG settings retains its own fitsSystemWindows; capture for visual review.
-        adb('shell', 'wm', 'size', '720x1560'); adb('shell', 'wm', 'user-rotation', 'lock', '0')
-        probe('settings'); time.sleep(2)
-        api['capture']('google-native-settings')
-        adb('shell', 'am', 'force-stop', package)
-        adb('shell', 'am', 'start', '-W', '-n', f'{package}/{namespace}.MainActivity', timeout=60)
-        time.sleep(3)
-        api['tap']('设置与工具', api['hierarchy']('payment-home'))
-        api['tap']('Google 账号与付款', api['hierarchy']('payment-tools'))
-        time.sleep(3)
-        api['capture']('payment-preparation-page')
-        api['tap']('关闭面板', api['hierarchy']('payment-panel-close'))
-        api['inspect_system_navigation']()
+        inspect_settings(api, probe)
         report['payment_runtime'] = 'real service capability/configuration verified; accounts, product prices and checkout not exercised'
         report['result'] = 'Google configuration and navigation inspection completed'
     finally:
@@ -98,11 +91,34 @@ def inspect(api, release, verifier):
         (out / 'google-readiness-log.txt').write_text(adb('logcat', '-d', '-v', 'threadtime', '-t', '2500', check=False), encoding='utf-8')
 
 
+def inspect_settings(api, probe):
+    adb = api['adb']
+    # Native microG settings retains its own fitsSystemWindows; capture for visual review.
+    adb('shell', 'wm', 'size', '720x1560'); adb('shell', 'wm', 'user-rotation', 'lock', '0')
+    probe('settings'); time.sleep(2)
+    api['capture']('google-native-settings')
+    adb('shell', 'am', 'force-stop', api['PACKAGE'])
+    adb('shell', 'am', 'start', '-W', '-n', f"{api['PACKAGE']}/{api['NAMESPACE']}.MainActivity", timeout=60)
+    time.sleep(3)
+    api['tap']('设置与工具', api['hierarchy']('payment-home'))
+    api['tap']('Google 账号与付款', api['hierarchy']('payment-tools'))
+    time.sleep(3)
+    tree = api['capture']('payment-preparation-page')
+    if any(n.get('text') == '启用付款服务' for n in tree.iter('node')):
+        api['tap']('启用付款服务', tree)
+        time.sleep(3)
+        api['locate'](api['capture']('payment-enabled-page'), '已启用')
+        api['REPORT']['checks'].append('host payment setup button saved the actual enabled state')
+    api['tap']('关闭面板', api['hierarchy']('payment-panel-close'))
+    api['inspect_system_navigation']()
+
+
 def inspect_window_fixture(api):
     """Insets geometry only: same window flags as Companion, no simulated purchase result."""
     adb, report, out = api['adb'], api['REPORT'], api['OUT']
     adb('shell', 'wm', 'size', '720x1560')
     adb('shell', 'wm', 'user-rotation', 'lock', '0')
+    adb('shell', 'cmd', 'overlay', 'enable-exclusive', '--category', 'com.android.internal.systemui.navbar.threebutton')
     adb('shell', 'settings', 'put', 'secure', 'show_ime_with_hard_keyboard', '1')
     cases = []
     for sheet in (True, False):

@@ -24,6 +24,8 @@ class GoogleReadinessProbeActivity : Activity() {
         super.onCreate(state)
         val output = TextView(this).apply { text = "GOOGLE_READINESS_PENDING" }
         setContentView(output)
+        // Returning after a guest rotation must not launch a second login task.
+        if (state != null) { output.text = "GOOGLE_READINESS_RESTORED"; return }
         Thread {
             val result = runCatching {
                 val runtime = AndroidContainerRuntimeFactory.create(applicationContext,
