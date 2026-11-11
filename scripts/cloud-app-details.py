@@ -6,6 +6,15 @@ import time
 def inspect(env):
     adb, capture, hierarchy = (env[k] for k in ('adb', 'capture', 'hierarchy'))
     tap, locate, report = (env[k] for k in ('tap', 'locate', 'REPORT'))
+    fixture = next((a for a in env['release']['assets'] if a['name'] == 'resource-cleanup-check.jar'), None)
+    if fixture:
+        data = env['request'](fixture['url'], 4 * 1024 * 1024, asset=True)
+        digest = env['hashlib'].sha256(data).hexdigest()
+        assert fixture['digest'] == 'sha256:' + digest
+        target = env['Path'](env['os'].environ['RUNNER_TEMP']) / 'resource-cleanup-check.jar'
+        target.write_bytes(data)
+        report['cleanup_link_check'] = env['command']('java', '-cp', str(target), 'ResourceCleanupLinkCheck')
+        report['cleanup_link_fixture_sha256'] = digest
 
     def reach(tree, label):
         for attempt in range(7):
