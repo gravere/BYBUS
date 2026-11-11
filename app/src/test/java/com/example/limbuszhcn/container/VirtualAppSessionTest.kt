@@ -56,6 +56,12 @@ class VirtualAppSessionTest {
         assertTrue(access.moved.isEmpty())
     }
 
+    @Test fun cancelledOrBackgroundEntryDoesNotPullGuestToFront() {
+        val access = Access(SessionSnapshot(game, setOf(123), listOf(task())))
+        assertFalse(VirtualAppSession(access).resume { false })
+        assertTrue(access.moved.isEmpty())
+    }
+
     @Test fun diagnosticContainsOnlyBoundedOwnGameMetadata() {
         val info = SessionSnapshot(game, setOf(123), listOf(task(), task(pkg = "private.other"))).diagnostic()
         assertTrue(info.contains("liveGuestPids=123"))

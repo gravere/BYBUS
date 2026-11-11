@@ -116,12 +116,25 @@ def inspect_session(api, probe):
     assert any(n.get('resource-id') == 'com.google.android.gms:id/next_button' for n in tree.iter('node'))
     before = probe('session-snapshot')
     assert before['pids'] and before['tasks'], 'live guest missing before background switch'
+    probe('session-entry-enable')
     adb('shell', 'input', 'keyevent', 'KEYCODE_HOME')
     time.sleep(2)
-    adb('shell', 'am', 'start', '-W', '-n', f"{api['PACKAGE']}/{api['NAMESPACE']}.MainActivity", timeout=30)
+    adb('shell', 'am', 'start', '-W', '-n', f"{api['PACKAGE']}/{api['NAMESPACE']}.MainActivity",
+        '-a', 'android.intent.action.MAIN', '-c', 'android.intent.category.LAUNCHER', '-f', '0x10200000', timeout=30)
     time.sleep(3)
+    tree = api['capture']('session-desktop-returned')
+    assert any(n.get('resource-id') == 'com.google.android.gms:id/next_button' and n.get('enabled') == 'true'
+               for n in tree.iter('node')), 'desktop entry did not directly restore the guest'
     background = probe('session-snapshot')
     assert background['pids'] == before['pids'] and background['tasks'] == before['tasks']
+    adb('shell', 'am', 'start', '-W', '-n', f"{api['PACKAGE']}/{api['NAMESPACE']}.MainActivity",
+        '-a', 'io.github.gravere.bybus.MANAGE', '-f', '0x10008000', timeout=30)
+    time.sleep(3)
+    tree = api['capture']('session-management-opened')
+    assert any(n.get('package') == api['PACKAGE'] for n in tree.iter('node'))
+    assert not any(n.get('resource-id') == 'com.google.android.gms:id/next_button' for n in tree.iter('node'))
+    windows = adb('shell', 'dumpsys', 'activity', 'activities')
+    assert re.search(r'mResumedActivity:.*MainActivity', windows), 'management shortcut did not remain in host'
     resumed = probe('session-resume')
     assert resumed['resumed'] is True
     assert resumed['pids'] == before['pids'] and resumed['tasks'] == before['tasks']
@@ -132,8 +145,9 @@ def inspect_session(api, probe):
     after = probe('session-snapshot')
     assert after['pids'] == before['pids'] and after['tasks'] == before['tasks']
     report['existing_session'] = dict(before=before, background=background, resumed=resumed, after=after)
-    report['checks'].append('real virtual Google Activity survived Home -> BYBUS -> AppTask.moveToFront with identical guest PIDs/task IDs and visible controls')
-    report['session_scope'] = 'shared container/system task route; no Unity game, account or payment exercised'
+    probe('session-entry-disable')
+    report['checks'].append('MAIN/LAUNCHER directly restored the real virtual task; MANAGE stayed in host; guest PIDs/task IDs unchanged; controls visible')
+    report['session_scope'] = 'production MainActivity and system task route with debug-only Google guest substitution; no Unity game, account or payment exercised'
 
 
 def inspect_settings(api, probe):

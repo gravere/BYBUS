@@ -50,8 +50,16 @@ jobs:
           test -e /dev/kvm
           sudo setfacl -m "u:$(id -u):rw" /dev/kvm
           # Required even with -no-audio by the emulator binary on minimal runners.
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libpulse0
+          # Use signed upstream Ubuntu indexes for this command only. The runner's
+          # Azure mirror can fail DNS and spend minutes retrying every dependency.
+          apt_sources="$RUNNER_TEMP/bybus-ubuntu.sources"
+          printf 'Types: deb\nURIs: https://archive.ubuntu.com/ubuntu\nSuites: noble noble-updates\nComponents: main universe\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' > "$apt_sources"
+          mkdir -p "$RUNNER_TEMP/bybus-apt-lists/partial"
+          apt_options=(-o "Dir::Etc::sourcelist=$apt_sources" -o 'Dir::Etc::sourceparts=-'
+            -o "Dir::State::lists=$RUNNER_TEMP/bybus-apt-lists" -o 'Acquire::Retries=1'
+            -o 'Acquire::https::Timeout=20')
+          timeout 180 sudo apt-get "${apt_options[@]}" update -qq
+          timeout 180 sudo apt-get "${apt_options[@]}" install -y --no-install-recommends libpulse0
           sdk_bin="$ANDROID_HOME/cmdline-tools/latest/bin"
           if [ ! -x "$sdk_bin/sdkmanager" ]; then
             for sdk_candidate in "$ANDROID_HOME"/cmdline-tools/*/bin; do
