@@ -16,7 +16,7 @@ inline bool decorative(std::string_view tag) {
     auto end = tag.find_first_of("= \t");
     auto name = tag.substr(0, end);
     for (auto safe : {"color", "alpha", "size", "b", "i", "u", "s", "mark",
-                      "align", "line-height", "cspace", "mspace", "indent", "voffset", "font-weight"}) {
+                      "align", "line-height", "cspace", "mspace", "indent", "voffset", "font-weight", "link"}) {
         if (limbus_rich_text::equal_ascii(name, safe)) return true;
     }
     return false;

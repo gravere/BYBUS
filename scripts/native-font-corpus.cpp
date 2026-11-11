@@ -39,7 +39,8 @@ int main(int argc, char **argv) {
         if (text.size() < 16000) {
             for (const auto &decorated : {"<color=#ffeecc>" + text + "</color>",
                     "<#a16a3b>" + text + "</color>", "<B><COLOR=#ffeecc>" + text + "</COLOR></B>",
-                    "<font-weight=700>" + text + "</font-weight>"}) {
+                    "<font-weight=700>" + text + "</font-weight>",
+                    "<link=\"known\">" + text + "</link>"}) {
                 assert(catalogue.contains(decorated)); ++rich;
             }
         }

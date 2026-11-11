@@ -10,6 +10,11 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.core.view.doOnPreDraw
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.example.limbuszhcn.container.AndroidContainerRuntimeFactory
 import com.example.limbuszhcn.container.AndroidInstalledGameImporter
 import com.example.limbuszhcn.container.ContainerPatchInstaller
@@ -26,6 +31,11 @@ import java.io.File
  * 汉化器主界面，负责准备容器、从 GitHub Releases 更新汉化并启动容器内游戏。
  */
 class MainActivity : ComponentActivity() {
+    private var homeCreated = false
+    private var pendingLauncherRoute = false
+    private var entryRoute: Job? = null
+    @Volatile private var entryGeneration = 0
+    @Volatile private var entryVisible = false
     private val containerRuntime: ContainerRuntime by lazy {
         AndroidContainerRuntimeFactory.create(applicationContext, filesDir.toPath().resolve("container-workspace"))
     }
@@ -46,6 +56,16 @@ class MainActivity : ComponentActivity() {
             finish()
             return
         }
+        if (isDesktopEntry(intent, savedInstanceState != null)) {
+            pendingLauncherRoute = true
+            return
+        }
+        showHome(savedInstanceState)
+    }
+
+    private fun showHome(savedInstanceState: Bundle?) {
+        if (homeCreated) return
+        homeCreated = true
         if (android.os.Build.VERSION.SDK_INT >= 31) {
             splashScreen.setOnExitAnimationListener { it.remove() }
         }
@@ -198,6 +218,7 @@ class MainActivity : ComponentActivity() {
     /** Returning from the guest refreshes its last launch receipt. */
     override fun onResume() {
         super.onResume()
+        entryVisible = true
         logEntry("resume")
         if (isFinishing) return
         if (com.example.limbuszhcn.migration.MigrationAccess.preferences(this).getBoolean("pending", false)) {
@@ -205,15 +226,63 @@ class MainActivity : ComponentActivity() {
             finish()
             return
         }
+        if (homeCreated && !pendingLauncherRoute) refreshHomeAfterResume()
+    }
+
+    private fun refreshHomeAfterResume() {
         androidx.lifecycle.ViewModelProvider(this)[LauncherViewModel::class.java].apply {
             appUpdater.resumeInstallation()
             resumeRefresh()
         }
     }
 
+    override fun onPostResume() {
+        super.onPostResume()
+        routeDesktopEntry()
+    }
+
+    override fun onPause() {
+        entryVisible = false
+        super.onPause()
+    }
+
+    private fun isDesktopEntry(value: Intent?, restored: Boolean = false) = shouldResumeLauncherEntry(
+        value?.action, value?.hasCategory(Intent.CATEGORY_LAUNCHER) == true,
+        (value?.flags ?: 0) and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0, restored)
+
+    private fun routeDesktopEntry() {
+        if (!pendingLauncherRoute || entryRoute?.isActive == true || !entryVisible) return
+        pendingLauncherRoute = false
+        val generation = entryGeneration
+        entryRoute = lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { resumeDesktopSession(this@MainActivity, containerRuntime) {
+                    entryVisible && entryGeneration == generation
+                } }
+            }
+            if (isFinishing || isDestroyed || entryGeneration != generation) return@launch
+            if (result.getOrDefault(false)) {
+                PersistentDiagnosticLog.info(TAG, "Launcher entry restored existing guest task before home")
+                finish()
+            } else if (entryVisible) {
+                showHome(null)
+                result.exceptionOrNull()?.let { error ->
+                    PersistentDiagnosticLog.warn(TAG, "Launcher session routing unavailable", error)
+                }
+                refreshHomeAfterResume()
+            } else {
+                pendingLauncherRoute = true
+            }
+        }
+    }
+
     /** 处理复用现有 Activity 时收到的受限调试 Intent。 */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        entryGeneration++
+        entryRoute?.cancel()
+        entryRoute = null
+        pendingLauncherRoute = false
         setIntent(intent)
         logEntry("new_intent")
         if (intent.action == io.github.gravere.bybus.migration.core.MigrationArchive.IMPORT_ACTION &&
@@ -222,6 +291,12 @@ class MainActivity : ComponentActivity() {
             finish()
             return
         }
+        if (isDesktopEntry(intent)) {
+            pendingLauncherRoute = true
+            routeDesktopEntry()
+            return
+        }
+        showHome(null)
         launchContainerGameFromDebugIntent(intent)
         if (intent.action == com.example.limbuszhcn.update.GameStores.UPDATE_ACTION)
             androidx.lifecycle.ViewModelProvider(this)[LauncherViewModel::class.java].requestGameUpdates()

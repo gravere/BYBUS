@@ -69,6 +69,7 @@
             android:resizeableActivity="true"
             android:label="@string/app_name"
             android:theme="@style/Theme.LimbusZhCN">
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/launcher_shortcuts" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 

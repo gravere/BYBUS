@@ -33,6 +33,11 @@ class GoogleReadinessProbeActivity : Activity() {
                 val runtime = AndroidContainerRuntimeFactory.create(applicationContext,
                     filesDir.toPath().resolve("container-workspace")) as VirtualAppContainerRuntime
                 when (intent.getStringExtra("stage")) {
+                    "session-entry-enable", "session-entry-disable" -> {
+                        val enabled = intent.getStringExtra("stage") == "session-entry-enable"
+                        check(getSharedPreferences("session_probe", MODE_PRIVATE).edit().putBoolean("google_guest", enabled).commit())
+                        JSONObject().put("result", "entry_fixture_configured").put("enabled", enabled)
+                    }
                     "session-snapshot", "session-resume" -> {
                         val session = com.example.limbuszhcn.container.VirtualAppSession(applicationContext, "com.google.android.gms")
                         val before = session.snapshot()

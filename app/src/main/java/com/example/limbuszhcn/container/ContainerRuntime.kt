@@ -37,7 +37,7 @@ interface ContainerRuntime {
     fun hasRunningGame(): Boolean = false
 
     /** False means no live task; errors must not silently trigger a destructive cold launch. */
-    fun resumeGameIfRunning(): Boolean = false
+    fun resumeGameIfRunning(allowMove: () -> Boolean = { true }): Boolean = false
 
     /** Stop the guest before mutating its installation or translation snapshot. */
     fun stopGame() {}

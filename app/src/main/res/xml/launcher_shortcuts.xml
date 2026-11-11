@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="manage_bybus" android:enabled="true"
+        android:icon="@mipmap/ic_launcher" android:shortcutShortLabel="@string/manage_bybus">
+        <intent android:action="io.github.gravere.bybus.MANAGE"
+            android:targetPackage="io.github.gravere.bybus"
+            android:targetClass="com.example.limbuszhcn.MainActivity" />
+    </shortcut>
+</shortcuts>

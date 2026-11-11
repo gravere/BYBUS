@@ -61,6 +61,14 @@ bool ensure_tmp_font() { return font_ready; }
 
 // Generated from the current runtime, not a separate implementation of the algorithm.
 #include "runtime-translation-under-test.inc"
+using rich_text_one_fn = void *(*)(void *, const void *);
+using rich_text_all_fn = void *(*)(void *, bool, const void *);
+using rich_text_color_fn = void *(*)(void *, void *, const void *);
+rich_text_one_fn g_original_rich_text_one[3] = {};
+rich_text_all_fn g_original_rich_text_all = nullptr;
+rich_text_color_fn g_original_rich_text_color = nullptr;
+void *(*g_original_rich_text_skill)(void *, bool, bool, const void *) = nullptr;
+#include "runtime-rich-text-under-test.inc"
 
 std::string text(void *s) { std::string result; utf16_to_utf8(chars(s), length(s), &result); return result; }
 std::unordered_set<void *> destroyed;
@@ -144,6 +152,16 @@ int main() {
     assert(translate_managed_string(original) == original);
 
     font_ready = true;
+    g_font_catalogue.add("使目标获得2层流血");
+    g_original_rich_text_one[0] = [](void *value, const void *) -> void * {
+        return new_managed_string("<sprite name=\"Bleeding\"><style=\"highlightConverted\">" + text(value) + "</style>");
+    };
+    auto rich = replacement_rich_text_one<0>(new_managed_string("使目标获得2层流血"), nullptr);
+    assert(!g_font_catalogue.contains(text(rich)) && is_translated_managed_string(rich));
+    assert(is_translated_managed_string(new_managed_string(text(rich)))); // copied output retains full-string proof
+    auto unverified_rich = replacement_rich_text_one<0>(new_managed_string("未知玩家正文"), nullptr);
+    assert(!is_translated_managed_string(unverified_rich));
+    assert(!is_translated_managed_string(new_managed_string(text(unverified_rich))));
     const std::string ruby = "你已经无处可逃了，<ruby=Fabius>费边</ruby>。";
     g_font_catalogue.add(ruby);
     g_original_ruby_format[0] = format_ruby;

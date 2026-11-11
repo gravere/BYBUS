@@ -35,8 +35,9 @@ internal class VirtualAppSession(private val access: SessionTaskAccess) {
 
     fun snapshot(): SessionSnapshot = access.snapshot()
 
-    fun resume(): Boolean {
+    fun resume(allowMove: () -> Boolean = { true }): Boolean {
         val task = snapshot().resumableTasks.firstOrNull() ?: return false
+        if (!allowMove()) return false
         // Failure must propagate. Falling through to a cold launch would kill the saved session.
         access.moveToFront(task.id)
         return true
