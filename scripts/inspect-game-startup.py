@@ -174,14 +174,18 @@ def inspect(adb, command, hierarchy, locate, tap, report, out, verifier):
     adb("shell", "am", "force-stop", GAME)
     adb("logcat", "-b", "all", "-c")
     adb("shell", "am", "start", "-W", "-n", HOST + "/com.example.limbuszhcn.MainActivity", timeout=90)
-    time.sleep(5)
-    tree = hierarchy("container-home")
-    try:
-        locate(tree, "启动游戏")
-    except RuntimeError:
-        tap("检测游戏", tree)
-        time.sleep(5)
+    deadline = time.monotonic() + 90
+    while True:
         tree = hierarchy("container-detected")
+        labels = {node.get("text", "") for node in tree.iter("node")}
+        if "启动游戏" in labels:
+            break
+        if "检测游戏" in labels:
+            tap("检测游戏", tree)
+        if time.monotonic() >= deadline:
+            capture(adb, out, "container-detection-timeout")
+            raise RuntimeError("Installed game detection did not finish within the inspection window")
+        time.sleep(2)
     tap("启动游戏", tree)
     def preparation_failure():
         state = hierarchy("container-preparation")
