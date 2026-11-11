@@ -353,6 +353,10 @@ const void *g_tmp_runtime_type = nullptr;
 const void *g_material_get_float_info = nullptr;
 const void *g_material_get_texture_info = nullptr;
 const void *g_material_compute_crc_info = nullptr;
+const void *g_material_keyword_info = nullptr;
+const void *g_font_face_info = nullptr;
+const void *g_face_point_size_info = nullptr;
+const void *g_font_atlas_padding_info = nullptr;
 il2cpp_init_fn g_original_il2cpp_init = nullptr;
 dlsym_fn g_original_unity_dlsym = nullptr;
 limbus_runtime::Symbols g_il2cpp_symbols;
@@ -1973,6 +1977,31 @@ void replacement_choice_clear(void *instance, const void *method) {
 }
 
 // Observation only: these labels select metadata; they do not grant font provenance.
+bool find_tmp_component_state(void *instance, TmpComponentState *state);
+void *material_main_texture(void *material);
+
+float font_point_size(void *font) {
+    if (!font || !g_font_face_info || !g_face_point_size_info || !g_runtime_invoke || !g_object_unbox) return -1;
+    void *exception = nullptr;
+    void *boxed = g_runtime_invoke(g_font_face_info, font, nullptr, &exception);
+    auto root = !exception && boxed ? limbus_managed::retain(g_gc, boxed) : limbus_managed::Ref{};
+    void *face = root ? g_object_unbox(root->get()) : nullptr;
+    float point_size = -1;
+    // runtime_invoke takes the unboxed receiver for a value-type instance method.
+    if (face) invoke_float_getter(g_face_point_size_info, face, &point_size);
+    return point_size;
+}
+
+int material_keyword(void *material, const char *keyword) {
+    if (!material || !g_material_keyword_info || !g_runtime_invoke || !g_object_unbox) return -1;
+    auto key = limbus_managed::retain(g_gc, new_managed_string(keyword));
+    if (!key) return -1;
+    void *args[] = {key->get()}, *exception = nullptr;
+    void *boxed = g_runtime_invoke(g_material_keyword_info, material, args, &exception);
+    void *unboxed = !exception && boxed ? g_object_unbox(boxed) : nullptr;
+    return unboxed ? (*static_cast<uint8_t *>(unboxed) ? 1 : 0) : -1;
+}
+
 void observe_popup_font(void *instance, void *managed_text, bool legacy) {
     if (!instance || !managed_text || !g_string_length || !g_string_chars || !g_class_get_method) return;
     const auto length = g_string_length(managed_text);
@@ -1997,7 +2026,8 @@ void observe_popup_font(void *instance, void *managed_text, bool legacy) {
              text.find("每周") != text.npos) kind = 9;
     else if (!legacy && is_announcer_description(instance)) kind = 10;
     else if (text == "经验" || text == "纺锤" || text == "有利属性" ||
-             text == "难度" || text.find("采光") != text.npos) kind = 12;
+             text == "难度" || text.find("采光") != text.npos || text.find("推荐等级") != text.npos ||
+             text.find("额外奖励") != text.npos || text.find("每日加成") != text.npos) kind = 12;
     if (choice_text) kind = 11;
     if (!kind) return;
     const auto shape = popup_text_shape(text);
@@ -2017,6 +2047,8 @@ void observe_popup_font(void *instance, void *managed_text, bool legacy) {
     if (millis < sample.next_ms && (choice_text || sample.input == input)) return;
     sample.input = input;
     sample.next_ms = millis + 5000;
+    TmpComponentState saved;
+    const bool saved_state = !legacy && find_tmp_component_state(instance, &saved);
     void *font = invoke_object_getter(legacy ? g_ui_get_font_info : g_tmp_get_font_info, instance);
     void *material = legacy ? nullptr : invoke_object_getter(g_tmp_get_shared_material_info, instance);
     auto font_name = read_unity_object_name(font);
@@ -2034,10 +2066,26 @@ void observe_popup_font(void *instance, void *managed_text, bool legacy) {
         invoke_bool_getter(g_tmp_get_word_wrapping_info, instance, &wrapping);
     }
     ComponentRect rect = read_component_rect(instance, legacy ? g_ui_get_rect_transform_info : g_tmp_get_rect_transform_info);
+    void *source_material = saved_state ? saved.shared_material : material;
+    void *source_font = saved_state ? saved.font : font;
+    float font_size = -1, font_min = -1, font_max = -1;
+    bool auto_size = false;
+    int32_t padding = -1, source_padding = -1;
+    if (!legacy) {
+        invoke_float_getter(g_tmp_get_font_size_info, instance, &font_size);
+        invoke_float_getter(g_tmp_get_font_size_min_info, instance, &font_min);
+        invoke_float_getter(g_tmp_get_font_size_max_info, instance, &font_max);
+        invoke_bool_getter(g_tmp_get_auto_sizing_info, instance, &auto_size);
+        invoke_int_getter(g_font_atlas_padding_info, font, &padding);
+        invoke_int_getter(g_font_atlas_padding_info, source_font, &source_padding);
+    }
+    void *atlas = legacy ? nullptr : material_main_texture(material);
+    void *font_material = !legacy && font ? invoke_object_getter(g_tmp_font_get_material_info, font) : nullptr;
+    const bool atlas_matches = atlas && atlas == material_main_texture(font_material);
     uint64_t text_hash = 14695981039346656037ull;
     for (unsigned char c : text) text_hash = (text_hash ^ c) * 1099511628211ull;
-    char row[2048];
-    snprintf(row, sizeof(row), "kind=%d type=%s component=%p proof=%d primary=%d font=%s style=%d weight=%d material=%p converted=%d dilate=%.4f normal=%.4f bold=%.4f outline=%.4f scale=%.4f gradient=%.4f shadow_x=%.4f shadow_y=%.4f shadow_softness=%.4f shadow_dilate=%.4f tags_font=%d tags_sprite=%d wrap=%d overflow=%d rect=%.1fx%.1f breaks=%zu text_hash=%016llx shape=%s",
+    char row[3072];
+    snprintf(row, sizeof(row), "kind=%d type=%s component=%p proof=%d primary=%d font=%s style=%d weight=%d material=%p converted=%d dilate=%.4f normal=%.4f bold=%.4f outline=%.4f scale=%.4f gradient=%.4f shadow_x=%.4f shadow_y=%.4f shadow_softness=%.4f shadow_dilate=%.4f tags_font=%d tags_sprite=%d wrap=%d overflow=%d rect=%.1fx%.1f breaks=%zu text_hash=%016llx size=%.2f auto=%d min=%.2f max=%.2f point=%.2f padding=%d source_point=%.2f source_padding=%d atlas_match=%d underlay_on=%d underlay_inner=%d scale_c=%.4f source_material=%p source_gradient=%.4f source_shadow_x=%.4f source_shadow_y=%.4f source_shadow_softness=%.4f source_shadow_dilate=%.4f shape=%s",
             kind, legacy ? "ui" : "tmp", instance, proof,
             font && font == (legacy ? g_ui_font : g_tmp_font_asset), font_name.c_str(), style, weight,
             material, g_converted_font_materials.find(material) != nullptr,
@@ -2049,7 +2097,13 @@ void observe_popup_font(void *instance, void *managed_text, bool legacy) {
             text.find("<font") != text.npos, text.find("<sprite") != text.npos,
             wrapping, overflow, rect.width, rect.height,
             static_cast<size_t>(std::count(text.begin(), text.end(), '\n')),
-            static_cast<unsigned long long>(text_hash), shape.c_str());
+            static_cast<unsigned long long>(text_hash), font_size, auto_size, font_min, font_max,
+            legacy ? -1 : font_point_size(font), padding, legacy ? -1 : font_point_size(source_font), source_padding,
+            atlas_matches, material_keyword(material, "UNDERLAY_ON"), material_keyword(material, "UNDERLAY_INNER"),
+            read_material_number(material, "_ScaleRatioC"), source_material,
+            read_material_number(source_material, "_GradientScale"), read_material_number(source_material, "_UnderlayOffsetX"),
+            read_material_number(source_material, "_UnderlayOffsetY"), read_material_number(source_material, "_UnderlaySoftness"),
+            read_material_number(source_material, "_UnderlayDilate"), shape.c_str());
     if (sample.last == row) return;
     sample.last = row;
     append_native_metadata("font-state.log", row);
@@ -2189,14 +2243,23 @@ void *translated_tmp_material(void *instance, void *requested_material) {
     // atlas and its metrics, preventing a Japanese atlas or lost outline.
     const bool known_source = state.converted_material &&
             state.converted_material->source() == requested_material;
+    void *source_atlas = material_main_texture(requested_material);
+    void *chinese_atlas = material_main_texture(font_material);
+    if (source_atlas && chinese_atlas && source_atlas == chinese_atlas) {
+        // TMP's fontMaterial getter creates a game-owned instance without going
+        // through either setter. It already samples our atlas. Converting it
+        // again renders a snapshot while the game animates the original, and
+        // the next getter can create another needless copy. Keep its identity
+        // and leave the original-font restoration preset intact.
+        assign_lease({});
+        return requested_material;
+    }
     auto material_root = known_source ? state.converted_material->source_root() :
             (state.shared_material == requested_material && state.material_root ? state.material_root :
              limbus_managed::retain(g_gc, requested_material));
     if (!material_root) { assign_lease({}); return font_material; }
     bool restores_source = known_source && state.converted_material->restores_source();
     if (!known_source) {
-        void *source_atlas = material_main_texture(requested_material);
-        void *chinese_atlas = material_main_texture(font_material);
         restores_source = source_atlas && chinese_atlas && source_atlas != chinese_atlas;
     }
     if (restores_source) {
@@ -3643,6 +3706,33 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
     const void *material_get_texture_method = find_method_by_signature(
             material_class, "GetTexture", "System.String");
     const void *material_compute_crc_method = find_method_by_signature(material_class, "ComputeCRC", "");
+    auto diagnostic_method = [&](void *klass, const char *name, const char *parameters,
+                                 const char *return_type, bool inherited) -> const void * {
+        if (!method_get_flags || !method_is_generic || !method_get_return_type || !type_get_name || !il2cpp_free)
+            return nullptr;
+        for (unsigned depth = 0; klass && depth < 8; ++depth) {
+            const void *candidate = find_method_by_signature(klass, name, parameters);
+            if (candidate) {
+                uint32_t implementation = 0;
+                char *actual = type_get_name(method_get_return_type(candidate));
+                bool valid = actual && strcmp(actual, return_type) == 0 && !method_is_generic(candidate) &&
+                        !(method_get_flags(candidate, &implementation) & 0x0010u);
+                if (actual) il2cpp_free(actual);
+                return valid ? candidate : nullptr;
+            }
+            if (!inherited || !class_get_parent) break;
+            klass = class_get_parent(klass);
+        }
+        return nullptr;
+    };
+    const void *material_keyword_method = diagnostic_method(material_class, "IsKeywordEnabled",
+            "System.String", "System.Boolean", false);
+    const void *font_face_method = diagnostic_method(tmp_font_class, "get_faceInfo", "",
+            "UnityEngine.TextCore.FaceInfo", true);
+    void *face_info_class = font_face_method && class_from_type ?
+            class_from_type(method_get_return_type(font_face_method)) : nullptr;
+    const void *face_point_method = diagnostic_method(face_info_class, "get_pointSize", "", "System.Single", false);
+    const void *font_padding_method = diagnostic_method(tmp_font_class, "get_atlasPadding", "", "System.Int32", true);
     const void *get_fallback_fonts_method = tmp_settings_class == nullptr ? nullptr :
             class_get_method_from_name(tmp_settings_class, "get_fallbackFontAssets", 0);
     const void *get_fallback_material_method = find_method_by_signature(
@@ -3832,6 +3922,10 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         g_material_get_float_info = material_get_float_method;
         g_material_get_texture_info = material_get_texture_method;
         g_material_compute_crc_info = material_compute_crc_method;
+        g_material_keyword_info = material_keyword_method;
+        g_font_face_info = font_face_method;
+        g_face_point_size_info = face_point_method;
+        g_font_atlas_padding_info = font_padding_method;
         hook_limbus_owned_function(tmp_pointer, reinterpret_cast<void *>(replacement_tmp_set_text),
                        reinterpret_cast<void **>(&g_original_tmp_set_text));
         auto has_inline_hook_space = [&](void *klass, void *pointer) {

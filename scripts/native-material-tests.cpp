@@ -257,14 +257,26 @@ int main() {
     Preset local = *visible;
     local.style = 30; local.underlay_alpha = .2f; local.face_dilate = .1f;
     rendered.material = &local;
+    const auto conversions_before_local = converted_cache.size();
     prepare_tmp_text(&rendered, &text);
-    visible = static_cast<Converted *>(rendered.material);
-    assert(visible->style == 30 && visible->underlay_alpha == .2f && visible->face_dilate == .1f);
+    assert(rendered.material == &local);
+    assert(converted_cache.size() == conversions_before_local);
+    assert(local.style == 30 && local.underlay_alpha == .2f && local.face_dilate == .1f);
     assert(find_tmp_component_state(&rendered, &saved) && saved.shared_material == &selected);
     saved = {};
     local.underlay_alpha = .1f;
+    local.underlay_y = -.6f;
+    // Animation edits the instance held by the game without assigning text.
+    assert(static_cast<Preset *>(rendered.material)->underlay_alpha == .1f);
+    assert(static_cast<Preset *>(rendered.material)->underlay_y == -.6f);
     prepare_tmp_text(&rendered, &text);
-    assert(visible->underlay_alpha == .1f);
+    assert(rendered.material == &local);
+    for (int i = 0; i < 3; ++i) {
+        auto instance_read_by_game = rendered.material;
+        prepare_tmp_text(&rendered, &text);
+        assert(rendered.material == instance_read_by_game);
+        assert(converted_cache.size() == conversions_before_local);
+    }
     auto checksum_api = g_material_compute_crc_info;
     g_material_compute_crc_info = nullptr;
     auto padding_count = rendered.padding_updates;
