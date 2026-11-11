@@ -11,7 +11,12 @@ import time
 def inspect(api, release, verifier, windows_only=False):
     adb, out, report = api['adb'], api['OUT'], api['REPORT']
     package, namespace = api['PACKAGE'], api['NAMESPACE']
-    adb('root'); adb('wait-for-device', timeout=30)
+    # adbd can close the transport while restarting as root; verify the resulting UID.
+    for attempt in range(3):
+        adb('root', check=False)
+        adb('wait-for-device', timeout=30)
+        if adb('shell', 'id', '-u', check=False).strip() == '0': break
+        time.sleep(2)
     assert adb('shell', 'id', '-u').strip() == '0', 'disposable emulator only'
     report['probe_sha256'] = api['install_component_probe'](release, verifier)
     result_path = f'/data/user/0/{package}/files/google-readiness.json'
@@ -137,11 +142,7 @@ def inspect_window_fixture(api):
             areas = api['visible_navigation_frames'](windows, 720, 1560)
             assert areas, 'window fixture has no navigation area'
             if keyboard:
-                ime = []
-                for block in re.split(r'(?m)^  Window #\d+ ', windows):
-                    if 'ty=INPUT_METHOD ' in block and re.search(r'(?m)^\s+isVisible=true\s*$', block):
-                        match = re.search(r'Frames:.*?frame=\[(\d+),(\d+)\]\[(\d+),(\d+)\]', block)
-                        if match: ime.append(tuple(map(int, match.groups())))
+                ime = visible_ime_frames(windows)
                 assert ime, 'keyboard was not actually shown'
                 areas.extend(ime)
             assert not any(button[0] < n[2] and button[2] > n[0] and button[1] < n[3] and button[3] > n[1] for n in areas), 'fixture button overlaps keyboard/navigation'
@@ -152,3 +153,20 @@ def inspect_window_fixture(api):
         api['locate'](api['hierarchy']('window-action-delivered'), '操作已收到')
         adb('shell', 'input', 'keyevent', 'BACK')
     report['window_geometry_fixture'] = cases
+
+
+def visible_ime_frames(windows):
+    areas = []
+    for block in re.split(r'(?m)^  Window #\d+ ', windows):
+        if 'ty=INPUT_METHOD ' not in block or not re.search(r'(?m)^\s+isVisible=true\s*$', block):
+            continue
+        frame = re.search(r'Frames:.*?frame=\[(\d+),(\d+)\]\[(\d+),(\d+)\]', block)
+        content = re.search(r'mGivenContentInsets=\[(\d+),(\d+)\]\[(\d+),(\d+)\]', block)
+        assert frame and content, 'keyboard bounds unavailable'
+        x1, y1, x2, y2 = map(int, frame.groups())
+        left, top, right, bottom = map(int, content.groups())
+        # The IME surface includes transparent space above the actual keyboard.
+        bounds = (x1+left, y1+top, x2-right, y2-bottom)
+        assert bounds[0] < bounds[2] and bounds[1] < bounds[3]
+        areas.append(bounds)
+    return areas
