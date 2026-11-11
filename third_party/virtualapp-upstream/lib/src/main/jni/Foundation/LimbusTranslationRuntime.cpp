@@ -152,6 +152,9 @@ bool remember_translated_text(void *object, const std::string &text) {
     return true;
 }
 struct TmpComponentState {
+    limbus_text_provenance::LayoutOverride<bool> wrapping;
+    limbus_text_provenance::LayoutOverride<int32_t> overflow;
+    limbus_text_provenance::LayoutOverride<float> spacing;
     void *font = nullptr;
     void *shared_material = nullptr;
     limbus_managed::Ref font_root;
@@ -160,41 +163,14 @@ struct TmpComponentState {
     void *padded_material = nullptr;
     uint32_t padded_crc = 0;
     bool has_padded_crc = false;
-    float line_spacing = 0.0f;
-    bool has_line_spacing = false;
-    float font_size = 0.0f;
-    bool has_font_size = false;
-    float font_size_min = 0.0f;
-    bool has_font_size_min = false;
-    float font_size_max = 0.0f;
-    bool has_font_size_max = false;
-    bool auto_sizing = false;
-    bool has_auto_sizing = false;
-    bool word_wrapping = false;
-    bool has_word_wrapping = false;
-    int32_t overflow_mode = 0;
-    bool has_overflow_mode = false;
 };
 limbus_managed::Registry<TmpComponentState> g_original_tmp_states(g_gc, 8192);
 struct UiComponentState {
+    limbus_text_provenance::LayoutOverride<int32_t> horizontal, vertical;
     void *font = nullptr;
     limbus_managed::Ref font_root;
     int32_t font_style = 0;
     bool has_font_style = false;
-    float line_spacing = 1.0f;
-    bool has_line_spacing = false;
-    int32_t font_size = 0;
-    bool has_font_size = false;
-    int32_t resize_min_size = 0;
-    bool has_resize_min_size = false;
-    int32_t resize_max_size = 0;
-    bool has_resize_max_size = false;
-    bool resize_best_fit = false;
-    bool has_resize_best_fit = false;
-    int32_t horizontal_overflow = 0;
-    bool has_horizontal_overflow = false;
-    int32_t vertical_overflow = 0;
-    bool has_vertical_overflow = false;
 };
 limbus_managed::Registry<UiComponentState> g_original_ui_states(g_gc, 4096);
 uint64_t g_translation_hits = 0;
@@ -288,6 +264,9 @@ tmp_set_text_fn g_original_notice_set_data = nullptr;
 const void *g_notice_body_field = nullptr;
 const void *g_choice_content_field = nullptr;
 tmp_parse_input_fn g_original_choice_clear = nullptr;
+tmp_parse_input_fn g_original_choice_disable = nullptr;
+typedef void *(*choice_content_fn)(void *, void *, bool, const void *);
+choice_content_fn g_original_choice_content[3] = {};
 void *g_choice_result_log_class = nullptr;
 const void *g_choice_result_log_field = nullptr;
 const void *g_choice_button_text_field = nullptr;
@@ -324,6 +303,7 @@ const void *g_tmp_set_shared_material_info = nullptr;
 const void *g_tmp_get_line_spacing_info = nullptr;
 const void *g_tmp_set_line_spacing_info = nullptr;
 const void *g_tmp_get_font_size_info = nullptr;
+const void *g_tmp_base_size_field = nullptr;
 const void *g_tmp_set_font_size_info = nullptr;
 const void *g_tmp_get_font_size_min_info = nullptr;
 const void *g_tmp_set_font_size_min_info = nullptr;
@@ -1319,6 +1299,26 @@ void *replacement_rpg_format(void *format, void *arguments, const void *method) 
     return finish_formatted_translation(g_original_rpg_format(translated, arguments, method), fields);
 }
 
+typedef void (*localization_load_fn)(void *, int32_t, const void *);
+localization_load_fn g_original_localization_load[2] = {};
+template<size_t Slot>
+void replacement_localization_load(void *instance, int32_t language, const void *method) {
+    if (g_live_resources) {
+        const bool ready = ensure_tmp_font();
+        char status[64];
+        snprintf(status, sizeof(status), "localization_preflight slot=%zu ready=%d", Slot, ready);
+        append_native_metadata("font-state.log", status);
+    }
+    g_original_localization_load[Slot](instance, language, method);
+}
+acquisition0_fn g_original_gift_text_data = nullptr;
+void *replacement_gift_text_data(void *instance, const void *method) {
+    void *data = g_original_gift_text_data(instance, method);
+    if (data && g_object_get_class && g_object_get_class(data) == g_ego_gift_text_class)
+        translate_object_graph(data, nullptr);
+    return data;
+}
+
 typedef void *(*acquisition1_fn)(void *, void *, const void *);
 typedef void *(*acquisition2_fn)(void *, void *, void *, const void *);
 const size_t kAcquisitionSlots = 64;
@@ -1913,7 +1913,7 @@ bool read_choice_list(void *list, std::string *complete, bool *verified) {
     return true;
 }
 
-void bind_choice_target(void *owner, void *target, const std::string &text, bool verified) {
+void bind_choice_target(void *owner, void *target, const std::string &text, bool verified, bool reflow = true) {
     int32_t owner_id = 0, target_id = 0;
     if (!owner || !target || !invoke_int_getter(g_object_get_instance_id_info, owner, &owner_id) ||
         !invoke_int_getter(g_object_get_instance_id_info, target, &target_id) || !owner_id || !target_id) return;
@@ -1925,7 +1925,7 @@ void bind_choice_target(void *owner, void *target, const std::string &text, bool
     auto found = g_choice_owners.find(owner);
     if (found != g_choice_owners.end() && found->second.id == owner_id && found->second.proof.matches(text))
         state.proof = found->second.proof;
-    else state.proof.assign(text, verified);
+    else state.proof.assign(text, verified, reflow);
     if (g_choice_targets.size() >= 32 && !g_choice_targets.count(target))
         g_choice_targets.erase(g_choice_targets.begin());
     g_choice_targets[target] = std::move(state);
@@ -1945,7 +1945,7 @@ void replacement_choice_set_total(void *instance, void *list, const void *method
     if (invoke_int_getter(g_object_get_instance_id_info, instance, &id) && id) {
         ChoiceFlowState state;
         state.id = id;
-        state.proof.assign(text, readable && verified);
+        state.proof.assign(text, readable && verified, true);
         pthread_mutex_lock(&g_font_state_lock);
         // Coroutine factories can bind their target before SetTotalContent
         // executes. Refresh those bindings instead of discarding their role.
@@ -2030,12 +2030,45 @@ void replacement_choice_button(void *instance, int32_t selection, void *message,
     g_field_get_value(instance, g_choice_button_result_field, &description);
     std::string text, result;
     read_flow_text(translated, &text);
-    bind_choice_target(instance, button, text, is_translated_managed_string(translated));
+    bind_choice_target(instance, button, text, is_translated_managed_string(translated), false);
     prepare_choice_font(button, text, is_translated_managed_string(translated));
     read_flow_text(translated_result, &result);
-    bind_choice_target(instance, description, result, is_translated_managed_string(translated_result));
+    bind_choice_target(instance, description, result, is_translated_managed_string(translated_result), false);
     prepare_choice_font(description, result, is_translated_managed_string(translated_result));
     g_original_choice_button(instance, selection, translated, translated_result, method);
+}
+
+template<size_t Slot>
+void *replacement_choice_content(void *instance, void *source, bool add_line_break, const void *method) {
+    // This is the complete input before the game inserts automatic line breaks
+    // and before its iterator factories can be inlined into MoveNext.
+    void *prepared = source;
+    std::string text;
+    bool verified = false;
+    if (Slot == 0) {
+        prepared = translate_managed_string(source);
+        verified = read_flow_text(prepared, &text) && is_translated_managed_string(prepared);
+    } else if (!read_choice_list(source, &text, &verified)) { text.clear(); verified = false; }
+    clear_choice_flow(instance);
+    int32_t id = 0;
+    if (invoke_int_getter(g_object_get_instance_id_info, instance, &id) && id) {
+        ChoiceFlowState state;
+        state.id = id; state.proof.assign(text, verified, true);
+        pthread_mutex_lock(&g_font_state_lock);
+        if (g_choice_owners.size() >= 32) g_choice_owners.erase(g_choice_owners.begin());
+        g_choice_owners[instance] = std::move(state);
+        pthread_mutex_unlock(&g_font_state_lock);
+    }
+    void *target = nullptr;
+    g_field_get_value(instance, g_choice_content_field, &target);
+    bind_choice_target(instance, target, text, verified);
+    prepare_choice_font(target, text, verified);
+    return g_original_choice_content[Slot](instance, prepared, add_line_break, method);
+}
+
+void replacement_choice_disable(void *instance, const void *method) {
+    clear_choice_flow(instance);
+    g_original_choice_disable(instance, method);
 }
 
 void replacement_choice_clear(void *instance, const void *method) {
@@ -2199,21 +2232,11 @@ bool capture_tmp_component_state(void *instance, void *font, TmpComponentState *
     candidate.shared_material = invoke_object_getter(g_tmp_get_shared_material_info, instance);
     candidate.material_root = limbus_managed::retain(g_gc, candidate.shared_material);
     if (candidate.shared_material && !candidate.material_root) return false;
-    candidate.has_line_spacing = invoke_float_getter(
-            g_tmp_get_line_spacing_info, instance, &candidate.line_spacing);
-    candidate.has_font_size = invoke_float_getter(
-            g_tmp_get_font_size_info, instance, &candidate.font_size);
-    candidate.has_font_size_min = invoke_float_getter(
-            g_tmp_get_font_size_min_info, instance, &candidate.font_size_min);
-    candidate.has_font_size_max = invoke_float_getter(
-            g_tmp_get_font_size_max_info, instance, &candidate.font_size_max);
-    candidate.has_auto_sizing = invoke_bool_getter(
-            g_tmp_get_auto_sizing_info, instance, &candidate.auto_sizing);
-    candidate.has_word_wrapping = invoke_bool_getter(
-            g_tmp_get_word_wrapping_info, instance, &candidate.word_wrapping);
-    candidate.has_overflow_mode = invoke_int_getter(
-            g_tmp_get_overflow_mode_info, instance, &candidate.overflow_mode);
     pthread_mutex_lock(&g_font_state_lock);
+    if (auto previous = g_original_tmp_states.find(instance, id)) {
+        candidate.wrapping = previous->wrapping; candidate.overflow = previous->overflow;
+        candidate.spacing = previous->spacing;
+    }
     bool saved = g_original_tmp_states.put(instance, id, candidate);
     pthread_mutex_unlock(&g_font_state_lock);
     if (saved && state) *state = candidate;
@@ -2429,32 +2452,17 @@ void restore_tmp_component_state(void *instance) {
     if (!restore) return;
     if (g_tmp_get_font == nullptr ||
         g_tmp_get_font(instance, g_tmp_get_font_info) != g_tmp_font_asset) return;
-    // 组件会被列表复用；必须恢复字体、材质与全部排版约束，避免中文缩放泄漏到日文页面。
     if (g_tmp_set_font != nullptr) g_tmp_set_font(instance, state.font, g_tmp_set_font_info);
-    if (state.shared_material != nullptr) {
+    if (state.shared_material != nullptr)
         invoke_object_setter(g_tmp_set_shared_material_info, instance, state.shared_material);
-    }
-    if (state.has_line_spacing) {
-        invoke_float_setter(g_tmp_set_line_spacing_info, instance, state.line_spacing);
-    }
-    if (state.has_auto_sizing) {
-        invoke_bool_setter(g_tmp_set_auto_sizing_info, instance, state.auto_sizing);
-    }
-    if (state.has_word_wrapping) {
-        invoke_bool_setter(g_tmp_set_word_wrapping_info, instance, state.word_wrapping);
-    }
-    if (state.has_overflow_mode) {
-        invoke_int_setter(g_tmp_set_overflow_mode_info, instance, state.overflow_mode);
-    }
-    if (state.has_font_size_min) {
-        invoke_float_setter(g_tmp_set_font_size_min_info, instance, state.font_size_min);
-    }
-    if (state.has_font_size_max) {
-        invoke_float_setter(g_tmp_set_font_size_max_info, instance, state.font_size_max);
-    }
-    if (state.has_font_size) {
-        invoke_float_setter(g_tmp_set_font_size_info, instance, state.font_size);
-    }
+    bool wrap = false; int32_t overflow = 0; float spacing = 0;
+    if (invoke_bool_getter(g_tmp_get_word_wrapping_info, instance, &wrap) && state.wrapping.restore(wrap))
+        invoke_bool_setter(g_tmp_set_word_wrapping_info, instance, state.wrapping.original);
+    if (invoke_int_getter(g_tmp_get_overflow_mode_info, instance, &overflow) && state.overflow.restore(overflow))
+        invoke_int_setter(g_tmp_set_overflow_mode_info, instance, state.overflow.original);
+    if (invoke_float_getter(g_tmp_get_line_spacing_info, instance, &spacing) && state.spacing.restore(spacing))
+        invoke_float_setter(g_tmp_set_line_spacing_info, instance, state.spacing.original);
+
 }
 
 bool capture_ui_component_state(void *instance) {
@@ -2465,20 +2473,6 @@ bool capture_ui_component_state(void *instance) {
     candidate.font_root = limbus_managed::retain(g_gc, candidate.font);
     if (candidate.font && !candidate.font_root) return false;
     candidate.has_font_style = invoke_int_getter(g_ui_get_font_style_info, instance, &candidate.font_style);
-    candidate.has_line_spacing = invoke_float_getter(
-            g_ui_get_line_spacing_info, instance, &candidate.line_spacing);
-    candidate.has_font_size = invoke_int_getter(
-            g_ui_get_font_size_info, instance, &candidate.font_size);
-    candidate.has_resize_min_size = invoke_int_getter(
-            g_ui_get_resize_min_size_info, instance, &candidate.resize_min_size);
-    candidate.has_resize_max_size = invoke_int_getter(
-            g_ui_get_resize_max_size_info, instance, &candidate.resize_max_size);
-    candidate.has_resize_best_fit = invoke_bool_getter(
-            g_ui_get_resize_best_fit_info, instance, &candidate.resize_best_fit);
-    candidate.has_horizontal_overflow = invoke_int_getter(
-            g_ui_get_horizontal_overflow_info, instance, &candidate.horizontal_overflow);
-    candidate.has_vertical_overflow = invoke_int_getter(
-            g_ui_get_vertical_overflow_info, instance, &candidate.vertical_overflow);
     pthread_mutex_lock(&g_font_state_lock);
     bool saved = g_original_ui_states.put(instance, id, candidate);
     pthread_mutex_unlock(&g_font_state_lock);
@@ -2507,31 +2501,14 @@ void restore_ui_component_state(void *instance) {
     pthread_mutex_unlock(&g_font_state_lock);
     if (!restore) return;
     if (invoke_object_getter(g_ui_get_font_info, instance) != g_ui_font) return;
-    // 列表和页签会复用旧 UI.Text；离开中文文本时恢复原设置，避免影响未汉化资源。
     if (state.font != nullptr) invoke_object_setter(g_ui_set_font_info, instance, state.font);
     if (state.has_font_style) invoke_int_setter(g_ui_set_font_style_info, instance, state.font_style);
-    if (state.has_line_spacing) {
-        invoke_float_setter(g_ui_set_line_spacing_info, instance, state.line_spacing);
-    }
-    if (state.has_resize_best_fit) {
-        invoke_bool_setter(g_ui_set_resize_best_fit_info, instance, state.resize_best_fit);
-    }
-    if (state.has_resize_min_size) {
-        invoke_int_setter(g_ui_set_resize_min_size_info, instance, state.resize_min_size);
-    }
-    if (state.has_resize_max_size) {
-        invoke_int_setter(g_ui_set_resize_max_size_info, instance, state.resize_max_size);
-    }
-    if (state.has_horizontal_overflow) {
-        invoke_int_setter(
-                g_ui_set_horizontal_overflow_info, instance, state.horizontal_overflow);
-    }
-    if (state.has_vertical_overflow) {
-        invoke_int_setter(g_ui_set_vertical_overflow_info, instance, state.vertical_overflow);
-    }
-    if (state.has_font_size) {
-        invoke_int_setter(g_ui_set_font_size_info, instance, state.font_size);
-    }
+    int32_t value = 0;
+    if (invoke_int_getter(g_ui_get_horizontal_overflow_info, instance, &value) && state.horizontal.restore(value))
+        invoke_int_setter(g_ui_set_horizontal_overflow_info, instance, state.horizontal.original);
+    if (invoke_int_getter(g_ui_get_vertical_overflow_info, instance, &value) && state.vertical.restore(value))
+        invoke_int_setter(g_ui_set_vertical_overflow_info, instance, state.vertical.original);
+
 }
 
 size_t count_visible_codepoints(const std::string &text) {
@@ -2557,112 +2534,88 @@ bool has_content_fitted_height(void *instance) {
             enabled && invoke_int_getter(g_content_fitter_vertical_info, fitter, &fit) && (fit == 1 || fit == 2);
 }
 
-void apply_translated_tmp_style(void *instance, void *managed_text,
-                                const TmpComponentState &state) {
-    if (managed_text == nullptr || g_string_length == nullptr ||
-        g_string_chars == nullptr) {
-        return;
+void save_tmp_layout_state(void *instance, const TmpComponentState &state) {
+    const auto id = component_id(instance);
+    pthread_mutex_lock(&g_font_state_lock);
+    if (auto saved = g_original_tmp_states.find(instance, id)) {
+        saved->wrapping = state.wrapping; saved->overflow = state.overflow; saved->spacing = state.spacing;
     }
-    int32_t length = g_string_length(managed_text);
+    pthread_mutex_unlock(&g_font_state_lock);
+}
+
+void save_ui_layout_state(void *instance, const UiComponentState &state) {
+    const auto id = component_id(instance);
+    pthread_mutex_lock(&g_font_state_lock);
+    if (auto saved = g_original_ui_states.find(instance, id)) {
+        saved->horizontal = state.horizontal; saved->vertical = state.vertical;
+    }
+    pthread_mutex_unlock(&g_font_state_lock);
+}
+
+float read_tmp_layout_size(void *instance) {
+    float size = 0;
+    if (!invoke_float_getter(g_tmp_get_font_size_info, instance, &size)) return 0;
+    bool automatic = false;
+    if (g_tmp_base_size_field && g_field_get_value &&
+        invoke_bool_getter(g_tmp_get_auto_sizing_info, instance, &automatic) && automatic) {
+        float base = 0;
+        g_field_get_value(instance, g_tmp_base_size_field, &base);
+        // TMP keeps its configured base separately from the fitted live size.
+        // This is a read-only layout hint, never the auto-sizing upper bound.
+        if (std::isfinite(base) && base > 0 && base <= 4096) size = base;
+    }
+    return std::isfinite(size) && size > 0 ? size : 0;
+}
+
+void apply_translated_tmp_style(void *instance, void *managed_text,
+                                const TmpComponentState &previous) {
+    if (!managed_text || !g_string_length || !g_string_chars) return;
+    const int32_t length = g_string_length(managed_text);
     std::string text;
     if (length < 0 || length > 1024 * 1024 ||
-        !utf16_to_utf8(g_string_chars(managed_text), length, &text)) {
-        return;
-    }
-
-    // The announcer's custom scroll task owns its layout, including later parses.
+        !utf16_to_utf8(g_string_chars(managed_text), length, &text)) return;
     if (is_announcer_description(instance) || is_choice_text(instance) ||
-        (is_ruby_text(instance) && limbus_text_provenance::positioned_ruby(text)) ||
-        !state.has_font_size || state.font_size <= 0.0f) return;
-
-    size_t visible_length = count_visible_codepoints(text);
-    bool has_explicit_break = limbus_text_provenance::explicit_line_break(text);
-    ComponentRect rect = read_component_rect(instance, g_tmp_get_rect_transform_info);
-    bool short_text = visible_length <= 48;
-    std::string component_name;
-    std::string parent_name;
-    bool needs_component_identity = has_explicit_break ||
-            (rect.width > 0.0f && rect.width < 140.0f && rect.height <= 0.0f);
-    if (needs_component_identity) {
-        component_name = read_unity_object_name(instance);
-        parent_name = read_unity_parent_name(instance);
+        (is_ruby_text(instance) && limbus_text_provenance::positioned_ruby(text))) return;
+    const float size = read_tmp_layout_size(instance);
+    if (size <= 0) return;
+    auto state = previous;
+    bool current_wrap = false; int32_t current_overflow = 0;
+    const bool has_wrap = invoke_bool_getter(g_tmp_get_word_wrapping_info, instance, &current_wrap);
+    const bool has_overflow = invoke_int_getter(g_tmp_get_overflow_mode_info, instance, &current_overflow);
+    const bool original_wrap = has_wrap && state.wrapping.observe(current_wrap);
+    const int32_t original_overflow = has_overflow ? state.overflow.observe(current_overflow) : -1;
+    const auto visible = count_visible_codepoints(text);
+    const bool explicit_break = limbus_text_provenance::explicit_line_break(text);
+    const auto rect = read_component_rect(instance, g_tmp_get_rect_transform_info);
+    const bool fitted = has_content_fitted_height(instance);
+    const bool single = limbus_text_provenance::single_line_label(visible, explicit_break,
+            has_wrap && !original_wrap, rect.height, size, original_overflow, fitted);
+    const bool title = explicit_break && read_unity_object_name(instance) == "[Text]GroupName";
+    const bool body = fitted || explicit_break || visible > 48 || rect.height > size * 1.8f || original_wrap;
+    if (has_wrap) {
+        const bool desired = title || single ? false : body;
+        if (current_wrap != desired) invoke_bool_setter(g_tmp_set_word_wrapping_info, instance, desired);
+        state.wrapping.record(desired);
     }
-    // 编队页、人格排列页与人格选择页会复用同名文本组件，但父节点名称并不一致。
-    // 使用精确组件名覆盖三类页面，避免“公主”等包内已有换行只在部分页面生效。
-    bool personality_group_name = component_name == "[Text]GroupName";
-    bool formation_deck_label = component_name == "[Text]Deck" &&
-            parent_name == "[Image]Mask";
-    const float nominal_size = limbus_text_provenance::nominal_font_size(state.font_size,
-            state.has_auto_sizing && state.auto_sizing,
-            state.has_font_size_max ? state.font_size_max : 0.0f);
-    const bool content_fitted = short_text && !has_explicit_break &&
-            rect.height <= nominal_size * 1.8f && has_content_fitted_height(instance);
-    bool single_line = limbus_text_provenance::single_line_label(visible_length, has_explicit_break,
-            state.has_word_wrapping && !state.word_wrapping, rect.height, nominal_size,
-            state.has_overflow_mode ? state.overflow_mode : -1, content_fitted);
-
-    if (single_line) {
-        // 页签、技能名和横幅必须保持单行。之前只启用自动字号却没有关闭换行，
-        // TMP 会先把中文拆成数行，再被一行高的遮罩裁成黄块或黑块。
-        invoke_bool_setter(g_tmp_set_word_wrapping_info, instance, false);
-        // Do not introduce ellipsis into a label that did not have it originally.
-        if (state.has_overflow_mode)
-            invoke_int_setter(g_tmp_set_overflow_mode_info, instance, state.overflow_mode);
-        // 左侧编队槽原始字号为 30，在手机上辨识度不足；该控件高度由遮罩动态提供，
-        // 因此固定为用户指定的 35，避免自动字号再次把长编队名缩小。
-        // Same-style controls keep the same nominal size regardless of label length.
-        float maximum = formation_deck_label ? 35.0f : nominal_size;
-        float minimum = formation_deck_label ? 35.0f :
-                limbus_text_provenance::readable_minimum(maximum,
-                        state.has_font_size_min ? state.font_size_min : 0.0f);
-        invoke_float_setter(g_tmp_set_font_size_min_info, instance, minimum);
-        invoke_float_setter(g_tmp_set_font_size_max_info, instance, maximum);
-        invoke_float_setter(g_tmp_set_font_size_info, instance, maximum);
-        invoke_bool_setter(g_tmp_set_auto_sizing_info, instance, true);
-        if (state.has_line_spacing) {
-            invoke_float_setter(g_tmp_set_line_spacing_info, instance, state.line_spacing);
-        }
-    } else if (short_text && has_explicit_break && personality_group_name) {
-        // Only this verified card title uses fixed lines. Dialogue keeps wrapping.
-        invoke_bool_setter(g_tmp_set_word_wrapping_info, instance, false);
-        invoke_int_setter(g_tmp_set_overflow_mode_info, instance, 0);  // Overflow.
-        invoke_bool_setter(g_tmp_set_auto_sizing_info, instance, false);
-        invoke_float_setter(g_tmp_set_font_size_info, instance, state.font_size);
-        // The title's explicit line-height already controls its paragraph spacing.
-        invoke_float_setter(g_tmp_set_line_spacing_info, instance, 0.0f);
-    } else {
-        // A tall body frame must wrap even if its original Latin/Japanese text
-        // used no-wrap auto sizing. Unknown geometry keeps the existing policy.
-        const bool body_wrap = content_fitted || has_explicit_break || !short_text || rect.height > nominal_size * 1.8f ||
-                (state.has_word_wrapping && state.word_wrapping);
-        if (state.has_word_wrapping || body_wrap)
-            invoke_bool_setter(g_tmp_set_word_wrapping_info, instance, body_wrap);
-        if (state.has_overflow_mode) {
-            invoke_int_setter(g_tmp_set_overflow_mode_info, instance,
-                    body_wrap && (state.overflow_mode == 1 || state.overflow_mode == 3) ? 0 : state.overflow_mode);
-        }
-        if (state.has_line_spacing) {
-            invoke_float_setter(g_tmp_set_line_spacing_info, instance, state.line_spacing);
-        }
-        if (state.has_auto_sizing) {
-            invoke_bool_setter(g_tmp_set_auto_sizing_info, instance, state.auto_sizing);
-        }
-        if (state.has_auto_sizing && state.auto_sizing) {
-            invoke_float_setter(g_tmp_set_font_size_max_info, instance, nominal_size);
-            invoke_float_setter(g_tmp_set_font_size_min_info, instance,
-                    limbus_text_provenance::readable_minimum(nominal_size,
-                        state.has_font_size_min ? state.font_size_min : 0.0f));
-        }
-        invoke_float_setter(g_tmp_set_font_size_info, instance, nominal_size);
+    if (has_overflow) {
+        const int32_t desired = (title || (!single && body &&
+                (original_overflow == 1 || original_overflow == 3))) ? 0 : original_overflow;
+        if (current_overflow != desired) invoke_int_setter(g_tmp_set_overflow_mode_info, instance, desired);
+        state.overflow.record(desired);
     }
-
-    uint64_t decisions = g_layout_decisions.fetch_add(1, std::memory_order_relaxed) + 1;
-    if (decisions <= 20 || decisions % 500 == 0) {
-        // 诊断只记录几何和分类，不输出正文内容；用户回传日志即可判断控件为何选了单/双行。
-        LT_LOGI("TMP layout decision=%llu chars=%zu rect=%.1fx%.1f font=%.1f single=%d short=%d",
-                static_cast<unsigned long long>(decisions), visible_length,
-                rect.width, rect.height, state.font_size, single_line, short_text);
+    float current_spacing = 0;
+    if (invoke_float_getter(g_tmp_get_line_spacing_info, instance, &current_spacing)) {
+        const auto baseline = state.spacing.observe(current_spacing);
+        const auto desired = title ? 0.0f : baseline;
+        if (current_spacing != desired) invoke_float_setter(g_tmp_set_line_spacing_info, instance, desired);
+        state.spacing.record(desired);
     }
+    // Do not write size, min/max or auto-sizing here. TMP owns their live values.
+    save_tmp_layout_state(instance, state);
+    const auto decisions = g_layout_decisions.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (decisions <= 20 || decisions % 500 == 0)
+        LT_LOGI("TMP layout decision=%llu chars=%zu rect=%.1fx%.1f font=%.1f single=%d fitted=%d",
+                static_cast<unsigned long long>(decisions), visible, rect.width, rect.height, size, single, fitted);
 }
 
 void *apply_tmp_component_layout_markup(void *instance, void *managed_text) {
@@ -2789,6 +2742,19 @@ void *prepare_tmp_text(void *instance, void *managed_text, bool restore_untransl
     return replacement;
 }
 
+void replacement_tmp_set_font(void *instance, void *requested, const void *method) {
+    // The trampoline is also used by our own switch/restore calls, avoiding
+    // recursion. A game assignment alone can rebuild the mesh without parsing.
+    g_tmp_set_font(instance, requested, method);
+    static thread_local bool refreshing = false;
+    if (refreshing || !instance || !g_font_ready || requested == g_tmp_font_asset) return;
+    void *text = invoke_object_getter(g_tmp_get_text_info, instance);
+    if (!text || !(is_translated_managed_string(text) || is_choice_text(instance, text) ||
+                  is_translated_tmp_fragment(instance, text))) return;
+    struct Guard { bool &value; Guard(bool &v) : value(v) { value = true; } ~Guard() { value = false; } } guard(refreshing);
+    prepare_tmp_text(instance, text, false);
+}
+
 void finalize_tmp_text(void *instance, void *managed_text) {
     if (instance == nullptr || managed_text == nullptr ||
         !(is_translated_managed_string(managed_text) || is_choice_text(instance, managed_text))) {
@@ -2796,8 +2762,7 @@ void finalize_tmp_text(void *instance, void *managed_text) {
     }
     TmpComponentState state;
     if (find_tmp_component_state(instance, &state)) {
-        // 必须在原始 set_text/SetText 完成后再应用字号和换行；否则游戏 setter 会用
-        // 旧文本重新计算布局，导致我们设置的自动缩放没有真正处理新中文。
+        // Classify the current text after the game setter, without replacing its size policy.
         apply_translated_tmp_style(instance, managed_text, state);
     }
 }
@@ -2869,81 +2834,34 @@ void *replacement_ruby_format(void *instance, void *managed_text, const void *me
 }
 
 void apply_translated_ui_style(void *instance, void *managed_text,
-                               const UiComponentState &state) {
-    if (managed_text == nullptr || !state.has_font_size || state.font_size <= 0 ||
-        g_string_length == nullptr || g_string_chars == nullptr) {
-        return;
-    }
-    int32_t length = g_string_length(managed_text);
+                               const UiComponentState &previous) {
+    if (!managed_text || !g_string_length || !g_string_chars) return;
+    const auto length = g_string_length(managed_text);
     std::string text;
+    int32_t size = 0;
     if (length < 0 || length > 1024 * 1024 ||
-        !utf16_to_utf8(g_string_chars(managed_text), length, &text)) {
-        return;
+        !utf16_to_utf8(g_string_chars(managed_text), length, &text) ||
+        !invoke_int_getter(g_ui_get_font_size_info, instance, &size) || size <= 0) return;
+    auto state = previous;
+    int32_t horizontal = 0, vertical = 0;
+    const bool has_horizontal = invoke_int_getter(g_ui_get_horizontal_overflow_info, instance, &horizontal);
+    const bool has_vertical = invoke_int_getter(g_ui_get_vertical_overflow_info, instance, &vertical);
+    const auto original_horizontal = has_horizontal ? state.horizontal.observe(horizontal) : 0;
+    if (has_vertical) state.vertical.observe(vertical);
+    const auto visible = count_visible_codepoints(text);
+    const bool explicit_break = limbus_text_provenance::explicit_line_break(text);
+    const auto rect = read_component_rect(instance, g_ui_get_rect_transform_info);
+    const bool fitted = has_content_fitted_height(instance);
+    const bool single = limbus_text_provenance::single_line_label(visible, explicit_break,
+            original_horizontal == 1, rect.height, static_cast<float>(size), -1, fitted);
+    const bool body = fitted || explicit_break || visible > 48 || rect.height > size * 1.8f;
+    if (has_horizontal) {
+        const auto desired = single ? 1 : body ? 0 : original_horizontal;
+        if (horizontal != desired) invoke_int_setter(g_ui_set_horizontal_overflow_info, instance, desired);
+        state.horizontal.record(desired);
     }
-    size_t visible_length = count_visible_codepoints(text);
-    bool has_explicit_break = text.find('\n') != std::string::npos ||
-            text.find('\r') != std::string::npos;
-    bool short_text = visible_length <= 48;
-    ComponentRect rect = read_component_rect(instance, g_ui_get_rect_transform_info);
-    const int32_t nominal_size = static_cast<int32_t>(limbus_text_provenance::nominal_font_size(
-            static_cast<float>(state.font_size), state.has_resize_best_fit && state.resize_best_fit,
-            state.has_resize_max_size ? static_cast<float>(state.resize_max_size) : 0.0f));
-    const int32_t minimum_size = static_cast<int32_t>(std::ceil(limbus_text_provenance::readable_minimum(
-            static_cast<float>(nominal_size),
-            state.has_resize_min_size ? static_cast<float>(state.resize_min_size) : 0.0f)));
-    bool single_line = limbus_text_provenance::single_line_label(visible_length, has_explicit_break,
-            state.has_horizontal_overflow && state.horizontal_overflow == 1, rect.height,
-            static_cast<float>(nominal_size), -1,
-            short_text && !has_explicit_break && rect.height <= nominal_size * 1.8f && has_content_fitted_height(instance));
-
-    if (single_line) {
-        // Use Unity's real glyph metrics instead of a character-count estimate.
-        invoke_int_setter(g_ui_set_resize_min_size_info, instance, minimum_size);
-        invoke_int_setter(g_ui_set_resize_max_size_info, instance, nominal_size);
-        invoke_int_setter(g_ui_set_font_size_info, instance, nominal_size);
-        invoke_bool_setter(g_ui_set_resize_best_fit_info, instance, true);
-        invoke_int_setter(g_ui_set_horizontal_overflow_info, instance, 1);  // Overflow.
-        invoke_int_setter(g_ui_set_vertical_overflow_info, instance, 1);    // Overflow.
-        if (state.has_line_spacing) {
-            invoke_float_setter(g_ui_set_line_spacing_info, instance,
-                                std::max(1.0f, state.line_spacing));
-        }
-    } else if (short_text && has_explicit_break) {
-        // 汉化包明确含换行时保留原字号，并用 Unity UI 的行高倍率拉开上下距离。
-        invoke_bool_setter(g_ui_set_resize_best_fit_info, instance, false);
-        invoke_int_setter(g_ui_set_font_size_info, instance, nominal_size);
-        invoke_int_setter(g_ui_set_horizontal_overflow_info, instance, 0);  // Wrap.
-        invoke_int_setter(g_ui_set_vertical_overflow_info, instance, 1);    // Overflow.
-        invoke_float_setter(g_ui_set_line_spacing_info, instance,
-                            state.has_line_spacing ? std::max(1.24f, state.line_spacing) : 1.24f);
-    } else {
-        // Tall body controls wrap even when the original used no-wrap shrinking.
-        if (state.has_resize_best_fit) {
-            invoke_bool_setter(
-                    g_ui_set_resize_best_fit_info, instance, state.resize_best_fit);
-        }
-        if (state.has_resize_min_size) {
-            invoke_int_setter(
-                    g_ui_set_resize_min_size_info, instance, minimum_size);
-        }
-        if (state.has_resize_max_size) {
-            invoke_int_setter(
-                    g_ui_set_resize_max_size_info, instance, nominal_size);
-        }
-        if (state.has_horizontal_overflow) {
-            invoke_int_setter(g_ui_set_horizontal_overflow_info, instance,
-                              has_explicit_break || rect.height > nominal_size * 1.8f ? 0 :
-                              state.horizontal_overflow);
-        }
-        if (state.has_vertical_overflow) {
-            invoke_int_setter(
-                    g_ui_set_vertical_overflow_info, instance, state.vertical_overflow);
-        }
-        if (state.has_line_spacing) {
-            invoke_float_setter(g_ui_set_line_spacing_info, instance, state.line_spacing);
-        }
-        invoke_int_setter(g_ui_set_font_size_info, instance, nominal_size);
-    }
+    // Preserve the game's vertical mask/overflow, best-fit limits, spacing and size.
+    save_ui_layout_state(instance, state);
 }
 
 void *prepare_ui_text(void *instance, void *managed_text) {
@@ -3499,6 +3417,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
     void *rich_text_matcher_class = nullptr, *material_writer_class = nullptr;
     void *story_dialog_class = nullptr;
     void *story_data_class = nullptr;
+    void *text_data_set_class = nullptr, *gift_popup_data_class = nullptr;
     void *announcer_ui_class = nullptr;
     void *choice_scroll_class = nullptr;
     void *choice_gift_class = nullptr;
@@ -3602,6 +3521,8 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             g_buf_text_class = class_from_name(image, "", "TextData_Buf");
         if (g_battle_keyword_text_class == nullptr)
             g_battle_keyword_text_class = class_from_name(image, "", "TextData_BattleKeywords");
+        if (!text_data_set_class) text_data_set_class = class_from_name(image, "", "TextDataSet");
+        if (!gift_popup_data_class) gift_popup_data_class = class_from_name(image, "MainUI", "EgoGiftPopupData");
         if (!localize_resource_class)
             localize_resource_class = class_from_name(image, "TextAssetPatch", "TextAssetPatchManager");
         if (!text_asset_class)
@@ -4124,6 +4045,39 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 if (result) il2cpp_free(result);
                 return valid ? entry : nullptr;
             };
+            auto hook_verified = [&](void *klass, const char *name, const char *params, const char *returns,
+                                     void *replacement, void **original) {
+                const void *entry = verified_entry(klass, name, params, returns, false);
+                void *pointer = nullptr;
+                if (entry) memcpy(&pointer, entry, sizeof(pointer));
+                if (has_inline_hook_space(klass, pointer)) hook_limbus_owned_function(pointer, replacement, original);
+            };
+            tmp_set_font_fn font_trampoline = nullptr;
+            hook_verified(tmp_text_class, "set_font", "TMPro.TMP_FontAsset", "System.Void",
+                    reinterpret_cast<void *>(replacement_tmp_set_font), reinterpret_cast<void **>(&font_trampoline));
+            if (font_trampoline) g_tmp_set_font = font_trampoline;
+            hook_verified(gift_popup_data_class, "GetEgoGiftTextData", "", "TextData_EgoGift",
+                    reinterpret_cast<void *>(replacement_gift_text_data), reinterpret_cast<void **>(&g_original_gift_text_data));
+            // LOCALIZE_LANGUAGE is verified as an Int32 enum, not assumed from its name.
+            for (size_t slot = 0; slot < 2; ++slot) {
+                const char *name = slot ? "LoadRemote" : "LoadLocal";
+                const auto entry = verified_entry(text_data_set_class, name, "LOCALIZE_LANGUAGE", "System.Void", false);
+                void *language = entry && class_from_type ? class_from_type(method_get_param(entry, 0)) : nullptr;
+                const void *value = language && class_is_enum && class_is_enum(language) && class_get_field_from_name ?
+                        class_get_field_from_name(language, "value__") : nullptr;
+                char *type = value && field_get_type ? type_get_name(field_get_type(value)) : nullptr;
+                const bool valid = type && strcmp(type, "System.Int32") == 0;
+                if (type) il2cpp_free(type);
+                if (valid) hook_verified(text_data_set_class, name, "LOCALIZE_LANGUAGE", "System.Void",
+                        slot ? reinterpret_cast<void *>(replacement_localization_load<1>) :
+                               reinterpret_cast<void *>(replacement_localization_load<0>),
+                        reinterpret_cast<void **>(&g_original_localization_load[slot]));
+            }
+            char boundaries[128];
+            snprintf(boundaries, sizeof(boundaries), "font_reassign=%d localization_load=%d/%d gift_model=%d",
+                    font_trampoline != nullptr, g_original_localization_load[0] != nullptr,
+                    g_original_localization_load[1] != nullptr, g_original_gift_text_data != nullptr);
+            append_native_metadata("font-state.log", boundaries);
             std::unordered_map<void *, std::pair<std::string, void *>> rich_installed;
             auto hook_rich = [&](const char *name, const char *parameters, void *replacement, void **original) {
                 const void *entry = verified_entry(rich_text_matcher_class, name, parameters, "System.String", true);
@@ -4262,6 +4216,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             }
             return nullptr;
         };
+        g_tmp_base_size_field = choice_field(tmp_text_class, "m_fontSizeBase", "System.Single");
         g_choice_result_log_field = choice_field(g_choice_result_log_class, "_resultLog", "System.String");
         g_choice_button_text_field = choice_field(choice_button_class, "tmp_button", "TMPro.TextMeshProUGUI");
         g_choice_button_result_field = choice_field(choice_button_class, "_activeResultDesc", "TMPro.TextMeshProUGUI");
@@ -4295,6 +4250,13 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         if (g_notice_body_field)
             hook_choice_method(notice_body_class, "SetData", "System.String", "System.Void",
                     reinterpret_cast<void *>(replacement_notice_set_data), reinterpret_cast<void **>(&g_original_notice_set_data));
+        if (g_choice_content_field) {
+            hook_choice_method(choice_scroll_class, "ReadingContent", "System.String,System.Boolean",
+                    "System.Collections.IEnumerator", reinterpret_cast<void *>(replacement_choice_content<0>),
+                    reinterpret_cast<void **>(&g_original_choice_content[0]));
+            hook_choice_method(choice_scroll_class, "OnDisable", "", "System.Void",
+                    reinterpret_cast<void *>(replacement_choice_disable), reinterpret_cast<void **>(&g_original_choice_disable));
+        }
         if (g_choice_content_field)
             hook_choice_method(choice_scroll_class, "SetText", "System.String", "System.Void",
                     reinterpret_cast<void *>(replacement_choice_set_text), reinterpret_cast<void **>(&g_original_choice_set_text));
@@ -4304,6 +4266,16 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         for (const char *list_type : {"System.Collections.Generic.List<ChoiceEventResultLog>",
                                      "System.Collections.Generic.List`1<ChoiceEventResultLog>"}) {
             if (!g_choice_result_log_field) break;
+            if (g_choice_content_field) {
+                const auto signature = std::string(list_type) + ",System.Boolean";
+                if (!g_original_choice_content[1]) hook_choice_method(choice_scroll_class, "ReadingContent",
+                        signature.c_str(), "System.Collections.IEnumerator",
+                        reinterpret_cast<void *>(replacement_choice_content<1>), reinterpret_cast<void **>(&g_original_choice_content[1]));
+                if (!g_original_choice_content[2] && choice_gift_class && class_get_parent && class_get_parent(choice_gift_class) == choice_scroll_class)
+                    hook_choice_method(choice_gift_class, "ReadingContent", signature.c_str(), "System.Collections.IEnumerator",
+                        reinterpret_cast<void *>(replacement_choice_content<2>), reinterpret_cast<void **>(&g_original_choice_content[2]));
+            }
+
             if (!g_original_choice_read_list) {
                 auto signature = std::string("TMPro.TextMeshProUGUI,") + list_type;
                 hook_choice_method(choice_scroll_class, "ReadingOneLineAtATime", signature.c_str(), "System.Collections.IEnumerator",
@@ -4335,6 +4307,11 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 g_original_choice_button != nullptr, g_choice_result_log_field != nullptr,
                 g_original_choice_read_gift != nullptr, g_original_choice_set_text != nullptr, g_original_notice_set_data != nullptr);
         append_native_metadata("font-state.log", choice_hooks);
+        snprintf(choice_hooks, sizeof(choice_hooks), "choice_content string=%d list=%d gift=%d disable=%d",
+                g_original_choice_content[0] != nullptr, g_original_choice_content[1] != nullptr,
+                g_original_choice_content[2] != nullptr, g_original_choice_disable != nullptr);
+        append_native_metadata("font-state.log", choice_hooks);
+
         for (void *choice_class : {choice_scroll_class, choice_button_class}) {
         if (choice_class && class_get_methods && method_get_name && method_get_param_count &&
             method_get_param && type_get_name && il2cpp_free) {

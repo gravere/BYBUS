@@ -63,6 +63,8 @@ using Set = void (*)(void *, void *, const void *);
 Read g_original_choice_read_string, g_original_choice_read_list, g_original_choice_read_gift;
 Set g_original_choice_set_total, g_original_choice_set_text;
 void (*g_original_choice_clear)(void *, const void *);
+void (*g_original_choice_disable)(void *, const void *);
+void *(*g_original_choice_content[3])(void *, void *, bool, const void *);
 void (*g_original_choice_button)(void *, int32_t, void *, void *, const void *);
 #include "runtime-flow-under-test.inc"
 
@@ -83,6 +85,10 @@ void set(void *owner, void *, const void *) {
 void clear(void *, const void *) { ++calls; }
 void button(void *owner, int32_t index, void *, void *, const void *) {
     assert(index == 2 && is_choice_text(static_cast<Object *>(owner)->body, &probe)); ++calls;
+}
+void *content(void *owner, void *source, bool add, const void *) {
+    assert(add && is_choice_text(static_cast<Object *>(owner)->body, &probe));
+    ++calls; return source;
 }
 int main() {
     g_original_choice_read_string = g_original_choice_read_list = g_original_choice_read_gift = read;
@@ -111,5 +117,19 @@ int main() {
     replacement_choice_clear(&owner, nullptr);
     assert(!is_choice_text(&target, &probe));
     assert(calls == 6);
+    // Public entries establish the complete source before deferred/inlined readers.
+    for (auto &entry : g_original_choice_content) entry = content;
+    g_original_choice_disable = clear;
+    full = codec.from_bytes("机器人吃力地举起双臂。终端上显示出这样的话。");
+    g_font_catalogue.add(codec.to_bytes(full)); probe = u"吃力地举";
+    replacement_choice_content<0>(&owner, &full, true, nullptr);
+    assert(is_choice_text(&target, &probe));
+    assert(!is_choice_text(&second, &probe));
+    assert(!g_font_catalogue.contains(codec.to_bytes(probe)));
+    replacement_choice_content<1>(&owner, &list, true, nullptr);
+    replacement_choice_content<2>(&owner, &list, true, nullptr);
+    replacement_choice_disable(&owner, nullptr);
+    assert(!is_choice_text(&target, &probe));
+    assert(calls == 10);
     puts("Production event entries: base/derived, direct/skip, target identity, reset and paragraph proof passed");
 }

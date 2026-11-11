@@ -19,7 +19,7 @@ struct TmpComponentState {
     uint32_t padded_crc = 0;
     bool has_padded_crc = false;
 };
-struct Component { int id; void *font; bool alive = true; void *material = nullptr; int padding_updates = 0; int redraws = 0; };
+struct Component { int id; void *font; bool alive = true; void *material = nullptr; int padding_updates = 0; int redraws = 0; void *text = nullptr; };
 struct Preset {
     int style = 0;
     float outline_width = 0, underlay_x = 0, underlay_y = 0, underlay_alpha = 0, face_dilate = 0;
@@ -37,7 +37,10 @@ std::mutex g_font_state_lock;
 #define pthread_mutex_unlock(p) (p)->unlock()
 int chinese_font, chinese_material, japanese_font, conversion_method, retain_method, release_method;
 int texture_method, padding_method, chinese_texture, japanese_texture, crc_method;
-int writer_get_text_method, dirty_method;
+int writer_get_text_method, dirty_method, text_method;
+const void *g_tmp_get_text_info = &text_method;
+bool g_font_ready = true;
+void *game_font_material = nullptr;
 struct MaterialWriter { Component *text; Preset *cached; float outline, alpha, dilate; };
 const void *g_material_writer_get_text_info = &writer_get_text_method;
 void write_material(void *object, const void *) {
@@ -83,6 +86,7 @@ bool find_tmp_component_state(void *instance, TmpComponentState *out) {
     return true;
 }
 void *invoke_object_getter(const void *method, void *object) {
+    if (method == g_tmp_get_text_info) return static_cast<Component *>(object)->text;
     if (method == g_material_writer_get_text_info) return static_cast<MaterialWriter *>(object)->text;
     if (method == g_tmp_get_shared_material_info) return static_cast<Component *>(object)->material;
     assert(object == g_tmp_font_asset);
@@ -156,7 +160,7 @@ bool remember_translated_text(void *, const std::string &) { assert(false); retu
 void *apply_tmp_component_layout_markup(void *, void *text) { return text; }
 limbus_font_proof::Catalogue fonts;
 bool is_translated_managed_string(void *text) { return fonts.contains(codec.to_bytes(*static_cast<std::u16string *>(text))); }
-bool is_translated_tmp_fragment(void *, void *, std::vector<void *> *) { return false; }
+bool is_translated_tmp_fragment(void *, void *, std::vector<void *> * = nullptr) { return false; }
 namespace limbus_ui_labels { std::string translate_status(const std::string &) { return {}; } }
 bool capture_tmp_component_state(void *object, void *font, TmpComponentState *out) {
     TmpComponentState state;
@@ -168,7 +172,7 @@ bool capture_tmp_component_state(void *object, void *font, TmpComponentState *ou
 }
 void set_font(void *object, void *font, const void *) {
     static_cast<Component *>(object)->font = font;
-    static_cast<Component *>(object)->material = &chinese_material;
+    static_cast<Component *>(object)->material = font == g_tmp_font_asset ? &chinese_material : game_font_material;
 }
 auto g_tmp_set_font = set_font;
 void invoke_object_setter(const void *, void *object, void *material) {
@@ -182,6 +186,7 @@ uint64_t g_translation_hits = 0;
 #define __atomic_add_fetch(p, n, order) (*(p) += (n))
 #define __ATOMIC_RELAXED 0
 #include "runtime-prepare-text-under-test.inc"
+#include "runtime-font-refresh-under-test.inc"
 
 void forget(Component &component) {
     TmpComponentState saved;
@@ -336,5 +341,24 @@ int main() {
     replacement_material_write(&writer, nullptr);
     assert(untouched.material == &normal && untouched.padding_updates == 0);
     assert(untouched.font == &japanese_font);
+    // Follow the complete production font setter -> text preparation -> material
+    // conversion chain, without relying on another text assignment or parse.
+    Component rebound{901, &japanese_font};
+    Preset initial{91}, changed{92}; changed.outline_width = .2f; changed.underlay_alpha = .6f;
+    auto caption = codec.from_bytes("经验"); rebound.text = &caption; rebound.material = &initial;
+    prepare_tmp_text(&rebound, &caption);
+    assert(rebound.font == &chinese_font);
+    game_font_material = &changed;
+    replacement_tmp_set_font(&rebound, &japanese_font, nullptr);
+    assert(rebound.font == &chinese_font);
+    auto painted = static_cast<Converted *>(rebound.material);
+    assert(painted->chinese_atlas && painted->style == 92 && painted->outline_width == .2f && painted->underlay_alpha == .6f);
+    TmpComponentState restore;
+    assert(find_tmp_component_state(&rebound, &restore));
+    assert(restore.font == &japanese_font && restore.shared_material == &changed);
+    forget(rebound); restore = {};
+    caption = codec.from_bytes("未知原文");
+    replacement_tmp_set_font(&rebound, &japanese_font, nullptr);
+    assert(rebound.font == &japanese_font && rebound.material == &changed);
     puts("Material styles, live sharing, cache boundary, destruction and failure fallback passed");
 }
