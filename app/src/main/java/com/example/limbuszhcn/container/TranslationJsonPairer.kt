@@ -11,13 +11,6 @@ internal object TranslationJsonPairer {
     }
 
     fun pair(path: String, originalJson: String, translationJson: String): Result {
-        fun parse(text: String): Any {
-            val tokener = JSONTokener(text.removePrefix("\uFEFF"))
-            val root = tokener.nextValue()
-            require(root is JSONObject || root is JSONArray) { "Resource root must be an object or array" }
-            require(tokener.nextClean() == '\u0000') { "Trailing data in resource" }
-            return root
-        }
         val original = parse(originalJson)
         val translation = parse(translationJson)
         val records = mutableListOf<TranslationIndexRecord>()
@@ -27,6 +20,32 @@ internal object TranslationJsonPairer {
         }
         collect(original, translation, path, "$", records, 0)
         return Result(records, sourceFields, records.size)
+    }
+
+    /** Merge only the display leaves accepted by the exact same identity policy as the index. */
+    fun merge(path: String, originalJson: String, translationJson: String): String? {
+        val original = parse(originalJson)
+        val translation = parse(translationJson)
+        val records = mutableListOf<TranslationIndexRecord>()
+        val edits = mutableListOf<() -> Unit>()
+        collect(original, translation, path, "$", records, 0, edits = edits)
+        edits.forEach { it() }
+        return if (records.any { it.source != it.translation }) original.toString() else null
+    }
+
+    fun releasedTexts(path: String, json: String): List<String> {
+        val value = parse(json)
+        val records = mutableListOf<TranslationIndexRecord>()
+        collect(value, value, path, "$", records, 0)
+        return records.map { it.translation }
+    }
+
+    private fun parse(text: String): Any {
+        val tokener = JSONTokener(text.removePrefix("\uFEFF"))
+        val root = tokener.nextValue()
+        require(root is JSONObject || root is JSONArray) { "Resource root must be an object or array" }
+        require(tokener.nextClean() == '\u0000') { "Trailing data in resource" }
+        return root
     }
 
     private fun isExplicitlyEmpty(value: Any): Boolean = when (value) {
@@ -53,7 +72,7 @@ internal object TranslationJsonPairer {
                         records: MutableList<TranslationIndexRecord>, depth: Int,
                         displayArray: String? = null, arrayOwnerId: String? = null,
                         skillContext: String? = null, skillRelation: String? = null,
-                        objectScope: String? = null) {
+                        objectScope: String? = null, edits: MutableList<() -> Unit>? = null) {
         require(depth <= 64) { "Resource nesting exceeds limit" }
         when {
             original is JSONObject && translated is JSONObject -> {
@@ -90,7 +109,7 @@ internal object TranslationJsonPairer {
                     if (field == "simpleDesc" && tableScope?.startsWith("@ego-gift:") == true && !tableScope.contains('/')) {
                         if (source is JSONArray && target is JSONArray) {
                             collectGiftAbilities(source, target, path, "$objectContext.$field",
-                                records, depth + 1, tableScope)
+                                records, depth + 1, tableScope, edits)
                         }
                         return@forEach
                     }
@@ -100,7 +119,7 @@ internal object TranslationJsonPairer {
                     if ((eventOptions || guideStories || rpgDialogue) && tableScope != null && !tableScope.contains('/')) {
                         if (source is JSONArray && target is JSONArray) {
                             collectTableChildren(source, target, path, "$objectContext.$field", records,
-                                depth + 1, tableScope, if (guideStories) "level" else if (rpgDialogue) "index" else null)
+                                depth + 1, tableScope, if (guideStories) "level" else if (rpgDialogue) "index" else null, edits)
                         }
                         return@forEach
                     }
@@ -108,10 +127,11 @@ internal object TranslationJsonPairer {
                         TranslationTextPolicy.isDisplayField(field) &&
                         TranslationTextPolicy.isUsableDisplayText(source) && TranslationTextPolicy.isUsableDisplayText(target)) {
                         records += TranslationIndexRecord(path, objectContext, field, source, target, stableId)
+                        edits?.add { original.put(field, target) }
                     } else if (source is JSONObject || source is JSONArray) {
                         collect(source, target, path, "$objectContext.$field", records, depth + 1,
                             field.takeIf { it in TranslationTextPolicy.STRING_ARRAY_FIELDS }, stableId,
-                            skillRoot.takeIf { field.lowercase() in SKILL_CHILD_FIELDS }, field.lowercase())
+                            skillRoot.takeIf { field.lowercase() in SKILL_CHILD_FIELDS }, field.lowercase(), edits = edits)
                     }
                 }
             }
@@ -128,6 +148,7 @@ internal object TranslationJsonPairer {
                             TranslationTextPolicy.isUsableDisplayText(target)) {
                             records += TranslationIndexRecord(path, "$context[$index]", displayArray,
                                 source, target, arrayOwnerId)
+                            edits?.add { original.put(index, target) }
                         }
                     }
                     return
@@ -164,7 +185,7 @@ internal object TranslationJsonPairer {
                         }
                     }?.takeIf { it.length <= 256 }
                     collect(source, target, path, "$context[$index]", records, depth + 1,
-                        skillContext = nestedSkill)
+                        skillContext = nestedSkill, edits = edits)
                 }
             }
         }
@@ -172,7 +193,7 @@ internal object TranslationJsonPairer {
 
     private fun collectGiftAbilities(original: JSONArray, translated: JSONArray, path: String,
                                      context: String, records: MutableList<TranslationIndexRecord>,
-                                     depth: Int, parent: String) {
+                                     depth: Int, parent: String, edits: MutableList<() -> Unit>?) {
         fun groups(array: JSONArray) = (0 until array.length()).mapNotNull { index ->
             array.optJSONObject(index)?.let { row ->
                 row.opt("abilityID")?.toString()?.takeIf { it.isSkillNumber() }?.let { it to row }
@@ -191,13 +212,13 @@ internal object TranslationJsonPairer {
             // Ability IDs are metadata, not a license to pair changed structures.
             if (!equivalentJson(nonDisplayMetadata(source), nonDisplayMetadata(target))) continue
             collect(source, target, path, "$context[$index]", records, depth + 1,
-                objectScope = "$parent/ability:$id")
+                objectScope = "$parent/ability:$id", edits = edits)
         }
     }
 
     private fun collectTableChildren(original: JSONArray, translated: JSONArray, path: String,
                                      context: String, records: MutableList<TranslationIndexRecord>,
-                                     depth: Int, parent: String, identityField: String?) {
+                                     depth: Int, parent: String, identityField: String?, edits: MutableList<() -> Unit>?) {
         if (identityField == null && original.length() != translated.length()) return
         fun identities(array: JSONArray) = (0 until array.length()).mapNotNull { index ->
             array.optJSONObject(index)?.let { row ->
@@ -219,7 +240,7 @@ internal object TranslationJsonPairer {
                 "index" -> "$parent/text:$identity"
                 else -> "$parent/option:$index"
             }
-            collect(source, target, path, "$context[$index]", records, depth + 1, objectScope = key)
+            collect(source, target, path, "$context[$index]", records, depth + 1, objectScope = key, edits = edits)
         }
     }
 

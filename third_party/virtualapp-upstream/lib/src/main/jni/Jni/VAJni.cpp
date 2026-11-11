@@ -40,9 +40,9 @@ static jint jni_nativeMaintainLimbusAppSealingPatches(JNIEnv *env, jclass clazz)
 }
 
 static void jni_nativeConfigureLimbusTranslationRuntime(JNIEnv *env, jclass clazz,
-                                                        jstring activeIndexPointer) {
+                                                        jstring activeIndexPointer, jboolean liveResources) {
     ScopeUtfString pointer(activeIndexPointer);
-    configure_limbus_translation_runtime(pointer.c_str());
+    configure_limbus_translation_runtime(pointer.c_str(), liveResources == JNI_TRUE);
 }
 
 
@@ -188,7 +188,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *_vm, void *) {
             {"nativeHookLimbusFindClass",              "()V",                                                         (void *) jni_nativeHookLimbusFindClass},
             {"nativeScanLimbusNativeSyscalls",         "(Ljava/lang/String;)V",                                       (void *) jni_nativeScanLimbusNativeSyscalls},
             {"nativeMaintainLimbusAppSealingPatches",  "()I",                                                        (void *) jni_nativeMaintainLimbusAppSealingPatches},
-            {"nativeConfigureLimbusTranslationRuntime", "(Ljava/lang/String;)V",                                      (void *) jni_nativeConfigureLimbusTranslationRuntime},
+            {"nativeConfigureLimbusTranslationRuntime", "(Ljava/lang/String;Z)V",                                     (void *) jni_nativeConfigureLimbusTranslationRuntime},
             {"nativeReverseRedirectedPath",            "(Ljava/lang/String;)Ljava/lang/String;",                      (void *) jni_nativeReverseRedirectedPath},
             {"nativeGetRedirectedPath",                "(Ljava/lang/String;)Ljava/lang/String;",                      (void *) jni_nativeGetRedirectedPath},
             {"nativeIORedirect",                       "(Ljava/lang/String;Ljava/lang/String;)V",                     (void *) jni_nativeIORedirect},
