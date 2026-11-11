@@ -4297,7 +4297,7 @@ void *replacement_il2cpp_init(const char *domain_name) {
     const bool resolved = resolver.ready() && report_il2cpp_resolver(resolver, true);
     pthread_mutex_lock(&g_lock);
     g_resolver_reported = resolved;
-    write_runtime_receipt(g_index.empty() ? "no_index"
+    write_runtime_receipt((g_index.empty() && !g_live_resources) ? "no_index"
             : (resolved && g_hook_installed ? "hooks_installed" : "hook_setup_incomplete"));
     pthread_mutex_unlock(&g_lock);
     LT_LOGI("IL2CPP init boundary domain=%p translationReady=%d resolver=loaded-handle", domain, resolved);
