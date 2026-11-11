@@ -228,6 +228,16 @@ typedef void *(*ruby_format_fn)(void *, void *, const void *);
 ruby_format_fn g_original_ruby_format[3] = {};
 void *g_ruby_text_classes[3] = {};
 thread_local bool g_inside_ruby_format = false;
+typedef void *(*rich_text_one_fn)(void *, const void *);
+typedef void *(*rich_text_all_fn)(void *, bool, const void *);
+typedef void *(*rich_text_color_fn)(void *, void *, const void *);
+typedef void *(*rich_text_skill_fn)(void *, bool, bool, const void *);
+rich_text_one_fn g_original_rich_text_one[3] = {};
+rich_text_all_fn g_original_rich_text_all = nullptr;
+rich_text_color_fn g_original_rich_text_color = nullptr;
+rich_text_skill_fn g_original_rich_text_skill = nullptr;
+tmp_parse_input_fn g_original_material_write = nullptr;
+const void *g_material_writer_get_text_info = nullptr;
 typedef void *(*class_get_parent_fn)(void *);
 typedef const void *(*class_get_fields_fn)(void *, void **);
 typedef const char *(*field_get_name_fn)(const void *);
@@ -2330,6 +2340,14 @@ void refresh_tmp_component_material(void *instance) {
     }
 }
 
+void replacement_material_write(void *instance, const void *method) {
+    g_original_material_write(instance, method);
+    if (!instance || !g_tmp_font_asset || !g_tmp_get_font || !g_material_writer_get_text_info) return;
+    void *text = invoke_object_getter(g_material_writer_get_text_info, instance);
+    if (text && g_tmp_get_font(text, g_tmp_get_font_info) == g_tmp_font_asset)
+        refresh_tmp_component_material(text);
+}
+
 void replacement_tmp_set_shared_material(void *instance, void *material, const void *method) {
     g_original_tmp_set_shared_material(
             instance, translated_tmp_material(instance, material), method);
@@ -2708,6 +2726,41 @@ void finalize_tmp_text(void *instance, void *managed_text) {
         // 旧文本重新计算布局，导致我们设置的自动缩放没有真正处理新中文。
         apply_translated_tmp_style(instance, managed_text, state);
     }
+}
+
+template<class Format>
+void *carry_rich_text_provenance(void *input, Format format) {
+    // Only this verified game formatter can carry the whole input's identity
+    // through inserted sprites/links and style macros. Never strip those tags
+    // from an arbitrary string or change the formatter's text/arguments/output.
+    const bool translated = input && is_translated_managed_string(input);
+    void *result = format();
+    if (!translated || !result || !g_string_length || !g_string_chars) return result;
+    const auto length = g_string_length(result);
+    std::string text;
+    if (length > 0 && length <= 65536 && utf16_to_utf8(g_string_chars(result), length, &text)) {
+        pthread_mutex_lock(&g_font_state_lock);
+        remember_translated_text(result, text);
+        pthread_mutex_unlock(&g_font_state_lock);
+    }
+    return result;
+}
+
+template<size_t Slot>
+void *replacement_rich_text_one(void *text, const void *method) {
+    return carry_rich_text_provenance(text, [&] { return g_original_rich_text_one[Slot](text, method); });
+}
+
+void *replacement_rich_text_all(void *text, bool gray, const void *method) {
+    return carry_rich_text_provenance(text, [&] { return g_original_rich_text_all(text, gray, method); });
+}
+
+void *replacement_rich_text_color(void *text, void *color, const void *method) {
+    return carry_rich_text_provenance(text, [&] { return g_original_rich_text_color(text, color, method); });
+}
+
+void *replacement_rich_text_skill(void *text, bool gray, bool highlight, const void *method) {
+    return carry_rich_text_provenance(text, [&] { return g_original_rich_text_skill(text, gray, highlight, method); });
 }
 
 template<size_t Slot>
@@ -3343,6 +3396,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
     const void *tmp_set_text_one_method = nullptr;
     const void *tmp_set_text_string_method = nullptr;
     void *tmp_text_class = nullptr;
+    void *rich_text_matcher_class = nullptr, *material_writer_class = nullptr;
     void *story_dialog_class = nullptr;
     void *story_data_class = nullptr;
     void *announcer_ui_class = nullptr;
@@ -3453,6 +3507,10 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             ui_loader_class = class_from_name(image, "", "UITextDataLoader");
         if (ui_parameter_loader_class == nullptr)
             ui_parameter_loader_class = class_from_name(image, "", "UITextDataLoaderWithParameters");
+        if (!rich_text_matcher_class)
+            rich_text_matcher_class = class_from_name(image, "UI.Utility", "TMProStringMatcher");
+        if (!material_writer_class)
+            material_writer_class = class_from_name(image, "", "TextMeshProMaterialSetter");
         if (announcer_ui_class == nullptr)
             announcer_ui_class = class_from_name(image, "BattleUI.Announcer", "BattleAnnouncerUI");
         if (choice_scroll_class == nullptr)
@@ -3940,6 +3998,60 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                     *(position + 1) - address >= ((address & 7u) ? 20u : 16u);
         };
         if (method_get_class && method_is_generic && method_get_flags && method_get_return_type) {
+            auto verified_entry = [&](void *klass, const char *name, const char *parameters,
+                                      const char *returns, bool is_static) -> const void * {
+                const void *entry = find_method_by_signature(klass, name, parameters);
+                uint32_t implementation = 0;
+                if (!klass || !entry || method_get_class(entry) != klass || method_is_generic(entry) ||
+                    ((method_get_flags(entry, &implementation) & 0x0010u) != 0) != is_static) return nullptr;
+                char *result = type_get_name(method_get_return_type(entry));
+                const bool valid = result && strcmp(result, returns) == 0;
+                if (result) il2cpp_free(result);
+                return valid ? entry : nullptr;
+            };
+            std::unordered_map<void *, std::pair<std::string, void *>> rich_installed;
+            auto hook_rich = [&](const char *name, const char *parameters, void *replacement, void **original) {
+                const void *entry = verified_entry(rich_text_matcher_class, name, parameters, "System.String", true);
+                if (!entry) return;
+                void *pointer = nullptr;
+                memcpy(&pointer, entry, sizeof(pointer));
+                if (!has_inline_hook_space(rich_text_matcher_class, pointer)) return;
+                const auto prior = rich_installed.find(pointer);
+                if (prior != rich_installed.end()) {
+                    if (prior->second.first == parameters) *original = prior->second.second;
+                    return;
+                }
+                hook_limbus_owned_function(pointer, replacement, original);
+                if (*original) rich_installed.emplace(pointer, std::make_pair(std::string(parameters), *original));
+            };
+            hook_rich("GetAppliedAllRichText", "System.String,System.Boolean",
+                    reinterpret_cast<void *>(replacement_rich_text_all), reinterpret_cast<void **>(&g_original_rich_text_all));
+            hook_rich("GetHighlightedEgoGiftString", "System.String",
+                    reinterpret_cast<void *>(replacement_rich_text_one<0>), reinterpret_cast<void **>(&g_original_rich_text_one[0]));
+            hook_rich("GetApplySpriteAndLinkAndColorString", "System.String",
+                    reinterpret_cast<void *>(replacement_rich_text_one<1>), reinterpret_cast<void **>(&g_original_rich_text_one[1]));
+            hook_rich("GetColorMappedLinkedString", "System.String,System.String",
+                    reinterpret_cast<void *>(replacement_rich_text_color), reinterpret_cast<void **>(&g_original_rich_text_color));
+            hook_rich("GetBuffMatchedString", "System.String",
+                    reinterpret_cast<void *>(replacement_rich_text_one<2>), reinterpret_cast<void **>(&g_original_rich_text_one[2]));
+            hook_rich("GetSkillTagMatchedString", "System.String,System.Boolean,System.Boolean",
+                    reinterpret_cast<void *>(replacement_rich_text_skill), reinterpret_cast<void **>(&g_original_rich_text_skill));
+            const void *writer = verified_entry(material_writer_class, "WriteMaterialProperty", "", "System.Void", false);
+            g_material_writer_get_text_info = verified_entry(material_writer_class, "get_Text", "", "TMPro.TMP_Text", false);
+            if (writer && g_material_writer_get_text_info) {
+                void *pointer = nullptr;
+                memcpy(&pointer, writer, sizeof(pointer));
+                if (has_inline_hook_space(material_writer_class, pointer))
+                    hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement_material_write),
+                            reinterpret_cast<void **>(&g_original_material_write));
+            }
+            char shared_hooks[128];
+            snprintf(shared_hooks, sizeof(shared_hooks), "shared_text_refresh rich=%d gift=%d sprite=%d color=%d buff=%d skill=%d material=%d",
+                    g_original_rich_text_all != nullptr, g_original_rich_text_one[0] != nullptr,
+                    g_original_rich_text_one[1] != nullptr, g_original_rich_text_color != nullptr,
+                    g_original_rich_text_one[2] != nullptr, g_original_rich_text_skill != nullptr,
+                    g_original_material_write != nullptr);
+            append_native_metadata("font-state.log", shared_hooks);
             ruby_format_fn replacements[] = {replacement_ruby_format<0>, replacement_ruby_format<1>, replacement_ruby_format<2>};
             std::unordered_map<void *, ruby_format_fn> installed;
             for (size_t slot = 0; slot < 3; ++slot) {

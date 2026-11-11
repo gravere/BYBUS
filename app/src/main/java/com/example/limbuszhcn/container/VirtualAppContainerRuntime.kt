@@ -89,9 +89,9 @@ class VirtualAppContainerRuntime(
         VirtualAppSession(context).snapshot().resumableTasks.isNotEmpty()
     }.onFailure { Log.w(TAG, "Unable to inspect existing game session", it) }.getOrDefault(false)
 
-    override fun resumeGameIfRunning(): Boolean {
+    override fun resumeGameIfRunning(allowMove: () -> Boolean): Boolean {
         bridge.requireAvailable()
-        return VirtualAppSession(context).resume().also { resumed ->
+        return VirtualAppSession(context).resume(allowMove).also { resumed ->
             if (resumed) Log.i(TAG, "Resumed existing game task; retained process and active translation")
         }
     }

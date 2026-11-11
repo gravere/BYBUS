@@ -37,6 +37,16 @@ std::mutex g_font_state_lock;
 #define pthread_mutex_unlock(p) (p)->unlock()
 int chinese_font, chinese_material, japanese_font, conversion_method, retain_method, release_method;
 int texture_method, padding_method, chinese_texture, japanese_texture, crc_method;
+int writer_get_text_method;
+struct MaterialWriter { Component *text; Preset *cached; float outline, alpha, dilate; };
+const void *g_material_writer_get_text_info = &writer_get_text_method;
+void write_material(void *object, const void *) {
+    auto &writer = *static_cast<MaterialWriter *>(object);
+    writer.cached->outline_width = writer.outline;
+    writer.cached->underlay_alpha = writer.alpha;
+    writer.cached->face_dilate = writer.dilate;
+}
+auto g_original_material_write = write_material;
 void *g_tmp_font_asset = &chinese_font;
 const void *g_tmp_get_font_info = &chinese_font;
 const void *g_tmp_set_font_info = &japanese_font;
@@ -72,6 +82,7 @@ bool find_tmp_component_state(void *instance, TmpComponentState *out) {
     return true;
 }
 void *invoke_object_getter(const void *method, void *object) {
+    if (method == g_material_writer_get_text_info) return static_cast<MaterialWriter *>(object)->text;
     if (method == g_tmp_get_shared_material_info) return static_cast<Component *>(object)->material;
     assert(object == g_tmp_font_asset);
     return &chinese_material;
@@ -246,13 +257,21 @@ int main() {
     assert(rendered.padding_updates == 1);
     prepare_tmp_text(&rendered, &text);
     assert(rendered.padding_updates == 1); // Unchanged parsing must not re-dirty Ruby/layout.
+    // The shared game component cached the source before the font switch.
+    // Its write must refresh the visible clone even with no text parse/setter.
+    MaterialWriter writer{&rendered, &normal, .31f, .72f, .08f};
+    replacement_material_write(&writer, nullptr);
+    assert(visible->outline_width == .31f && visible->underlay_alpha == .72f && visible->face_dilate == .08f);
+    assert(rendered.padding_updates == 2);
+    replacement_material_write(&writer, nullptr);
+    assert(rendered.padding_updates == 2); // No perpetual geometry invalidation.
     // A material-array or internal Unity assignment bypasses the singular setter.
     rendered.material = &selected;
     prepare_tmp_text(&rendered, &text);
     assert(rendered.material != &selected);
     visible = static_cast<Converted *>(rendered.material);
     assert(visible->style == 20 && visible->outline_width == .25f && visible->keywords == 3);
-    assert(rendered.padding_updates == 2);
+    assert(rendered.padding_updates == 3);
     TmpComponentState saved;
     assert(find_tmp_component_state(&rendered, &saved) && saved.shared_material == &selected);
     saved = {};
@@ -266,6 +285,9 @@ int main() {
     assert(rendered.material == &local);
     assert(converted_cache.size() == conversions_before_local);
     assert(local.style == 30 && local.underlay_alpha == .2f && local.face_dilate == .1f);
+    writer = {&rendered, &local, .35f, .2f, .1f};
+    replacement_material_write(&writer, nullptr);
+    assert(rendered.material == &local && local.outline_width == .35f);
     assert(find_tmp_component_state(&rendered, &saved) && saved.shared_material == &selected);
     saved = {};
     local.underlay_alpha = .1f;
@@ -304,5 +326,11 @@ int main() {
     assert(restore_calls == restored_before + 1);
     forget(thread_dialog);
     assert(retained == released);
+    Component untouched{302, &japanese_font};
+    untouched.material = &normal;
+    writer = {&untouched, &normal, .2f, .4f, .05f};
+    replacement_material_write(&writer, nullptr);
+    assert(untouched.material == &normal && untouched.padding_updates == 0);
+    assert(untouched.font == &japanese_font);
     puts("Material styles, live sharing, cache boundary, destruction and failure fallback passed");
 }
