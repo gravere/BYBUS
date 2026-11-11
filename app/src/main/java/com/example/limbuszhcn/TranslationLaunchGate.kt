@@ -2,12 +2,11 @@ package com.example.limbuszhcn
 
 import com.example.limbuszhcn.gamefs.PatchInstallSummary
 
-internal enum class TranslationLaunchMode { Localized, NeedsResources, ResourcePreparation }
+internal enum class TranslationLaunchMode { Localized, NeedsResources }
 
-/** A downloaded archive or startup-only index is never a localized game launch. */
+/** Live resources are ready before the first download; a startup-only index is insufficient. */
 internal fun translationLaunchMode(active: PatchInstallSummary?, prepareResources: Boolean): TranslationLaunchMode =
     when {
-        active?.indexActivated == true -> TranslationLaunchMode.Localized
-        prepareResources -> TranslationLaunchMode.ResourcePreparation
+        active?.liveResourcesReady == true || active?.indexActivated == true -> TranslationLaunchMode.Localized
         else -> TranslationLaunchMode.NeedsResources
     }

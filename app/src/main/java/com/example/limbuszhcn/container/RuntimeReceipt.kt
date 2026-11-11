@@ -13,7 +13,8 @@ import kotlin.io.path.writeText
 internal class RuntimeReceipt(private val indexRoot: Path) {
     fun beginLaunch() {
         Files.createDirectories(indexRoot)
-        val mode = TranslationIndexStore(indexRoot).selectRuntimeIndex()
+        val indexMode = TranslationIndexStore(indexRoot).selectRuntimeIndex()
+        val mode = if (LiveTranslationStore(indexRoot.parent).read() != null) "live" else indexMode
         indexRoot.resolve("launch-mode.txt").writeText(mode + "\n", Charsets.UTF_8)
         val temp = indexRoot.resolve("launch.request.tmp")
         temp.writeText(UUID.randomUUID().toString() + "\n")
@@ -58,7 +59,7 @@ internal class RuntimeReceipt(private val indexRoot: Path) {
             val font = receipt.getProperty("fontState").takeIf { it in setOf("pending", "ready", "failed") } ?: "unknown"
             appendLine("runtimeState=$state")
             appendLine("runtimeFontState=$font")
-            for (key in listOf("pid", "entries", "terms", "fontAttempts")) {
+            for (key in listOf("pid", "entries", "terms", "fontAttempts", "liveResources", "liveResourceMerges")) {
                 appendLine("runtime_$key=${receipt.getProperty(key)?.toLongOrNull()?.takeIf { it >= 0 } ?: -1}")
             }
         }
@@ -88,7 +89,7 @@ internal class RuntimeReceipt(private val indexRoot: Path) {
     private fun launchMode(): String = runCatching {
         val file = indexRoot.resolve("launch-mode.txt")
         require(Files.size(file) <= 16)
-        file.readText().trim().takeIf { it in setOf("none", "startup", "full") } ?: "unknown"
+        file.readText().trim().takeIf { it in setOf("none", "startup", "full", "live") } ?: "unknown"
     }.getOrDefault("unknown")
 
     private fun currentSafetyAlert(): Properties? {

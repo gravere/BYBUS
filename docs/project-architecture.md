@@ -11,8 +11,8 @@ The production path is container mode:
 
 1. Import or synchronize the officially signed Limbus APK/splits installed on the device, regardless of installation channel.
 2. Stop the previous guest, check the fixed LLC release source, and validate persistent translation files.
-3. Pair Japanese resource text with Chinese text and atomically activate a complete host-owned index.
-4. Launch the game inside VirtualApp. The native text layer reads that index; original game resource files remain unchanged.
+3. Prepare a verified, persistent Zero Association resource manifest and font catalogue before launch; build the paired index when original text is already present.
+4. Launch the game inside VirtualApp. Localized JSON is merged at the verified text-read boundary, including resources downloaded in this same session. The paired index remains a display fallback; original game resource files remain unchanged. See [first-run localization](live-localization.md).
 
 The project does not modify the game APK and does not rely on Frida or Shizuku.
 

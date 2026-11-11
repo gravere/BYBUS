@@ -86,6 +86,17 @@ class LimbusZhCNApplication : Application() {
     private class LimbusVirtualConfig(
         private val hostPackageName: String
     ) : SettingConfig() {
+        private var liveTranslation: com.example.limbuszhcn.container.LiveResourceTranslator? = null
+
+        override fun prepareLimbusTranslationResources(): Boolean {
+            liveTranslation = com.example.limbuszhcn.container.LiveTranslationStore(
+                VirtualCore.get().context.filesDir.toPath().resolve("translation-cache")).open()
+            return liveTranslation != null
+        }
+
+        override fun translateLimbusResource(resource: String, original: String): String? =
+            liveTranslation?.translate(resource, original)
+
         override fun getHostPackageName(): String = hostPackageName
 
         override fun getPluginEnginePackageName(): String? = null

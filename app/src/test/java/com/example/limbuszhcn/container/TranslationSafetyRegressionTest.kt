@@ -48,7 +48,9 @@ class TranslationSafetyRegressionTest {
             write(patch.resolve("File$i.json"), """{"dataList":[{"id":1,"name":"新译文$i"}]}""")
             write(localize.resolve("jp/JP_File$i.json"), if (i < valid) """{"dataList":[{"id":1,"name":"新しい文章$i"}]}""" else "{")
         }
-        return patch to manifest
+        val verified = verifiedFixtureManifest(patch, manifest)
+        write(patch.resolve("manifest.json"), verified.toJson())
+        return patch to verified
     }
     private fun installer(storage: GameStorage = ContainerWorkspaceStorage(localize)) = ContainerPatchInstaller(cache, storage)
 
@@ -74,7 +76,8 @@ class TranslationSafetyRegressionTest {
         assertFalse(result.indexActivated)
         assertEquals(1, result.availableSourceFiles)
         assertTrue(result.previousIndexPreserved)
-        assertEquals("100", installer.activeInstallSummary()!!.version)
+        assertEquals("200", installer.activeInstallSummary()!!.version)
+        assertEquals("100", TranslationIndexStore(cache.resolve("translation-index")).activeManifest()!!.getProperty("version"))
     }
 
     @Test fun validIndexActivatesAndCanBeReusedWithoutChangingOriginalResources() {
@@ -89,9 +92,8 @@ class TranslationSafetyRegressionTest {
     @Test fun missingTranslationRemainsInReadinessDenominator() {
         seed(); val (patch, manifest) = prepared(10, 10)
         repeat(9) { Files.delete(patch.resolve("File$it.json")) }
-        val result = installer().activateRedirect(patch, manifest)
-        assertEquals(10, result.candidateSourceFiles)
-        assertFalse(result.indexActivated)
+        assertThrows(java.nio.file.NoSuchFileException::class.java) { installer().activateRedirect(patch, manifest) }
+        assertEquals("100", installer().activeInstallSummary()!!.version)
     }
 
     @Test fun largeRecordCollapsePreservesTheOldIndex() {
@@ -105,7 +107,7 @@ class TranslationSafetyRegressionTest {
         val (patch, manifest) = prepared(10, 10)
         write(patch.resolve("File9.json"), """{"dataList":[{"key":"one","text":"第一处"}]}""")
         write(localize.resolve("jp/JP_File9.json"), """{"dataList":[{"key":"one","text":"第一の場所"},{"key":"two","text":"未翻訳"}]}""")
-        val result = installer().activateRedirect(patch, manifest)
+        val result = installer().activateRedirect(patch, verifiedFixtureManifest(patch, manifest))
         assertTrue(result.indexActivated)
         assertEquals(9, result.availableSourceFiles)
         assertEquals(10, result.sourceRecordCount)
@@ -122,7 +124,8 @@ class TranslationSafetyRegressionTest {
             }
         }
         assertFalse(installer(storage).activateRedirect(patch, manifest).indexActivated)
-        assertEquals("100", installer().activeInstallSummary()!!.version)
+        assertEquals("200", installer().activeInstallSummary()!!.version)
+        assertEquals("100", TranslationIndexStore(cache.resolve("translation-index")).activeManifest()!!.getProperty("version"))
     }
 
     @Test fun missingIdentityNeverFallsBackToAnotherItem() {

@@ -11,6 +11,7 @@
 #include "LimbusFontMaterials.h"
 #include "LimbusLanguageGetterPatch.h"
 #include "LimbusRuntimeSymbols.h"
+#include "LimbusResourceBridge.h"
 #include "RuntimePage.h"
 #include "../Substrate/SubstrateHook.h"
 
@@ -51,6 +52,11 @@ const uint32_t kMaxStringBytes = 16 * 1024 * 1024;
 pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t g_font_state_lock = PTHREAD_MUTEX_INITIALIZER;
 char g_active_pointer[PATH_MAX] = {};
+bool g_live_resources = false;
+jmethodID g_resource_bridge_method = nullptr;
+std::atomic<uint64_t> g_live_resource_hits{0};
+std::atomic<uint64_t> g_live_resource_errors{0};
+thread_local bool g_inside_resource_read = false;
 pthread_mutex_t g_diagnostic_lock = PTHREAD_MUTEX_INITIALIZER;
 
 // Only fixed native metadata calls this writer. No displayed text is accepted.
@@ -777,7 +783,7 @@ void *translate_managed_string(void *managed_text, const std::string &stable_id 
     }
     // Copies of released Chinese strings are stable independent of lookup order.
     // Compiler contexts disambiguate original JP fields that share those bytes.
-    if (context == g_contextual_index.end()) {
+    if (g_live_resources || context == g_contextual_index.end()) {
         pthread_mutex_lock(&g_font_state_lock);
         bool released_output = g_font_catalogue.contains(source);
         pthread_mutex_unlock(&g_font_state_lock);
@@ -1477,7 +1483,7 @@ bool ensure_tmp_font() {
     g_font_ready = prepare_tmp_font(fallback_list);
     LT_LOGI("CJK font attempt=%u ready=%d threadCheck=%s", g_font_attempts, g_font_ready,
             g_current_thread_is_main_info ? "unity-api" : "init-thread-fallback");
-    write_runtime_receipt(g_index.empty() ? "no_index" :
+    write_runtime_receipt((g_index.empty() && !g_live_resources) ? "no_index" :
             g_hook_installed ? "hooks_installed" : "hook_setup_incomplete");
     return g_font_ready;
 }
@@ -1602,6 +1608,70 @@ std::string read_unity_object_name(void *instance) {
         name.clear();
     }
     return name;
+}
+
+
+// Both paths keep the original loader/download semantics, then translate display JSON in memory.
+void *translate_resource_json(const std::string &key, void *original) {
+    if (!g_live_resources || !g_resource_bridge_method || g_inside_resource_read || !original ||
+        key.empty() || key.size() > 1024 || !g_string_length || !g_string_chars) return original;
+    const auto file = key.substr(key.rfind('/') == std::string::npos ? 0 : key.rfind('/') + 1);
+    if (file.compare(0, 3, "JP_") != 0) return original;
+    const int32_t length = g_string_length(original);
+    if (length <= 0 || length > 16 * 1024 * 1024) return original;
+    const uint16_t *chars = g_string_chars(original);
+    int32_t first = 0;
+    while (first < length && (chars[first] == 0xfeff || chars[first] == ' ' || chars[first] == '\r' ||
+                             chars[first] == '\n' || chars[first] == '\t')) ++first;
+    if (first == length || (chars[first] != '{' && chars[first] != '[')) return original;
+    struct ReadScope { ReadScope() { g_inside_resource_read = true; } ~ReadScope() { g_inside_resource_read = false; } } reading;
+    if (!ensure_tmp_font()) return original;
+    auto retained = limbus_managed::retain(g_gc, original);
+    if (!retained) return original;
+    LimbusResourceJniScope jni;
+    if (!jni.valid()) return original;
+    auto env = jni.env;
+    jstring resource = env->NewStringUTF(key.c_str()); // manifest keys are ASCII/UTF-8 asset identifiers
+    jstring source = env->NewString(reinterpret_cast<const jchar *>(g_string_chars(retained->get())), length);
+    if (!resource || !source || env->ExceptionCheck()) return original;
+    auto output = static_cast<jstring>(env->CallStaticObjectMethod(nativeEngineClass, g_resource_bridge_method, resource, source));
+    if (env->ExceptionCheck()) {
+        const auto failures = g_live_resource_errors.fetch_add(1) + 1;
+        if (failures == 1 || failures % 100 == 0) LT_LOGW("Live resource merge rejected count=%llu", static_cast<unsigned long long>(failures));
+        return original;
+    }
+    if (!output) return original;
+    const jsize size = env->GetStringLength(output);
+    if (size <= 0 || size > 16 * 1024 * 1024) return original;
+    const jchar *result = env->GetStringChars(output, nullptr);
+    if (!result) return original;
+    void *translated = g_string_new_utf16(reinterpret_cast<const uint16_t *>(result), size);
+    env->ReleaseStringChars(output, result);
+    if (!translated) return original;
+    const auto hits = g_live_resource_hits.fetch_add(1) + 1;
+    if (hits == 1 || hits % 100 == 0) {
+        char event[100];
+        snprintf(event, sizeof(event), "live_resource_merges=%llu", static_cast<unsigned long long>(hits));
+        append_native_metadata("font-state.log", event);
+        LT_LOGI("Live resource JSON merged count=%llu", static_cast<unsigned long long>(hits));
+    }
+    return translated;
+}
+
+typedef void *(*localize_resource_fn)(void *, void *, const void *);
+localize_resource_fn g_original_localize_resource = nullptr;
+acquisition0_fn g_original_text_asset_text = nullptr;
+void *replacement_localize_resource(void *instance, void *path, const void *method) {
+    void *original = g_original_localize_resource(instance, path, method);
+    std::string key;
+    const int32_t length = path && g_string_length ? g_string_length(path) : 0;
+    if (length <= 0 || length > 1024 || !utf16_to_utf8(g_string_chars(path), length, &key)) return original;
+    return translate_resource_json(key, original);
+}
+void *replacement_text_asset_text(void *instance, const void *method) {
+    void *original = g_original_text_asset_text(instance, method);
+    if (g_inside_resource_read || !is_unity_main_thread()) return original;
+    return translate_resource_json(read_unity_object_name(instance), original);
 }
 
 std::string read_unity_parent_name(void *component) {
@@ -2789,6 +2859,7 @@ void write_runtime_receipt(const char *state) {
     if (output == nullptr) return;
     fprintf(output, "request=%s\nstate=%s\npid=%d\nentries=%zu\nterms=%zu\nnativeProfile=%s\n",
             request, state, getpid(), g_index.size(), g_terms.size(), profile);
+    fprintf(output, "liveResources=%d\nliveResourceMerges=%llu\n", g_live_resources, static_cast<unsigned long long>(g_live_resource_hits.load()));
     fprintf(output, "fontState=%s\nfontAttempts=%u\n",
             g_font_ready ? "ready" : g_font_attempts >= 3 ? "failed" : "pending", g_font_attempts);
     fflush(output);
@@ -2912,6 +2983,35 @@ bool load_active_index() {
         return false;
     }
     return load_index_file(canonical);
+}
+
+bool load_live_font_catalogue() {
+    std::string path(g_active_pointer);
+    path.resize(path.rfind('/') + 1);
+    path += "live-fonts.bin";
+    FILE *file = fopen(path.c_str(), "rb");
+    if (!file) return false;
+    const unsigned char expected[] = {'L', 'Z', 'F', 'C', '1', 0};
+    unsigned char magic[sizeof(expected)] = {};
+    uint32_t count = 0;
+    bool valid = read_exact(file, magic, sizeof(magic)) && memcmp(magic, expected, sizeof(magic)) == 0 &&
+            read_u32(file, &count) && count > 0 && count <= kMaxEntries;
+    std::unordered_map<std::string, std::string> labels;
+    size_t bytes = 0;
+    for (uint32_t n = 0; valid && n < count; ++n) {
+        std::string text;
+        valid = read_string(file, &text) && is_usable_display_text(text) && !text.empty() &&
+                (bytes += text.size()) <= 64u * 1024u * 1024u;
+        if (valid) labels.emplace(text, text);
+    }
+    valid = valid && labels.size() == count && fgetc(file) == EOF;
+    fclose(file);
+    if (!valid) return false;
+    for (const auto &entry : labels) g_font_catalogue.add(entry.second);
+    labels.insert(g_index.begin(), g_index.end());
+    rebuild_package_line_break_index(labels);
+    LT_LOGI("Prepared live resource font catalogue labels=%u", count);
+    return true;
 }
 
 bool locate_runtime_symbol(const void *symbol, limbus_runtime::ModuleOwner &owner) {
@@ -3126,6 +3226,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
     void *rpg_format_class = nullptr;
     void *ui_text_data_class = nullptr;
     void *ui_loader_class = nullptr, *ui_parameter_loader_class = nullptr;
+    void *localize_resource_class = nullptr, *text_asset_class = nullptr;
     const void *get_language_method = nullptr;
     const void *get_global_language_method = nullptr;
     void *get_language_class = nullptr;
@@ -3205,6 +3306,10 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             g_buf_text_class = class_from_name(image, "", "TextData_Buf");
         if (g_battle_keyword_text_class == nullptr)
             g_battle_keyword_text_class = class_from_name(image, "", "TextData_BattleKeywords");
+        if (!localize_resource_class)
+            localize_resource_class = class_from_name(image, "TextAssetPatch", "TextAssetPatchManager");
+        if (!text_asset_class)
+            text_asset_class = class_from_name(image, "UnityEngine", "TextAsset");
         if (ui_loader_class == nullptr)
             ui_loader_class = class_from_name(image, "", "UITextDataLoader");
         if (ui_parameter_loader_class == nullptr)
@@ -3667,6 +3772,30 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                     position + 1 != managed_method_addresses.end() &&
                     *(position + 1) - address >= ((address & 7u) ? 20u : 16u);
         };
+        if (g_live_resources && method_get_class && method_is_generic && method_get_flags && method_get_return_type) {
+            auto hook_resource = [&](void *klass, const char *name, const char *parameters, void *replacement, void **original) {
+                const void *entry = find_method_by_signature(klass, name, parameters);
+                uint32_t flags = 0;
+                if (!entry || method_get_class(entry) != klass || method_is_generic(entry) ||
+                    (method_get_flags(entry, &flags) & 0x0010u)) return;
+                char *result = type_get_name(method_get_return_type(entry));
+                bool valid = result && strcmp(result, "System.String") == 0;
+                if (result) il2cpp_free(result);
+                void *pointer = nullptr;
+                memcpy(&pointer, entry, sizeof(pointer));
+                if (valid && has_inline_hook_space(klass, pointer))
+                    hook_limbus_owned_function(pointer, replacement, original);
+            };
+            hook_resource(localize_resource_class, "LoadLocalizeFileSync", "System.String",
+                    reinterpret_cast<void *>(replacement_localize_resource), reinterpret_cast<void **>(&g_original_localize_resource));
+            hook_resource(text_asset_class, "get_text", "", reinterpret_cast<void *>(replacement_text_asset_text),
+                    reinterpret_cast<void **>(&g_original_text_asset_text));
+            char resource_hooks[96];
+            snprintf(resource_hooks, sizeof(resource_hooks), "live_resource_hooks sync=%d asset=%d",
+                    g_original_localize_resource != nullptr, g_original_text_asset_text != nullptr);
+            append_native_metadata("font-state.log", resource_hooks);
+            LT_LOGI("%s", resource_hooks);
+        }
         const void *announcer_set = find_method_by_signature(announcer_ui_class, "SetDescription", "System.String");
         if (announcer_set && method_get_flags && method_get_return_type && class_get_fields &&
             field_get_name && field_get_type && field_get_value && g_object_get_instance_id_info) {
@@ -4228,7 +4357,7 @@ void record_limbus_integrity_detail(const char *detail) {
     append_native_metadata("integrity-state.log", detail);
 }
 
-void configure_limbus_translation_runtime(const char *active_index_pointer) {
+void configure_limbus_translation_runtime(const char *active_index_pointer, bool live_resources) {
     if (active_index_pointer == nullptr || active_index_pointer[0] != '/') {
         LT_LOGW("Reject invalid active index pointer");
         return;
@@ -4246,7 +4375,15 @@ void configure_limbus_translation_runtime(const char *active_index_pointer) {
     g_package_line_breaks.clear();
     g_term_trie.clear();
     const bool loaded = load_active_index();
-    write_runtime_receipt(loaded ? "index_loaded" : "no_index");
+    g_live_resources = false;
+    g_resource_bridge_method = nullptr;
+    if (live_resources) {
+        LimbusResourceJniScope jni;
+        if (jni.valid()) g_resource_bridge_method = jni.env->GetStaticMethodID(nativeEngineClass,
+                "translateLimbusResource", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;");
+        g_live_resources = jni.valid() && g_resource_bridge_method && load_live_font_catalogue();
+    }
+    write_runtime_receipt((loaded || g_live_resources) ? "index_loaded" : "no_index");
     pthread_mutex_unlock(&g_lock);
 }
 
