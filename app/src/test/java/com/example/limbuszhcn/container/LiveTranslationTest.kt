@@ -43,6 +43,9 @@ class LiveTranslationTest {
         assertNotNull(running.translate("JP_Story", changed))
         assertNull(running.translate("JP_Story", """{"dataList":[{"id":9,"content":"新章"}]}"""))
         assertNotNull(store.open()!!.translate("JP_UI", source))
+        val installer = ContainerPatchInstaller(cache, ContainerWorkspaceStorage(cache.resolve("Localize")))
+        assertEquals("200", installer.uninstallLatest().version)
+        assertNull(store.open())
     }
 
     @Test fun resourcesAreScopedAndAmbiguousNamesAreNotGuessed() {

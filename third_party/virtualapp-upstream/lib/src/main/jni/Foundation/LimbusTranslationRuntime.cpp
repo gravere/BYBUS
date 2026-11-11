@@ -1654,6 +1654,9 @@ void *translate_resource_json(const std::string &key, void *original) {
         snprintf(event, sizeof(event), "live_resource_merges=%llu", static_cast<unsigned long long>(hits));
         append_native_metadata("font-state.log", event);
         LT_LOGI("Live resource JSON merged count=%llu", static_cast<unsigned long long>(hits));
+        pthread_mutex_lock(&g_lock);
+        write_runtime_receipt(g_hook_installed ? "hooks_installed" : "index_loaded");
+        pthread_mutex_unlock(&g_lock);
     }
     return translated;
 }
