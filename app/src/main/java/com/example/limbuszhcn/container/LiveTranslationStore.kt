@@ -20,11 +20,15 @@ internal class LiveTranslationStore(private val cache: Path) {
     private val fonts = root.resolve("live-fonts.bin")
 
     fun prepare(directory: Path, manifest: PatchManifest, resourceKey: (String) -> String): Snapshot {
-        val patchRoot = cache.resolve("patch-cache").toRealPath()
+        // Android can expose the same private directory through /data/user/0 and
+        // /data/data. Resolve both operands before creating persistent relative paths.
+        val cacheRoot = cache.toRealPath()
+        val patchRoot = cacheRoot.resolve("patch-cache").toRealPath()
+        require(patchRoot.startsWith(cacheRoot)) { "汉化缓存目录无效" }
         val entries = manifest.entries.filter { it.cachePath.endsWith(".json", true) }.map { entry ->
             val path = directory.resolve(entry.cachePath).toRealPath()
             require(path.startsWith(patchRoot) && Files.size(path) == entry.size) { "汉化资源路径或大小无效" }
-            Entry(resourceKey(entry.targetPath), cache.toAbsolutePath().normalize().relativize(path).toString().replace('\\', '/'),
+            Entry(resourceKey(entry.targetPath), cacheRoot.relativize(path).toString().replace('\\', '/'),
                 entry.size, entry.sha256)
         }
         require(entries.isNotEmpty() && entries.size <= 5000 && entries.map { it.key }.toSet().size == entries.size)
