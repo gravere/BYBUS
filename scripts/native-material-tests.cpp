@@ -1,4 +1,5 @@
 #include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusFontMaterials.h"
+#include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusFontProof.h"
 #include <cassert>
 #include <cstdio>
 #include <mutex>
@@ -140,7 +141,8 @@ void *new_managed_string(const std::string &value) {
 }
 bool remember_translated_text(void *, const std::string &) { assert(false); return false; }
 void *apply_tmp_component_layout_markup(void *, void *text) { return text; }
-bool is_translated_managed_string(void *text) { return *static_cast<std::u16string *>(text) == u"经验"; }
+limbus_font_proof::Catalogue fonts;
+bool is_translated_managed_string(void *text) { return fonts.contains(codec.to_bytes(*static_cast<std::u16string *>(text))); }
 bool is_translated_tmp_fragment(void *, void *, std::vector<void *> *) { return false; }
 namespace limbus_ui_labels { std::string translate_status(const std::string &) { return {}; } }
 bool capture_tmp_component_state(void *object, void *font, TmpComponentState *out) {
@@ -159,7 +161,8 @@ auto g_tmp_set_font = set_font;
 void invoke_object_setter(const void *, void *object, void *material) {
     static_cast<Component *>(object)->material = translated_tmp_material(object, material);
 }
-void restore_tmp_component_state(void *) {}
+int restore_calls = 0;
+void restore_tmp_component_state(void *) { ++restore_calls; }
 std::atomic<uint64_t> g_tmp_primary_font_switches{0};
 uint64_t g_translation_hits = 0;
 #define LT_LOGI(...) ((void)0)
@@ -173,6 +176,7 @@ void forget(Component &component) {
 }
 
 int main() {
+    for (const auto label : {"经验", "纺锤采光 ({0})", "暴食", "是否跳过战斗？"}) fonts.add(label);
     g_original_tmp_states.set_alive([](void *object) { return static_cast<Component *>(object)->alive; });
     Component first{1, &japanese_font}, second{2, &chinese_font};
     Preset preset{42};
@@ -285,6 +289,20 @@ int main() {
     assert(rendered.padding_updates == padding_count);
     g_material_compute_crc_info = checksum_api;
     forget(rendered);
+    assert(retained == released);
+    Component thread_dialog{301, &japanese_font};
+    thread_dialog.material = &selected;
+    auto dialog_text = codec.from_bytes("纺锤采光 (暴食) - 5\n是否跳过战斗？");
+    assert(prepare_tmp_text(&thread_dialog, &dialog_text) == &dialog_text);
+    assert(thread_dialog.font == &chinese_font);
+    visible = static_cast<Converted *>(thread_dialog.material);
+    assert(visible->outline_width == selected.outline_width && visible->underlay_alpha == selected.underlay_alpha);
+    assert(visible->underlay_y == selected.underlay_y && visible->keywords == selected.keywords);
+    auto unrelated = codec.from_bytes("尚未确认来源的正文");
+    const int restored_before = restore_calls;
+    prepare_tmp_text(&thread_dialog, &unrelated);
+    assert(restore_calls == restored_before + 1);
+    forget(thread_dialog);
     assert(retained == released);
     puts("Material styles, live sharing, cache boundary, destruction and failure fallback passed");
 }

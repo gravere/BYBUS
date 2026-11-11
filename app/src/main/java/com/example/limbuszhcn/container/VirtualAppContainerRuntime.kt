@@ -85,6 +85,17 @@ class VirtualAppContainerRuntime(
 
     override fun stopGame() = bridge.stopExistingGameProcess(LocalContainerRuntime.GAME_PACKAGE)
 
+    override fun hasRunningGame(): Boolean = if (!bridge.available) false else runCatching {
+        VirtualAppSession(context).snapshot().resumableTasks.isNotEmpty()
+    }.onFailure { Log.w(TAG, "Unable to inspect existing game session", it) }.getOrDefault(false)
+
+    override fun resumeGameIfRunning(): Boolean {
+        bridge.requireAvailable()
+        return VirtualAppSession(context).resume().also { resumed ->
+            if (resumed) Log.i(TAG, "Resumed existing game task; retained process and active translation")
+        }
+    }
+
     fun openGoogleSettings() {
         bridge.ensureGoogleAppsInstalled()
         bridge.openGoogleSettings()

@@ -33,6 +33,14 @@ class GoogleReadinessProbeActivity : Activity() {
                 val runtime = AndroidContainerRuntimeFactory.create(applicationContext,
                     filesDir.toPath().resolve("container-workspace")) as VirtualAppContainerRuntime
                 when (intent.getStringExtra("stage")) {
+                    "session-snapshot", "session-resume" -> {
+                        val session = com.example.limbuszhcn.container.VirtualAppSession(applicationContext, "com.google.android.gms")
+                        val before = session.snapshot()
+                        val resumed = if (intent.getStringExtra("stage") == "session-resume") session.resume() else false
+                        JSONObject().put("result", "session_observed").put("resumed", resumed)
+                            .put("pids", JSONArray(before.pids.sorted()))
+                            .put("tasks", JSONArray(before.resumableTasks.map { it.id }))
+                    }
                     "login" -> {
                         runtime.googlePaymentState()
                         val target = Intent().setComponent(ComponentName("com.google.android.gms",

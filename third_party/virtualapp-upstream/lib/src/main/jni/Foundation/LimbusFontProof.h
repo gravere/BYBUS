@@ -251,6 +251,19 @@ public:
         recent_.emplace(std::move(label), found);
         return found;
     }
+    bool contains_display_line(std::string_view rendered) {
+        if (contains_atomic(rendered)) return true;
+        if (rendered.size() > 2048 || has_literal_region(rendered) ||
+            rendered.find_first_of("\r\n") != rendered.npos) return false;
+        // The game appends a numeric stage to a complete translated dungeon
+        // name. Keep this proof separate: it cannot authorize nested suffixes.
+        const auto split = rendered.rfind(" - ");
+        if (split == rendered.npos) return false;
+        const auto number = canonical(rendered.substr(split + 3));
+        if (number.empty() || number.size() > 6) return false;
+        for (char c : number) if (c < '0' || c > '9') return false;
+        return contains_atomic(rendered.substr(0, split));
+    }
     bool contains(std::string_view rendered) {
         if (contains_atomic(rendered)) return true;
         if (rendered.size() > 8192 || has_literal_region(rendered)) return false;
@@ -263,7 +276,7 @@ public:
                 list_text.replace(i, 4, "\n");
         rendered = list_text;
         if (rendered.find("•") == rendered.npos && rendered.find("◆") == rendered.npos) {
-            if (rendered.find('\n') == rendered.npos) return false;
+            if (rendered.find('\n') == rendered.npos) return contains_display_line(rendered);
             // Keep line boundaries in this cache: joining known complete
             // paragraphs is not permission to match arbitrary substrings.
             auto known = paragraphs_.find(list_text);
@@ -274,7 +287,7 @@ public:
                 const auto end = rendered.find('\n', start);
                 auto line = rendered.substr(start, end == rendered.npos ? rendered.npos : end - start);
                 if (!canonical(line).empty() &&
-                    (++count > 16 || line.size() > 2048 || !contains_atomic(line))) { valid = false; break; }
+                    (++count > 16 || line.size() > 2048 || !contains_display_line(line))) { valid = false; break; }
                 if (end == rendered.npos) break;
                 start = end + 1;
             }
