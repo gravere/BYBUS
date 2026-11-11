@@ -23,8 +23,13 @@ int main(int argc, char **argv) {
     limbus_font_proof::Catalogue catalogue;
     for (const auto &text : released) catalogue.add(text);
     auto loaded = std::chrono::steady_clock::now();
-    size_t full = 0, formatted = 0, rich = 0, excluded = 0, fragments = 0;
+    size_t full = 0, formatted = 0, rich = 0, excluded = 0, fragments = 0, verbatim = 0;
     for (const auto &text : released) {
+        if (text.find("<noparse") != text.npos) {
+            assert(catalogue.contains(text)); ++verbatim;
+            assert(!catalogue.contains(text + "未核实的附加正文"));
+            continue;
+        }
         auto label = limbus_font_proof::canonical(text);
         bool non_ascii = false;
         for (unsigned char c : label) non_ascii |= c >= 128;
@@ -57,8 +62,8 @@ int main(int argc, char **argv) {
         }
     }
     auto done = std::chrono::steady_clock::now();
-    printf("Font corpus: input=%u labels=%zu patterns=%zu full=%zu rich=%zu formatted=%zu fragments=%zu excluded=%zu build_ms=%lld verify_ms=%lld\n",
-           count, catalogue.label_count(), catalogue.pattern_count(), full, rich, formatted, fragments, excluded,
+    printf("Font corpus: input=%u labels=%zu patterns=%zu full=%zu rich=%zu formatted=%zu fragments=%zu excluded=%zu verbatim=%zu build_ms=%lld verify_ms=%lld\n",
+           count, catalogue.label_count(), catalogue.pattern_count(), full, rich, formatted, fragments, excluded, verbatim,
            (long long)std::chrono::duration_cast<std::chrono::milliseconds>(loaded-start).count(),
            (long long)std::chrono::duration_cast<std::chrono::milliseconds>(done-loaded).count());
 }

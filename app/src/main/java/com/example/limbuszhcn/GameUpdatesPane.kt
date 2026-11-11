@@ -79,7 +79,7 @@ internal fun GameUpdatesPane(state: LauncherUiState, onCheck: () -> Unit,
                 SheetAction(Glyph.Store, "原安装商店 · ${state.installSource.label}", external = true, onClick = onOriginalStore)
             }
         }
-        Text("保留系统安装包，游戏资源继续在 BYBUS 内下载。", color = C.Muted, style = MaterialTheme.typography.bodySmall)
+
     }
 }
 

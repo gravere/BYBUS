@@ -4,7 +4,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
@@ -15,7 +14,6 @@ import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
 @Composable
 internal fun RuntimeStatusPane(state: LauncherUiState, onGameUpdates: () -> Unit, onRefresh: () -> Unit) {
-    var showDetails by rememberSaveable { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         DetailSection("游戏与汉化", contentPadding = PaddingValues(0.dp)) {
             Row(Modifier.fillMaxWidth()
@@ -52,7 +50,7 @@ internal fun RuntimeStatusPane(state: LauncherUiState, onGameUpdates: () -> Unit
                 }
             }
         }
-        DetailSection("运行记录", action = {
+        DetailSection("上次启动", action = {
             IconButton(onClick = onRefresh, enabled = !state.busy,
                 modifier = Modifier.size(48.dp).semantics { contentDescription = "重新检测" }) {
                 if (state.busy) CircularProgressIndicator(Modifier.size(20.dp), color = C.Accent, strokeWidth = 2.dp)
@@ -60,19 +58,21 @@ internal fun RuntimeStatusPane(state: LauncherUiState, onGameUpdates: () -> Unit
             }
         }) {
             Column(Modifier.padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(state.runtimeStatus, color = C.Muted, style = MaterialTheme.typography.bodySmall)
-                if (state.busy || state.failed) {
-                    Text(if (state.busy) state.stage else state.message, color = if (state.failed) C.Error else C.Muted,
-                        style = MaterialTheme.typography.bodySmall)
-                } else if (state.message.isNotBlank() && state.message != state.runtimeStatus) {
-                    TextButton(onClick = { showDetails = !showDetails }, contentPadding = PaddingValues(horizontal = 0.dp)) {
-                        Text(if (showDetails) "收起详细记录" else "展开详细记录", style = MaterialTheme.typography.labelMedium)
-                    }
-                    ExpandableDetails(showDetails) {
-                        Text(state.message, color = C.Muted, style = MaterialTheme.typography.bodySmall)
-                    }
+                val record = state.runtimeStatus
+                Text(record.result, style = MaterialTheme.typography.titleSmall)
+                record.startedAtMillis?.let {
+                    DetailRow("启动时间", java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
+                        .format(java.util.Date(it)))
+                    DetailRow("汉化文本", record.translation)
+                    DetailRow("中文字体", record.font)
                 }
+                record.issue?.let { Text(it, color = C.Error, style = MaterialTheme.typography.bodyMedium) }
             }
+        }
+        if (state.busy || state.failed) DetailSection("当前操作") {
+            Text(if (state.busy) state.stage else state.message,
+                color = if (state.failed) C.Error else C.Ink, style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(vertical = 16.dp))
         }
     }
 }

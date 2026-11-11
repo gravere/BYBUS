@@ -46,6 +46,7 @@ BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeL
 - **汉化持续同步** — 启动前检查零协更新，复用已校验的缓存；汉化索引与配置持久保存，无需每次重新设置。
 - **节省下载流量** — 应用更新复用已安装内容，只下载缺少的部分；支持旧版数据迁移和兼容资源 ZIP 导入。
 - **更新集中管理** — BYBUS 新版本自动红点提醒，游戏支持多渠道更新入口与本地安装包，零协项目动态随时可查。
+- **一键修复** — 重新检查游戏、中文字体与汉化文件，保留账号和已下载的游戏资源。
 - **手机与平板自适应** — 竖屏单列、宽屏并排，适应分屏和大字号；启动过程通过图标与环绕进度呈现。
 
 ## 开始使用
@@ -67,7 +68,7 @@ Google 登录使用容器内的独立账号环境，首次使用需在「设置�
 
 | 文件 | 用途 |
 | --- | --- |
-| `BYBUS-<版本>-arm64-v8a.apk` 或 `BYBUS-Android.apk` | 内容相同的独立版完整安装包，首次安装或手动更新任选一个 |
+| `BYBUS-Android.apk` | 完整安装包，首次安装和手动更新都选它 |
 | `BYBUS.apk` | 旧 BYBUS 的一次性迁移衔接更新，覆盖旧版并保留数据；首次安装不要选它 |
 | `bybus-app-update.json`、`bybus-update.json`、`SHA256SUMS.txt` | 更新描述与校验值，无需手动安装 |
 | Source code | 项目源码，不是安装包 |
@@ -78,11 +79,15 @@ Google 登录使用容器内的独立账号环境，首次使用需在「设置�
 
 | 更新内容 | 操作入口 |
 | --- | --- |
-| BYBUS | 设置与工具 → 更新 → BYBUS |
+| BYBUS | 设置与工具 → 应用更新 |
 | 游戏 | 设置与工具 → 游戏更新 |
-| 汉化 | 启动前自动检查，也可在「更新 → 汉化资源」中手动检查 |
+| 汉化 | 启动前自动检查，也可在「设置与工具 → 汉化设置 → 汉化资源」中手动检查 |
 
-手动更新时，下载最新完整 APK **覆盖安装**即可保留数据；应用内更新不可用时也可采用此方式。卸载 BYBUS 或清除数据会删除容器内的资源和配置。
+手动更新时，下载最新完整 APK **覆盖安装**即可保留数据；应用内更新不可用时也可采用此方式。卸载 BYBUS 或在系统设置中清除应用数据，会删除容器内的资源和配置。
+
+遇到汉化文件或字体加载异常，可打开「设置与工具 → 修复」。修复时会关闭游戏，完成后从首页重新启动。
+
+需要释放空间时，可打开「设置与工具 → 清除数据」，确认后清理已下载的游戏资源与缓存。账号会保留，下次进入游戏需要重新下载资源。
 
 <details>
 <summary><strong>已有旧版 BYBUS，如何保留数据并迁移？</strong></summary>
@@ -131,7 +136,7 @@ Google 登录使用容器内的独立账号环境，首次使用需在「设置�
 | 项目 | 贡献 |
 | --- | --- |
 | [BBBEANNN / limbusZhCN](https://github.com/BBBEANNN/limbusZhCN) | BYBUS 的基础项目，提供 Android 汉化与容器接入实现 |
-| [都市零协会 / LocalizeLimbusCompany](https://github.com/LocalizeLimbusCompany/LocalizeLimbusCompany) | 简体中文翻译、校对、汉化资源与持续维护 |
+| [都市零协会 / LocalizeLimbusCompany](https://github.com/LocalizeLimbusCompany/LocalizeLimbusCompany) | 简体中文翻译、校对、汉化资源与持续维护；项目图标使用其官方 GitHub 头像 |
 | [ServenScorpion / VirtualApp](https://github.com/ServenScorpion/VirtualApp) | Android 应用容器；同时感谢 VirtualApp 原项目的贡献者 |
 | [microG / GmsCore](https://github.com/microg/GmsCore) | Google 服务兼容组件与 Companion |
 | [be5invis / Sarasa Gothic](https://github.com/be5invis/Sarasa-Gothic) | 更纱黑体，游戏中文字体来源 |

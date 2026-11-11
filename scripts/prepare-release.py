@@ -89,7 +89,7 @@ legacy_manifest = dict(schemaVersion=1, packageName=legacy_identity[1], versionN
     minSdk=26, apkName=legacy_apk.name, size=legacy_apk.stat().st_size, sha256=digest(legacy_apk), deltas=[],
     notes='- 请保留旧版和数据，先完成这次更新。\n- 再从 GitHub 下载 BYBUS-Android.apk，在新版“设置与工具 → 数据迁移”中导入数据。\n- 确认新版可以正常使用后，再卸载旧版。')
 (args.output/'bybus-update.json').write_text(json.dumps(legacy_manifest, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
-files = [apk, compat_apk, legacy_apk, args.output/'bybus-app-update.json', args.output/'bybus-update.json']
+files = [compat_apk, legacy_apk, args.output/'bybus-app-update.json', args.output/'bybus-update.json']
 (args.output/'SHA256SUMS.txt').write_text(''.join(digest(p)+'  '+p.name+'\n' for p in files), encoding='utf-8')
 print(json.dumps(dict(tag=f'{version}-build.{code}', name=f'BYBUS {version}', apkName=apk.name,
                      compatibilityApkName=compat_apk.name, sha256=sha, size=apk.stat().st_size, signer=signer[1],

@@ -39,6 +39,16 @@ whether their use and redistribution of this component are permitted.
 The APK files are bundled so a fresh container can bootstrap the Google-service
 compatibility layer without downloading executable code at first launch.
 
+## Zero Association project icon
+
+- Copyright: 都市零协会 / LocalizeLimbusCompany
+- Source: https://github.com/LocalizeLimbusCompany
+- Original avatar: https://avatars.githubusercontent.com/u/129521269?v=4&s=128
+- Asset: `app/src/main/res/drawable-nodpi/zero_association.png`
+
+The unmodified official avatar identifies the translation source in the app.
+It remains third-party artwork and is not relicensed under the root GPL license.
+
 ## Chinese localization font
 
 - Runtime asset: `app/src/main/assets/runtime/ChineseFont.ttf`

@@ -14,6 +14,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import com.example.limbuszhcn.ConfirmedOperation
+import com.example.limbuszhcn.OperationConfirmation
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import com.example.limbuszhcn.MainActivity
@@ -237,19 +240,35 @@ open class MigrationActivity : ComponentActivity() {
         setContent {
             LimbusZhCNTheme {
                 val state = model.state
+                var confirmation by rememberSaveable { mutableStateOf<ConfirmedOperation?>(null) }
+                var selectedResource by rememberSaveable { mutableStateOf<String?>(null) }
                 val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
                     if (uri != null) {
                         runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-                        model.importResources(uri, prepareTarget())
+                        selectedResource = uri.toString()
+                        confirmation = ConfirmedOperation.ImportResources
                     }
                 }
                 BackHandler { if (!state.busy && !state.pending) leaveMigration() }
                 MigrationScreen(state = state, onBack = ::leaveMigration, onRefresh = model::refresh,
-                    onMigrate = { model.start(prepareTarget()) },
+                    onMigrate = { confirmation = ConfirmedOperation.Migrate },
                     onSelectFile = { picker.launch(arrayOf("application/zip", "application/octet-stream")) },
                     onOpenLegacy = {
                         packageManager.getLaunchIntentForPackage(MigrationArchive.LEGACY)?.let(::startActivity)
                     }, onFinish = ::leaveMigration)
+                confirmation?.let { operation ->
+                    OperationConfirmation(operation, enabled = !state.busy,
+                        onDismiss = { confirmation = null; selectedResource = null }) {
+                        val resource = selectedResource
+                        confirmation = null
+                        selectedResource = null
+                        if (!state.busy) when (operation) {
+                            ConfirmedOperation.Migrate -> model.start(prepareTarget())
+                            ConfirmedOperation.ImportResources -> resource?.let { model.importResources(Uri.parse(it), prepareTarget()) }
+                            else -> Unit
+                        }
+                    }
+                }
             }
         }
     }

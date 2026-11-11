@@ -1,12 +1,13 @@
 {
-  "release": "v1.0.11-build.54",
-  "apk_sha256": "b485912fb03d651c4540a2bb0d457d62cb2250d05b87ef501b52e3aef670c6e1",
-  "workflow_run": "https://github.com/gravere/BYBUS/actions/runs/40724375539",
-  "profile": "Android 11 x86_64, ARM native bridge, 4 KB",
-  "capture": "Original screencap PNG from the signed release APK; emulator status icons hidden; no image or app state edits",
+  "release": "v1.0.43-build.86",
+  "apk_sha256": "f9c14db85a15e7a16457a89d0d5601dc6813042662a5026b96d25a564f9ec2a6",
+  "source_commit": "5f344305f096387d25521216bb2e153918011c1f",
+  "workflow_run": "https://github.com/gravere/BYBUS/actions/runs/42982167441",
+  "profile": "Android 16 x86_64, ARM native bridge, 4 KB",
+  "capture": "Original screencap PNG from the signed v1.0.43 candidate; emulator status icons hidden; no image or app state edits",
   "files": {
-    "home.png": "9a28b96e698f052f37d8f7827a974cf408ec177dc7708ec2ad6dac93ad40fddd",
-    "project.png": "aaf6f7339e0dd4df1868a40b5cc3efb7fc0a2ed55a23832a456c9dd4d899b7ef",
-    "settings.png": "1b2d5baf52295a71ca3ec50f18cebd964dae899f22fab567c0a5114c48c00288"
+    "home.png": "d179a25eb8eeb64574db3a0feb064d5766eba790195c3f812d5e72de332ff784",
+    "project.png": "373753f24e34448b4dc621dd62ae0707ec0dd844944dc2366688c44c47b1d9ad",
+    "settings.png": "5cfd426c6e461d6ac472f7404873ac53b2a3a9eae42348fcf126cfb0034595fe"
   }
 }

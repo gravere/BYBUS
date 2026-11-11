@@ -19,7 +19,8 @@ internal class LiveTranslationStore(private val cache: Path) {
     private val descriptor = root.resolve("live-resources.json")
     private val fonts = root.resolve("live-fonts.bin")
 
-    fun prepare(directory: Path, manifest: PatchManifest, resourceKey: (String) -> String): Snapshot {
+    fun prepare(directory: Path, manifest: PatchManifest, forceRebuild: Boolean = false,
+                resourceKey: (String) -> String): Snapshot {
         // Android can expose the same private directory through /data/user/0 and
         // /data/data. Resolve both operands before creating persistent relative paths.
         val cacheRoot = cache.toRealPath()
@@ -33,7 +34,7 @@ internal class LiveTranslationStore(private val cache: Path) {
         }
         require(entries.isNotEmpty() && entries.size <= 5000 && entries.map { it.key }.toSet().size == entries.size)
         require(entries.all { validKey(it.key) && SHA.matches(it.hash) && it.size in 1..MAX_JSON_BYTES })
-        read()?.takeIf { it.version == manifest.requestedVersion && it.archive == manifest.archiveSha256 &&
+        read()?.takeIf { !forceRebuild && it.version == manifest.requestedVersion && it.archive == manifest.archiveSha256 &&
             it.entries == entries && it.fontHash == fonts.sha256() }?.let { return it }
 
         val labels = sortedSetOf<String>()
@@ -43,8 +44,9 @@ internal class LiveTranslationStore(private val cache: Path) {
             val json = file.readText(Charsets.UTF_8)
             // Self-pairing applies exactly the same field/identity restrictions as runtime merging.
             TranslationJsonPairer.releasedTexts("Localize/${entry.key}", json).forEach { text ->
-                if (text.any { c -> c.code in 0x3400..0x9fff } &&
-                    text.none { c -> c.code in 0x3040..0x30ff || c.code in 0xac00..0xd7af }) labels += text
+                // Released Chinese names may deliberately contain kana (e.g. し协会).
+                // Provenance comes from the verified display field, not script purity.
+                if (text.any { c -> c.code in 0x3400..0x9fff }) labels += text
             }
         }
         require(labels.isNotEmpty() && labels.size <= 1_000_000) { "汉化包没有有效中文显示文本" }
@@ -95,7 +97,7 @@ internal class LiveTranslationStore(private val cache: Path) {
     data class Snapshot(val version: String, val archive: String, val entries: List<Entry>, val fontHash: String, val labels: Int)
 
     companion object {
-        private const val SCHEMA = 1
+        private const val SCHEMA = 2
         const val MAX_JSON_BYTES = 16L * 1024 * 1024
         private val SHA = Regex("[0-9a-f]{64}")
         private fun validKey(key: String): Boolean = key.startsWith("jp/") && key.length <= 512 &&

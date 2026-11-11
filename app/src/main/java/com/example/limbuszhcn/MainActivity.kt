@@ -122,7 +122,6 @@ class MainActivity : ComponentActivity() {
                             .onFailure { appUpdater.releasePageError() }
                     },
                     onLaunch = model::launch,
-                    onPrepareResources = model::prepareGameResources,
                     onRefresh = model::refresh,
                     onUpdate = model::updateTranslation,
                     onCheckGameUpdate = model::checkGameUpdate,
@@ -137,11 +136,11 @@ class MainActivity : ComponentActivity() {
                         } else model.installPackageUpdate()
                     },
                     onCancelGameInstall = model::cancelPackageUpdate,
-                    onSync = model::syncGame,
+                    onRepair = model::repair,
+                    onClearGameResources = model::clearGameResources,
                     onMigration = { runCatching {
                         startActivity(Intent(this, com.example.limbuszhcn.migration.MigrationActivity::class.java))
                     }.onFailure(model::showError) },
-                    onRestore = model::restore,
                     onExport = model::exportDiagnostics,
                     onGoogleSettings = model::openGoogleSettings,
                     onCheckGooglePayment = model::checkGooglePayment,

@@ -20,7 +20,7 @@ internal fun diagnosticExportStage(cancelled: Boolean): String =
 internal fun completedOperationFeedback(stage: String): String? = when (stage) {
     "检查零协更新并校验汉化文件" -> "汉化检查完成"
     "重新同步游戏", "同步游戏，保留已有数据" -> "游戏已同步"
-    "正在停用汉化" -> "汉化已停用"
+    "正在清除游戏资源" -> "游戏资源清理完成"
     "正在保存诊断包" -> "诊断包已保存"
     "取消导出" -> "已取消导出"
     else -> null
