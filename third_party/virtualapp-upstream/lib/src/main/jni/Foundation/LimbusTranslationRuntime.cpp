@@ -1422,7 +1422,10 @@ bool prepare_tmp_font(void *fallback_list) {
     void *font_path = path_root ? path_root->get() : nullptr;
     if (!font_path) return false;
     if (!g_tmp_font_root) {
-        int32_t face_index = 0, sampling_size = 32, atlas_padding = 9;
+        // Match the shipped Japanese body/title SDF assets (34pt, padding 5).
+        // Keeping only the material's numeric effects while changing this ratio
+        // enlarged shadows/outlines relative to the Chinese glyphs.
+        int32_t face_index = 0, sampling_size = 34, atlas_padding = 5;
         int32_t render_mode = 4169; // GlyphRenderMode.SDFAA.
         // Sarasa CJK needs this capacity; a 1024 atlas lost previously visible glyphs.
         int32_t atlas_width = 4096, atlas_height = 4096;

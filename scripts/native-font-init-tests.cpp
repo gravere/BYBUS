@@ -12,6 +12,7 @@ void pthread_mutex_unlock(int *mutex) { assert(*mutex); *mutex = 0; }
 int pthread_self() { return simulated_thread; }
 bool pthread_equal(int a, int b) { return a == b; }
 bool g_font_ready = false, g_font_gc_validated = false, g_hook_installed = true;
+bool g_live_resources = false;
 unsigned g_font_attempts = 0;
 thread_local bool g_inside_font_init = false;
 char g_active_pointer[] = "/private/translation-cache/index/active.txt";
@@ -58,6 +59,12 @@ void *invoke(const void *entry, void *object, void **args, void **exception) {
     if (entry == &settings_method) return settings_ready ? &list : nullptr;
     if (entry == &create_method) {
         assert(!object && *static_cast<int32_t *>(args[5]) == 4096 && *static_cast<int32_t *>(args[6]) == 4096);
+        // Shipped body/title presets use 34pt with GradientScale = padding + 1 = 6.
+        // The old 32/9 setup inflated the physical shadow even with identical colors.
+        const int sample = *static_cast<int32_t *>(args[2]);
+        const int padding = *static_cast<int32_t *>(args[3]);
+        assert(sample == 34 && padding == 5);
+        assert((padding + 1) * 34 == 6 * sample);
         ++creates;
         if (reenter) assert(!ensure_tmp_font()); // No recursive lock / extra attempt.
         if (create_failures-- > 0) { *exception = &create_method; return nullptr; }

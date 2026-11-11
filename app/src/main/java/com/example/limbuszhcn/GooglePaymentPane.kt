@@ -19,7 +19,7 @@ internal fun GooglePaymentPane(state: LauncherUiState, onRefresh: () -> Unit,
             PaymentStatusRow("应用内购买", payment?.billingEnabled?.let { if (it) "已启用" else "未启用" })
             DetailActionDivider()
             PaymentStatusRow("设备注册", payment?.let {
-                if (it.registered) "已注册" else if (it.registrationEnabled) "等待注册" else "未启用"
+                if (it.registered) "已注册" else if (it.registrationEnabled) "尚未完成" else "未启用"
             })
         }
         state.googlePaymentIssue?.let { Text(it, color = C.Error, style = MaterialTheme.typography.bodyMedium) }
@@ -31,7 +31,7 @@ internal fun GooglePaymentPane(state: LauncherUiState, onRefresh: () -> Unit,
             }
         }
         if (payment?.registrationEnabled == true && !payment.registered) {
-            Text("设备注册需要联网，完成后点击刷新状态。", color = C.Muted, style = MaterialTheme.typography.bodySmall)
+            Text("Google 设备注册尚未完成，商品价格可能无法加载。确认网络能连接 Google 后，点击下方重试。", color = C.Muted, style = MaterialTheme.typography.bodySmall)
         }
         if (payment?.billingEnabled == true) {
             Text("若刚启用付款服务，请从 BYBUS 重新启动游戏。", color = C.Muted, style = MaterialTheme.typography.bodySmall)
@@ -40,7 +40,7 @@ internal fun GooglePaymentPane(state: LauncherUiState, onRefresh: () -> Unit,
             SheetAction(Glyph.Account, if (payment?.hasAccount == false) "登录 Google 账号" else "管理 Google 账号",
                 enabled = !state.busy, navigation = true, onClick = onSettings)
             DetailActionDivider()
-            SheetAction(Glyph.Refresh, "刷新状态", enabled = !state.busy, onClick = onRefresh)
+            SheetAction(Glyph.Refresh, if (payment?.registrationEnabled == true && !payment.registered) "重试设备注册" else "刷新状态", enabled = !state.busy, onClick = onRefresh)
         }
     }
 }
