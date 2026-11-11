@@ -1457,7 +1457,7 @@ def main():
         REPORT["result"] = "detail continuation completed; combine with the same APK's retained first pages"
         return
     home = capture("home")
-    if os.environ.get("RUNTIME_MODE") == "app-details":
+    if os.environ.get("RUNTIME_MODE") in ("app-details", "app-details-rest"):
         import importlib.util
         spec = importlib.util.spec_from_file_location("app_details", Path(__file__).with_name("cloud-app-details.py"))
         inspection = importlib.util.module_from_spec(spec)

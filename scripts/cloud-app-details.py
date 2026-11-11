@@ -35,24 +35,26 @@ def inspect(env):
         capture(name + '-body')
         return close(tree)
 
-    home = about(capture('home'), 'about')
-    tap('都市零协会', home)
-    project = capture('project')
-    locate(project, '翻译项目')
-    labels = [n.get('text', '') for n in project.iter('node')]
-    assert '边狱巴士 · 简体中文' not in labels
-    assert '正式汉化包 · 启动前自动检查更新' not in labels
-    tap('项目来源：翻译进度', project)
-    progress = reach(hierarchy('progress'), '这些统计代表什么？')
-    tap('这些统计代表什么？', progress)
-    reach(hierarchy('progress-expanded'), '总词条是项目收录的文本条目数，一条可能是名称，也可能是一整段对白。')
-    capture('progress-explanation')
-    home = close(hierarchy('progress-expanded'))
-    tap('运行状态', home)
-    status = reach(hierarchy('runtime'), '尚无启动记录')
-    locate(status, '尚无启动记录')
-    capture('runtime-status')
-    home = close(status)
+    home = capture('home')
+    if env['os'].environ.get('RUNTIME_MODE') != 'app-details-rest':
+        home = about(capture('home'), 'about')
+        tap('都市零协会', home)
+        project = capture('project')
+        locate(project, '翻译项目')
+        labels = [n.get('text', '') for n in project.iter('node')]
+        assert '边狱巴士 · 简体中文' not in labels
+        assert '正式汉化包 · 启动前自动检查更新' not in labels
+        tap('项目来源：翻译进度', project)
+        progress = reach(hierarchy('progress'), '这些统计代表什么？')
+        tap('这些统计代表什么？', progress)
+        reach(hierarchy('progress-expanded'), '总词条是项目收录的文本条目数，一条可能是名称，也可能是一整段对白。')
+        capture('progress-explanation')
+        home = close(hierarchy('progress-expanded'))
+        tap('运行状态', home)
+        status = reach(hierarchy('runtime'), '尚无启动记录')
+        locate(status, '尚无启动记录')
+        capture('runtime-status')
+        home = close(status)
     tap('设置与工具', home)
     settings = capture('settings')
     tap('修复', reach(settings, '修复'))
@@ -61,8 +63,11 @@ def inspect(env):
     repair = reach(repair, '开始修复')
     capture('repair')
     # No official game on this disposable image: repair must stay disabled.
-    targets = [n for n in repair.iter('node') if n.get('text') == '开始修复']
-    assert targets and all(n.get('enabled') == 'false' for n in targets)
+    parents = {child: parent for parent in repair.iter() for child in parent}
+    button = next(n for n in repair.iter('node') if n.get('text') == '开始修复')
+    while button.get('clickable') != 'true' and button in parents:
+        button = parents[button]
+    assert button.get('clickable') == 'true' and button.get('enabled') == 'false'
     adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
     parent = hierarchy('repair-parent')
     locate(parent, '设置与工具')
@@ -94,6 +99,6 @@ def inspect(env):
         adb('shell', 'wm', 'size', 'reset')
         adb('shell', 'wm', 'density', 'reset')
         adb('shell', 'settings', 'put', 'system', 'font_scale', '1.0')
-    report['checks'].append('about, project, progress, runtime, repair, update pages and repair back navigation')
+    report['checks'].append('repair, update pages and repair back navigation; earlier pages checked only in full mode')
     report['checks'].append('expanded help and repair layout at phone, 600dp portrait and 1280dp landscape with 1.3 font scale')
     report['result'] = 'app detail inspection completed; no game or payment attempted'
