@@ -1383,13 +1383,14 @@ def main():
     if "Success" not in installed:
         raise RuntimeError("APK installation did not succeed: " + installed[-1000:])
     REPORT["checks"].append("published APK signature/hash and installation")
-    if os.environ.get("RUNTIME_MODE") in ("google-readiness", "google-window", "google-settings"):
+    if os.environ.get("RUNTIME_MODE") in ("google-readiness", "google-window", "google-settings", "session-resume"):
         import importlib.util
         spec = importlib.util.spec_from_file_location("google_readiness", "scripts/inspect-google-readiness.py")
         inspection = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(inspection)
         inspection.inspect(globals(), release, verifier, windows_only=os.environ.get("RUNTIME_MODE") != "google-readiness",
-                           settings_only=os.environ.get("RUNTIME_MODE") == "google-settings")
+                           settings_only=os.environ.get("RUNTIME_MODE") == "google-settings",
+                           session_only=os.environ.get("RUNTIME_MODE") == "session-resume")
         return
     if os.environ.get("RUNTIME_MODE") == "package-jni":
         adb("root")

@@ -149,6 +149,20 @@ int main() {
     assert(!fonts.contains("• <font=Unknown>初始经费 +150</font>"));
     assert(!fonts.contains("• 初始经费 +150\n•"));
     fonts.add("脑啡肽模块");
+    fonts.add("纺锤采光 ({0})");
+    fonts.add("暴食");
+    fonts.add("是否跳过战斗？");
+    // Exact diagnostic bdec4736b1fe0c7e: complete released lines plus a stage number.
+    assert(fonts.contains("纺锤采光 (暴食) - 5\n是否跳过战斗？"));
+    assert(fonts.contains("纺锤采光 (暴食) - 5"));
+    assert(fonts.contains("<color=yellow>纺锤采光 (暴食) - 5</color><br>是否跳过战斗？"));
+    assert(!fonts.contains_atomic("纺锤采光 (暴食) - 5"));
+    assert(!fonts.contains("纺锤采光 (未知名称) - 5\n是否跳过战斗？"));
+    assert(!fonts.contains("纺锤采光 (暴食) - 5\n未知的确认句"));
+    for (const auto suffix : {"", "-5", "5.0", "5/6", "5000000", "玩家名字", "5附加内容", "5 - 6"})
+        assert(!fonts.contains(std::string("纺锤采光 (暴食) - ") + suffix));
+    assert(!fonts.contains("<font=Other>纺锤采光 (暴食) - 5</font>"));
+    assert(!fonts.contains("<noparse>纺锤采光 (暴食) - 5</noparse>"));
     fonts.add("{0}花费x{1}");
     // The real diagnostic hash resolves to this complete official template
     // with the game's diamond prefix. The prefix is not a new translation.

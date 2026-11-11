@@ -29,6 +29,7 @@ internal data class LauncherUiState(
     val container: ContainerStatus? = null,
     val installedVersion: Long? = null,
     val installedVersionName: String? = null,
+    val canResumeGame: Boolean = false,
     val nativeCompatibilityIssue: String? = null,
     val gameUpdate: GameUpdateCatalog = GameUpdateCatalog(),
     val installSource: GameInstallSource = GameInstallSource(),
@@ -135,8 +136,9 @@ internal class LaunchCoordinator private constructor(application: Application) {
         val name = runCatching { AndroidInstalledGameImporter.installedVersionName(app.packageManager) }.getOrNull()
         val source = if (installed != null) GameStores.installedSource(app) else GameInstallSource()
         val preferred = GameUpdateSource.fromKey(updatePreferences.getString("preferred", null)) ?: GameStores.sourceFor(source)
+        val canResume = runtime.hasRunningGame()
         publish { it.copy(container = container, installedVersion = installed, installedVersionName = name,
-            installSource = source, preferredGameSource = preferred) }
+            installSource = source, preferredGameSource = preferred, canResumeGame = canResume) }
         return container to installed
     }
 
@@ -305,6 +307,12 @@ internal class LaunchCoordinator private constructor(application: Application) {
         // A Play/DNS outage must not stall the existing translation/launch path.
         checkGameUpdate(force = true)
         perform("准备启动") {
+            stage("返回游戏", 2)
+            if (runtime.resumeGameIfRunning()) {
+                publish { it.copy(canResumeGame = true) }
+                return@perform "已返回游戏"
+            }
+            publish { it.copy(canResumeGame = false) }
             stage("检查游戏兼容性", 0)
             val localCandidate = com.example.limbuszhcn.update.TranslationRepository(
                 app.filesDir.toPath().resolve("translation-cache")).hasLaunchCandidate()
@@ -340,6 +348,8 @@ internal class LaunchCoordinator private constructor(application: Application) {
             val runtimeStatus = receipt().status()
             publish { it.copy(runtimeStatus = runtimeStatus) }
             measureStartup("container_launch") { runtime.launchGame() }
+            val canResume = runtime.hasRunningGame()
+            publish { it.copy(canResumeGame = canResume) }
             if (update.isFailure) "${update.exceptionOrNull()!!.updateFailureLabel()}；${summary.description()}；游戏已打开"
             else "${summary.description()}；游戏已打开"
         }
