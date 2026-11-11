@@ -157,6 +157,9 @@ struct TmpComponentState {
     limbus_managed::Ref font_root;
     limbus_managed::Ref material_root;
     limbus_font_materials::Lease converted_material;
+    void *padded_material = nullptr;
+    uint32_t padded_crc = 0;
+    bool has_padded_crc = false;
     float line_spacing = 0.0f;
     bool has_line_spacing = false;
     float font_size = 0.0f;
@@ -221,6 +224,10 @@ typedef void (*tmp_set_material_fn)(void *, void *, const void *);
 typedef void (*tmp_set_text_fn)(void *, void *, const void *);
 typedef void (*tmp_set_text_string_fn)(void *, void *, bool, const void *);
 typedef void (*tmp_parse_input_fn)(void *, const void *);
+typedef void *(*ruby_format_fn)(void *, void *, const void *);
+ruby_format_fn g_original_ruby_format[3] = {};
+void *g_ruby_text_classes[3] = {};
+thread_local bool g_inside_ruby_format = false;
 typedef void *(*class_get_parent_fn)(void *);
 typedef const void *(*class_get_fields_fn)(void *, void **);
 typedef const char *(*field_get_name_fn)(const void *);
@@ -344,9 +351,8 @@ const void *g_component_get_game_object_info = nullptr;
 const void *g_game_object_get_active_info = nullptr;
 const void *g_tmp_runtime_type = nullptr;
 const void *g_material_get_float_info = nullptr;
-const void *g_material_set_float_info = nullptr;
-const void *g_material_get_color_info = nullptr;
-const void *g_material_set_color_info = nullptr;
+const void *g_material_get_texture_info = nullptr;
+const void *g_material_compute_crc_info = nullptr;
 il2cpp_init_fn g_original_il2cpp_init = nullptr;
 dlsym_fn g_original_unity_dlsym = nullptr;
 limbus_runtime::Symbols g_il2cpp_symbols;
@@ -1990,6 +1996,8 @@ void observe_popup_font(void *instance, void *managed_text, bool legacy) {
              text.find("饰品") != text.npos || text.find("投影") != text.npos ||
              text.find("每周") != text.npos) kind = 9;
     else if (!legacy && is_announcer_description(instance)) kind = 10;
+    else if (text == "经验" || text == "纺锤" || text == "有利属性" ||
+             text == "难度" || text.find("采光") != text.npos) kind = 12;
     if (choice_text) kind = 11;
     if (!kind) return;
     const auto shape = popup_text_shape(text);
@@ -2029,13 +2037,15 @@ void observe_popup_font(void *instance, void *managed_text, bool legacy) {
     uint64_t text_hash = 14695981039346656037ull;
     for (unsigned char c : text) text_hash = (text_hash ^ c) * 1099511628211ull;
     char row[2048];
-    snprintf(row, sizeof(row), "kind=%d type=%s component=%p proof=%d primary=%d font=%s style=%d weight=%d material=%p converted=%d dilate=%.4f normal=%.4f bold=%.4f outline=%.4f scale=%.4f gradient=%.4f tags_font=%d tags_sprite=%d wrap=%d overflow=%d rect=%.1fx%.1f breaks=%zu text_hash=%016llx shape=%s",
+    snprintf(row, sizeof(row), "kind=%d type=%s component=%p proof=%d primary=%d font=%s style=%d weight=%d material=%p converted=%d dilate=%.4f normal=%.4f bold=%.4f outline=%.4f scale=%.4f gradient=%.4f shadow_x=%.4f shadow_y=%.4f shadow_softness=%.4f shadow_dilate=%.4f tags_font=%d tags_sprite=%d wrap=%d overflow=%d rect=%.1fx%.1f breaks=%zu text_hash=%016llx shape=%s",
             kind, legacy ? "ui" : "tmp", instance, proof,
             font && font == (legacy ? g_ui_font : g_tmp_font_asset), font_name.c_str(), style, weight,
             material, g_converted_font_materials.find(material) != nullptr,
             read_material_number(material, "_FaceDilate"), read_material_number(material, "_WeightNormal"),
             read_material_number(material, "_WeightBold"), read_material_number(material, "_OutlineWidth"),
             read_material_number(material, "_ScaleRatioA"), read_material_number(material, "_GradientScale"),
+            read_material_number(material, "_UnderlayOffsetX"), read_material_number(material, "_UnderlayOffsetY"),
+            read_material_number(material, "_UnderlaySoftness"), read_material_number(material, "_UnderlayDilate"),
             text.find("<font") != text.npos, text.find("<sprite") != text.npos,
             wrapping, overflow, rect.width, rect.height,
             static_cast<size_t>(std::count(text.begin(), text.end(), '\n')),
@@ -2043,67 +2053,6 @@ void observe_popup_font(void *instance, void *managed_text, bool legacy) {
     if (sample.last == row) return;
     sample.last = row;
     append_native_metadata("font-state.log", row);
-}
-
-struct MaterialOutlineStyle {
-    float width = 0.0f;
-    float color[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-    bool has_width = false;
-    bool has_color = false;
-};
-
-MaterialOutlineStyle read_material_outline(void *material) {
-    MaterialOutlineStyle style;
-    if (material == nullptr || g_runtime_invoke == nullptr || g_object_unbox == nullptr) {
-        return style;
-    }
-    void *width_name = new_managed_string("_OutlineWidth");
-    void *color_name = new_managed_string("_OutlineColor");
-    if (width_name != nullptr && g_material_get_float_info != nullptr) {
-        void *args[] = {width_name};
-        void *exception = nullptr;
-        void *boxed = g_runtime_invoke(g_material_get_float_info, material, args, &exception);
-        void *unboxed = exception == nullptr && boxed != nullptr ? g_object_unbox(boxed) : nullptr;
-        if (unboxed != nullptr) {
-            memcpy(&style.width, unboxed, sizeof(style.width));
-            style.has_width = true;
-        }
-    }
-    if (color_name != nullptr && g_material_get_color_info != nullptr) {
-        void *args[] = {color_name};
-        void *exception = nullptr;
-        void *boxed = g_runtime_invoke(g_material_get_color_info, material, args, &exception);
-        void *unboxed = exception == nullptr && boxed != nullptr ? g_object_unbox(boxed) : nullptr;
-        if (unboxed != nullptr) {
-            memcpy(style.color, unboxed, sizeof(style.color));
-            style.has_color = true;
-        }
-    }
-    return style;
-}
-
-void apply_material_outline(void *material, const MaterialOutlineStyle &style) {
-    if (material == nullptr || !style.has_width || style.width <= 0.0001f ||
-        g_runtime_invoke == nullptr) {
-        return;
-    }
-    void *width_name = new_managed_string("_OutlineWidth");
-    void *color_name = new_managed_string("_OutlineColor");
-    if (width_name != nullptr && g_material_set_float_info != nullptr) {
-        float width = style.width;
-        void *args[] = {width_name, &width};
-        void *exception = nullptr;
-        g_runtime_invoke(g_material_set_float_info, material, args, &exception);
-    }
-    if (color_name != nullptr && g_material_set_color_info != nullptr) {
-        // 拼点/技能组件原材质已有描边宽度时，中文材质继承宽度并统一为不透明黑边。
-        // 这样既保留游戏层级感，也不会给原本没有描边的普通正文强行加边。
-        float black[4] = {0.0f, 0.0f, 0.0f,
-                          style.has_color ? std::max(style.color[3], 0.95f) : 1.0f};
-        void *args[] = {color_name, black};
-        void *exception = nullptr;
-        g_runtime_invoke(g_material_set_color_info, material, args, &exception);
-    }
 }
 
 bool unity_object_alive(void *instance) {
@@ -2171,6 +2120,25 @@ bool retain_tmp_material(void *material) {
     return exception == nullptr;
 }
 
+void *material_main_texture(void *material) {
+    if (!material || !g_material_get_texture_info || !g_runtime_invoke) return nullptr;
+    auto name = limbus_managed::retain(g_gc, new_managed_string("_MainTex"));
+    if (!name) return nullptr;
+    void *args[] = {name->get()}, *exception = nullptr;
+    void *texture = g_runtime_invoke(g_material_get_texture_info, material, args, &exception);
+    return exception ? nullptr : texture;
+}
+
+bool material_crc(void *material, uint32_t *value) {
+    if (!material || !value || !g_material_compute_crc_info || !g_runtime_invoke || !g_object_unbox) return false;
+    void *exception = nullptr;
+    void *boxed = g_runtime_invoke(g_material_compute_crc_info, material, nullptr, &exception);
+    void *unboxed = !exception && boxed ? g_object_unbox(boxed) : nullptr;
+    if (!unboxed) return false;
+    memcpy(value, unboxed, sizeof(*value));
+    return true;
+}
+
 void release_tmp_material(void *material) {
     if (!g_runtime_invoke || !g_release_fallback_material_info) return;
     void *args[] = {material}, *exception = nullptr;
@@ -2197,7 +2165,15 @@ void *translated_tmp_material(void *instance, void *requested_material) {
     auto assign_lease = [&](limbus_font_materials::Lease lease) {
         pthread_mutex_lock(&g_font_state_lock);
         auto saved = g_original_tmp_states.find(instance, id);
-        if (saved) saved->converted_material = std::move(lease);
+        if (saved) {
+            // Sharing a converted preset must carry its real source too. A
+            // Chinese-atlas instance is styling input, never a Japanese restore preset.
+            if (lease && lease->restores_source() && lease->source()) {
+                saved->shared_material = lease->source();
+                saved->material_root = lease->source_root();
+            }
+            saved->converted_material = std::move(lease);
+        }
         pthread_mutex_unlock(&g_font_state_lock);
     };
     if (requested_material == nullptr || requested_material == font_material) {
@@ -2211,26 +2187,81 @@ void *translated_tmp_material(void *instance, void *requested_material) {
     // Keep the latest game preset for recycled components, including selection
     // and disabled states. TMP's material manager copies style but replaces the
     // atlas and its metrics, preventing a Japanese atlas or lost outline.
-    auto material_root = limbus_managed::retain(g_gc, requested_material);
-    if (!material_root) return font_material;
-    pthread_mutex_lock(&g_font_state_lock);
-    auto saved = g_original_tmp_states.find(instance, id);
-    if (saved) { saved->shared_material = requested_material; saved->material_root = material_root; }
-    pthread_mutex_unlock(&g_font_state_lock);
+    const bool known_source = state.converted_material &&
+            state.converted_material->source() == requested_material;
+    auto material_root = known_source ? state.converted_material->source_root() :
+            (state.shared_material == requested_material && state.material_root ? state.material_root :
+             limbus_managed::retain(g_gc, requested_material));
+    if (!material_root) { assign_lease({}); return font_material; }
+    bool restores_source = known_source && state.converted_material->restores_source();
+    if (!known_source) {
+        void *source_atlas = material_main_texture(requested_material);
+        void *chinese_atlas = material_main_texture(font_material);
+        restores_source = source_atlas && chinese_atlas && source_atlas != chinese_atlas;
+    }
+    if (restores_source) {
+        pthread_mutex_lock(&g_font_state_lock);
+        auto saved = g_original_tmp_states.find(instance, id);
+        if (saved) { saved->shared_material = requested_material; saved->material_root = material_root; }
+        pthread_mutex_unlock(&g_font_state_lock);
+    }
     if (g_get_fallback_material_info == nullptr || g_retain_fallback_material_info == nullptr ||
-        g_release_fallback_material_info == nullptr) return font_material;
+        g_release_fallback_material_info == nullptr) { assign_lease({}); return font_material; }
     void *args[] = {requested_material, font_material};
     void *exception = nullptr;
     // Even a known source preset may have changed in place. Let TMP refresh its
     // own cached conversion instead of returning our previous material blindly.
     void *converted = g_runtime_invoke(g_get_fallback_material_info, nullptr, args, &exception);
-    if (exception != nullptr || converted == nullptr) return font_material;
-    auto lease = g_converted_font_materials.acquire(converted, retain_tmp_material, release_tmp_material);
-    if (!lease) return font_material;
+    if (exception != nullptr || converted == nullptr) { assign_lease({}); return font_material; }
+    auto lease = g_converted_font_materials.acquire(converted, retain_tmp_material, release_tmp_material,
+            std::move(material_root), restores_source);
+    if (!lease) { assign_lease({}); return font_material; }
     // Only live component records hold strong leases. New presets retain their
     // own style even after more than 128 materials have been visited.
     assign_lease(std::move(lease));
     return converted;
+}
+
+void refresh_tmp_component_material(void *instance) {
+    TmpComponentState state;
+    if (!g_tmp_get_shared_material_info || !find_tmp_component_state(instance, &state)) return;
+    void *current = invoke_object_getter(g_tmp_get_shared_material_info, instance);
+    void *source = current;
+    if (state.converted_material && state.converted_material->get() == current &&
+        state.converted_material->source()) source = state.converted_material->source();
+    void *converted = translated_tmp_material(instance, source);
+    if (!converted) return;
+    if (converted != current) invoke_object_setter(g_tmp_set_shared_material_info, instance, converted);
+    uint32_t checksum = 0;
+    const bool known_crc = material_crc(converted, &checksum);
+    if (state.padded_material == converted &&
+        (!known_crc || (state.has_padded_crc && state.padded_crc == checksum))) return;
+    // A Unity version without ComputeCRC still gets padding on material changes,
+    // but cannot enter a perpetual dirty/reparse loop on the same material.
+    // The source can change in place while the converted pointer stays equal.
+    // TMP's public setter then short-circuits, leaving old outline/shadow padding.
+    // Resolve the concrete override: TMP_Text's base UpdateMeshPadding is empty.
+    if (!g_object_get_class || !g_class_get_method || !g_runtime_invoke) return;
+    void *klass = g_object_get_class(instance);
+    if (!klass) return;
+    const void *padding = g_class_get_method(klass, "UpdateMeshPadding", 0);
+    if (!padding) return;
+    void *exception = nullptr;
+    g_runtime_invoke(padding, instance, nullptr, &exception);
+    if (!exception) {
+        // GetPadding can update shader ratios; remember the post-update CRC so
+        // an unchanged parse does not mark this component dirty again.
+        const bool padded_crc = material_crc(converted, &checksum);
+        const auto id = component_id(instance);
+        pthread_mutex_lock(&g_font_state_lock);
+        auto saved = g_original_tmp_states.find(instance, id);
+        if (saved) {
+            saved->padded_material = converted;
+            saved->padded_crc = checksum;
+            saved->has_padded_crc = padded_crc;
+        }
+        pthread_mutex_unlock(&g_font_state_lock);
+    }
 }
 
 void replacement_tmp_set_shared_material(void *instance, void *material, const void *method) {
@@ -2362,6 +2393,14 @@ size_t count_visible_codepoints(const std::string &text) {
     return limbus_rich_text::visible_codepoints(text);
 }
 
+bool is_ruby_text(void *instance) {
+    if (!instance || !g_object_get_class) return false;
+    void *klass = g_object_get_class(instance);
+    for (size_t i = 0; i < 3; ++i)
+        if (g_original_ruby_format[i] && klass == g_ruby_text_classes[i]) return true;
+    return false;
+}
+
 void apply_translated_tmp_style(void *instance, void *managed_text,
                                 const TmpComponentState &state) {
     if (managed_text == nullptr || g_string_length == nullptr ||
@@ -2376,7 +2415,7 @@ void apply_translated_tmp_style(void *instance, void *managed_text,
     }
 
     // The announcer's custom scroll task owns its layout, including later parses.
-    if (is_announcer_description(instance) || is_choice_text(instance) ||
+    if (is_announcer_description(instance) || is_choice_text(instance) || is_ruby_text(instance) ||
         !state.has_font_size || state.font_size <= 0.0f) return;
 
     size_t visible_length = count_visible_codepoints(text);
@@ -2572,6 +2611,10 @@ void *prepare_tmp_text(void *instance, void *managed_text, bool restore_untransl
                             LT_LOGI("TMP Chinese primary font switches=%llu font=%p",
                                     static_cast<unsigned long long>(switches), g_tmp_font_asset);
                         }
+                    } else {
+                        // Font identity does not prove that its material still
+                        // uses the right atlas or the latest selected/disabled style.
+                        refresh_tmp_component_material(font_target);
                     }
                 }
             } else if (!translated && restore_untranslated) {
@@ -2599,6 +2642,31 @@ void finalize_tmp_text(void *instance, void *managed_text) {
         // 旧文本重新计算布局，导致我们设置的自动缩放没有真正处理新中文。
         apply_translated_tmp_style(instance, managed_text, state);
     }
+}
+
+template<size_t Slot>
+void *replacement_ruby_format(void *instance, void *managed_text, const void *method) {
+    auto original = g_original_ruby_format[Slot];
+    if (!instance || !managed_text || g_inside_ruby_format) return original(instance, managed_text, method);
+    struct RubyScope {
+        RubyScope() { g_inside_ruby_format = true; }
+        ~RubyScope() { g_inside_ruby_format = false; }
+    } scope;
+    // Ruby measures the main text before replacing annotations with positioning
+    // tags. Prepare the font before measurement, and carry proof through that
+    // exact formatter invocation, rather than stripping arbitrary <ruby> tags.
+    void *prepared = prepare_tmp_text(instance, managed_text);
+    const bool translated = is_translated_managed_string(prepared);
+    void *result = original(instance, prepared, method);
+    if (!translated || !result || !g_string_length || !g_string_chars) return result;
+    const auto length = g_string_length(result);
+    std::string text;
+    if (length > 0 && length <= 65536 && utf16_to_utf8(g_string_chars(result), length, &text)) {
+        pthread_mutex_lock(&g_font_state_lock);
+        remember_translated_text(result, text);
+        pthread_mutex_unlock(&g_font_state_lock);
+    }
+    return result;
 }
 
 void apply_translated_ui_style(void *instance, void *managed_text,
@@ -3226,6 +3294,8 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
     void *material_class = nullptr;
     void *tmp_settings_class = nullptr;
     void *tmp_material_manager_class = nullptr;
+    void *ruby_text_classes[3] = {};
+    const char *ruby_class_names[] = {"CustomRubyTextMeshProUGUI", "RubyTextMeshProUGUI", "RubyTextMeshPro"};
     void *rpg_format_class = nullptr;
     void *ui_text_data_class = nullptr;
     void *ui_loader_class = nullptr, *ui_parameter_loader_class = nullptr;
@@ -3365,6 +3435,8 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         if (tmp_material_manager_class == nullptr) {
             tmp_material_manager_class = class_from_name(image, "TMPro", "TMP_MaterialManager");
         }
+        for (size_t ruby = 0; ruby < 3; ++ruby)
+            if (!ruby_text_classes[ruby]) ruby_text_classes[ruby] = class_from_name(image, "TMPro", ruby_class_names[ruby]);
         if (rpg_format_class == nullptr) {
             rpg_format_class = class_from_name(image, "RPGSystem", "RpgLocFormat");
         }
@@ -3568,12 +3640,9 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             class_get_method_from_name(transform_class, "get_parent", 0);
     const void *material_get_float_method = find_method_by_signature(
             material_class, "GetFloat", "System.String");
-    const void *material_set_float_method = find_method_by_signature(
-            material_class, "SetFloat", "System.String,System.Single");
-    const void *material_get_color_method = find_method_by_signature(
-            material_class, "GetColor", "System.String");
-    const void *material_set_color_method = find_method_by_signature(
-            material_class, "SetColor", "System.String,UnityEngine.Color");
+    const void *material_get_texture_method = find_method_by_signature(
+            material_class, "GetTexture", "System.String");
+    const void *material_compute_crc_method = find_method_by_signature(material_class, "ComputeCRC", "");
     const void *get_fallback_fonts_method = tmp_settings_class == nullptr ? nullptr :
             class_get_method_from_name(tmp_settings_class, "get_fallbackFontAssets", 0);
     const void *get_fallback_material_method = find_method_by_signature(
@@ -3604,7 +3673,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
     LT_LOGI("TMP fallback getter class=%p method=%p", tmp_settings_class, get_fallback_fonts_method);
     LT_LOGI("TMP style methods material=%p fontAssetMaterial=%p fontMaterial=%p/%p shared=%p/%p spacing=%p/%p"
             " fontSize=%p/%p min=%p/%p max=%p/%p auto=%p/%p wrap=%p/%p overflow=%p/%p"
-            " rect=%p/%p outline=%p/%p/%p/%p",
+            " rect=%p/%p materialRead=%p/%p/%p",
             material_class, tmp_font_get_material_method,
             tmp_get_font_material_method, tmp_set_font_material_method,
             tmp_get_shared_material_method,
@@ -3616,8 +3685,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             tmp_get_word_wrapping_method, tmp_set_word_wrapping_method,
             tmp_get_overflow_mode_method, tmp_set_overflow_mode_method,
             tmp_get_rect_transform_method, rect_transform_get_rect_method,
-            material_get_float_method, material_set_float_method,
-            material_get_color_method, material_set_color_method);
+            material_get_float_method, material_get_texture_method, material_compute_crc_method);
     LT_LOGI("UI.Text style methods font=%p/%p spacing=%p/%p fontSize=%p/%p min=%p/%p"
             " max=%p/%p bestFit=%p/%p horizontal=%p/%p vertical=%p/%p rect=%p/%p",
             ui_get_font_method, ui_set_font_method,
@@ -3762,9 +3830,8 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 g_component_get_game_object_info && g_game_object_get_active_info ?
                 "fragment_group_apis=1" : "fragment_group_apis=0");
         g_material_get_float_info = material_get_float_method;
-        g_material_set_float_info = material_set_float_method;
-        g_material_get_color_info = material_get_color_method;
-        g_material_set_color_info = material_set_color_method;
+        g_material_get_texture_info = material_get_texture_method;
+        g_material_compute_crc_info = material_compute_crc_method;
         hook_limbus_owned_function(tmp_pointer, reinterpret_cast<void *>(replacement_tmp_set_text),
                        reinterpret_cast<void **>(&g_original_tmp_set_text));
         auto has_inline_hook_space = [&](void *klass, void *pointer) {
@@ -3775,6 +3842,36 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                     position + 1 != managed_method_addresses.end() &&
                     *(position + 1) - address >= ((address & 7u) ? 20u : 16u);
         };
+        if (method_get_class && method_is_generic && method_get_flags && method_get_return_type) {
+            ruby_format_fn replacements[] = {replacement_ruby_format<0>, replacement_ruby_format<1>, replacement_ruby_format<2>};
+            std::unordered_map<void *, ruby_format_fn> installed;
+            for (size_t slot = 0; slot < 3; ++slot) {
+                void *klass = ruby_text_classes[slot];
+                const void *entry = find_method_by_signature(klass, "ReplaceRubyTags", "System.String");
+                uint32_t implementation = 0;
+                if (!entry || method_get_class(entry) != klass || method_is_generic(entry) ||
+                    (method_get_flags(entry, &implementation) & 0x0010u)) continue;
+                char *result = type_get_name(method_get_return_type(entry));
+                bool valid = result && strcmp(result, "System.String") == 0;
+                if (result) il2cpp_free(result);
+                void *pointer = nullptr;
+                memcpy(&pointer, entry, sizeof(pointer));
+                if (!valid || !has_inline_hook_space(klass, pointer)) continue;
+                auto alias = installed.find(pointer);
+                if (alias != installed.end()) g_original_ruby_format[slot] = alias->second;
+                else {
+                    hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacements[slot]),
+                            reinterpret_cast<void **>(&g_original_ruby_format[slot]));
+                    if (g_original_ruby_format[slot]) installed.emplace(pointer, g_original_ruby_format[slot]);
+                }
+                if (g_original_ruby_format[slot]) g_ruby_text_classes[slot] = klass;
+            }
+            char ruby_hooks[96];
+            snprintf(ruby_hooks, sizeof(ruby_hooks), "ruby_pre_layout custom=%d ui=%d text=%d",
+                    g_original_ruby_format[0] != nullptr, g_original_ruby_format[1] != nullptr,
+                    g_original_ruby_format[2] != nullptr);
+            append_native_metadata("font-state.log", ruby_hooks);
+        }
         if (g_live_resources && method_get_class && method_is_generic && method_get_flags && method_get_return_type) {
             auto hook_resource = [&](void *klass, const char *name, const char *parameters, void *replacement, void **original) {
                 const void *entry = find_method_by_signature(klass, name, parameters);

@@ -42,8 +42,9 @@ internal class LiveTranslationStore(private val cache: Path) {
             val file = cache.resolve(entry.path)
             require(file.sha256() == entry.hash) { "汉化资源校验失败" }
             val json = file.readText(Charsets.UTF_8)
-            // Self-pairing applies exactly the same field/identity restrictions as runtime merging.
-            TranslationJsonPairer.releasedTexts("Localize/${entry.key}", json).forEach { text ->
+            // Font provenance uses released display fields; pairing ambiguity
+            // must not discard their font coverage. Runtime merging stays strict.
+            TranslationJsonPairer.releasedTexts(json).forEach { text ->
                 // Released Chinese names may deliberately contain kana (e.g. し协会).
                 // Provenance comes from the verified display field, not script purity.
                 if (text.any { c -> c.code in 0x3400..0x9fff }) labels += text
@@ -97,7 +98,7 @@ internal class LiveTranslationStore(private val cache: Path) {
     data class Snapshot(val version: String, val archive: String, val entries: List<Entry>, val fontHash: String, val labels: Int)
 
     companion object {
-        private const val SCHEMA = 2
+        private const val SCHEMA = 3
         const val MAX_JSON_BYTES = 16L * 1024 * 1024
         private val SHA = Regex("[0-9a-f]{64}")
         private fun validKey(key: String): Boolean = key.startsWith("jp/") && key.length <= 512 &&

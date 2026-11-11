@@ -26,6 +26,7 @@ struct Control {
     ComponentRect rect;
     std::map<int, float> settings;
     bool announcer = false, choice = false;
+    bool ruby = false;
     std::string name, parent;
 };
 std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codec;
@@ -51,6 +52,7 @@ void invoke_int_setter(int key, void *i, int value) { invoke_float_setter(key, i
 void invoke_bool_setter(int key, void *i, bool value) { invoke_float_setter(key, i, value); }
 bool is_announcer_description(void *i) { return static_cast<Control *>(i)->announcer; }
 bool is_choice_text(void *i) { return static_cast<Control *>(i)->choice; }
+bool is_ruby_text(void *i) { return static_cast<Control *>(i)->ruby; }
 ComponentRect read_component_rect(void *i, int) { return static_cast<Control *>(i)->rect; }
 std::string read_unity_object_name(void *i) { return static_cast<Control *>(i)->name; }
 std::string read_unity_parent_name(void *i) { return static_cast<Control *>(i)->parent; }
@@ -100,10 +102,10 @@ int main() {
         apply(specialized, "分页或滚动正文", original);
         assert(specialized.settings.empty());
     }
-    Control announcer, choice;
-    announcer.announcer = true; choice.choice = true;
-    apply(announcer, "播报正文"); apply(choice, "事件正文");
-    assert(announcer.settings.empty() && choice.settings.empty());
+    Control announcer, choice, ruby;
+    announcer.announcer = true; choice.choice = true; ruby.ruby = true;
+    apply(announcer, "播报正文"); apply(choice, "事件正文"); apply(ruby, "<ruby=Fabius>费边</ruby>");
+    assert(announcer.settings.empty() && choice.settings.empty() && ruby.settings.empty());
     UiComponentState legacy;
     legacy.font_size = 8;
     auto label = codec.from_bytes("战斗设置");

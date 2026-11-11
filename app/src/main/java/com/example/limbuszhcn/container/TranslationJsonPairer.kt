@@ -33,11 +33,30 @@ internal object TranslationJsonPairer {
         return if (records.any { it.source != it.translation }) original.toString() else null
     }
 
-    fun releasedTexts(path: String, json: String): List<String> {
-        val value = parse(json)
-        val records = mutableListOf<TranslationIndexRecord>()
-        collect(value, value, path, "$", records, 0)
-        return records.map { it.translation }
+    fun releasedTexts(json: String): List<String> {
+        // This catalogue proves font ownership, not a source-to-target mapping.
+        // A duplicate identity cannot invalidate a complete released Chinese label.
+        val texts = mutableListOf<String>()
+        fun collectReleased(value: Any?, depth: Int, displayArray: String? = null) {
+            require(depth <= 64) { "Resource nesting exceeds limit" }
+            when (value) {
+                is JSONObject -> value.keys().forEach { field ->
+                    val child = value.opt(field)
+                    if (child is String) {
+                        if (TranslationTextPolicy.isDisplayField(field) && child.isNotBlank() &&
+                            TranslationTextPolicy.isUsableDisplayText(child)) texts += child
+                    } else collectReleased(child, depth + 1,
+                        field.takeIf { it in TranslationTextPolicy.STRING_ARRAY_FIELDS })
+                }
+                is JSONArray -> (0 until value.length()).forEach {
+                    collectReleased(value.opt(it), depth + 1, displayArray)
+                }
+                is String -> if (displayArray != null && value.isNotBlank() &&
+                    TranslationTextPolicy.isUsableDisplayText(value)) texts += value
+            }
+        }
+        collectReleased(parse(json), 0)
+        return texts
     }
 
     private fun parse(text: String): Any {
