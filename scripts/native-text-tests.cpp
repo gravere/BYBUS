@@ -117,6 +117,16 @@ int main() {
     assert(!is_short_translated_label("12345678"));
     assert(!is_short_translated_label(std::string(257, 'x') + "中文"));
     limbus_font_proof::Catalogue fonts;
+    fonts.add("し协会\n南部5科");
+    assert(fonts.contains("<b>し协会<br>南部5科</b>"));
+    assert(fonts.contains("し协会<BR><voffset=2>南部5科</voffset>"));
+    assert(!fonts.contains("し协会<br=unknown>南部5科"));
+    assert(!fonts.contains("し协会<sprite name=unknown>南部5科"));
+    assert(!fonts.contains("し协会<br>南部5科新增正文"));
+    fonts.add("N公司E.G.O::<noparse>凶弹</noparse> 李箱");
+    assert(fonts.contains("N公司E.G.O::<noparse>凶弹</noparse> 李箱"));
+    assert(!fonts.contains("<noparse>凶弹</noparse>"));
+    assert(!fonts.contains("N公司E.G.O::<noparse>凶弹</noparse> 李箱额外正文"));
     fonts.add("初始<color=#dd0000>经费</color> +{0}");
     fonts.add("<color=#dd0000>主题卡包</color>出现数量 +{0}");
     assert(fonts.contains("• 初始<color=#dd0000>经费</color> +150\n• 主题卡包出现数量 +1"));

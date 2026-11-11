@@ -70,11 +70,11 @@ class VirtualAppContainerRuntime(
         return fallback.importGame(request, bridge::referencedGameApkPaths) { prepared ->
             val result = bridge.installBaseApk(prepared.splitApkPaths.first(), prepared.source == "installed")
             require(result.success && result.packageName == LocalContainerRuntime.GAME_PACKAGE) {
-                "容器安装未完成，请重新同步游戏: ${result.error.orEmpty()}"
+                "游戏同步未完成，请在设置中运行修复：${result.error.orEmpty()}"
             }
             bridge.ensureGoogleAppsInstalled()
             val count = bridge.installNativeLibraries(LocalContainerRuntime.GAME_PACKAGE, prepared.splitApkPaths)
-            require(count > 0) { "游戏原生库缺失，请重新同步游戏" }
+            require(count > 0) { "游戏启动文件缺失，请在设置中运行修复" }
             if (prepared.source == "installed") {
                 val current = AndroidInstalledGameImporter.installedVersionCode(context.packageManager)
                 require(current == prepared.versionCode) { "同步期间系统更新了游戏，请重试同步" }
@@ -114,7 +114,7 @@ class VirtualAppContainerRuntime(
     override fun launchGame() {
         Log.i(TAG, "launchGame requested pid=${Process.myPid()}")
         bridge.requireAvailable()
-        require(!fallback.status().requiresInstalledGameResync) { "上次游戏同步未完成，请重新同步后启动" }
+        require(!fallback.status().requiresInstalledGameResync) { "上次游戏同步未完成，请在设置中运行修复后启动" }
         // Redirects must not survive into the next resource-validation pass.
         TranslationRedirectGate(context).close()
         ensureGameInstalledInVirtualApp()
@@ -134,7 +134,7 @@ class VirtualAppContainerRuntime(
         // Normal launch prepares the installed game through the single transactional import path.
         // A missing registration must not trigger a second, unmarked source-changing installer here.
         require(bridge.isVirtualAppInstalled(LocalContainerRuntime.GAME_PACKAGE)) {
-            "容器游戏记录缺失，请重新同步游戏后启动"
+            "游戏记录缺失，请在设置中运行修复后启动"
         }
     }
 

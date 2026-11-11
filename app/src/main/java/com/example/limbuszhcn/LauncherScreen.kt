@@ -36,7 +36,6 @@ internal fun LauncherScreen(
     onCancelAppUpdate: () -> Unit,
     onOpenAppRelease: () -> Unit,
     onLaunch: () -> Unit,
-    onPrepareResources: () -> Unit = {},
     onRefresh: () -> Unit,
     onUpdate: () -> Unit,
     onCheckGameUpdate: () -> Unit,
@@ -46,9 +45,9 @@ internal fun LauncherScreen(
     onImportGame: () -> Unit,
     onInstallGame: () -> Unit,
     onCancelGameInstall: () -> Unit,
-    onSync: () -> Unit,
+    onRepair: () -> Unit = {},
+    onClearGameResources: () -> Unit = {},
     onMigration: () -> Unit,
-    onRestore: () -> Unit,
     onExport: () -> Unit,
     onSettings: () -> Unit,
     onGoogleSettings: () -> Unit,
@@ -60,7 +59,7 @@ internal fun LauncherScreen(
 ) {
     var sheet by rememberSaveable { mutableStateOf<String?>(null) }
     var parentSheet by rememberSaveable { mutableStateOf<String?>(null) }
-    var updateTab by rememberSaveable { mutableStateOf(UpdateTab.App) }
+    var confirmation by rememberSaveable { mutableStateOf<ConfirmedOperation?>(null) }
     var handledUpdatesRequest by rememberSaveable { mutableLongStateOf(0L) }
     var handledPreparationRequest by rememberSaveable { mutableLongStateOf(0L) }
     LaunchedEffect(state.resourcePreparationRequest) {
@@ -145,38 +144,51 @@ internal fun LauncherScreen(
             sheet?.let { page ->
                 LauncherDetailSurface(layout, page, onDismiss = ::close,
                     onBack = parentSheet?.let { parent -> { sheet = parent; parentSheet = null } },
-                    navigation = { active -> if (active == "app-update") {
-                        UpdateTabs(updateTab, state.busy && state.stage == "检查零协更新并校验汉化文件") { updateTab = it }
-                    } },
-                    footer = { active -> if (active == "app-update") {
-                        if (updateTab == UpdateTab.App) AppUpdateControls(appUpdateState, state, onDownloadAppUpdate, onInstallAppUpdate, onCancelAppUpdate, layout.detailPadding.dp)
-                        else TranslationUpdateControls(state, onUpdate, layout.detailPadding.dp)
+                    footer = { active -> when (active) {
+                        "app-update" -> AppUpdateControls(appUpdateState, state, onDownloadAppUpdate, onInstallAppUpdate, onCancelAppUpdate, layout.detailPadding.dp)
+                        "translation" -> TranslationUpdateControls(state, { confirmation = ConfirmedOperation.Translation }, layout.detailPadding.dp)
                     } }) { active ->
-                    if (active == "google") {
+                    if (active == "repair") {
+                        RepairPane(state, { confirmation = ConfirmedOperation.Repair }, onExport)
+                    } else if (active == "clear-data") {
+                        ClearDataPane(state) { confirmation = ConfirmedOperation.ClearResources }
+                    } else if (active == "google") {
                         GooglePaymentPane(state, onCheckGooglePayment, onEnableGooglePayment,
                             onSettings = { onGoogleSettings() })
                     } else if (active == "resource-preparation") {
-                        ResourcePreparationPane(state, onPrepare = { close(); onPrepareResources() },
-                            onCheck = onLaunch, onImport = onMigration)
+                        ResourcePreparationPane(state, onCheck = onLaunch, onImport = onMigration)
                     } else if (active == "project") {
                         ProjectDetails(projectState, onRefreshProject, onSelectProjectSource, onOpenLink)
                     } else if (active == "updates") {
                         GameUpdatesPane(state, onCheckGameUpdate, onSelectGameSource, onOpenGamePage,
                             onOpenInstallSource, onImportGame, onInstallGame, onCancelGameInstall)
                     } else if (active == "app-update") {
-                        if (updateTab == UpdateTab.App) AppUpdatesPane(appUpdateState, onCheckAppUpdate, onOpenAppRelease)
-                        else TranslationUpdatesPane(state)
+                        AppUpdatesPane(appUpdateState, onCheckAppUpdate, onOpenAppRelease)
+                    } else if (active == "translation") {
+                        TranslationUpdatesPane(state)
                     } else {
                         LauncherDetails(active, state, onGameStore = { openChild("updates") },
                             appUpdateAvailable = appUpdateState.updateAvailable,
-                            onAppUpdate = { updateTab = UpdateTab.App; openChild("app-update"); onCheckAppUpdate() },
-                            onSync = { close(); onSync() }, onRestore = { close(); onRestore() },
-                            onMigration = onMigration,
+                            onAppUpdate = { openChild("app-update"); onCheckAppUpdate() },
+                            onTranslation = { openChild("translation") },
+                            onMigration = onMigration, onRepair = { openChild("repair") },
+                            onClearData = { openChild("clear-data") },
                             onExport = { close(); onExport() }, onSettings = { close(); onSettings() },
                             onGoogleSettings = { openChild("google"); onCheckGooglePayment() },
                             onRefresh = { if (active != "status") close(); onRefresh() }, onAbout = { openChild("about") })
                     }
                 }
+            }
+        }
+    }
+    confirmation?.let { operation ->
+        OperationConfirmation(operation, enabled = !state.busy, onDismiss = { confirmation = null }) {
+            confirmation = null
+            if (!state.busy) when (operation) {
+                ConfirmedOperation.Repair -> onRepair()
+                ConfirmedOperation.ClearResources -> onClearGameResources()
+                ConfirmedOperation.Translation -> onUpdate()
+                else -> Unit
             }
         }
     }
@@ -211,7 +223,7 @@ private fun InstallationCard(state: LauncherUiState, modifier: Modifier = Modifi
             if (state.gameUpdate.newerSources(state.installedVersionName).isNotEmpty()) "有新版" else null)
         HorizontalDivider(Modifier.padding(start = 32.dp, top = 12.dp, bottom = 12.dp), color = C.Line)
         InstallationRow(Glyph.Translation, "本地汉化", state.translation?.version
-            ?: if (state.resourcePreparation != null) "汉化包已校验 · 等待游戏资源" else "首次启动时准备")
+            ?: if (state.resourcePreparation != null) "汉化尚未就绪" else "首次启动时准备")
     }
 }
 

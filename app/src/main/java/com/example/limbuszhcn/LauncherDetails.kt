@@ -23,9 +23,9 @@ import com.example.limbuszhcn.ui.theme.LauncherColors as C
 internal fun LauncherDetails(page: String, state: LauncherUiState,
     appUpdateAvailable: Boolean = false,
     onGameStore: () -> Unit,
-    onAppUpdate: () -> Unit,
-    onSync: () -> Unit, onRestore: () -> Unit, onExport: () -> Unit, onSettings: () -> Unit,
-    onMigration: () -> Unit,
+    onAppUpdate: () -> Unit, onTranslation: () -> Unit,
+    onExport: () -> Unit, onSettings: () -> Unit,
+    onMigration: () -> Unit, onRepair: () -> Unit, onClearData: () -> Unit,
     onGoogleSettings: () -> Unit,
     onRefresh: () -> Unit, onAbout: () -> Unit) {
     val enabled = !state.busy
@@ -33,14 +33,11 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
         when (page) {
             "tools" -> {
                 DetailActionSection("版本与资源") {
-                    SheetAction(Glyph.Upgrade, "更新", showUpdate = appUpdateAvailable, navigation = true, onClick = onAppUpdate)
+                    SheetAction(Glyph.Upgrade, "应用更新", showUpdate = appUpdateAvailable, navigation = true, onClick = onAppUpdate)
                     DetailActionDivider()
                     SheetAction(Glyph.Gamepad, "游戏更新", navigation = true, onClick = onGameStore)
                 }
                 DetailActionSection("管理") {
-                    SheetAction(Glyph.Sync, "同步游戏", enabled && state.installedVersion != null,
-                        onClick = onSync)
-                    DetailActionDivider()
                     SheetAction(Glyph.Import, "数据迁移", enabled, navigation = true, onClick = onMigration)
                     DetailActionDivider()
                     SheetAction(Glyph.Battery, "后台运行", enabled, navigation = true, onClick = onSettings)
@@ -48,13 +45,16 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
                     SheetAction(Glyph.Account, "Google 账号与付款", enabled, navigation = true,
                         onClick = onGoogleSettings)
                     DetailActionDivider()
+                    SheetAction(Glyph.Repair, "修复", enabled, navigation = true, onClick = onRepair)
+                    DetailActionDivider()
+                    SheetAction(Glyph.Delete, "清除数据", enabled, navigation = true, onClick = onClearData)
+                    DetailActionDivider()
                     SheetAction(Glyph.File, "导出诊断", enabled, onClick = onExport)
                     DetailActionDivider()
                     SheetAction(Glyph.Info, "使用说明与版本", navigation = true, onClick = onAbout)
                 }
                 DetailActionSection("汉化设置") {
-                    SheetAction(Glyph.Stop, "停用汉化", enabled && state.translation != null,
-                        onClick = onRestore)
+                    SheetAction(Glyph.Translation, "汉化资源", navigation = true, onClick = onTranslation)
                 }
             }
             "status" -> RuntimeStatusPane(state, onGameStore, onRefresh)
@@ -62,6 +62,8 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
                 Text(state.message, color = C.Muted, style = MaterialTheme.typography.bodyMedium)
                 DetailActionSection("操作") {
                     SheetAction(Glyph.Refresh, "重新检测", enabled, onClick = onRefresh)
+                    DetailActionDivider()
+                    SheetAction(Glyph.Repair, "修复", enabled, navigation = true, onClick = onRepair)
                     DetailActionDivider()
                     SheetAction(Glyph.File, "导出诊断", enabled, onClick = onExport)
                 }
@@ -124,14 +126,13 @@ private fun AboutPane() {
         LauncherGlyph(Glyph.Mark, C.Accent, Modifier.size(32.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(androidx.compose.ui.res.stringResource(R.string.app_name), style = MaterialTheme.typography.titleLarge)
-            Text("非官方社区启动器", color = C.Muted, style = MaterialTheme.typography.bodySmall)
         }
-        Text(androidx.compose.ui.res.stringResource(R.string.app_version_name), color = C.Muted,
+        Text(androidx.compose.ui.res.stringResource(R.string.app_version_name), color = C.Ink,
             style = MaterialTheme.typography.labelMedium)
     }
     DetailSection("开始使用") {
         Column(Modifier.padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            listOf("进入游戏，登录并下载资源。", "下载完成后，返回 BYBUS 再启动一次。", "以后从这里启动，自动检查汉化更新。").forEachIndexed { index, text ->
+            listOf("安装官方游戏，回到 BYBUS 点击启动。", "汉化包准备好后进入游戏，登录并下载资源，汉化会随资源加载生效。", "以后从 BYBUS 启动，自动检查汉化更新。").forEachIndexed { index, text ->
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
                     Text("0${index + 1}", color = C.Accent, style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.padding(top = 3.dp))
@@ -140,15 +141,12 @@ private fun AboutPane() {
             }
         }
     }
-    Text("保留系统安装的游戏。卸载 BYBUS 或清除数据会删除资源与登录信息。",
-        color = C.Muted, style = MaterialTheme.typography.bodySmall)
-    DetailDisclosure("游戏更新与数据保存") {
-        Text("游戏可从原安装渠道更新，返回后自动识别；大资源只需在 BYBUS 内下载。",
-            color = C.Muted, style = MaterialTheme.typography.bodyMedium)
-        Text("覆盖更新 BYBUS 会保留数据。游戏新版本可能需要新的兼容修复。",
-            color = C.Muted, style = MaterialTheme.typography.bodyMedium)
+    DetailSection("游戏更新与数据缓存") {
+        Column(Modifier.padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text("保留系统安装的游戏，从原渠道更新后，BYBUS 会自动同步。", style = MaterialTheme.typography.bodyMedium)
+            Text("游戏资源在 BYBUS 内下载一次即可。覆盖更新 BYBUS 会保留资源与登录信息；卸载或在系统设置中清除 BYBUS 数据会删除它们。", style = MaterialTheme.typography.bodyMedium)
+        }
     }
-    Text("汉化文本：都市零协会\nLocalizeLimbusCompany", color = C.Muted, style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable

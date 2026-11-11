@@ -43,7 +43,9 @@ internal data class LauncherUiState(
     val googlePayment: com.example.limbuszhcn.container.GooglePaymentState? = null,
     val googlePaymentIssue: String? = null,
     val compatibility: DeviceCompatibilityReport? = null,
-    val runtimeStatus: String = "尚未收到游戏运行时确认；当前游戏版本的兼容性未验证",
+    val runtimeStatus: com.example.limbuszhcn.container.RuntimeLaunchStatus = com.example.limbuszhcn.container.RuntimeLaunchStatus(),
+    val repair: RepairState = RepairState(),
+    val clearing: DataClearState = DataClearState(),
     val busy: Boolean = false,
     val stage: String = "正在读取状态",
     val launchStep: Int = -1,
@@ -199,7 +201,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
             }
         } else null
         val compatibility = DeviceCompatibility(app).report()
-        val runtimeStatus = receipt().description()
+        val runtimeStatus = receipt().status()
         if (state.googlePayment != null) {
             val payment = runCatching { (runtime as? com.example.limbuszhcn.container.VirtualAppContainerRuntime)?.googlePaymentState() }
             publish { it.copy(googlePayment = payment.getOrNull(), googlePaymentIssue = payment.exceptionOrNull()?.userMessage()) }
@@ -335,7 +337,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
             stage("启动容器内游戏", 2)
             gameCompatibility.requireUnchanged(approvedBuild)
             receipt().beginLaunch()
-            val runtimeStatus = receipt().description()
+            val runtimeStatus = receipt().status()
             publish { it.copy(runtimeStatus = runtimeStatus) }
             measureStartup("container_launch") { runtime.launchGame() }
             if (update.isFailure) "${update.exceptionOrNull()!!.updateFailureLabel()}；${summary.description()}；游戏已打开"
@@ -353,17 +355,52 @@ internal class LaunchCoordinator private constructor(application: Application) {
         summary.description()
     }
 
-    fun syncGame() = perform("重新同步游戏") {
-        prepareGame(force = true)
-        "游戏已同步，点击主按钮启动汉化版"
+    fun repair() = perform("正在修复") {
+        fun progress(step: Int, text: String) {
+            stage(text)
+            publish { it.copy(repair = RepairState(RepairPhase.Running, step, text)) }
+        }
+        val result = runCatching {
+            progress(0, "正在重新同步游戏")
+            runtime.stopGame()
+            prepareGame(force = true)
+            progress(1, "正在校验中文字体")
+            com.lody.virtual.helper.compat.LimbusTranslationAssets.prepare(app)
+            progress(2, "正在重建汉化文件")
+            val patch = installer(onProgress = { progress(2, it) })
+            val summary = runCatching { patch.verifyCachedForLaunch(forceRebuild = true) }
+                .getOrElse { error ->
+                    if (error is java.util.concurrent.CancellationException || Thread.currentThread().isInterrupted) throw error
+                    patch.installFromGitHub(RELEASE_URL, forceRebuild = true)
+                }
+            check(summary.liveResourcesReady) { "汉化文件尚未准备完成，请联网后重试" }
+            preparationPreferences.edit().remove("pending").apply()
+            val active = patch.activeInstallSummary()
+            publish { it.copy(translation = active, resourcePreparation = null) }
+            "修复完成，回到首页即可启动游戏。"
+        }
+        publish { it.copy(repair = RepairState(
+            if (result.isSuccess) RepairPhase.Complete else RepairPhase.Failed,
+            if (result.isSuccess) 3 else it.repair.step,
+            result.getOrElse { error -> error.userMessage() })) }
+        result.getOrThrow()
     }
 
-    fun restore() = perform("正在停用汉化") {
-        require(readGameStatus().first.gameImported) { "请先导入游戏" }
-        runtime.stopGame()
-        val result = installer().uninstallLatest()
-        publish { it.copy(translation = null) }
-        "已停用汉化 ${result.version}"
+    fun clearGameResources() = perform("正在清除游戏资源") {
+        val result = runCatching {
+            publish { it.copy(clearing = DataClearState(running = true)) }
+            check(readGameStatus().first.available) { "容器暂不可用，请稍后重试" }
+            runtime.stopGame()
+            installer().uninstallLatest()
+            preparationPreferences.edit().remove("pending").apply()
+            publish { it.copy(translation = null, resourcePreparation = null, repair = RepairState()) }
+            val cleared = runtime.storage().clearDownloadedResources()
+            if (cleared.files == 0L) "没有需要清除的游戏资源。"
+            else "游戏资源已清除，释放 ${formatResourceBytes(cleared.bytes)}。下次进入游戏需要重新下载。"
+        }
+        publish { it.copy(clearing = DataClearState(failed = result.isFailure,
+            message = result.getOrElse { error -> "清理未完成：${error.userMessage()}。可以重试，账号未清除。" })) }
+        result.getOrThrow()
     }
 
     fun exportDiagnostics() = perform("正在生成诊断包", allowPackageUpdate = true) {

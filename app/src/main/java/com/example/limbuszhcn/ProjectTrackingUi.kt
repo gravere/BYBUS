@@ -98,10 +98,9 @@ internal fun ProjectDetails(tracking: ProjectTrackingState, onRefresh: () -> Uni
     }
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconTile(Glyph.Progress, accent = true)
+            ZeroAssociationIcon()
             Column(Modifier.weight(1f).padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("都市零协会", style = MaterialTheme.typography.titleMedium)
-                Text("边狱巴士 · 简体中文", color = C.Muted, style = MaterialTheme.typography.bodySmall)
             }
             IconButton(onClick = onRefresh, enabled = !tracking.loading && !waiting,
                 modifier = Modifier.size(48.dp).semantics { contentDescription = "刷新项目状态" }) {
@@ -167,8 +166,9 @@ private fun ParaTranzDetails(state: ProjectTrackerState, onOpenLink: (String) ->
         }
     }
     DetailDisclosure("这些统计代表什么？") {
-        Text("项目进度不代表本机汉化覆盖率。正式发布的译文会在启动游戏前检查更新。",
-            color = C.Muted, style = MaterialTheme.typography.bodyMedium)
+        Text("总词条是项目收录的文本条目数，一条可能是名称，也可能是一整段对白。", style = MaterialTheme.typography.bodyMedium)
+        Text("已翻译表示已有译文；已校对表示完成一次检查；已审核表示经过第二位成员复核。这些是翻译流程的不同阶段，不要将数字相加。", style = MaterialTheme.typography.bodyMedium)
+        Text("想知道新译文能否在游戏里使用，请看 GitHub 的正式发布。BYBUS 在启动前获取正式汉化包，ParaTranz 上刚修改的内容可能尚未发布。", style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -202,8 +202,7 @@ private fun GitHubDetails(state: GitHubTrackerState, onOpenLink: (String) -> Uni
     DetailActionSection("项目链接") {
         SheetAction(Glyph.Globe, "查看 GitHub 发布", external = true) { onOpenLink(ZeroGitHub.RELEASES) }
     }
-    Text("正式汉化包 · 启动前自动检查更新",
-        color = C.Muted, style = MaterialTheme.typography.bodySmall)
+
 }
 
 @Composable

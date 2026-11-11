@@ -82,13 +82,15 @@ internal fun <T> SourceTabs(options: List<T>, selected: T, label: (T) -> String,
 internal enum class Glyph {
     Mark, Bus, Settings, Battery, Account, Arrow, Chevron, Refresh, File, Stop, Globe, Play, External, Check, Close, Info,
     Upgrade, Gamepad, Sync, Apps, Translation, ReleaseTag, Folder, Store, Progress, BookOpen, Import,
-    Search, Enter, Shield
+    Search, Enter, Shield, Repair, Delete
 }
 
 @Composable
 internal fun LauncherGlyph(glyph: Glyph, color: Color, modifier: Modifier = Modifier, description: String? = null) {
     val vector = when (glyph) {
         Glyph.Mark -> R.drawable.ic_bybus
+        Glyph.Repair -> R.drawable.ic_action_repair
+        Glyph.Delete -> R.drawable.ic_action_delete
         Glyph.Refresh -> R.drawable.ic_action_refresh
         Glyph.Upgrade -> R.drawable.ic_action_upgrade
         Glyph.Gamepad -> R.drawable.ic_action_gamepad
@@ -134,7 +136,7 @@ internal fun LauncherGlyph(glyph: Glyph, color: Color, modifier: Modifier = Modi
                     line(12f, 7f, 12f, 12f); drawCircle(color, 1f, Offset(12f, 16f))
                 }
                 Glyph.Mark, Glyph.Refresh, Glyph.Upgrade, Glyph.Gamepad, Glyph.Sync, Glyph.Apps, Glyph.Translation,
-                Glyph.ReleaseTag, Glyph.Folder, Glyph.Store, Glyph.Progress, Glyph.BookOpen -> Unit // Vectors above.
+                Glyph.ReleaseTag, Glyph.Folder, Glyph.Store, Glyph.Progress, Glyph.BookOpen, Glyph.Repair, Glyph.Delete -> Unit // Vectors above.
                 Glyph.Arrow -> { line(4f, 12f, 20f, 12f); path(14f, 6f, 20f, 12f, 14f, 18f) }
                 Glyph.Chevron -> path(9f, 6f, 15f, 12f, 9f, 18f)
                 Glyph.Play -> drawPath(Path().apply { moveTo(8f, 5f); lineTo(19f, 12f); lineTo(8f, 19f); close() }, color)

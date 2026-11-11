@@ -34,24 +34,25 @@ class ContainerPatchInstaller(
      * @param installedVersion 已知的本地汉化版本；非空时仅接受更高版本。
      * @return 本次索引编译、资源就绪度和激活状态摘要。
      */
-    fun installFromGitHub(releaseUrl: String, installedVersion: Long? = null): PatchInstallSummary {
+    fun installFromGitHub(releaseUrl: String, installedVersion: Long? = null,
+                          forceRebuild: Boolean = false): PatchInstallSummary {
         val digests = FileDigestSession()
         val result = measureStartup("release_and_translation_files") {
             com.example.limbuszhcn.update.TranslationRepository(cacheRoot, releaseMetadata, digests::sha256, onProgress)
                 .checkLatest(releaseUrl, installedVersion)
         }
-        return activateVerifiedRedirect(result.outputDirectory, result.manifest, digests)
+        return activateVerifiedRedirect(result.outputDirectory, result.manifest, digests, forceRebuild)
     }
 
     /** Revalidate archive, extracted files, source snapshot and index even when the API is offline. */
-    fun verifyCachedForLaunch(): PatchInstallSummary {
-        onProgress("更新暂不可用，校验本地汉化")
+    fun verifyCachedForLaunch(forceRebuild: Boolean = false): PatchInstallSummary {
+        onProgress(if (forceRebuild) "校验本地汉化包" else "更新暂不可用，校验本地汉化")
         val digests = FileDigestSession()
         val cached = measureStartup("cached_translation_files") {
             com.example.limbuszhcn.update.TranslationRepository(cacheRoot, fileDigest = digests::sha256)
                 .verifiedForLaunch(activeInstallSummary()?.version)
         }
-        return activateVerifiedRedirect(cached.outputDirectory, cached.manifest, digests)
+        return activateVerifiedRedirect(cached.outputDirectory, cached.manifest, digests, forceRebuild)
     }
 
     /**
@@ -121,7 +122,7 @@ class ContainerPatchInstaller(
     }
 
     private fun activateVerifiedRedirect(patchDirectory: Path, manifest: PatchManifest,
-                                         digests: FileDigestSession): PatchInstallSummary {
+                                         digests: FileDigestSession, forceRebuild: Boolean = false): PatchInstallSummary {
         onProgress("校验游戏文本与汉化索引")
         val preparedRoot = patchDirectory.toAbsolutePath().normalize()
         manifest.entries.forEach {
@@ -130,7 +131,7 @@ class ContainerPatchInstaller(
             }
         }
         onProgress("准备首次加载汉化")
-        LiveTranslationStore(cacheRoot).prepare(patchDirectory, manifest) { target ->
+        LiveTranslationStore(cacheRoot).prepare(patchDirectory, manifest, forceRebuild) { target ->
             japaneseSourceFor(storage.resolvePatchTarget(target))
                 .removePrefix(storage.rootPath().replace('\\', '/').trimEnd('/') + "/")
         }
@@ -160,7 +161,7 @@ class ContainerPatchInstaller(
         // Legacy overlays must also be cleared on the fast path.
         Files.deleteIfExists(activeRedirectFile())
         Files.deleteIfExists(pendingRedirectFile())
-        if (buildCache.matches(fingerprint, active)) {
+        if (!forceRebuild && buildCache.matches(fingerprint, active)) {
             return PatchInstallSummary(
                 version = active!!.getProperty("version"),
                 writtenFiles = active.getProperty("availableSourceFileCount").toInt(),
