@@ -2298,7 +2298,7 @@ void *translated_tmp_material(void *instance, void *requested_material) {
     return converted;
 }
 
-void refresh_tmp_component_material(void *instance) {
+void refresh_tmp_component_material(void *instance, bool schedule_mesh = false) {
     TmpComponentState state;
     if (!g_tmp_get_shared_material_info || !find_tmp_component_state(instance, &state)) return;
     void *current = invoke_object_getter(g_tmp_get_shared_material_info, instance);
@@ -2337,6 +2337,13 @@ void refresh_tmp_component_material(void *instance) {
             saved->has_padded_crc = padded_crc;
         }
         pthread_mutex_unlock(&g_font_state_lock);
+        // Outside ParseInputText, changing padding alone does not enqueue a
+        // Canvas rebuild. Enqueue once after recording the new CRC, avoiding
+        // reparse loops while keeping widened outlines/shadows inside the mesh.
+        if (schedule_mesh) {
+            const void *dirty = g_class_get_method(klass, "SetVerticesDirty", 0);
+            if (dirty) g_runtime_invoke(dirty, instance, nullptr, &exception);
+        }
     }
 }
 
@@ -2345,7 +2352,7 @@ void replacement_material_write(void *instance, const void *method) {
     if (!instance || !g_tmp_font_asset || !g_tmp_get_font || !g_material_writer_get_text_info) return;
     void *text = invoke_object_getter(g_material_writer_get_text_info, instance);
     if (text && g_tmp_get_font(text, g_tmp_get_font_info) == g_tmp_font_asset)
-        refresh_tmp_component_material(text);
+        refresh_tmp_component_material(text, true);
 }
 
 void replacement_tmp_set_shared_material(void *instance, void *material, const void *method) {

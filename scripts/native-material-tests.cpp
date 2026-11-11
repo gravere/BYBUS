@@ -19,7 +19,7 @@ struct TmpComponentState {
     uint32_t padded_crc = 0;
     bool has_padded_crc = false;
 };
-struct Component { int id; void *font; bool alive = true; void *material = nullptr; int padding_updates = 0; };
+struct Component { int id; void *font; bool alive = true; void *material = nullptr; int padding_updates = 0; int redraws = 0; };
 struct Preset {
     int style = 0;
     float outline_width = 0, underlay_x = 0, underlay_y = 0, underlay_alpha = 0, face_dilate = 0;
@@ -37,7 +37,7 @@ std::mutex g_font_state_lock;
 #define pthread_mutex_unlock(p) (p)->unlock()
 int chinese_font, chinese_material, japanese_font, conversion_method, retain_method, release_method;
 int texture_method, padding_method, chinese_texture, japanese_texture, crc_method;
-int writer_get_text_method;
+int writer_get_text_method, dirty_method;
 struct MaterialWriter { Component *text; Preset *cached; float outline, alpha, dilate; };
 const void *g_material_writer_get_text_info = &writer_get_text_method;
 void write_material(void *object, const void *) {
@@ -63,6 +63,7 @@ void *new_managed_string(const std::string &);
 void invoke_object_setter(const void *, void *, void *);
 void *object_class(void *) { return &padding_method; }
 const void *class_method(void *, const char *name, int argc) {
+    if (std::string(name) == "SetVerticesDirty" && argc == 0) return &dirty_method;
     assert(std::string(name) == "UpdateMeshPadding" && argc == 0);
     return &padding_method;
 }
@@ -88,6 +89,7 @@ void *invoke_object_getter(const void *method, void *object) {
     return &chinese_material;
 }
 void *invoke(const void *method, void *object, void **args, void **exception) {
+    if (method == &dirty_method) { ++static_cast<Component *>(object)->redraws; return nullptr; }
     if (method == g_material_compute_crc_info) {
         static uint32_t hash;
         hash = 0;
@@ -263,8 +265,10 @@ int main() {
     replacement_material_write(&writer, nullptr);
     assert(visible->outline_width == .31f && visible->underlay_alpha == .72f && visible->face_dilate == .08f);
     assert(rendered.padding_updates == 2);
+    assert(rendered.redraws == 1);
     replacement_material_write(&writer, nullptr);
     assert(rendered.padding_updates == 2); // No perpetual geometry invalidation.
+    assert(rendered.redraws == 1);
     // A material-array or internal Unity assignment bypasses the singular setter.
     rendered.material = &selected;
     prepare_tmp_text(&rendered, &text);
