@@ -23,6 +23,8 @@ class ContainerWorkspaceStorage(
     private val migrationRoots: Map<String, Path> = mapOf("assets" to localizeRoot.parent.parent)
 ) : GameStorage {
     override fun resourceMigrationRoots(): Map<String, Path> = migrationRoots
+    override fun clearDownloadedResources() =
+        com.example.limbuszhcn.gamefs.DownloadedResourceCleaner.clear(localizeRoot, migrationRoots)
     override fun probe(): GameStorageProbe {
         val en = localizeRoot.resolve("en")
         val jp = localizeRoot.resolve("jp")

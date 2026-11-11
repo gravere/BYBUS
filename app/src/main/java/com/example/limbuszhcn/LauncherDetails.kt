@@ -23,9 +23,9 @@ import com.example.limbuszhcn.ui.theme.LauncherColors as C
 internal fun LauncherDetails(page: String, state: LauncherUiState,
     appUpdateAvailable: Boolean = false,
     onGameStore: () -> Unit,
-    onAppUpdate: () -> Unit,
-    onSync: () -> Unit, onRestore: () -> Unit, onExport: () -> Unit, onSettings: () -> Unit,
-    onMigration: () -> Unit, onRepair: () -> Unit,
+    onAppUpdate: () -> Unit, onTranslation: () -> Unit,
+    onExport: () -> Unit, onSettings: () -> Unit,
+    onMigration: () -> Unit, onRepair: () -> Unit, onClearData: () -> Unit,
     onGoogleSettings: () -> Unit,
     onRefresh: () -> Unit, onAbout: () -> Unit) {
     val enabled = !state.busy
@@ -33,14 +33,11 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
         when (page) {
             "tools" -> {
                 DetailActionSection("版本与资源") {
-                    SheetAction(Glyph.Upgrade, "更新", showUpdate = appUpdateAvailable, navigation = true, onClick = onAppUpdate)
+                    SheetAction(Glyph.Upgrade, "应用更新", showUpdate = appUpdateAvailable, navigation = true, onClick = onAppUpdate)
                     DetailActionDivider()
                     SheetAction(Glyph.Gamepad, "游戏更新", navigation = true, onClick = onGameStore)
                 }
                 DetailActionSection("管理") {
-                    SheetAction(Glyph.Sync, "同步游戏", enabled && state.installedVersion != null,
-                        onClick = onSync)
-                    DetailActionDivider()
                     SheetAction(Glyph.Import, "数据迁移", enabled, navigation = true, onClick = onMigration)
                     DetailActionDivider()
                     SheetAction(Glyph.Battery, "后台运行", enabled, navigation = true, onClick = onSettings)
@@ -50,13 +47,14 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
                     DetailActionDivider()
                     SheetAction(Glyph.Repair, "修复", enabled, navigation = true, onClick = onRepair)
                     DetailActionDivider()
+                    SheetAction(Glyph.Delete, "清除数据", enabled, navigation = true, onClick = onClearData)
+                    DetailActionDivider()
                     SheetAction(Glyph.File, "导出诊断", enabled, onClick = onExport)
                     DetailActionDivider()
                     SheetAction(Glyph.Info, "使用说明与版本", navigation = true, onClick = onAbout)
                 }
                 DetailActionSection("汉化设置") {
-                    SheetAction(Glyph.Stop, "停用汉化", enabled && state.translation != null,
-                        onClick = onRestore)
+                    SheetAction(Glyph.Translation, "汉化资源", navigation = true, onClick = onTranslation)
                 }
             }
             "status" -> RuntimeStatusPane(state, onGameStore, onRefresh)

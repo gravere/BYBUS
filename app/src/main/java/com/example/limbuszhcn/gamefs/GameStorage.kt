@@ -14,6 +14,7 @@ interface GameStorage {
     fun rootPath(): String
     fun deleteResource(relativePath: String): Boolean = false
     fun resourceMigrationRoots(): Map<String, Path> = emptyMap()
+    fun clearDownloadedResources(): ResourceClearResult = error("当前存储不支持清理游戏资源")
 }
 
 data class GameStorageProbe(

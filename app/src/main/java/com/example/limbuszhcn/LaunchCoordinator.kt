@@ -45,6 +45,7 @@ internal data class LauncherUiState(
     val compatibility: DeviceCompatibilityReport? = null,
     val runtimeStatus: com.example.limbuszhcn.container.RuntimeLaunchStatus = com.example.limbuszhcn.container.RuntimeLaunchStatus(),
     val repair: RepairState = RepairState(),
+    val clearing: DataClearState = DataClearState(),
     val busy: Boolean = false,
     val stage: String = "正在读取状态",
     val launchStep: Int = -1,
@@ -354,11 +355,6 @@ internal class LaunchCoordinator private constructor(application: Application) {
         summary.description()
     }
 
-    fun syncGame() = perform("重新同步游戏") {
-        prepareGame(force = true)
-        "游戏已同步，点击主按钮启动汉化版"
-    }
-
     fun repair() = perform("正在修复") {
         fun progress(step: Int, text: String) {
             stage(text)
@@ -390,12 +386,21 @@ internal class LaunchCoordinator private constructor(application: Application) {
         result.getOrThrow()
     }
 
-    fun restore() = perform("正在停用汉化") {
-        require(readGameStatus().first.gameImported) { "请先导入游戏" }
-        runtime.stopGame()
-        val result = installer().uninstallLatest()
-        publish { it.copy(translation = null) }
-        "已停用汉化 ${result.version}"
+    fun clearGameResources() = perform("正在清除游戏资源") {
+        val result = runCatching {
+            publish { it.copy(clearing = DataClearState(running = true)) }
+            check(readGameStatus().first.available) { "容器暂不可用，请稍后重试" }
+            runtime.stopGame()
+            installer().uninstallLatest()
+            preparationPreferences.edit().remove("pending").apply()
+            publish { it.copy(translation = null, resourcePreparation = null, repair = RepairState()) }
+            val cleared = runtime.storage().clearDownloadedResources()
+            if (cleared.files == 0L) "没有需要清除的游戏资源。"
+            else "游戏资源已清除，释放 ${formatResourceBytes(cleared.bytes)}。下次进入游戏需要重新下载。"
+        }
+        publish { it.copy(clearing = DataClearState(failed = result.isFailure,
+            message = result.getOrElse { error -> "清理未完成：${error.userMessage()}。可以重试，账号未清除。" })) }
+        result.getOrThrow()
     }
 
     fun exportDiagnostics() = perform("正在生成诊断包", allowPackageUpdate = true) {
