@@ -33,6 +33,10 @@
 验证范围见 [Android 适配说明](android-runtime-portability.md)。APK 的文件对齐、
 容器运行时适配与 Google 登录成功属于不同层次，不能互相替代。
 
+启动页/完整索引隔离、原文下载后的缓存晋级以及资源不足时的启动门禁已有针对性单测。
+本次未连接用户设备或重新下载游戏资源；首次进入游戏下载原文后，仍须返回 BYBUS
+完成配对，再以新游戏进程加载完整索引，不能将少量启动词条标记为完整汉化。
+
 ## 上游依据
 
 - [microG AuthSignInActivity](https://github.com/microg/GmsCore/blob/v0.3.17.252432/play-services-core/src/main/kotlin/org/microg/gms/auth/signin/AuthSignInActivity.kt)

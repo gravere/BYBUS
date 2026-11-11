@@ -65,7 +65,19 @@ API 36。原身份、接口和反射结构检查仍保留，Android 8–13 沿�
 接口依据：[Android 14 authenticator AIDL](https://github.com/aosp-mirror/platform_frameworks_base/blob/android14-release/core/java/android/accounts/IAccountAuthenticator.aidl)、
 [Android 14 权限调用](https://github.com/aosp-mirror/platform_frameworks_base/blob/android14-release/core/java/android/accounts/AbstractAccountAuthenticator.java)。
 
-## 当前结果（内部版本 33）
+## 服务初始化验证
+
+Android 15 与 Android 17 的一次性模拟器使用实际内置 Companion 服务，首次安装的
+API 3/27、inapp/subs 四项能力查询均返回 0；将开关关闭后返回真实错误 3，再走普通
+初始化自动恢复为 0。通过同一 Provider 读回确认持久保存，状态页无需手动开启。
+
+Android 17 另将 Google 设置所属进程置于冻结状态，读取内核 `cgroup.events` 确认
+`frozen=1` 后打开设置；同一 PID 存活并成功完成读写，随后设置页和宿主付款页正常显示。
+证据：[Android 15](https://github.com/gravere/BYBUS/actions/runs/42958080448)、
+[Android 17 冻结恢复](https://github.com/gravere/BYBUS/actions/runs/42958766997)。
+这验证服务配置与恢复，不包含账号授权、商品价格、结算、扣款或到账；未使用真实账号。
+
+## 历史真机结果（内部版本 33）
 
 签名 v1.0 / code33 已覆盖安装到 vivo X100 Ultra / Android 16。一次游戏启动保留
 原有账号和资源，进入主界面与商店；商品价格恢复。受限诊断确认注册标识桥接成功，
