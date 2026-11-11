@@ -197,7 +197,10 @@ def inspect(adb, command, hierarchy, locate, tap, report, out, verifier):
                                   if node.get("text")))
     # Wait for actual game activity, not a fixed delay while first-run assets
     # are still being prepared. This remains a single bounded launch attempt.
-    report["container_startup"] = observe_startup(adb, out, "container-startup", 240, container=True,
+    # A fresh emulator also imports the full game and installs bundled Google
+    # components. Keep this bounded separately from the 30-second game observation;
+    # a cold import can consume most of the former four-minute total by itself.
+    report["container_startup"] = observe_startup(adb, out, "container-startup", 600, container=True,
                                                  failure_probe=preparation_failure)
     report["result"] = "official/container startup evidence captured; compare screenshots and logs"
     report["checks"].append("one fresh container startup; no login" if live else "one startup each, original signed game and published BYBUS; no login")

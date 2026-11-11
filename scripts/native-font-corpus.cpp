@@ -25,8 +25,9 @@ int main(int argc, char **argv) {
     auto loaded = std::chrono::steady_clock::now();
     size_t full = 0, formatted = 0, rich = 0, excluded = 0, fragments = 0, verbatim = 0;
     for (const auto &text : released) {
-        if (text.find("<noparse") != text.npos) {
+        if (limbus_font_proof::has_literal_region(text)) {
             assert(catalogue.contains(text)); ++verbatim;
+            assert(catalogue.contains("<COLOR=#ffeecc>" + text + "</COLOR>")); ++rich;
             assert(!catalogue.contains(text + "未核实的附加正文"));
             continue;
         }
@@ -36,7 +37,11 @@ int main(int argc, char **argv) {
         if (!non_ascii) { ++excluded; continue; }
         assert(catalogue.contains(text)); ++full;
         if (text.size() < 16000) {
-            assert(catalogue.contains("<color=#ffeecc>" + text + "</color>")); ++rich;
+            for (const auto &decorated : {"<color=#ffeecc>" + text + "</color>",
+                    "<#a16a3b>" + text + "</color>", "<B><COLOR=#ffeecc>" + text + "</COLOR></B>",
+                    "<font-weight=700>" + text + "</font-weight>"}) {
+                assert(catalogue.contains(decorated)); ++rich;
+            }
         }
         auto p = limbus_font_proof::pattern(label);
         if (p.slots.empty()) continue;
