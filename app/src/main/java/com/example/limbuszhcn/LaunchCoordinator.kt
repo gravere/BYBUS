@@ -173,11 +173,11 @@ internal class LaunchCoordinator private constructor(application: Application) {
         val result = runCatching {
             val virtual = runtime as? com.example.limbuszhcn.container.VirtualAppContainerRuntime
                 ?: error("当前容器不支持 Google 账号设置")
-            virtual.googlePaymentState()
+            virtual.googlePaymentState(waitForRegistration = true)
         }
         publish { it.copy(googlePayment = result.getOrNull(), googlePaymentIssue = result.exceptionOrNull()?.userMessage()) }
         val payment = result.getOrThrow()
-        if (enable && !payment.registered) "付款已启用，正在等待 Google 设备注册"
+        if (!payment.registered) "Google 设备注册尚未完成，请检查网络后重试"
         else if (enable) "付款服务已启用"
         else "付款设置已检查"
     }

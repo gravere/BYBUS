@@ -90,9 +90,10 @@ class VirtualAppContainerRuntime(
         bridge.openGoogleSettings()
     }
 
-    fun googlePaymentState(): GooglePaymentState {
+    fun googlePaymentState(waitForRegistration: Boolean = false): GooglePaymentState {
         bridge.ensureGoogleAppsInstalled()
-        return GooglePaymentSetup(context).read()
+        val setup = GooglePaymentSetup(context)
+        return if (waitForRegistration) setup.awaitRegistration(retry = true) else setup.read()
     }
 
     /**
@@ -119,6 +120,7 @@ class VirtualAppContainerRuntime(
         TranslationRedirectGate(context).close()
         ensureGameInstalledInVirtualApp()
         val googlePackages = measureStartup("google_components") { bridge.ensureGoogleAppsInstalled() }
+        measureStartup("google_registration") { GooglePaymentSetup(context).awaitRegistration() }
         Log.i(TAG, "launchGame ensured Google packages=$googlePackages")
         bridge.logGamePackageDiagnostics(LocalContainerRuntime.GAME_PACKAGE)
         bridge.ensureGameLocalizeRoot(LocalContainerRuntime.GAME_PACKAGE)

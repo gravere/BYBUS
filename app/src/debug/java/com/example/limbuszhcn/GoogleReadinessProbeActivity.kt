@@ -43,8 +43,11 @@ class GoogleReadinessProbeActivity : Activity() {
                     }
                     "settings" -> { runtime.openGoogleSettings(); JSONObject().put("result", "settings_opened") }
                     else -> {
-                        val first = runtime.googlePaymentState()
+                        val started = SystemClock.elapsedRealtime()
+                        val first = runtime.googlePaymentState(waitForRegistration = true)
                         check(!first.hasAccount && first.billingEnabled && first.registrationEnabled)
+                        check(first.registered) { "real Google device check-in did not complete" }
+                        val registrationMs = SystemClock.elapsedRealtime() - started
                         val defaults = capability()
                         check(defaults.all { it == 0 }) { "fresh install defaults unavailable" }
                         disableForUpgradeFixture()
@@ -57,6 +60,7 @@ class GoogleReadinessProbeActivity : Activity() {
                         val reread = runtime.googlePaymentState()
                         check(reread.billingEnabled && reread.registrationEnabled && !reread.hasAccount)
                         JSONObject().put("result", "passed").put("disabled_codes", JSONArray(disabled))
+                            .put("device_registered", first.registered).put("registration_elapsed_ms", registrationMs)
                             .put("default_codes", JSONArray(defaults)).put("automatic_upgrade_repair", true)
                             .put("enabled_codes", JSONArray(available)).put("accounts_accessed", false)
                             .put("purchase_requested", false).put("provider_readback", true)

@@ -38,6 +38,8 @@ def inspect(api, release, verifier, windows_only=False, settings_only=False):
 
     try:
         report['billing_capability'] = probe('billing')
+        assert report['billing_capability']['device_registered'] is True
+        report['checks'].append('first real Google check-in completed before billing capability; provider ID and success time both present (values not exported)')
         report['checks'].append('real billing: fresh defaults supported 0; old disabled error 3 -> automatic repair -> supported 0; same provider persisted')
         if windows_only:
             if not settings_only: inspect_window_fixture(api)
