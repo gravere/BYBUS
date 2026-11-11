@@ -90,6 +90,12 @@ class VirtualAppContainerRuntime(
         bridge.openGoogleSettings()
     }
 
+    fun googlePaymentState(enable: Boolean = false): GooglePaymentState {
+        bridge.ensureGoogleAppsInstalled()
+        val setup = GooglePaymentSetup(context)
+        return if (enable) setup.enable() else setup.read()
+    }
+
     /**
      * 获取指向 VirtualApp 游戏数据目录的汉化资源存储。
      *

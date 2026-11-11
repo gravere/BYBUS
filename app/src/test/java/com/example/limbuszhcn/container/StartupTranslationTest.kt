@@ -50,6 +50,8 @@ class StartupTranslationTest {
         assertTrue(summary.startupIndexAvailable)
         assertEquals(0, summary.availableSourceFiles)
         assertNull(installer.activeInstallSummary())
+        assertEquals(com.example.limbuszhcn.TranslationLaunchMode.NeedsResources,
+            com.example.limbuszhcn.translationLaunchMode(installer.activeInstallSummary(), false))
         val store = TranslationIndexStore(index)
         assertEquals("startup", store.selectRuntimeIndex())
         val runtime = index.resolve(TranslationIndexStore.RUNTIME_POINTER).readText().trim()
@@ -68,6 +70,8 @@ class StartupTranslationTest {
         val nextLaunch = ContainerPatchInstaller(cache, ContainerWorkspaceStorage(localize), { listOf(apk.toString()) })
         val complete = nextLaunch.activateRedirect(patch, manifest)
         assertTrue(complete.indexActivated)
+        assertEquals(com.example.limbuszhcn.TranslationLaunchMode.Localized,
+            com.example.limbuszhcn.translationLaunchMode(nextLaunch.activeInstallSummary(), false))
         assertEquals("full", store.selectRuntimeIndex())
         assertFalse(Files.exists(index.resolve(TranslationIndexStore.BOOTSTRAP_POINTER)))
         assertFalse(index.resolve(TranslationIndexStore.RUNTIME_POINTER).readText().contains("bootstrap-"))

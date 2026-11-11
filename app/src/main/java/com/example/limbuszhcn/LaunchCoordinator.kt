@@ -38,6 +38,10 @@ internal data class LauncherUiState(
     val gameInstallPending: Boolean = false,
     val gameInstallConfirmation: Intent? = null,
     val translation: PatchInstallSummary? = null,
+    val resourcePreparation: PatchInstallSummary? = null,
+    val resourcePreparationRequest: Long = 0,
+    val googlePayment: com.example.limbuszhcn.container.GooglePaymentState? = null,
+    val googlePaymentIssue: String? = null,
     val compatibility: DeviceCompatibilityReport? = null,
     val runtimeStatus: String = "尚未收到游戏运行时确认；当前游戏版本的兼容性未验证",
     val busy: Boolean = false,
@@ -63,6 +67,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
         Executors.newSingleThreadExecutor { task -> Thread(task, "limbus-release-check") },
         { measureStartup("release_metadata") { github.releaseForLaunch() } })
     private val updatePreferences = app.getSharedPreferences("game-updates", 0)
+    private val preparationPreferences = app.getSharedPreferences("resource-preparation", 0)
     private val gameUpdates = GameUpdateSource.entries.associateWith { source ->
         com.example.limbuszhcn.update.GameUpdateRepository(app.filesDir.toPath().resolve("game-update-${source.key}.properties"), source = source)
     }
@@ -162,6 +167,19 @@ internal class LaunchCoordinator private constructor(application: Application) {
         "请在容器 Google 设置中登录账号并开启应用内购买"
     }
 
+    fun checkGooglePayment(enable: Boolean = false) = perform(if (enable) "启用付款服务" else "检查付款设置") {
+        val result = runCatching {
+            val virtual = runtime as? com.example.limbuszhcn.container.VirtualAppContainerRuntime
+                ?: error("当前容器不支持 Google 账号设置")
+            virtual.googlePaymentState(enable)
+        }
+        publish { it.copy(googlePayment = result.getOrNull(), googlePaymentIssue = result.exceptionOrNull()?.userMessage()) }
+        val payment = result.getOrThrow()
+        if (enable && !payment.registered) "付款已启用，正在等待 Google 设备注册"
+        else if (enable) "付款服务已启用"
+        else "付款设置已检查"
+    }
+
     private fun nextUpdatesRequest(value: LauncherUiState) =
         nextUiRequestId(value.updatesRequest, android.os.SystemClock.elapsedRealtimeNanos())
 
@@ -170,14 +188,28 @@ internal class LaunchCoordinator private constructor(application: Application) {
         val (container, installed) = readGameStatus()
         val nativeIssue = if (installed != null) runCatching { gameCompatibility.requireApproved() }
             .exceptionOrNull()?.message ?: "" else ""
-        val active = runCatching { installer().activeInstallSummary() }.getOrNull()
+        val patch = installer()
+        var active = runCatching { patch.activeInstallSummary() }.getOrNull()
+        // A return from the explicit download mode prepares the cached translation without
+        // terminating a potentially still-running resource download or starting another game.
+        val preparation = if (preparationPreferences.getBoolean("pending", false) && container.gameImported) {
+            runCatching { patch.verifyCachedForLaunch() }.getOrNull().also {
+                active = patch.activeInstallSummary()
+                if (active != null) preparationPreferences.edit().remove("pending").apply()
+            }
+        } else null
         val compatibility = DeviceCompatibility(app).report()
         val runtimeStatus = receipt().description()
+        if (state.googlePayment != null) {
+            val payment = runCatching { (runtime as? com.example.limbuszhcn.container.VirtualAppContainerRuntime)?.googlePaymentState() }
+            publish { it.copy(googlePayment = payment.getOrNull(), googlePaymentIssue = payment.exceptionOrNull()?.userMessage()) }
+        }
         val saved = runCatching {
             com.example.limbuszhcn.container.LocalContainerRuntime(app.filesDir.toPath().resolve("container-workspace")).compactSnapshots()
         }.getOrElse { error -> PersistentDiagnosticLog.warn(TAG, "Snapshot reuse skipped", error); 0L }
         if (saved > 0) PersistentDiagnosticLog.info(TAG, "Deduplicated committed APK snapshots savedBytes=$saved")
-        publish { it.copy(translation = active, compatibility = compatibility, runtimeStatus = runtimeStatus,
+        publish { it.copy(translation = active, resourcePreparation = if (active != null) null else preparation ?: it.resourcePreparation,
+            compatibility = compatibility, runtimeStatus = runtimeStatus,
             nativeCompatibilityIssue = nativeIssue.takeIf(String::isNotEmpty)) }
         container.message
     }
@@ -267,7 +299,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
 
     private fun receipt() = com.example.limbuszhcn.container.RuntimeReceipt(app.filesDir.toPath().resolve("translation-cache/translation-index"))
 
-    fun launch() {
+    fun launch(prepareResources: Boolean = false) {
         // A Play/DNS outage must not stall the existing translation/launch path.
         checkGameUpdate(force = true)
         perform("准备启动") {
@@ -290,14 +322,24 @@ internal class LaunchCoordinator private constructor(application: Application) {
                 } ?: throw IllegalStateException("${error.updateFailureLabel()}；本地汉化未通过完整校验", cached.exceptionOrNull() ?: error)
             }
             val active = if (summary.indexActivated) summary else patch.activeInstallSummary()
-            publish { it.copy(translation = active) }
+            val mode = translationLaunchMode(active, prepareResources)
+            publish { it.copy(translation = active, resourcePreparation = summary.takeIf { active == null }) }
+            if (mode == TranslationLaunchMode.NeedsResources) {
+                preparationPreferences.edit().putBoolean("pending", true).apply()
+                publish { it.copy(resourcePreparationRequest = nextUiRequestId(it.resourcePreparationRequest,
+                    android.os.SystemClock.elapsedRealtimeNanos())) }
+                return@perform "汉化包已校验，先完成游戏资源准备后再启动汉化版"
+            }
+            if (mode == TranslationLaunchMode.Localized) preparationPreferences.edit().remove("pending").apply()
+            else preparationPreferences.edit().putBoolean("pending", true).apply()
             stage("启动容器内游戏", 2)
             gameCompatibility.requireUnchanged(approvedBuild)
             receipt().beginLaunch()
             val runtimeStatus = receipt().description()
             publish { it.copy(runtimeStatus = runtimeStatus) }
             measureStartup("container_launch") { runtime.launchGame() }
-            if (update.isFailure) "${update.exceptionOrNull()!!.updateFailureLabel()}；${summary.description()}；游戏已打开"
+            if (mode == TranslationLaunchMode.ResourcePreparation) "已打开资源准备模式；下载完成后返回 BYBUS 准备完整汉化"
+            else if (update.isFailure) "${update.exceptionOrNull()!!.updateFailureLabel()}；${summary.description()}；游戏已打开"
             else "${summary.description()}；游戏已打开"
         }
     }

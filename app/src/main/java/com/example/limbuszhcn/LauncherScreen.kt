@@ -36,6 +36,7 @@ internal fun LauncherScreen(
     onCancelAppUpdate: () -> Unit,
     onOpenAppRelease: () -> Unit,
     onLaunch: () -> Unit,
+    onPrepareResources: () -> Unit = {},
     onRefresh: () -> Unit,
     onUpdate: () -> Unit,
     onCheckGameUpdate: () -> Unit,
@@ -51,6 +52,8 @@ internal fun LauncherScreen(
     onExport: () -> Unit,
     onSettings: () -> Unit,
     onGoogleSettings: () -> Unit,
+    onCheckGooglePayment: () -> Unit = {},
+    onEnableGooglePayment: () -> Unit = {},
     onRefreshProject: () -> Unit,
     onSelectProjectSource: (ProjectSource) -> Unit,
     onOpenLink: (String) -> Unit
@@ -59,6 +62,14 @@ internal fun LauncherScreen(
     var parentSheet by rememberSaveable { mutableStateOf<String?>(null) }
     var updateTab by rememberSaveable { mutableStateOf(UpdateTab.App) }
     var handledUpdatesRequest by rememberSaveable { mutableLongStateOf(0L) }
+    var handledPreparationRequest by rememberSaveable { mutableLongStateOf(0L) }
+    LaunchedEffect(state.resourcePreparationRequest) {
+        if (state.resourcePreparationRequest > 0 && state.resourcePreparationRequest != handledPreparationRequest) {
+            handledPreparationRequest = state.resourcePreparationRequest
+            parentSheet = null
+            sheet = "resource-preparation"
+        }
+    }
     LaunchedEffect(state.updatesRequest) {
         if (state.updatesRequest > 0 && state.updatesRequest != handledUpdatesRequest) {
             handledUpdatesRequest = state.updatesRequest
@@ -141,7 +152,13 @@ internal fun LauncherScreen(
                         if (updateTab == UpdateTab.App) AppUpdateControls(appUpdateState, state, onDownloadAppUpdate, onInstallAppUpdate, onCancelAppUpdate, layout.detailPadding.dp)
                         else TranslationUpdateControls(state, onUpdate, layout.detailPadding.dp)
                     } }) { active ->
-                    if (active == "project") {
+                    if (active == "google") {
+                        GooglePaymentPane(state, onCheckGooglePayment, onEnableGooglePayment,
+                            onSettings = { onGoogleSettings() })
+                    } else if (active == "resource-preparation") {
+                        ResourcePreparationPane(state, onPrepare = { close(); onPrepareResources() },
+                            onCheck = onLaunch, onImport = onMigration)
+                    } else if (active == "project") {
                         ProjectDetails(projectState, onRefreshProject, onSelectProjectSource, onOpenLink)
                     } else if (active == "updates") {
                         GameUpdatesPane(state, onCheckGameUpdate, onSelectGameSource, onOpenGamePage,
@@ -156,7 +173,7 @@ internal fun LauncherScreen(
                             onSync = { close(); onSync() }, onRestore = { close(); onRestore() },
                             onMigration = onMigration,
                             onExport = { close(); onExport() }, onSettings = { close(); onSettings() },
-                            onGoogleSettings = { close(); onGoogleSettings() },
+                            onGoogleSettings = { openChild("google"); onCheckGooglePayment() },
                             onRefresh = { if (active != "status") close(); onRefresh() }, onAbout = { openChild("about") })
                     }
                 }
@@ -181,6 +198,7 @@ private fun InstallationCard(state: LauncherUiState, modifier: Modifier = Modifi
         SummaryHeading(Glyph.Progress, "运行状态", when {
                 state.busy -> "正在准备"
                 state.failed -> "需要检查"
+                state.resourcePreparation != null -> "待准备资源"
                 ready -> "设备已就绪"
                 state.container == null -> "检测中"
                 state.installedVersion == null -> "等待安装"
@@ -192,7 +210,8 @@ private fun InstallationCard(state: LauncherUiState, modifier: Modifier = Modifi
                 else -> state.installedVersionName ?: state.installedVersion.toString() },
             if (state.gameUpdate.newerSources(state.installedVersionName).isNotEmpty()) "有新版" else null)
         HorizontalDivider(Modifier.padding(start = 32.dp, top = 12.dp, bottom = 12.dp), color = C.Line)
-        InstallationRow(Glyph.Translation, "本地汉化", state.translation?.version ?: "首次启动时准备")
+        InstallationRow(Glyph.Translation, "本地汉化", state.translation?.version
+            ?: if (state.resourcePreparation != null) "汉化包已校验 · 等待游戏资源" else "首次启动时准备")
     }
 }
 
@@ -226,6 +245,7 @@ internal fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefre
         state.compatibility?.isSupported == false -> LaunchAction.DeviceStatus
         state.nativeCompatibilityIssue != null -> LaunchAction.NativeStatus
         !canLaunch -> LaunchAction.Status
+        state.resourcePreparation != null -> LaunchAction.Resources
         state.failed -> LaunchAction.Retry
         else -> LaunchAction.Launch
     }
