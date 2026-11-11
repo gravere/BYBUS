@@ -100,7 +100,29 @@ def inspect_settings(api, probe):
     adb = api['adb']
     # Native microG settings retains its own fitsSystemWindows; capture for visual review.
     adb('shell', 'wm', 'size', '720x1560'); adb('shell', 'wm', 'user-rotation', 'lock', '0')
+    frozen_pid = None
+    if api['REPORT']['profile'] == 'android17':
+        # Fresh fixture: the first guest process belongs to SettingsProvider (GMS).
+        # Only this disposable AVD is controlled; no system-wide freezer setting changes.
+        process = api['PACKAGE'] + ':p0'
+        frozen_pid = adb('shell', 'pidof', process).strip()
+        assert re.fullmatch(r'\d+', frozen_pid), 'fixture Google owner unavailable'
+        group = adb('shell', 'cat', f'/proc/{frozen_pid}/cgroup')
+        match = re.search(r'(?m)^0::(/[^\r\n]*)$', group)
+        assert match and '..' not in match[1], 'unified process cgroup unavailable'
+        events_path = '/sys/fs/cgroup' + match[1] + '/cgroup.events'
+        adb('shell', 'am', 'freeze', process)
+        for _ in range(20):
+            events = adb('shell', 'cat', events_path)
+            if re.search(r'(?m)^frozen 1$', events): break
+            time.sleep(.25)
+        assert re.search(r'(?m)^frozen 1$', events), 'Google owner was not actually frozen'
+        api['REPORT']['settings_owner_before'] = 'kernel cgroup frozen=1'
     probe('settings'); time.sleep(2)
+    if frozen_pid:
+        assert adb('shell', 'pidof', api['PACKAGE'] + ':p0').strip() == frozen_pid, 'Google owner was killed instead of resumed'
+        api['REPORT']['checks'].append('frozen Google settings owner resumed through scoped system provider connection; same process survived')
+        api['REPORT']['settings_owner_resumed'] = True
     api['capture']('google-native-settings')
     adb('shell', 'am', 'force-stop', api['PACKAGE'])
     adb('shell', 'am', 'start', '-W', '-n', f"{api['PACKAGE']}/{api['NAMESPACE']}.MainActivity", timeout=60)

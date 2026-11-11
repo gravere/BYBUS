@@ -25,6 +25,13 @@ Google 组件就绪必须同时满足 APK 身份和所选 ABI 原生库的名称
 经同一 Provider 读回确认；已有安装也自动补齐关闭的开关。仅在开关缺失时写入，未注册时
 触发原 microG 注册广播，网络注册异步完成，不阻塞游戏等待联网。不伪造注册成功或改写计费响应。
 
+宿主读写设置期间，必须持有该虚拟进程对应的系统占位 Provider 连接。只拿到虚拟 Binder
+不构成 Android 的组件依赖：Android 17 实测会冻结闲置的 Google 进程，随后同步调用触发
+`Sync transaction while frozen` 并由系统终止进程。先核对 ClientConfig 的包、进程和槽位，
+通过 ContentResolver 取得短期连接，让系统按正常组件依赖恢复进程；整个设置读写结束后
+释放连接。不关闭系统冻结策略，不新增常驻服务，不持久占用该连接。
+依据：[AOSP 缓存进程冻结与同步 Binder](https://source.android.com/docs/core/perf/cached-apps-freezer)。
+
 
 启动时的购买失败提示与商品价格缺失须检查真实计费返回码，不能按结算页面取消故障处理。
 静态检查发现两处独立的容器问题：自定义授权缓存失效时把账号类型与 OAuth scope 比较，

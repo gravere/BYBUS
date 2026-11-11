@@ -10,6 +10,7 @@ import android.os.Build
 import com.lody.virtual.client.ipc.VAccountManager
 import com.lody.virtual.client.ipc.VActivityManager
 import com.lody.virtual.client.ipc.VPackageManager
+import com.lody.virtual.client.stub.StubManifest
 import com.lody.virtual.helper.compat.MicrogBillingIdentityPolicy
 
 data class GooglePaymentState(val billingEnabled: Boolean, val registrationEnabled: Boolean,
@@ -17,22 +18,33 @@ data class GooglePaymentState(val billingEnabled: Boolean, val registrationEnabl
 
 /** Manage only the installed container's public settings, through its single owning provider. */
 internal class GooglePaymentSetup(private val context: Context) {
-    private fun client(): ContentProviderClient {
+    private fun <T> withClient(block: (ContentProviderClient) -> T): T {
         val info = requireNotNull(VPackageManager.get().resolveContentProvider(AUTHORITY, 0, 0)) {
             "容器 Google 设置暂不可用"
         }
         require(MicrogBillingIdentityPolicy.isGoogleSettingsProvider(info.packageName, info.name, info.authority))
-        val provider = requireNotNull(VActivityManager.get().acquireProviderClient(0, info)) {
-            "无法连接容器 Google 设置"
-        }
-        return requireNotNull(if (Build.VERSION.SDK_INT >= 29)
-            mirror.android.content.ContentProviderClientQ.ctor.newInstance(context.contentResolver, provider, AUTHORITY, false)
-        else mirror.android.content.ContentProviderClientJB.ctor.newInstance(context.contentResolver, provider, false)) {
-            "无法读取容器 Google 设置"
+        val process = requireNotNull(VActivityManager.get().initProcess(info.packageName, info.processName, 0,
+            VActivityManager.PROCESS_TYPE_PROVIDER)) { "无法准备容器 Google 设置" }
+        check(process.packageName == info.packageName && process.processName == info.processName &&
+            process.vpid in 0 until StubManifest.STUB_COUNT) { "容器 Google 进程信息不一致" }
+        // A raw virtual Binder does not tell Android that its owner is in use. Hold the real
+        // stub provider for the whole operation so a cached/frozen owner is resumed by AMS.
+        return requireNotNull(context.contentResolver.acquireContentProviderClient(
+            StubManifest.getStubAuthority(process.vpid, process.is64Bit))) {
+            "无法唤醒容器 Google 设置"
+        }.use {
+            val provider = requireNotNull(VActivityManager.get().acquireProviderClient(0, info)) {
+                "无法连接容器 Google 设置"
+            }
+            requireNotNull(if (Build.VERSION.SDK_INT >= 29)
+                mirror.android.content.ContentProviderClientQ.ctor.newInstance(context.contentResolver, provider, AUTHORITY, false)
+            else mirror.android.content.ContentProviderClientJB.ctor.newInstance(context.contentResolver, provider, false)) {
+                "无法读取容器 Google 设置"
+            }.use(block)
         }
     }
 
-    fun read(): GooglePaymentState = client().use { read(it) }
+    fun read(): GooglePaymentState = withClient { read(it) }
 
     private fun read(client: ContentProviderClient): GooglePaymentState {
         val billing = requireNotNull(client.query(VENDING, arrayOf(BILLING), null, null, null)).use {
@@ -52,7 +64,7 @@ internal class GooglePaymentSetup(private val context: Context) {
 
     /** Local, idempotent defaults after verified component installation; no network wait. */
     fun ensureEnabled(): GooglePaymentState {
-        val state = client().use { client ->
+        val state = withClient { client ->
             val before = read(client)
             if (!before.billingEnabled)
                 client.update(VENDING, ContentValues().apply { put(BILLING, true) }, null, null)
