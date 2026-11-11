@@ -85,6 +85,7 @@ internal class LauncherViewModel(application: Application) : AndroidViewModel(ap
     fun installConfirmationOpened() = coordinator.installConfirmationOpened()
     fun selectGameSource(source: com.example.limbuszhcn.update.GameUpdateSource) = coordinator.selectGameSource(source)
     fun syncGame() = coordinator.syncGame()
+    fun repair() = coordinator.repair()
     fun openGoogleSettings() = coordinator.openGoogleSettings()
     fun checkGooglePayment() = coordinator.checkGooglePayment()
     fun enableGooglePayment() = coordinator.checkGooglePayment(enable = true)

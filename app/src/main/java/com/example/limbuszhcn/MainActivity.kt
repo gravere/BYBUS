@@ -138,6 +138,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onCancelGameInstall = model::cancelPackageUpdate,
                     onSync = model::syncGame,
+                    onRepair = model::repair,
                     onMigration = { runCatching {
                         startActivity(Intent(this, com.example.limbuszhcn.migration.MigrationActivity::class.java))
                     }.onFailure(model::showError) },

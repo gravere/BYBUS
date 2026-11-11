@@ -42,6 +42,24 @@ class CachedReleaseRecoveryTest {
         jp.writeText("""{"dataList":[{"id":1,"content":"囚人の資料"}]}""")
     }
 
+    @Test fun explicitRepairRebuildsDerivedFilesAndPreservesGameData() {
+        cached("100")
+        resources()
+        val profile = temporary.root.toPath().resolve("PlayerPrefs")
+        profile.writeText("opaque-account-and-settings-fixture")
+        val original = Files.readAllBytes(localize.resolve("jp/JP_MainUIText.json"))
+        installer().verifyCachedForLaunch()
+        assertTrue(installer().verifyCachedForLaunch().reusedIndex)
+        val fonts = cache.resolve("translation-index/live-fonts.bin")
+        fonts.writeText("broken")
+        val repaired = installer().verifyCachedForLaunch(forceRebuild = true)
+        assertFalse(repaired.reusedIndex)
+        assertTrue(repaired.liveResourcesReady)
+        assertNotNull(LiveTranslationStore(cache).open())
+        assertArrayEquals(original, Files.readAllBytes(localize.resolve("jp/JP_MainUIText.json")))
+        assertEquals("opaque-account-and-settings-fixture", profile.readText())
+    }
+
     @Test fun firstIndexCanBeBuiltFromCacheAfterResourcePreparationWithoutAnyNetwork() {
         cached("100")
         val pending = installer().verifyCachedForLaunch()

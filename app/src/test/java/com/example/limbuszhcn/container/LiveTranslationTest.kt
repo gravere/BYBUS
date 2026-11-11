@@ -10,21 +10,35 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.nio.file.Files
 import kotlin.io.path.writeText
+import kotlin.io.path.readText
 
 class LiveTranslationTest {
     @get:Rule val temporary = TemporaryFolder()
     private val cache get() = temporary.root.toPath()
     private val source = """{"dataList":[{"id":2,"content":"次の文","voicefile":"v2"},{"id":1,"content":"開始","model":"source","cost":17}]}"""
     private val translated = """{"dataList":[{"id":1,"content":"开始","model":"wrong","cost":999},{"id":2,"content":"下一句","voicefile":"wrong"}]}"""
-    private fun prepare(names: List<String> = listOf("JP_UI.json")): LiveTranslationStore {
+    private fun prepare(names: List<String> = listOf("JP_UI.json"), text: String = translated): LiveTranslationStore {
         val directory = cache.resolve("patch-cache/200")
         Files.createDirectories(directory)
         val entries = names.mapIndexed { i, key ->
-            val path = directory.resolve("$i.json"); path.writeText(translated)
+            val path = directory.resolve("$i.json"); path.writeText(text)
             PatchFileEntry("$i.json", "$i.json", "jp/$key", Files.size(path), path.sha256())
         }
         val manifest = PatchManifest("200", 200, "a".repeat(64), entries.size, entries.size, entries)
         return LiveTranslationStore(cache).also { it.prepare(directory, manifest) { key -> key } }
+    }
+
+    @Test fun releasedMixedScriptNamesKeepFontProvenanceAndOldCataloguesRebuild() {
+        val mixed = translated.replace("开始", "し协会 南部5科")
+        val store = prepare(text = mixed)
+        val fonts = cache.resolve("translation-index/live-fonts.bin")
+        assertTrue(Files.readAllBytes(fonts).toString(Charsets.UTF_8).contains("し协会 南部5科"))
+        assertTrue(store.open()!!.translate("JP_UI", source)!!.contains("し协会 南部5科"))
+        val descriptor = cache.resolve("translation-index/live-resources.json")
+        val json = JSONObject(descriptor.readText()).put("schema", 1)
+        descriptor.writeText(json.toString())
+        assertNull(store.read())
+        assertNotNull(prepare(text = mixed).open())
     }
 
     @Test fun firstSessionTranslatesResourcesAsTheyArriveWithoutOriginalFilesOrRestart() {

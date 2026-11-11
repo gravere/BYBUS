@@ -108,7 +108,7 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
                     Text(when (active) {
                         "tools" -> "设置与工具"; "status" -> "运行状态"; "error" -> "准备未完成"
                         "project" -> "翻译项目"; "updates" -> "游戏更新"; "app-update" -> "更新"
-                        "resource-preparation" -> "准备游戏资源"; "google" -> "Google 账号与付款"; else -> "关于"
+                        "repair" -> "修复"; "resource-preparation" -> "准备游戏资源"; "google" -> "Google 账号与付款"; else -> "关于"
                     }, style = MaterialTheme.typography.headlineSmall)
                 }
                 IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {

@@ -15,7 +15,7 @@ inline bool decorative(std::string_view tag) {
     auto end = tag.find_first_of("= ");
     auto name = tag.substr(0, end);
     for (auto safe : {"color", "alpha", "size", "b", "i", "u", "s", "mark",
-                      "align", "line-height", "cspace", "mspace", "indent"}) {
+                      "align", "line-height", "cspace", "mspace", "indent", "voffset"}) {
         if (name == safe) return true;
     }
     return false;
@@ -27,6 +27,13 @@ inline std::string canonical(std::string_view input) {
     for (size_t i = 0; i < input.size();) {
         if (input[i] == '<') {
             size_t end = input.find('>', i + 1);
+            // TMP's line-break tag and an actual newline have the same visible
+            // text. Normalize only the exact no-argument tag, not arbitrary tags.
+            if (end == i + 3 && (input[i + 1] == 'b' || input[i + 1] == 'B') &&
+                (input[i + 2] == 'r' || input[i + 2] == 'R')) {
+                i = end + 1;
+                continue;
+            }
             if (end != input.npos && end - i <= 128 && decorative(input.substr(i + 1, end - i - 1))) {
                 i = end + 1;
                 continue;
@@ -116,6 +123,7 @@ inline Pattern pattern(std::string_view text) {
     return result;
 }
 class Catalogue {
+    std::unordered_set<std::string> verbatim_;
     std::unordered_set<std::string> labels_;
     std::vector<Pattern> patterns_;
     std::unordered_set<std::string> fragments_;
@@ -152,8 +160,16 @@ class Catalogue {
         return false;
     }
 public:
-    void clear() { labels_.clear(); patterns_.clear(); fragments_.clear(); recent_.clear(); paragraphs_.clear(); }
+    void clear() { verbatim_.clear(); labels_.clear(); patterns_.clear(); fragments_.clear(); recent_.clear(); paragraphs_.clear(); }
     void add(std::string_view released) {
+        if (released.size() <= 16384 && released.find("<noparse") != released.npos) {
+            // Released names use literal rich-text brackets. They are known
+            // only as complete fields: never strip noparse or infer fragments.
+            for (unsigned char c : released) if (c >= 128) {
+                verbatim_.insert(std::string(released)); break;
+            }
+            return;
+        }
         auto label = canonical(released);
         bool non_ascii = false;
         for (unsigned char c : label) non_ascii |= c >= 128;
@@ -199,6 +215,8 @@ public:
         return false;
     }
     bool contains_atomic(std::string_view rendered) {
+        if (rendered.size() <= 16384 && rendered.find("<noparse") != rendered.npos &&
+            verbatim_.count(std::string(rendered))) return true;
         auto label = canonical(rendered);
         if (label.empty()) return false;
         if (labels_.count(label)) return true;
@@ -278,7 +296,7 @@ public:
         recent_[canonical(rendered)] = true;
         return true;
     }
-    size_t label_count() const { return labels_.size(); }
+    size_t label_count() const { return labels_.size() + verbatim_.size(); }
     size_t pattern_count() const { return patterns_.size(); }
 };
 }

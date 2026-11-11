@@ -9,6 +9,14 @@ import com.lody.virtual.helper.compat.LimbusSafetyAlert
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
 
+internal data class RuntimeLaunchStatus(
+    val startedAtMillis: Long? = null,
+    val result: String = "尚无启动记录",
+    val translation: String = "尚未加载",
+    val font: String = "尚未加载",
+    val issue: String? = null
+)
+
 /** A request token prevents a prior process's response from being mistaken for the new launch. */
 internal class RuntimeReceipt(private val indexRoot: Path) {
     fun beginLaunch() {
@@ -104,6 +112,41 @@ internal class RuntimeReceipt(private val indexRoot: Path) {
 
     private fun safeCodes(alert: Properties): String = alert.getProperty("codes", "")
         .split(',').filter { it.matches(Regex("[1-9][0-9]{4}")) }.distinct().take(8).joinToString(",")
+
+    fun status(): RuntimeLaunchStatus {
+        val request = currentRequest() ?: return RuntimeLaunchStatus()
+        val time = runCatching { Files.getLastModifiedTime(indexRoot.resolve("launch.request")).toMillis() }
+            .getOrNull()?.takeIf { it > 0 }
+        val receipt = readReceipt("runtime-state.properties").takeIf { it.getProperty("request") == request }
+        val state = receipt?.getProperty("state")
+        val font = when (receipt?.getProperty("fontState")) {
+            "ready" -> "已加载"
+            "failed" -> "加载失败"
+            "pending" -> "等待游戏加载"
+            else -> "尚未收到确认"
+        }
+        val translation = when (state) {
+            "hooks_installed" -> if ((receipt?.getProperty("liveResourceMerges")?.toLongOrNull() ?: 0) > 0)
+                "已读取汉化文本" else "已加载汉化功能"
+            "index_loaded" -> "等待游戏加载"
+            "no_index" -> "缺少汉化文件"
+            "hooks_failed" -> "加载失败"
+            else -> "尚未收到确认"
+        }
+        val issue = currentSafetyAlert()?.let { "游戏安全提示：${safeCodes(it).ifEmpty { "未提供编号" }}" }
+            ?: when {
+                state == "hooks_failed" -> "汉化功能未能加载，可尝试修复或导出诊断。"
+                state == "no_index" -> "汉化文件未就绪，请使用修复功能。"
+                receipt?.getProperty("fontState") == "failed" -> "中文字体加载失败，请使用修复功能。"
+                else -> null
+            }
+        return RuntimeLaunchStatus(time, when {
+            issue != null -> "启动时出现问题"
+            state == "hooks_installed" && font == "已加载" -> "汉化与字体已加载"
+            state != null -> "已收到游戏响应"
+            else -> "尚未收到游戏响应"
+        }, translation, font, issue)
+    }
 
     fun description(): String = runCatching {
         currentSafetyAlert()?.let { alert ->

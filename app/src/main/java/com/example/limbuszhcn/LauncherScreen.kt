@@ -47,6 +47,7 @@ internal fun LauncherScreen(
     onInstallGame: () -> Unit,
     onCancelGameInstall: () -> Unit,
     onSync: () -> Unit,
+    onRepair: () -> Unit = {},
     onMigration: () -> Unit,
     onRestore: () -> Unit,
     onExport: () -> Unit,
@@ -152,7 +153,9 @@ internal fun LauncherScreen(
                         if (updateTab == UpdateTab.App) AppUpdateControls(appUpdateState, state, onDownloadAppUpdate, onInstallAppUpdate, onCancelAppUpdate, layout.detailPadding.dp)
                         else TranslationUpdateControls(state, onUpdate, layout.detailPadding.dp)
                     } }) { active ->
-                    if (active == "google") {
+                    if (active == "repair") {
+                        RepairPane(state, onRepair, onExport)
+                    } else if (active == "google") {
                         GooglePaymentPane(state, onCheckGooglePayment, onEnableGooglePayment,
                             onSettings = { onGoogleSettings() })
                     } else if (active == "resource-preparation") {
@@ -171,7 +174,7 @@ internal fun LauncherScreen(
                             appUpdateAvailable = appUpdateState.updateAvailable,
                             onAppUpdate = { updateTab = UpdateTab.App; openChild("app-update"); onCheckAppUpdate() },
                             onSync = { close(); onSync() }, onRestore = { close(); onRestore() },
-                            onMigration = onMigration,
+                            onMigration = onMigration, onRepair = { openChild("repair") },
                             onExport = { close(); onExport() }, onSettings = { close(); onSettings() },
                             onGoogleSettings = { openChild("google"); onCheckGooglePayment() },
                             onRefresh = { if (active != "status") close(); onRefresh() }, onAbout = { openChild("about") })
@@ -211,7 +214,7 @@ private fun InstallationCard(state: LauncherUiState, modifier: Modifier = Modifi
             if (state.gameUpdate.newerSources(state.installedVersionName).isNotEmpty()) "有新版" else null)
         HorizontalDivider(Modifier.padding(start = 32.dp, top = 12.dp, bottom = 12.dp), color = C.Line)
         InstallationRow(Glyph.Translation, "本地汉化", state.translation?.version
-            ?: if (state.resourcePreparation != null) "汉化包已校验 · 等待游戏资源" else "首次启动时准备")
+            ?: if (state.resourcePreparation != null) "汉化尚未就绪" else "首次启动时准备")
     }
 }
 

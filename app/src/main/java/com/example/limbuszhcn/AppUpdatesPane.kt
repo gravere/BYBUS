@@ -101,10 +101,9 @@ internal fun AppUpdatesPane(state: AppUpdateState, onCheck: () -> Unit, onOpenPa
 internal fun TranslationUpdatesPane(state: LauncherUiState) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            IconTile(Glyph.Translation, accent = true)
+            ZeroAssociationIcon()
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("都市零协会", style = MaterialTheme.typography.titleMedium)
-                Text("边狱巴士 · 简体中文", color = C.Muted, style = MaterialTheme.typography.bodySmall)
             }
         }
         DetailCard {
