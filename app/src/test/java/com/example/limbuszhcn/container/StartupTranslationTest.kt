@@ -29,7 +29,7 @@ class StartupTranslationTest {
             write(patch.resolve("$name.json"), translated(i))
             PatchFileEntry("$name.json", "$name.json", "en/EN_$name.json", 1, "hash")
         }
-        return patch to PatchManifest("200", 200, "archive", 10, 10, entries)
+        return patch to verifiedFixtureManifest(patch, PatchManifest("200", 200, "archive", 10, 10, entries))
     }
     private fun apk(): Path {
         val path = root.resolve("official-assets.apk")
@@ -45,12 +45,12 @@ class StartupTranslationTest {
         val (patch, manifest) = inputs()
         val apk = apk()
         val installer = ContainerPatchInstaller(cache, ContainerWorkspaceStorage(localize), { listOf(apk.toString()) })
-        val summary = installer.activateRedirect(patch, manifest)
+        val summary = installer.activateRedirect(patch, verifiedFixtureManifest(patch, manifest))
         assertFalse(summary.indexActivated)
         assertTrue(summary.startupIndexAvailable)
         assertEquals(0, summary.availableSourceFiles)
-        assertNull(installer.activeInstallSummary())
-        assertEquals(com.example.limbuszhcn.TranslationLaunchMode.NeedsResources,
+        assertTrue(installer.activeInstallSummary()!!.liveResourcesReady)
+        assertEquals(com.example.limbuszhcn.TranslationLaunchMode.Localized,
             com.example.limbuszhcn.translationLaunchMode(installer.activeInstallSummary(), false))
         val store = TranslationIndexStore(index)
         assertEquals("startup", store.selectRuntimeIndex())
@@ -59,7 +59,7 @@ class StartupTranslationTest {
         assertTrue(Files.isRegularFile(Path.of(runtime)))
         // A startup generation cannot masquerade as a complete one, even with a copied pointer.
         index.resolve(TranslationIndexStore.ACTIVE_POINTER).writeText(runtime)
-        assertNull(installer.activeInstallSummary())
+        assertTrue(installer.activeInstallSummary()!!.liveResourcesReady)
         assertEquals("startup", store.selectRuntimeIndex())
         Files.delete(index.resolve(TranslationIndexStore.ACTIVE_POINTER))
         assertEquals(setOf("200"), store.pruneAndRetainedVersions())
@@ -87,11 +87,12 @@ class StartupTranslationTest {
         val store = TranslationIndexStore(index)
         store.activate(CompiledTranslationIndex("100", "old", "old", mapOf("以前の文" to "旧译文"),
             emptyMap(), 50, 0, 0, 10, 10))
-        val summary = installer.activateRedirect(patch, manifest)
+        val summary = installer.activateRedirect(patch, verifiedFixtureManifest(patch, manifest))
         assertFalse(summary.indexActivated)
         assertTrue(summary.previousIndexPreserved)
         assertEquals("full", store.selectRuntimeIndex())
-        assertEquals("100", installer.activeInstallSummary()!!.version)
+        assertEquals("200", installer.activeInstallSummary()!!.version)
+        assertEquals("100", TranslationIndexStore(cache.resolve("translation-index")).activeManifest()!!.getProperty("version"))
     }
 
     @Test fun partiallyPairedBundledTableKeepsProvenRowsWithoutClaimingFullReadiness() {
@@ -107,7 +108,7 @@ class StartupTranslationTest {
             it.closeEntry()
         }
         val summary = ContainerPatchInstaller(cache, ContainerWorkspaceStorage(localize), { listOf(apk.toString()) })
-            .activateRedirect(patch, manifest)
+            .activateRedirect(patch, verifiedFixtureManifest(patch, manifest))
         assertFalse(summary.indexActivated)
         assertTrue(summary.startupIndexAvailable)
         assertEquals(0, summary.availableSourceFiles)

@@ -10,8 +10,12 @@ class TranslationLaunchGateTest {
         assertEquals(TranslationLaunchMode.NeedsResources, translationLaunchMode(
             PatchInstallSummary("200", 0, indexActivated = false, startupIndexAvailable = true, sourceRecordCount = 35), false))
     }
-    @Test fun preparationRequiresExplicitChoiceAndNeverClaimsLocalized() {
-        assertEquals(TranslationLaunchMode.ResourcePreparation, translationLaunchMode(null, true))
+    @Test fun missingPackCannotFallThroughToAnUntranslatedPreparationLaunch() {
+        assertEquals(TranslationLaunchMode.NeedsResources, translationLaunchMode(null, true))
+    }
+    @Test fun verifiedLivePackCanLaunchBeforeAnyGameResourceDownload() {
+        val first = PatchInstallSummary("200", 0, indexActivated = false, liveResourcesReady = true)
+        assertEquals(TranslationLaunchMode.Localized, translationLaunchMode(first, false))
     }
     @Test fun verifiedFullIndexTakesPrecedenceAfterResourcesArrive() {
         val full = PatchInstallSummary("200", 100, sourceRecordCount = 20000)

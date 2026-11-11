@@ -1391,7 +1391,7 @@ def main():
         REPORT["checks"].append("Public Java/JNI package-list and concrete parcel checks across server Binder and attached native thread")
         REPORT["result"] = "JNI package API inspection completed; no game or protection library started"
         return
-    if os.environ.get("RUNTIME_MODE") == "game-startup":
+    if os.environ.get("RUNTIME_MODE") in ("game-startup", "live-translation"):
         import importlib.util
         spec = importlib.util.spec_from_file_location("game_startup", "scripts/inspect-game-startup.py")
         inspection = importlib.util.module_from_spec(spec)

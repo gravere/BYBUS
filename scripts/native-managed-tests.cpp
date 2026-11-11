@@ -28,6 +28,7 @@ limbus_managed::RecentOutputs g_recent_font_outputs;
 limbus_font_proof::Catalogue g_font_catalogue;
 std::unordered_map<std::string, std::string> g_index, g_contextual_index;
 std::unordered_map<std::string, std::string> g_terms;
+bool g_live_resources = false;
 thread_local std::string g_ui_text_key;
 std::atomic<uint64_t> g_contextual_hits{0}, g_acquisition_hits{0};
 // Shim the two mutex calls, not the production translation decisions.
@@ -102,6 +103,10 @@ int main() {
     g_contextual_index[std::string("defense") + '\x1f' + "name" + '\x1f' + "防御"] = "抵御";
     g_font_catalogue.add("防御"); g_font_catalogue.add("抵御");
     assert(text(translate_managed_string(new_managed_string("防御"), "defense", "name")) == "抵御");
+    g_live_resources = true;
+    auto merged_label = new_managed_string("防御");
+    assert(translate_managed_string(merged_label, "defense", "name") == merged_label);
+    g_live_resources = false;
     void *guard = translate_managed_string(new_managed_string("ガード"));
     assert(text(guard) == "防御");
     assert(text(translate_managed_string(new_managed_string("防御"), "defense", "name")) == "抵御");

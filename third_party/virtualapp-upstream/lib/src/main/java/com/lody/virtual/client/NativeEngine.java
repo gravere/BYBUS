@@ -282,10 +282,15 @@ public class NativeEngine {
 
     public static void configureLimbusTranslationRuntime(String activeIndexPointer) {
         try {
-            nativeConfigureLimbusTranslationRuntime(activeIndexPointer);
+            nativeConfigureLimbusTranslationRuntime(activeIndexPointer, VirtualCore.getConfig().prepareLimbusTranslationResources());
         } catch (Throwable e) {
             VLog.e(TAG, VLog.getStackTraceString(e));
         }
+    }
+
+    @Keep
+    public static String translateLimbusResource(String resource, String original) {
+        return VirtualCore.getConfig().translateLimbusResource(resource, original);
     }
 
     @Keep
@@ -569,7 +574,7 @@ public class NativeEngine {
 
     private static native int nativeMaintainLimbusAppSealingPatches();
 
-    private static native void nativeConfigureLimbusTranslationRuntime(String activeIndexPointer);
+    private static native void nativeConfigureLimbusTranslationRuntime(String activeIndexPointer, boolean liveResources);
 
     private static native void nativeMark();
 
