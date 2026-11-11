@@ -304,7 +304,7 @@ private class VirtualAppBridge(
         }
         microgConfig.markMigrationCompleted(installedApks)
         // New installs and existing disabled defaults share the same verified provider path.
-        // Device registration runs asynchronously; launching never waits for Google network I/O.
+        // Start registration now; the launch worker separately waits with a fixed deadline.
         GooglePaymentSetup(context).ensureEnabled()
         return components.map { it.second.packageName }
     }

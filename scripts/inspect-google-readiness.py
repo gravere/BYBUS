@@ -8,6 +8,12 @@ import struct
 import time
 
 
+def redact_checkin(text):
+    """Cloud emulator IDs are also unnecessary in downloadable test evidence."""
+    text = re.sub(r'(?i)(Checked in as\s+)[0-9a-f]+', r'\1[redacted]', text)
+    return re.sub(r'(?i)((?:android[_ ]?id|security[_ ]?token)\s*[=:]\s*)[0-9a-fx-]+', r'\1[redacted]', text)
+
+
 def inspect(api, release, verifier, windows_only=False, settings_only=False):
     adb, out, report = api['adb'], api['OUT'], api['REPORT']
     package, namespace = api['PACKAGE'], api['NAMESPACE']
@@ -95,7 +101,7 @@ def inspect(api, release, verifier, windows_only=False, settings_only=False):
     finally:
         adb('shell', 'wm', 'size', 'reset', check=False)
         adb('shell', 'wm', 'user-rotation', 'free', check=False)
-        (out / 'google-readiness-log.txt').write_text(adb('logcat', '-d', '-v', 'threadtime', '-t', '2500', check=False), encoding='utf-8')
+        (out / 'google-readiness-log.txt').write_text(redact_checkin(adb('logcat', '-d', '-v', 'threadtime', '-t', '2500', check=False)), encoding='utf-8')
 
 
 def inspect_settings(api, probe):

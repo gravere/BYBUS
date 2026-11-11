@@ -244,7 +244,6 @@ open class MigrationActivity : ComponentActivity() {
                 var selectedResource by rememberSaveable { mutableStateOf<String?>(null) }
                 val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
                     if (uri != null) {
-                        runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
                         selectedResource = uri.toString()
                         confirmation = ConfirmedOperation.ImportResources
                     }
@@ -264,7 +263,13 @@ open class MigrationActivity : ComponentActivity() {
                         selectedResource = null
                         if (!state.busy) when (operation) {
                             ConfirmedOperation.Migrate -> model.start(prepareTarget())
-                            ConfirmedOperation.ImportResources -> resource?.let { model.importResources(Uri.parse(it), prepareTarget()) }
+                            ConfirmedOperation.ImportResources -> resource?.let {
+                                val uri = Uri.parse(it)
+                                // Selecting a document is not consent to retain access after
+                                // cancelling the confirmation. The worker releases this grant.
+                                runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+                                model.importResources(uri, prepareTarget())
+                            }
                             else -> Unit
                         }
                     }
