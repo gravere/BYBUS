@@ -64,10 +64,10 @@ def capture(adb, out, label):
     activity = adb("shell", "dumpsys", "activity", "activities", timeout=20)
     resumed = [line.strip() for line in activity.splitlines()
                if "mResumedActivity" in line or "topResumedActivity" in line]
-    logs = adb("logcat", "-d", "-t", "1800", "LimbusSafety:V", "PackageQueries:V",
+    logs = adb("logcat", "-d", "LimbusSafety:V", "PackageQueries:V",
                "LimbusStartup:V", "LimbusZhCN:V", "LimbusVA:V", "AndroidRuntime:E",
                "ActivityManager:I", "ActivityTaskManager:I", "libc:F", "*:S", timeout=20)
-    (out / (label + "-log.txt")).write_text(sanitize(logs), encoding="utf-8")
+    (out / (label + "-log.txt")).write_text(sanitize(logs[-150000:]), encoding="utf-8")
     crashes = adb("logcat", "-d", "-b", "crash", "-t", "180", check=False)
     (out / (label + "-crashes.txt")).write_text(sanitize(crashes), encoding="utf-8")
     return {"resumed": resumed, "safety_70036_observed": "70036" in logs,
@@ -86,10 +86,12 @@ def security_evidence(logs):
     return sorted(codes)
 
 
-def observe_startup(adb, out, label, timeout, container=False):
+def observe_startup(adb, out, label, timeout, container=False, failure_probe=None):
     deadline = time.monotonic() + timeout
     first_game_frame = None
     alert_seen = False
+    preparation_error = None
+    next_probe = time.monotonic() + 8
     while time.monotonic() < deadline:
         activities = adb("shell", "dumpsys", "activity", "activities", timeout=15)
         resumed = "\n".join(line for line in activities.splitlines()
@@ -104,10 +106,18 @@ def observe_startup(adb, out, label, timeout, container=False):
             first_game_frame = time.monotonic()
         if first_game_frame is not None and time.monotonic() - first_game_frame >= 30:
             break
+        if (failure_probe and first_game_frame is None and HOST + "/" in resumed and
+                time.monotonic() >= next_probe):
+            preparation_error = failure_probe()
+            next_probe = time.monotonic() + 8
+            if preparation_error:
+                break
         time.sleep(1)
     result = capture(adb, out, label)
     result.update(game_activity_seen=first_game_frame is not None, security_dialog_seen=alert_seen,
                   security_rejection_seen=False, observed_security_codes=[])
+    if preparation_error:
+        result["preparation_error"] = preparation_error
     result["game_in_foreground_at_capture"] = any(
         (HOST + "/" in line and "ShadowActivity" in line) if container else GAME + "/" in line
         for line in result["resumed"])
@@ -116,8 +126,8 @@ def observe_startup(adb, out, label, timeout, container=False):
     uids = [uid for package, uid in re.findall(r"package:(\S+) uid:(\d+)", packages)
             if package in (HOST, GAME)]
     if uids:
-        logs = adb("logcat", "-d", "--uid=" + ",".join(uids), "-t", "1600", timeout=20)
-        (out / (label + "-app-log.txt")).write_text(sanitize(logs), encoding="utf-8")
+        logs = adb("logcat", "-d", "--uid=" + ",".join(uids), timeout=20)
+        (out / (label + "-app-log.txt")).write_text(sanitize(logs[-150000:]), encoding="utf-8")
         # A short-lived alert can disappear between activity samples. Include
         # the existing process log so an observed rejection cannot be missed.
         codes = security_evidence(logs)
@@ -173,13 +183,23 @@ def inspect(adb, command, hierarchy, locate, tap, report, out, verifier):
         time.sleep(5)
         tree = hierarchy("container-detected")
     tap("启动游戏", tree)
+    def preparation_failure():
+        state = hierarchy("container-preparation")
+        if not any(node.get("text") == "查看失败原因" for node in state.iter("node")):
+            return None
+        tap("查看失败原因", state)
+        details = hierarchy("container-preparation-error")
+        return sanitize("\n".join(node.get("text", "") for node in details.iter("node")
+                                  if node.get("text")))
     # Wait for actual game activity, not a fixed delay while first-run assets
     # are still being prepared. This remains a single bounded launch attempt.
-    report["container_startup"] = observe_startup(adb, out, "container-startup", 240, container=True)
+    report["container_startup"] = observe_startup(adb, out, "container-startup", 240, container=True,
+                                                 failure_probe=preparation_failure)
     report["result"] = "official/container startup evidence captured; compare screenshots and logs"
     report["checks"].append("one fresh container startup; no login" if live else "one startup each, original signed game and published BYBUS; no login")
     if not report["container_startup"]["game_activity_seen"]:
-        raise RuntimeError("First-run preparation did not reach game activity within the inspection window")
+        raise RuntimeError(report["container_startup"].get("preparation_error") or
+                           "First-run preparation did not reach game activity within the inspection window")
     for kind in (("container_startup",) if live else ("official_startup", "container_startup")):
         status = report[kind]
         if (status["security_dialog_seen"] or status["security_rejection_seen"] or status["safety_70036_observed"] or
