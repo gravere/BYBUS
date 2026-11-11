@@ -2,6 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
         <activity android:name=".GoogleReadinessProbeActivity" android:exported="true" />
+        <activity android:name=".GoogleWindowProbeActivity" android:theme="@style/GoogleWindowProbeTheme" android:exported="true" />
         <activity android:name=".InstallFlowProbeActivity" android:exported="true" />
         <activity android:name=".AppCrashProbeActivity" android:exported="true" />
         <activity android:name=".ServerCrashProbeActivity" android:process="@string/engine_process_name" android:exported="true" />

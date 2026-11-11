@@ -81,7 +81,7 @@ jobs:
           printf 'no\n' | avdmanager create avd -n bybus-runtime -k "$ANDROID_IMAGE"
           expected_target=$(cut -d ';' -f 2 <<< "$ANDROID_IMAGE")
           grep -Fx "target=$expected_target" "$ANDROID_AVD_HOME/bybus-runtime.ini" > runtime-output/avd-target.txt
-          printf '\nhw.lcd.width=720\nhw.lcd.height=1560\nhw.lcd.density=320\ndisk.dataPartition.size=4G\n' >> "$ANDROID_AVD_HOME/bybus-runtime.avd/config.ini"
+          printf '\nhw.lcd.width=720\nhw.lcd.height=1560\nhw.lcd.density=320\nhw.mainKeys=no\ndisk.dataPartition.size=4G\n' >> "$ANDROID_AVD_HOME/bybus-runtime.avd/config.ini"
           if [ "$RUNTIME_MODE" = game-startup ]; then
             printf 'disk.dataPartition.size=8G\n' >> "$ANDROID_AVD_HOME/bybus-runtime.avd/config.ini"
           fi

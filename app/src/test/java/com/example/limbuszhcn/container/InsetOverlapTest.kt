@@ -2,6 +2,7 @@ package com.example.limbuszhcn.container
 
 import com.lody.virtual.helper.compat.InsetOverlap
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class InsetOverlapTest {
@@ -18,6 +19,9 @@ class InsetOverlapTest {
     @Test fun keyboardUsesOnlyOverlapRemainingAfterSystemResize() {
         assertArrayEquals(intArrayOf(0, 0, 0, 300), InsetOverlap.calculate(400, 900, 0, 24, 400, 876, 0, 24, 0, 300))
         assertArrayEquals(intArrayOf(0, 0, 0, 0), InsetOverlap.calculate(400, 900, 0, 24, 400, 576, 0, 24, 0, 300))
+        assertEquals(300, InsetOverlap.keyboardBottom(24, 876, 600))
+        assertEquals(0, InsetOverlap.keyboardBottom(24, 576, 600))
+        assertEquals(0, InsetOverlap.keyboardBottom(400, 200, 600))
     }
     @Test fun splitWindowAndNotYetLaidOutRootDoNotReservePhantomBars() {
         assertArrayEquals(intArrayOf(0, 0, 0, 0), InsetOverlap.calculate(400, 400, 0, 0, 400, 400, 0, 0, 0, 0))

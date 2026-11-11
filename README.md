@@ -59,7 +59,7 @@ BYBUS 使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeL
 > [!NOTE]
 > BYBUS 与系统原版的数据独立，首次使用需要重新登录和下载资源。日常保留系统里的官方游戏安装包，大型资源可只在 BYBUS 中下载和使用。游戏更新新增的资源仍需正常下载。
 
-Google 登录使用容器内的独立账号环境，首次使用需在「设置与工具 → Google 账号」中添加账号。需要内购时，可在同一页面查看付款与设备注册状态，并启用付款服务。
+Google 登录使用容器内的独立账号环境，首次使用需在「设置与工具 → Google 账号与付款」中添加账号。需要内购时，可在同一页面查看付款与设备注册状态，并启用付款服务。
 
 <details>
 <summary><strong>发行文件怎么选？首次安装请选择完整 APK</strong></summary>

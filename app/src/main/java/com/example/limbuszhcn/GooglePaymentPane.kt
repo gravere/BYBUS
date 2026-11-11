@@ -33,6 +33,9 @@ internal fun GooglePaymentPane(state: LauncherUiState, onRefresh: () -> Unit,
         if (payment?.registrationEnabled == true && !payment.registered) {
             Text("设备注册需要联网，完成后点击刷新状态。", color = C.Muted, style = MaterialTheme.typography.bodySmall)
         }
+        if (payment?.billingEnabled == true) {
+            Text("若刚启用付款服务，请从 BYBUS 重新启动游戏。", color = C.Muted, style = MaterialTheme.typography.bodySmall)
+        }
         DetailActionSection("账号设置") {
             SheetAction(Glyph.Account, if (payment?.hasAccount == false) "登录 Google 账号" else "管理 Google 账号",
                 enabled = !state.busy, navigation = true, onClick = onSettings)
