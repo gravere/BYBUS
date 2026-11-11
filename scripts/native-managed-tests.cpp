@@ -66,6 +66,20 @@ std::string text(void *s) { std::string result; utf16_to_utf8(chars(s), length(s
 std::unordered_set<void *> destroyed;
 bool native_alive(void *object) { return !destroyed.count(object); }
 
+using ruby_format_fn = void *(*)(void *, void *, const void *);
+ruby_format_fn g_original_ruby_format[3] = {};
+thread_local bool g_inside_ruby_format = false;
+bool ruby_prepared = false;
+void *prepare_tmp_text(void *, void *value) {
+    ruby_prepared = true;
+    return translate_managed_string(value);
+}
+#include "runtime-ruby-under-test.inc"
+void *format_ruby(void *, void *value, const void *) {
+    assert(ruby_prepared); // Font preparation must precede the formatter's measurements.
+    return new_managed_string("<pos=2><size=50%>Fabius</size><voffset=-1>" + text(value));
+}
+
 int main() {
     {
         std::string scene = "@story:outer";
@@ -129,6 +143,25 @@ int main() {
     auto original = new_managed_string("ガード");
     assert(translate_managed_string(original) == original);
 
+    font_ready = true;
+    const std::string ruby = "你已经无处可逃了，<ruby=Fabius>费边</ruby>。";
+    g_font_catalogue.add(ruby);
+    g_original_ruby_format[0] = format_ruby;
+    auto annotated = new_managed_string(ruby);
+    auto generated = replacement_ruby_format<0>(&ruby_prepared, annotated, nullptr);
+    assert(!g_font_catalogue.contains(text(generated)));
+    assert(is_translated_managed_string(generated));
+    assert(text(generated) == "<pos=2><size=50%>Fabius</size><voffset=-1>" + ruby);
+    assert(!g_inside_ruby_format);
+    ruby_prepared = false;
+    auto unknown = replacement_ruby_format<0>(&ruby_prepared,
+            new_managed_string("<ruby=unknown>未知正文</ruby>"), nullptr);
+    assert(!is_translated_managed_string(unknown));
+    assert(!g_inside_ruby_format);
+    g_original_ruby_format[1] = [](void *, void *, const void *) -> void * { throw 9; };
+    try { replacement_ruby_format<1>(&ruby_prepared, annotated, nullptr); assert(false); }
+    catch (int value) { assert(value == 9 && !g_inside_ruby_format); }
+
     int a, b, c, font;
     struct Saved { limbus_managed::Ref font; };
     const auto before = handles.size();
@@ -157,5 +190,5 @@ int main() {
     assert(translated == "<color=red>防御</color>");
     assert(!translate_embedded_terms("<noparse>ガード</noparse>", &translated));
     assert(!translate_embedded_terms("<color=red></color>", &translated));
-    puts("Managed provenance, context order, GC/address reuse, native destruction and bounds passed");
+    puts("Managed provenance, Ruby formatter boundary, context order, GC/address reuse, native destruction and bounds passed");
 }

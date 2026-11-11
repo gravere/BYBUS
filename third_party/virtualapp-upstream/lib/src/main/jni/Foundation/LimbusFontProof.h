@@ -6,36 +6,49 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include "LimbusRichText.h"
 
 // Font provenance only: this never translates, rewrites tags, or changes numbers.
 // Recognize a complete released translation, including bounded numeric formatting.
 namespace limbus_font_proof {
 inline bool decorative(std::string_view tag) {
     if (!tag.empty() && tag.front() == '/') tag.remove_prefix(1);
-    auto end = tag.find_first_of("= ");
+    auto end = tag.find_first_of("= \t");
     auto name = tag.substr(0, end);
     for (auto safe : {"color", "alpha", "size", "b", "i", "u", "s", "mark",
-                      "align", "line-height", "cspace", "mspace", "indent", "voffset"}) {
-        if (name == safe) return true;
+                      "align", "line-height", "cspace", "mspace", "indent", "voffset", "font-weight"}) {
+        if (limbus_rich_text::equal_ascii(name, safe)) return true;
+    }
+    return false;
+}
+inline bool has_literal_region(std::string_view input) {
+    for (size_t i = 0; (i = input.find('<', i)) != input.npos; ++i) {
+        const auto tag = limbus_rich_text::tag_at(input, i);
+        if (tag.end && limbus_rich_text::equal_ascii(tag.name, "noparse")) return true;
     }
     return false;
 }
 inline std::string canonical(std::string_view input) {
-    if (input.empty() || input.size() > 16384 || input.find("<noparse") != input.npos) return {};
+    if (input.empty() || input.size() > 16384) return {};
     std::string out;
     out.reserve(input.size());
     for (size_t i = 0; i < input.size();) {
         if (input[i] == '<') {
-            size_t end = input.find('>', i + 1);
+            const auto tag = limbus_rich_text::tag_at(input, i);
+            if (tag.end && !tag.closing && limbus_rich_text::equal_ascii(tag.name, "noparse")) {
+                const auto end = limbus_rich_text::literal_end(input, tag.end);
+                // Literal markup, whitespace and punctuation inside noparse
+                // are visible content, not formatting to normalize away.
+                out.append(input.substr(i, end - i)); i = end; continue;
+            }
             // TMP's line-break tag and an actual newline have the same visible
             // text. Normalize only the exact no-argument tag, not arbitrary tags.
-            if (end == i + 3 && (input[i + 1] == 'b' || input[i + 1] == 'B') &&
-                (input[i + 2] == 'r' || input[i + 2] == 'R')) {
-                i = end + 1;
+            if (tag.end == i + 4 && !tag.closing && limbus_rich_text::equal_ascii(tag.name, "br")) {
+                i = tag.end;
                 continue;
             }
-            if (end != input.npos && end - i <= 128 && decorative(input.substr(i + 1, end - i - 1))) {
-                i = end + 1;
+            if (tag.end && decorative(tag.name)) {
+                i = tag.end;
                 continue;
             }
         }
@@ -162,11 +175,11 @@ class Catalogue {
 public:
     void clear() { verbatim_.clear(); labels_.clear(); patterns_.clear(); fragments_.clear(); recent_.clear(); paragraphs_.clear(); }
     void add(std::string_view released) {
-        if (released.size() <= 16384 && released.find("<noparse") != released.npos) {
+        if (released.size() <= 16384 && has_literal_region(released)) {
             // Released names use literal rich-text brackets. They are known
             // only as complete fields: never strip noparse or infer fragments.
             for (unsigned char c : released) if (c >= 128) {
-                verbatim_.insert(std::string(released)); break;
+                verbatim_.insert(canonical(released)); break;
             }
             return;
         }
@@ -215,10 +228,9 @@ public:
         return false;
     }
     bool contains_atomic(std::string_view rendered) {
-        if (rendered.size() <= 16384 && rendered.find("<noparse") != rendered.npos &&
-            verbatim_.count(std::string(rendered))) return true;
         auto label = canonical(rendered);
         if (label.empty()) return false;
+        if (has_literal_region(rendered)) return verbatim_.count(label) != 0;
         if (labels_.count(label)) return true;
         auto cached = recent_.find(label);
         if (cached != recent_.end()) return cached->second;
@@ -241,7 +253,7 @@ public:
     }
     bool contains(std::string_view rendered) {
         if (contains_atomic(rendered)) return true;
-        if (rendered.size() > 8192 || rendered.find("<noparse") != rendered.npos) return false;
+        if (rendered.size() > 8192 || has_literal_region(rendered)) return false;
         // Start-buff cards concatenate several released descriptions. Validate
         // every complete bullet, including its parameters, never a prose substring.
         std::string list_text(rendered);

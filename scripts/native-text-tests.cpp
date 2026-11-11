@@ -117,6 +117,17 @@ int main() {
     assert(!is_short_translated_label("12345678"));
     assert(!is_short_translated_label(std::string(257, 'x') + "中文"));
     limbus_font_proof::Catalogue fonts;
+    fonts.add("经验");
+    // These wrappers exist in the shipped game's literal table. Font evidence
+    // must survive TMP's case-insensitive tags and short color notation.
+    assert(fonts.contains("<#a16a3b>经验</color>"));
+    assert(fonts.contains("<B><COLOR=#ffffff>经验</COLOR></B>"));
+    assert(fonts.contains("<font-weight=700>经验</font-weight>"));
+    assert(!fonts.contains("<#not-a-color>经验</color>"));
+    assert(!fonts.contains("<FONT=Unknown>经验</FONT>"));
+    fonts.add("N公司E.G.O::<NOPARSE><b>凶弹</b></NOPARSE> 李箱");
+    assert(fonts.contains("<COLOR=red>N公司E.G.O::<NOPARSE><b>凶弹</b></NOPARSE> 李箱</COLOR>"));
+    assert(!fonts.contains("N公司E.G.O::<NOPARSE>凶弹</NOPARSE> 李箱"));
     fonts.add("し协会\n南部5科");
     assert(fonts.contains("<b>し协会<br>南部5科</b>"));
     assert(fonts.contains("し协会<BR><voffset=2>南部5科</voffset>"));

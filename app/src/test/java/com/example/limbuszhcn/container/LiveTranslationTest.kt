@@ -35,7 +35,7 @@ class LiveTranslationTest {
         assertTrue(Files.readAllBytes(fonts).toString(Charsets.UTF_8).contains("し协会 南部5科"))
         assertTrue(store.open()!!.translate("JP_UI", source)!!.contains("し协会 南部5科"))
         val descriptor = cache.resolve("translation-index/live-resources.json")
-        val json = JSONObject(descriptor.readText()).put("schema", 1)
+        val json = JSONObject(descriptor.readText()).put("schema", 2)
         descriptor.writeText(json.toString())
         assertNull(store.read())
         assertNotNull(prepare(text = mixed).open())
@@ -73,13 +73,31 @@ class LiveTranslationTest {
     }
 
     @Test fun duplicateIdsAndUnmatchedLeavesRetainTheOriginal() {
-        assertTrue(TranslationJsonPairer.releasedTexts("jp/JP_Index.json", """{"files":["UI.json"]}""").isEmpty())
+        assertTrue(TranslationJsonPairer.releasedTexts("""{"files":["UI.json"]}""").isEmpty())
         val original = """{"dataList":[{"id":1,"content":"甲"},{"id":1,"content":"乙"},{"id":3,"content":"未翻訳"}]}"""
         assertNull(TranslationJsonPairer.merge("jp/JP_UI.json", original, translated))
         val target = """{"dataList":[{"id":2,"content":""},{"id":1,"content":"开始"}]}"""
         val out = JSONObject(TranslationJsonPairer.merge("jp/JP_UI.json", source, target)!!).getJSONArray("dataList")
         assertEquals("次の文", out.getJSONObject(0).getString("content"))
         assertEquals("开始", out.getJSONObject(1).getString("content"))
+    }
+
+    @Test fun allReleasedDisplayFieldsKeepFontCoverageWithoutRelaxingTranslationPairing() {
+        val official = """{"dataList":[
+            {"id":1,"name":"雪原岔道","model":"内部模型","simpleDesc":[
+                {"abilityID":3,"simpleDesc":"增加强度"},
+                {"abilityID":3,"simpleDesc":"增加层数"}]},
+            {"id":1,"name":"雪原十字路口","result":["事件结果"],
+             "files":["内部文件"],"desc":"坏字\ufffd"}]}"""
+        assertEquals(setOf("雪原岔道", "雪原十字路口", "增加强度", "增加层数", "事件结果"),
+            TranslationJsonPairer.releasedTexts(official).toSet())
+        val source = """{"dataList":[{"id":1,"name":"原文一"},{"id":1,"name":"原文二"}]}"""
+        assertNull(TranslationJsonPairer.merge("jp/JP_UI.json", source, official))
+        val store = prepare(text = official)
+        val catalogue = Files.readAllBytes(cache.resolve("translation-index/live-fonts.bin")).toString(Charsets.UTF_8)
+        assertTrue(catalogue.contains("雪原岔道") && catalogue.contains("增加层数"))
+        assertFalse(catalogue.contains("内部模型") || catalogue.contains("内部文件"))
+        assertNotNull(store.open())
     }
 
     @Test fun nestedSkillDescriptionsUseTheExistingPairingPolicyAndKeepNumbers() {

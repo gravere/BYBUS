@@ -7,14 +7,21 @@ namespace limbus_font_materials {
 // so visiting more pages does not pin every material for the process lifetime.
 class Material {
     limbus_managed::Ref root_;
+    limbus_managed::Ref source_;
+    bool restore_source_;
     void (*release_)(void *);
 public:
-    Material(limbus_managed::Ref root, void (*release)(void *))
-        : root_(std::move(root)), release_(release) {}
+    Material(limbus_managed::Ref root, void (*release)(void *),
+             limbus_managed::Ref source, bool restore_source)
+        : root_(std::move(root)), source_(std::move(source)),
+          restore_source_(restore_source), release_(release) {}
     ~Material() { if (auto object = root_->get()) release_(object); }
     Material(const Material &) = delete;
     Material &operator=(const Material &) = delete;
     void *get() const { return root_->get(); }
+    const limbus_managed::Ref &source_root() const { return source_; }
+    void *source() const { return source_ ? source_->get() : nullptr; }
+    bool restores_source() const { return restore_source_; }
 };
 using Lease = std::shared_ptr<Material>;
 
@@ -39,13 +46,15 @@ public:
             else ++it;
         }
     }
-    Lease acquire(void *object, bool (*retain)(void *), void (*release)(void *)) {
+    Lease acquire(void *object, bool (*retain)(void *), void (*release)(void *),
+                  limbus_managed::Ref source = {}, bool restore_source = false) {
         if (!object || !retain || !release) return {};
         if (auto existing = find(object)) return existing;
         if ((++acquisitions_ & 31) == 0) collect();
         auto root = limbus_managed::retain(gc_, object);
         if (!root || !retain(object)) return {};
-        auto lease = std::make_shared<Material>(std::move(root), release);
+        auto lease = std::make_shared<Material>(std::move(root), release,
+                std::move(source), restore_source);
         entries_[object] = lease;
         return lease;
     }
