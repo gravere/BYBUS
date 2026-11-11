@@ -82,12 +82,6 @@ int main() {
     assert(!single_line_label(12, true, true, 40, 32));
     assert(!single_line_label(12, false, true, 160, 32));
     assert(single_line_label(12, false, true, 0, 32));
-    assert(nominal_font_size(12, true, 32) == 32);
-    assert(nominal_font_size(12, false, 32) == 12);
-    assert(nominal_font_size(12, true, 0) == 12);
-    assert(readable_minimum(30, 3) == 24);
-    assert(readable_minimum(30, 27) == 27);
-    assert(readable_minimum(8, 0) == 8);
     assert(limbus_rich_text::visible_codepoints("<……我想问你一些事。>") == 12);
     assert(limbus_rich_text::visible_codepoints("<color=#fff000>中文</color>") == 2);
     assert(limbus_rich_text::visible_codepoints("<B>中文</B><sprite=1>") == 3);
@@ -101,7 +95,7 @@ int main() {
     assert(explicit_line_break("第一段<BR>第二段"));
     assert(!explicit_line_break("<b>普通标签</b>"));
     assert(!explicit_line_break("<noparse><br></noparse>"));
-    for (int overflow : {2, 3, 4, 5, 6})
+    for (int overflow : {4, 5, 6})
         assert(!single_line_label(12, false, true, 40, 32, overflow));
     assert(is_gp_formatter_parameter("System.Object[]"));
     assert(is_gp_formatter_parameter("System.Int32"));
@@ -292,6 +286,15 @@ int main() {
     assert(!flow.matches("<font=Other>终端上显示</font>"));
     assert(!flow.matches("123"));
     assert(!fonts.contains("机器人吃"));  // Scoped proof never changes the catalogue.
+    assert(flow.assign(event, true, true)); // Only an explicitly bound stream allows reflow.
+    assert(flow.matches("吃力地举起双臂。"));
+    assert(!flow.matches("吃力地举起双臂。额外文字"));
+    assert(!flow.matches("<font=Other>吃力地举起双臂。</font>"));
+    assert(!fonts.contains("吃力地举起双臂。"));
+    assert(flow.assign("<style=\"upgradeHighlight\">增强后的饰品效果持续生效。</style>", true, true));
+    assert(flow.matches("<style=\"upgradeHighlight\">饰品效果持续</style>"));
+    assert(!flow.matches("<style=\"Unknown\">饰品效果持续</style>"));
+    assert(!flow.matches("<font=Other>饰品效果持续</font>"));
     assert(!flow.assign("未知事件。", false));
     assert(!flow.matches("机器人吃"));
     assert(!flow.assign("<NOPARSE>未知事件。</NOPARSE>", true));

@@ -1,5 +1,6 @@
 #pragma once
 #include "LimbusFontProof.h"
+#include <algorithm>
 
 namespace limbus_font_proof {
 // A proof belongs to one registered event text component, never the global
@@ -7,6 +8,15 @@ namespace limbus_font_proof {
 class FlowProof {
     std::string complete_;
     std::vector<size_t> starts_;
+    bool reflow_ = false;
+    std::vector<std::string> styles_;
+    std::string without_known_styles(std::string text) const {
+        for (const auto &style : styles_) {
+            for (size_t pos = 0; (pos = text.find(style, pos)) != text.npos;)
+                text.erase(pos, style.size());
+        }
+        return text;
+    }
     static std::string normalize(std::string_view text) {
         std::string normalized;
         for (size_t i = 0; i < text.size();) {
@@ -35,12 +45,28 @@ class FlowProof {
         return normalized;
     }
 public:
-    void clear() { complete_.clear(); starts_.clear(); }
-    bool assign(std::string_view text, bool verified) {
+    void clear() { complete_.clear(); starts_.clear(); styles_.clear(); reflow_ = false; }
+    bool assign(std::string_view text, bool verified, bool reflow = false) {
         clear();
         if (!verified || text.empty() || text.size() > 16384) return false;
-        const auto normalized = normalize(text);
+        auto normalized = normalize(text);
         if (normalized.empty()) return false;
+        if (reflow) {
+            // A continued visual line may reopen its original style. Only
+            // openings actually present in this verified input are equivalent.
+            for (size_t i = 0; i < normalized.size();) {
+                auto tag = limbus_rich_text::tag_at(normalized, i);
+                if (tag.end && !tag.closing && limbus_rich_text::equal_ascii(tag.name, "style")) {
+                    const auto style = normalized.substr(i, tag.end - i);
+                    if (std::find(styles_.begin(), styles_.end(), style) == styles_.end()) {
+                        if (styles_.size() >= 32) { clear(); return false; }
+                        styles_.push_back(style);
+                    }
+                }
+                i = tag.end ? tag.end : i + 1;
+            }
+            normalized = without_known_styles(std::move(normalized));
+        }
         text = normalized;
         for (size_t start = 0; start <= text.size();) {
             size_t end = text.find('\n', start);
@@ -53,17 +79,26 @@ public:
             if (end == text.npos) break;
             start = end + 1;
         }
+        reflow_ = reflow;
         return !complete_.empty();
     }
     bool matches(std::string_view rendered) const {
         if (complete_.empty() || rendered.size() > 16384) return false;
-        auto visible = canonical(normalize(rendered));
+        auto visible = canonical(without_known_styles(normalize(rendered)));
         bool non_ascii = false;
         for (unsigned char c : visible) non_ascii |= c >= 128;
         if (!non_ascii || visible.empty()) return false;
         for (size_t start : starts_)
             if (visible.size() <= complete_.size() - start &&
                 complete_.compare(start, visible.size(), visible) == 0) return true;
+        // Only the controller's registered streaming target may restart at an
+        // automatic line break. Every displayed byte must still come from its
+        // verified complete input, including exact style/sprite opening tags.
+        if (reflow_) {
+            auto pos = complete_.find(visible);
+            return pos != complete_.npos &&
+                    (static_cast<unsigned char>(complete_[pos]) & 0xc0) != 0x80;
+        }
         return false;
     }
 };
