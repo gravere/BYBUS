@@ -30,6 +30,7 @@ Google 组件就绪必须同时满足 APK 身份和所选 ABI 原生库的名称
 `Sync transaction while frozen` 并由系统终止进程。先核对 ClientConfig 的包、进程和槽位，
 通过 ContentResolver 取得短期连接，让系统按正常组件依赖恢复进程；整个设置读写结束后
 释放连接。不关闭系统冻结策略，不新增常驻服务，不持久占用该连接。
+访客侧 `GetContentProvider` 原有的系统占位连接继续保留；此次补齐的是宿主设置读写遗漏的依赖。
 依据：[AOSP 缓存进程冻结与同步 Binder](https://source.android.com/docs/core/perf/cached-apps-freezer)。
 
 

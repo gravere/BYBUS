@@ -8,7 +8,7 @@ import struct
 import time
 
 
-def inspect(api, release, verifier, windows_only=False):
+def inspect(api, release, verifier, windows_only=False, settings_only=False):
     adb, out, report = api['adb'], api['OUT'], api['REPORT']
     package, namespace = api['PACKAGE'], api['NAMESPACE']
     # adbd can close the transport while restarting as root; verify the resulting UID.
@@ -40,7 +40,7 @@ def inspect(api, release, verifier, windows_only=False):
         report['billing_capability'] = probe('billing')
         report['checks'].append('real billing: fresh defaults supported 0; old disabled error 3 -> automatic repair -> supported 0; same provider persisted')
         if windows_only:
-            inspect_window_fixture(api)
+            if not settings_only: inspect_window_fixture(api)
             inspect_settings(api, probe)
             report['result'] = 'Remaining Google windows and settings inspection completed'
             return
@@ -105,8 +105,7 @@ def inspect_settings(api, probe):
         # Fresh fixture: the first guest process belongs to SettingsProvider (GMS).
         # Only this disposable AVD is controlled; no system-wide freezer setting changes.
         process = api['PACKAGE'] + ':p0'
-        frozen_pid = adb('shell', 'pidof', process).strip()
-        assert re.fullmatch(r'\d+', frozen_pid), 'fixture Google owner unavailable'
+        frozen_pid = process_record_pid(adb, process)
         group = adb('shell', 'cat', f'/proc/{frozen_pid}/cgroup')
         match = re.search(r'(?m)^0::(/[^\r\n]*)$', group)
         assert match and '..' not in match[1], 'unified process cgroup unavailable'
@@ -120,7 +119,7 @@ def inspect_settings(api, probe):
         api['REPORT']['settings_owner_before'] = 'kernel cgroup frozen=1'
     probe('settings'); time.sleep(2)
     if frozen_pid:
-        assert adb('shell', 'pidof', api['PACKAGE'] + ':p0').strip() == frozen_pid, 'Google owner was killed instead of resumed'
+        assert process_record_pid(adb, api['PACKAGE'] + ':p0') == frozen_pid, 'Google owner was killed instead of resumed'
         api['REPORT']['checks'].append('frozen Google settings owner resumed through scoped system provider connection; same process survived')
         api['REPORT']['settings_owner_resumed'] = True
     api['capture']('google-native-settings')
@@ -136,6 +135,14 @@ def inspect_settings(api, probe):
     api['REPORT']['checks'].append('host payment page shows service enabled without a manual switch')
     api['tap']('关闭面板', api['hierarchy']('payment-panel-close'))
     api['inspect_system_navigation']()
+
+
+def process_record_pid(adb, process):
+    # VirtualApp changes Linux argv[0]; use Android's owning ProcessRecord, not pidof.
+    records = adb('shell', 'dumpsys', 'activity', 'processes')
+    pids = set(re.findall(r'ProcessRecord\{[^{}\s]+\s+(\d+):' + re.escape(process) + r'/[^}]+\}', records))
+    assert len(pids) == 1, 'fixture Google owner missing or ambiguous'
+    return pids.pop()
 
 
 def inspect_window_fixture(api):
