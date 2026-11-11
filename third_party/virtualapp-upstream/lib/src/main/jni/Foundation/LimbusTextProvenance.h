@@ -120,9 +120,10 @@ inline bool explicit_line_break(std::string_view text) {
 // A short sentence in a tall dialogue box is still body text. Counting characters
 // alone must not turn it into an ellipsized, single-line label.
 inline bool single_line_label(size_t visible, bool explicit_break, bool original_no_wrap,
-                              float rect_height, float font_size, int overflow = -1) {
+                              float rect_height, float font_size, int overflow = -1,
+                              bool content_fitted_height = false) {
     // Preserve Masking, Truncate, ScrollRect, Page and Linked modes (TMP 3).
-    if (overflow >= 2 || visible > 48 || explicit_break || !original_no_wrap) return false;
+    if (overflow >= 2 || visible > 48 || explicit_break || content_fitted_height) return false;
     if (rect_height > 0 && font_size > 0)
         return rect_height <= font_size * 1.8f;
     return original_no_wrap;

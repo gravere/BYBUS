@@ -26,7 +26,7 @@ struct Control {
     ComponentRect rect;
     std::map<int, float> settings;
     bool announcer = false, choice = false;
-    bool ruby = false;
+    bool ruby = false, fitted = false;
     std::string name, parent;
 };
 std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codec;
@@ -53,6 +53,7 @@ void invoke_bool_setter(int key, void *i, bool value) { invoke_float_setter(key,
 bool is_announcer_description(void *i) { return static_cast<Control *>(i)->announcer; }
 bool is_choice_text(void *i) { return static_cast<Control *>(i)->choice; }
 bool is_ruby_text(void *i) { return static_cast<Control *>(i)->ruby; }
+bool has_content_fitted_height(void *i) { return static_cast<Control *>(i)->fitted; }
 ComponentRect read_component_rect(void *i, int) { return static_cast<Control *>(i)->rect; }
 std::string read_unity_object_name(void *i) { return static_cast<Control *>(i)->name; }
 std::string read_unity_parent_name(void *i) { return static_cast<Control *>(i)->parent; }
@@ -94,6 +95,15 @@ int main() {
     assert(short_button.settings[Maximum] == 30 && short_button.settings[Minimum] == 24);
     assert(short_button.settings[Wrap] == 0 && short_button.settings[Overflow] == 0);
 
+    // Regression: the battle toggles allow wrapping in their serialized state
+    // but only have one line of height. CJK labels must not stack vertically.
+    for (const auto *label : {"胜率", "伤害"}) {
+        Control battle; battle.rect = {52, 40};
+        TmpComponentState state; state.word_wrapping = true;
+        apply(battle, label, state);
+        assert(battle.settings[Wrap] == 0 && battle.settings[Size] == 30);
+    }
+
     TmpComponentState shrunk;
     shrunk.font_size = 9;
     Control reused;
@@ -110,10 +120,14 @@ int main() {
 
     // A content-fitted description can still be one line high before layout.
     Control pending_height;
+    pending_height.fitted = true;
     TmpComponentState wrapped;
     wrapped.word_wrapping = true;
     apply(pending_height, "饰品效果在换行布局前不能被强制改成单行。", wrapped);
     assert(pending_height.settings[Wrap] == 1);
+    Control no_wrap_body; no_wrap_body.fitted = true;
+    apply(no_wrap_body, "内容决定高度的正文也应换行。");
+    assert(no_wrap_body.settings[Wrap] == 1);
     Control long_description;
     long_description.rect.height = 0;
     ::apply(long_description, std::string(65, 'x') + "中文效果");
