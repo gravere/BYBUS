@@ -262,7 +262,7 @@ public:
                 (list_text[i + 2] == 'r' || list_text[i + 2] == 'R') && list_text[i + 3] == '>')
                 list_text.replace(i, 4, "\n");
         rendered = list_text;
-        if (rendered.find("•") == rendered.npos) {
+        if (rendered.find("•") == rendered.npos && rendered.find("◆") == rendered.npos) {
             if (rendered.find('\n') == rendered.npos) return false;
             // Keep line boundaries in this cache: joining known complete
             // paragraphs is not permission to match arbitrary substrings.
@@ -288,7 +288,10 @@ public:
             size_t end = rendered.find('\n', start);
             std::string line = canonical(rendered.substr(start, end == rendered.npos ? rendered.npos : end - start));
             if (!line.empty()) {
-                const std::string bullet = "•";
+                // Both markers are added by the game around complete released
+                // labels/templates. They never authorize an unknown remainder.
+                const std::string_view bullet = line.compare(0, std::string_view("◆").size(), "◆") == 0
+                        ? std::string_view("◆") : std::string_view("•");
                 if (line.compare(0, bullet.size(), bullet) == 0) {
                     if (items.size() >= 16) return false;
                     items.push_back(line.substr(bullet.size()));
@@ -304,8 +307,9 @@ public:
         for (const auto &item : items) {
             if (item.empty() || item.size() > 2048 || !contains_atomic(item)) return false;
         }
-        if (recent_.size() >= 512) recent_.clear();
-        recent_[canonical(rendered)] = true;
+        // Keep whole-list proof out of the atomic-template cache: otherwise a
+        // previously seen list can authorize another nested bullet wrapper.
+        // Individual complete items are already cached by contains_atomic.
         return true;
     }
     size_t label_count() const { return labels_.size() + verbatim_.size(); }
