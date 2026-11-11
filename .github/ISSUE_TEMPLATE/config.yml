@@ -1,6 +1,8 @@
-# 只向普通报告者开放结构化表单，避免缺少设备、版本和复现信息的空白 Issue。
 blank_issues_enabled: false
 contact_links:
-  - name: 下载最新版本
-    url: https://github.com/gravere/BYBUS/releases/latest
-    about: 提交问题前请先覆盖安装最新 Release 并重新测试。
+- name: 先看使用步骤
+  url: https://github.com/gravere/BYBUS#开始使用
+  about: 原版安装后不用打开，直接进入 BYBUS；账号、资源和更新说明都在这里。
+- name: 下载 BYBUS
+  url: https://github.com/gravere/BYBUS/releases/latest
+  about: 完整 APK 与发行说明；无法更新时也可以直接提交问题。
