@@ -74,7 +74,8 @@ int main() {
     assert(skill_child_key("@skill:100/level:1/coin:0", "coindescs", "", 0) == "@skill:100/level:1/coin:0/text:0");
     assert(skill_child_key("@skill:100", "levelList", "", 0).empty());
     assert(skill_child_key("@skill:100", "unknown", "1", 0).empty());
-    assert(!single_line_label(12, false, false, 40, 32));
+    assert(single_line_label(12, false, false, 40, 32));
+    assert(!single_line_label(12, false, false, 40, 32, 0, true));
     assert(single_line_label(12, false, true, 40, 32));
     assert(!single_line_label(12, false, false, 160, 32));
     assert(!single_line_label(12, false, false, 0, 32));

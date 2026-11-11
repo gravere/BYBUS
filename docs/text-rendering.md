@@ -33,6 +33,18 @@
 
 完整译文扫描还应包含游戏实际使用的富文本包装、格式参数、逐字/分段、字体字形覆盖及正式包中尚未翻译的内容。纯文本命中率、模拟材质结果和真实游戏画面是不同证据，必须分别记录。
 
+游戏 488 的事件参数接口已从元数据与原始 Il2CppType 数据表核对为
+`GetTagMatchedAbChoiceLogString(String, ArgumentForChoice[]) -> String`（静态）。
+`String[]` / `Object[]` 不是这个接口，不能用包装函数单测代替实际签名核对。
+富文本加工前先按完整原文执行现有翻译，再把同次调用的来源传给加工结果，
+避免未经接管的短 getter 返回日文后，先展开状态图标而失去完整原文匹配。
+事件目标在原函数测量和创建协程之前准备已验证全文的主字体；段落证明仍只属于
+同一组件，不扩展到任意中文或正文中间片段。
+
+单行按钮必须以实际一行高度判定，即使游戏原属性允许换行也应保持横排。
+有启用的 `ContentSizeFitter.verticalFit` 的正文则由内容决定高度，初始一行高度
+不能当作按钮证据；通过公开组件 API 核对，不用控件名称猜测，也不读取托管偏移。
+
 格式化回归使用生产包装函数，覆盖完整译文、宏变换、链接/图标、嵌套调用及未确认文本；材质回归必须在不调用文字准备/解析的条件下修改源材质，再经游戏共用写入入口检查最终绘制材质及留边。参考 [Unity 的后备材质契约](https://docs.unity3d.com/ja/Packages/com.unity.textmeshpro%403.0/api/TMPro.TMP_MaterialManager.GetFallbackMaterial.html) 和 [TMP 实现](https://github.com/Unity-Technologies/uGUI/tree/7ca0363fd41d8de5f3cbc6121fe9a5acf95c88c6/com.unity.ugui/Runtime/TMP)。
 
 ## 中文图集与原材质的尺度

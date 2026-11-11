@@ -129,7 +129,7 @@
   `Rewrite Limbus GMS GetServiceRequest`,随后仍可进入 `PlayDone`。其中
   `libcovault-appsec.so +0x4e564` 的 `SIGILL` 被放行后游戏继续运行,不得把它单独作为
   GMS broker 修复失败的判据。Android 13/MIUI 设备仍需用相同四条日志复测。
-- 运行时文本索引当前为日语单源 schema 9（稀疏身份/字段/完整原文上下文），构建指纹为 jp-pairing-9。策略版本同时参与索引内容摘要，避免生成目录错误复用。裸数字、时间和比例不能进入无上下文全局文本/术语规则；包内数字标题仅可按稳定资源身份与显示字段翻译，旧缓存也须在 native 层排除数字术语。schema 6 的版本 2026071001 曾生成
+- 运行时文本索引当前为日语单源 schema 9（稀疏身份/字段/完整原文上下文），构建指纹为 jp-pairing-13。策略版本同时参与索引内容摘要，避免生成目录错误复用。裸数字、时间和比例不能进入无上下文全局文本/术语规则；包内数字标题仅可按稳定资源身份与显示字段翻译，旧缓存也须在 native 层排除数字术语。schema 6 的版本 2026071001 曾生成
   93488 条完整映射、19659 条幂等短术语映射和 151950 条源记录;schema 7 在此基础上
   统一编译端/native 显示字段、覆盖 `story/relatedChapterText/openConditionNumber`,并拒绝
   Unicode 替换字符、非法控制字符等确定损坏的译文。Limbus 1.109.1 可解析 149 个 IL2CPP
