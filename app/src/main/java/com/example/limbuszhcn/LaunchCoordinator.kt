@@ -424,6 +424,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
             diagnosticExport.selected(destination?.toString())
         }
         if (selected.isFailure) {
+            destination?.let { releaseDiagnosticGrant(it) }
             runCatching { diagnosticExport.discardMarker() }
             showError(requireNotNull(selected.exceptionOrNull()))
             return
@@ -453,13 +454,18 @@ internal class LaunchCoordinator private constructor(application: Application) {
                         "已取消导出诊断包"
                     } else {
                         val uri = Uri.parse(requireNotNull(pending.destination))
-                        app.contentResolver.openOutputStream(uri, "wt").use { output ->
-                            requireNotNull(output) { "无法打开所选保存位置，请重新导出" }
-                            pending.archive.toFile().inputStream().use { it.copyTo(output) }
+                        try {
+                            app.contentResolver.openOutputStream(uri, "wt").use { output ->
+                                requireNotNull(output) { "无法打开所选保存位置，请重新导出" }
+                                pending.archive.toFile().inputStream().use { it.copyTo(output) }
+                            }
+                            diagnosticExport.complete()
+                            "诊断包已保存"
+                        } finally {
+                            // A failed save returns to the picker too; do not retain
+                            // write access to a destination that is no longer recorded.
+                            releaseDiagnosticGrant(uri)
                         }
-                        diagnosticExport.complete()
-                        runCatching { app.contentResolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
-                        "诊断包已保存"
                     }
                 }
             }
@@ -474,6 +480,10 @@ internal class LaunchCoordinator private constructor(application: Application) {
                     message = result.getOrElse { error -> error.userMessage() }.orEmpty())
             }
         }
+    }
+
+    private fun releaseDiagnosticGrant(uri: Uri) {
+        runCatching { app.contentResolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
     }
 
     fun showError(error: Throwable) { state = state.copy(failed = true, message = error.userMessage()) }
