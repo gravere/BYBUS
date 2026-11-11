@@ -148,6 +148,19 @@ int main() {
     assert(!fonts.contains("• 初始经费 +玩家名字\n• 主题卡包出现数量 +1"));
     assert(!fonts.contains("• <font=Unknown>初始经费 +150</font>"));
     assert(!fonts.contains("• 初始经费 +150\n•"));
+    fonts.add("脑啡肽模块");
+    fonts.add("{0}花费x{1}");
+    // The real diagnostic hash resolves to this complete official template
+    // with the game's diamond prefix. The prefix is not a new translation.
+    assert(fonts.contains("◆ 脑啡肽模块花费x2"));
+    assert(fonts.contains("<COLOR=red>◆ 脑啡肽模块花费x2</COLOR>"));
+    assert(fonts.contains("◆ 脑啡肽模块花费x2\n◆ 初始经费 +150"));
+    assert(!fonts.contains("◆ 未知名称花费x2"));
+    assert(!fonts.contains("◆ 脑啡肽模块花费x2附加正文"));
+    assert(!fonts.contains("◆◆ 脑啡肽模块花费x2"));
+    assert(!fonts.contains("• • 初始经费 +150"));
+    assert(!fonts.contains("<noparse>◆ 脑啡肽模块花费x2</noparse>"));
+    assert(!fonts.contains("◆ 脑啡肽模块花费x2\n◆ 尚未翻译"));
     for (const auto value : {"30", "04:30", "133 / 133", "251.91", "(25%)", "<color=yellow>04:30</color>"})
         assert(limbus_font_proof::numeric_display(value));
     for (const auto value : {"30层", "在04:30后恢复1脑啡肽。", "Sinner", "", ":/", "{0}"})
