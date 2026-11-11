@@ -207,6 +207,7 @@ public final class AppInstrumentation extends InstrumentationDelegate implements
             }
         }
         super.callActivityOnCreate(activity, icicle);
+        com.lody.virtual.helper.compat.MicrogActivityInsets.apply(activity);
         exposeMicrogLoginWebViewIfBridgeStalls(activity);
     }
 

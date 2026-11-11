@@ -122,6 +122,7 @@ class MainActivity : ComponentActivity() {
                             .onFailure { appUpdater.releasePageError() }
                     },
                     onLaunch = model::launch,
+                    onPrepareResources = model::prepareGameResources,
                     onRefresh = model::refresh,
                     onUpdate = model::updateTranslation,
                     onCheckGameUpdate = model::checkGameUpdate,
@@ -143,6 +144,8 @@ class MainActivity : ComponentActivity() {
                     onRestore = model::restore,
                     onExport = model::exportDiagnostics,
                     onGoogleSettings = model::openGoogleSettings,
+                    onCheckGooglePayment = model::checkGooglePayment,
+                    onEnableGooglePayment = model::enableGooglePayment,
                     onRefreshProject = { model.refreshProject(force = true) },
                     onSelectProjectSource = model::selectProjectSource,
                     onOpenLink = { url ->

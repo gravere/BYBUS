@@ -30,6 +30,7 @@ internal class LauncherViewModel(application: Application) : AndroidViewModel(ap
     }
     val state: LauncherUiState get() = coordinator.state
     fun launch() = coordinator.launch()
+    fun prepareGameResources() = coordinator.launch(prepareResources = true)
     fun refresh() {
         refreshStatus(preserveFailure = false)
     }
@@ -85,6 +86,8 @@ internal class LauncherViewModel(application: Application) : AndroidViewModel(ap
     fun selectGameSource(source: com.example.limbuszhcn.update.GameUpdateSource) = coordinator.selectGameSource(source)
     fun syncGame() = coordinator.syncGame()
     fun openGoogleSettings() = coordinator.openGoogleSettings()
+    fun checkGooglePayment() = coordinator.checkGooglePayment()
+    fun enableGooglePayment() = coordinator.checkGooglePayment(enable = true)
     fun restore() = coordinator.restore()
     fun exportDiagnostics() = coordinator.exportDiagnostics()
     fun exportPickerOpened() = coordinator.exportPickerOpened()

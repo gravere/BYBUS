@@ -90,6 +90,11 @@ class VirtualAppContainerRuntime(
         bridge.openGoogleSettings()
     }
 
+    fun googlePaymentState(): GooglePaymentState {
+        bridge.ensureGoogleAppsInstalled()
+        return GooglePaymentSetup(context).read()
+    }
+
     /**
      * 获取指向 VirtualApp 游戏数据目录的汉化资源存储。
      *
@@ -296,6 +301,9 @@ private class VirtualAppBridge(
             File(info.apkPath)
         }
         microgConfig.markMigrationCompleted(installedApks)
+        // New installs and existing disabled defaults share the same verified provider path.
+        // Device registration runs asynchronously; launching never waits for Google network I/O.
+        GooglePaymentSetup(context).ensureEnabled()
         return components.map { it.second.packageName }
     }
 
