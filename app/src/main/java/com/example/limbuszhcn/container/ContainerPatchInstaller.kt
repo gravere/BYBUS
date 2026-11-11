@@ -324,14 +324,14 @@ class ContainerPatchInstaller(
      * @return 删除或恢复文件的卸载摘要。
      */
     fun uninstallLatest(): PatchUninstallSummary {
+        val version = activeInstallSummary()?.version ?: "未启用"
         LiveTranslationStore(cacheRoot).deactivate()
-        val active = TranslationIndexStore(indexRoot()).activeManifest()
         TranslationIndexStore(indexRoot()).deactivate()
         Files.deleteIfExists(activeRedirectFile())
         Files.deleteIfExists(pendingRedirectFile())
         Files.deleteIfExists(indexRoot().resolve("build-receipt.properties"))
         // No game-resource writes, and no selection based on the latest cached release.
-        return PatchUninstallSummary(active?.getProperty("version") ?: "未启用", 0)
+        return PatchUninstallSummary(version, 0)
     }
 
     /** Explicit legacy migration only; not called by runtime deactivation. */
