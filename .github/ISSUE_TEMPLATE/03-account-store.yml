@@ -1,0 +1,72 @@
+name: 账号与商店
+description: Google / Apple 登录、账号选择、商品价格、结算或付款返回异常
+title: '[账号商店] '
+labels:
+- bug
+body:
+- type: markdown
+  attributes:
+    value: 说明卡在哪一步即可，不需要为了排查再次购买，也不用发送邮箱、密码、验证码或订单付款信息。
+- type: dropdown
+  id: stage
+  attributes:
+    label: 哪个环节出了问题？
+    options:
+    - 游戏登录页点了没有反应
+    - 添加 / 选择 Google 账号
+    - Apple 登录或浏览器返回
+    - 商品价格不显示或显示异常
+    - 打不开结算页
+    - 取消 / 返回结算后游戏卡住
+    - 付款后商品状态异常
+    - 其他 / 不确定
+  validations:
+    required: true
+- type: textarea
+  id: what-happened
+  attributes:
+    label: 操作与实际结果
+    description: 写出入口、提示文字和返回后的状态；如果已尝试过原版，可描述对照结果，无需额外下载原版资源测试。
+  validations:
+    required: true
+- type: input
+  id: versions
+  attributes:
+    label: BYBUS / 游戏版本
+    placeholder: BYBUS：…；游戏：…
+    description: 填写实际版本；看不到的可写“无法查看”，还没安装游戏可写“未安装”。不用先升级才能反馈。
+  validations:
+    required: true
+- type: input
+  id: device
+  attributes:
+    label: 设备与系统
+    placeholder: 手机或平板型号 / Android 版本 / OriginOS、HyperOS 等系统版本
+    description: 填写机型、Android 版本和系统名称；不知道的部分可留空。
+  validations:
+    required: true
+- type: dropdown
+  id: sign-in
+  attributes:
+    label: 使用的登录方式（选填）
+    options:
+    - Google
+    - Apple
+    - 游客
+    - 其他 / 不确定
+  validations:
+    required: false
+- type: textarea
+  id: service-status
+  attributes:
+    label: 已知的账号或服务状态（选填）
+    description: 如果查看过“Google 账号与付款”，可填写已登录 / 已启用 / 已注册等状态，不要填写账号地址。
+  validations:
+    required: false
+- type: textarea
+  id: evidence
+  attributes:
+    label: 截图或诊断包（选填）
+    description: 可拖入截图、录屏或“设置与工具 → 导出诊断”生成的 ZIP；无法获取可留空。附件请遮住邮箱、账号及付款信息。
+  validations:
+    required: false
