@@ -40,7 +40,8 @@ internal enum class LaunchAction(val title: String, val symbol: LaunchSymbol, va
     Prepare("准备游戏", LaunchSymbol.Prepare, busy = true), Translate("检查汉化", LaunchSymbol.Translate, busy = true),
     Starting("正在启动", LaunchSymbol.Depart, busy = true), Working("正在处理", LaunchSymbol.Working, busy = true),
     DeviceStatus("查看设备兼容性", LaunchSymbol.Attention), NativeStatus("查看兼容状态", LaunchSymbol.Attention),
-    Status("查看运行状态", LaunchSymbol.Info), Retry("重新启动", LaunchSymbol.Retry), Launch("启动游戏", LaunchSymbol.Ready)
+    Status("查看运行状态", LaunchSymbol.Info), Resources("准备资源", LaunchSymbol.Prepare),
+    Retry("重新启动", LaunchSymbol.Retry), Launch("启动游戏", LaunchSymbol.Ready)
 }
 
 private data class LaunchContent(val title: String, val symbol: LaunchSymbol, val busy: Boolean)

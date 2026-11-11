@@ -280,6 +280,10 @@ def inspect_google(parent):
     while time.monotonic() < deadline:
         time.sleep(5)
         tree = hierarchy("google-settings")
+        for label in ("登录 Google 账号", "管理 Google 账号"):
+            if any(n.get("text") == label and n.get("enabled") == "true" for n in tree.iter("node")):
+                tap(label, tree)
+                break
         if any(n.get("package") == "com.google.android.gms" for n in tree.iter("node")):
             capture("google-settings")
             REPORT["google_component_ui"] = "container Google settings opened; no account or billing request"
@@ -374,7 +378,18 @@ def visible_navigation_frames(windows, width, height):
             continue
         match = re.search(r"(?m)^\s+Frames:.*?\bframe=\[(\d+),(\d+)\]\[(\d+),(\d+)\]", block)
         if match:
-            frames.append(tuple(map(int, match.groups())))
+            x1, y1, x2, y2 = map(int, match.groups())
+            # Tablet taskbars have a larger transparent window for animations. Only
+            # their declared provided inset is occupied, not that entire window.
+            provider = re.search(r"type=navigationBars\b[^\n]*?insetsSize=Insets\{left=(\d+), top=(\d+), right=(\d+), bottom=(\d+)\}", block)
+            if provider:
+                left, top, right, bottom = map(int, provider.groups())
+                if left: frames.append((x1, y1, min(x2, x1+left), y2))
+                if top: frames.append((x1, y1, x2, min(y2, y1+top)))
+                if right: frames.append((max(x1, x2-right), y1, x2, y2))
+                if bottom: frames.append((x1, max(y1, y2-bottom), x2, y2))
+            else:
+                frames.append((x1, y1, x2, y2))
     return [f for f in frames if 0 <= f[0] < f[2] <= width and 0 <= f[1] < f[3] <= height]
 
 
@@ -1356,6 +1371,14 @@ def main():
     if "Success" not in installed:
         raise RuntimeError("APK installation did not succeed: " + installed[-1000:])
     REPORT["checks"].append("published APK signature/hash and installation")
+    if os.environ.get("RUNTIME_MODE") in ("google-readiness", "google-window", "google-settings"):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("google_readiness", "scripts/inspect-google-readiness.py")
+        inspection = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(inspection)
+        inspection.inspect(globals(), release, verifier, windows_only=os.environ.get("RUNTIME_MODE") != "google-readiness",
+                           settings_only=os.environ.get("RUNTIME_MODE") == "google-settings")
+        return
     if os.environ.get("RUNTIME_MODE") == "package-jni":
         adb("root")
         adb("wait-for-device", timeout=30)

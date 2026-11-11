@@ -17,6 +17,23 @@ Google 组件就绪必须同时满足 APK 身份和所选 ABI 原生库的名称
 
 ## 初始化失败排查
 
+内置 Companion 的旧式 `isBillingSupported` 对有效 API 3–27 / inapp、subs 均返回 3 时，
+其固定版本源码对应 `VendingPreferences.isBillingEnabled` 为 false。启动成功、存在账号
+不能证明付款开关和设备注册已完成。宿主提供独立的 Google 账号与付款状态页，只读取
+容器内同一 SettingsProvider 的付款开关、注册开关与注册完成布尔状态；不读取 Token，
+不显示或记录账号名称、设备标识。Google 组件完成校验与安装后，默认启用付款和设备注册，
+经同一 Provider 读回确认；已有安装也自动补齐关闭的开关。仅在开关缺失时写入，未注册时
+触发原 microG 注册广播，网络注册异步完成，不阻塞游戏等待联网。不伪造注册成功或改写计费响应。
+
+宿主读写设置期间，必须持有该虚拟进程对应的系统占位 Provider 连接。只拿到虚拟 Binder
+不构成 Android 的组件依赖：Android 17 实测会冻结闲置的 Google 进程，随后同步调用触发
+`Sync transaction while frozen` 并由系统终止进程。先核对 ClientConfig 的包、进程和槽位，
+通过 ContentResolver 取得短期连接，让系统按正常组件依赖恢复进程；整个设置读写结束后
+释放连接。不关闭系统冻结策略，不新增常驻服务，不持久占用该连接。
+访客侧 `GetContentProvider` 原有的系统占位连接继续保留；此次补齐的是宿主设置读写遗漏的依赖。
+依据：[AOSP 缓存进程冻结与同步 Binder](https://source.android.com/docs/core/perf/cached-apps-freezer)。
+
+
 启动时的购买失败提示与商品价格缺失须检查真实计费返回码，不能按结算页面取消故障处理。
 静态检查发现两处独立的容器问题：自定义授权缓存失效时把账号类型与 OAuth scope 比较，
 导致已撤销的缓存未被清除；注册标识补齐只在 API 36 生效，但内置 microG 的注册数据来源
@@ -42,13 +59,25 @@ API 36。原身份、接口和反射结构检查仍保留，Android 8–13 沿�
 绑定所有权独立于 authenticator Binder 记录：空 Binder、服务死亡和绑定期间会话关闭
 都要释放成功建立的连接，不能因 Binder 已为空而跳过 unbind。
 
-首次使用仍需在容器内登录账号，并在 Google 设置中开启设备注册和应用内购买。
-已登录游戏、已安装组件和计费就绪是不同状态；检查与更新不得覆盖用户主动关闭的设置。
+首次使用仍需在容器内登录账号，设备注册和应用内购买由 BYBUS 默认开启。
+已登录游戏、已安装组件和计费就绪是不同状态；状态页显示真实注册结果，账号与付款仍由用户确认。
 
 接口依据：[Android 14 authenticator AIDL](https://github.com/aosp-mirror/platform_frameworks_base/blob/android14-release/core/java/android/accounts/IAccountAuthenticator.aidl)、
 [Android 14 权限调用](https://github.com/aosp-mirror/platform_frameworks_base/blob/android14-release/core/java/android/accounts/AbstractAccountAuthenticator.java)。
 
-## 当前结果（内部版本 33）
+## 服务初始化验证
+
+Android 15 与 Android 17 的一次性模拟器使用实际内置 Companion 服务，首次安装的
+API 3/27、inapp/subs 四项能力查询均返回 0；将开关关闭后返回真实错误 3，再走普通
+初始化自动恢复为 0。通过同一 Provider 读回确认持久保存，状态页无需手动开启。
+
+Android 17 另将 Google 设置所属进程置于冻结状态，读取内核 `cgroup.events` 确认
+`frozen=1` 后打开设置；同一 PID 存活并成功完成读写，随后设置页和宿主付款页正常显示。
+证据：[Android 15](https://github.com/gravere/BYBUS/actions/runs/42958080448)、
+[Android 17 冻结恢复](https://github.com/gravere/BYBUS/actions/runs/42958766997)。
+这验证服务配置与恢复，不包含账号授权、商品价格、结算、扣款或到账；未使用真实账号。
+
+## 历史真机结果（内部版本 33）
 
 签名 v1.0 / code33 已覆盖安装到 vivo X100 Ultra / Android 16。一次游戏启动保留
 原有账号和资源，进入主界面与商店；商品价格恢复。受限诊断确认注册标识桥接成功，
