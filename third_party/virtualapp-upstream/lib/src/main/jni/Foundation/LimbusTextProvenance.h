@@ -8,6 +8,18 @@
 #include "LimbusRichText.h"
 
 namespace limbus_text_provenance {
+// Own only values we actually change. A later game write becomes the new
+// baseline; neither recycled controls nor translated refreshes replay old state.
+template<class T> struct LayoutOverride {
+    T original{}, applied{};
+    bool active = false;
+    T observe(T current) {
+        if (!active || current != applied) { original = current; active = false; }
+        return original;
+    }
+    void record(T value) { applied = value; active = value != original; }
+    bool restore(T current) const { return active && current == applied; }
+};
 inline bool skill_number(const std::string &id) {
     return !id.empty() && id.size() <= 18 &&
             std::all_of(id.begin(), id.end(), [](char c) { return c >= '0' && c <= '9'; });
@@ -122,8 +134,9 @@ inline bool explicit_line_break(std::string_view text) {
 inline bool single_line_label(size_t visible, bool explicit_break, bool original_no_wrap,
                               float rect_height, float font_size, int overflow = -1,
                               bool content_fitted_height = false) {
-    // Preserve Masking, Truncate, ScrollRect, Page and Linked modes (TMP 3).
-    if (overflow >= 2 || visible > 48 || explicit_break || content_fitted_height) return false;
+    // ScrollRect, Page and Linked own their text flow. Masking/Truncate also
+    // occur on ordinary one-line buttons and must not force CJK vertical stacks.
+    if (overflow >= 4 || visible > 48 || explicit_break || content_fitted_height) return false;
     if (rect_height > 0 && font_size > 0)
         return rect_height <= font_size * 1.8f;
     return original_no_wrap;
@@ -141,14 +154,8 @@ inline bool positioned_ruby(std::string_view text) {
     }
     return false;
 }
-inline float nominal_font_size(float current, bool auto_sizing, float maximum) {
-    return auto_sizing && std::isfinite(maximum) && maximum > 0 ? maximum : current;
-}
-inline float readable_minimum(float maximum, float original_minimum) {
-    float floor = std::max(9.0f, maximum * 0.8f);
-    if (std::isfinite(original_minimum) && original_minimum > floor) floor = original_minimum;
-    return std::min(maximum, floor);
-}
+
+
 // These IL2CPP parameters occupy one general-purpose register on the supported
 // arm64 profile. Floating-point and arbitrary value types require typed wrappers.
 inline bool is_gp_formatter_parameter(const char *name) {
