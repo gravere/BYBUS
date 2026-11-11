@@ -82,7 +82,7 @@ jobs:
           expected_target=$(cut -d ';' -f 2 <<< "$ANDROID_IMAGE")
           grep -Fx "target=$expected_target" "$ANDROID_AVD_HOME/bybus-runtime.ini" > runtime-output/avd-target.txt
           printf '\nhw.lcd.width=720\nhw.lcd.height=1560\nhw.lcd.density=320\nhw.mainKeys=no\ndisk.dataPartition.size=4G\n' >> "$ANDROID_AVD_HOME/bybus-runtime.avd/config.ini"
-          if [ "$RUNTIME_MODE" = game-startup ]; then
+          if [ "$RUNTIME_MODE" = game-startup ] || [ "$RUNTIME_MODE" = live-translation ]; then
             printf 'disk.dataPartition.size=8G\n' >> "$ANDROID_AVD_HOME/bybus-runtime.avd/config.ini"
           fi
           "$ANDROID_HOME/emulator/emulator" -accel-check > runtime-output/acceleration.txt
