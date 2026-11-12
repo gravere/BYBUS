@@ -33,6 +33,15 @@ internal object TranslationJsonPairer {
         return if (records.any { it.source != it.translation }) original.toString() else null
     }
 
+    fun releasedModelRecords(path: String, json: String): List<TranslationIndexRecord> {
+        val root = parse(json)
+        val records = mutableListOf<TranslationIndexRecord>()
+        // A release also contains manifests with no display fields. Those have
+        // no model entries; the stricter source-pairing readiness rule stays in pair().
+        collect(root, root, path, "$", records, 0)
+        return records
+    }
+
     fun releasedTexts(json: String): List<String> {
         // This catalogue proves font ownership, not a source-to-target mapping.
         // A duplicate identity cannot invalidate a complete released Chinese label.
@@ -311,6 +320,8 @@ internal object TranslationJsonPairer {
         return when {
             belongsTo(path, "Bufs") -> "@buf:$id"
             belongsTo(path, "BattleKeywords") -> "@battle-keyword:$id"
+            belongsTo(path, "SkillTag") -> "@skill-tag:$id"
+            belongsTo(path, "EgoGiftCategory") -> "@gift-category:$id"
             else -> id
         }
     }

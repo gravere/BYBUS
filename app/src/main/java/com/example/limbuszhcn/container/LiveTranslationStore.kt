@@ -38,6 +38,7 @@ internal class LiveTranslationStore(private val cache: Path) {
             it.entries == entries && it.fontHash == fonts.sha256() }?.let { return it }
 
         val labels = sortedSetOf<String>()
+        val models = ReleasedModelFields()
         entries.forEach { entry ->
             val file = cache.resolve(entry.path)
             require(file.sha256() == entry.hash) { "汉化资源校验失败" }
@@ -49,14 +50,22 @@ internal class LiveTranslationStore(private val cache: Path) {
                 // Provenance comes from the verified display field, not script purity.
                 if (text.any { c -> c.code in 0x3400..0x9fff }) labels += text
             }
+            models.add(entry.key, json)
         }
         require(labels.isNotEmpty() && labels.size <= 1_000_000) { "汉化包没有有效中文显示文本" }
         Files.createDirectories(root)
         val pendingFonts = root.resolve(".live-fonts.tmp")
         DataOutputStream(BufferedOutputStream(Files.newOutputStream(pendingFonts))).use { out ->
-            out.write(byteArrayOf(76, 90, 70, 67, 49, 0)) // LZFC1
+            out.write(byteArrayOf(76, 90, 70, 67, 50, 0)) // LZFC2: font catalogue + scoped model fields
             out.writeInt(labels.size)
             labels.forEach { text -> val bytes = text.toByteArray(Charsets.UTF_8); out.writeInt(bytes.size); out.write(bytes) }
+            val fields = models.fields()
+            out.writeInt(fields.size)
+            fields.forEach { (key, value) ->
+                for (text in listOf(key, value)) {
+                    val bytes = text.toByteArray(Charsets.UTF_8); out.writeInt(bytes.size); out.write(bytes)
+                }
+            }
         }
         AtomicFiles.move(pendingFonts, fonts, true)
         val snapshot = Snapshot(manifest.requestedVersion, manifest.archiveSha256, entries, fonts.sha256(), labels.size)
@@ -98,7 +107,7 @@ internal class LiveTranslationStore(private val cache: Path) {
     data class Snapshot(val version: String, val archive: String, val entries: List<Entry>, val fontHash: String, val labels: Int)
 
     companion object {
-        private const val SCHEMA = 3
+        private const val SCHEMA = 4
         const val MAX_JSON_BYTES = 16L * 1024 * 1024
         private val SHA = Regex("[0-9a-f]{64}")
         private fun validKey(key: String): Boolean = key.startsWith("jp/") && key.length <= 512 &&
@@ -106,6 +115,29 @@ internal class LiveTranslationStore(private val cache: Path) {
             key.split('/').none { it.isEmpty() || it == "." || it == ".." } &&
             key.none { it.code < 32 || it == '\\' || it == ':' }
     }
+}
+
+/** Mirrors typed localization tables; never selects by display text or load order. */
+internal class ReleasedModelFields {
+    private val values = sortedMapOf<String, String>()
+    private val conflicts = mutableSetOf<String>()
+
+    fun add(path: String, json: String) {
+        TranslationJsonPairer.releasedModelRecords(path, json).forEach { row ->
+            val id = row.stableId ?: return@forEach
+            // Bare IDs occur in unrelated UI tables. Only a model namespace is usable.
+            if (!id.startsWith('@') || id.length > 256 || '\u001f' in id) return@forEach
+            if (row.field in TranslationTextPolicy.STRING_ARRAY_FIELDS) return@forEach
+            val key = "$id\u001f${row.field}"
+            if (key in conflicts) return@forEach
+            val previous = values.putIfAbsent(key, row.translation)
+            if (previous != null && previous != row.translation) {
+                values.remove(key); conflicts += key
+            }
+        }
+    }
+
+    fun fields(): Map<String, String> = values
 }
 
 /** Per-process snapshot with a bounded content-addressed cache; no polling or game-file access. */
