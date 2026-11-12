@@ -115,6 +115,8 @@ void *g_rpg_dialogue_class = nullptr;
 void *g_rpg_dialogue_text_class = nullptr;
 void *g_buf_text_class = nullptr;
 void *g_battle_keyword_text_class = nullptr;
+void *g_skill_tag_text_class = nullptr;
+void *g_gift_category_text_class = nullptr;
 std::atomic<uint64_t> g_contextual_hits{0};
 // 部分人格列表会把汉化包标题中的换行压成空格或直接移除；该索引只保存由包内译文
 // 推导出的原始分行，让运行时兼容不同页面，而无需硬编码任何人格名称或译文。
@@ -126,6 +128,7 @@ struct TermTrieNode {
     const std::string *translation = nullptr;
 };
 std::vector<TermTrieNode> g_term_trie;
+std::unordered_map<std::string, std::string> g_model_fields;
 bool g_configured = false;
 bool g_resolver_reported = false;
 bool g_probe_started = false;
@@ -777,7 +780,10 @@ void *translate_managed_string(void *managed_text, const std::string &stable_id 
     pthread_mutex_lock(&g_font_state_lock);
     bool already_translated = g_translated_objects.find(managed_text) != nullptr;
     pthread_mutex_unlock(&g_font_state_lock);
-    if (already_translated) return managed_text;
+    // A typed model lookup has stronger identity than a previous unscoped pass.
+    auto model = stable_id.empty() || !display_field ? g_model_fields.end() :
+            g_model_fields.find(stable_id + '\x1f' + display_field);
+    if (already_translated && model == g_model_fields.end()) return managed_text;
     std::unordered_map<std::string, std::string>::const_iterator match = g_index.find(source);
     std::string translated;
     const bool scoped_ui = stable_id.empty() && display_field == nullptr && !g_ui_text_key.empty();
@@ -791,7 +797,7 @@ void *translate_managed_string(void *managed_text, const std::string &stable_id 
     }
     // Copies of released Chinese strings are stable independent of lookup order.
     // Compiler contexts disambiguate original JP fields that share those bytes.
-    if (g_live_resources || context == g_contextual_index.end()) {
+    if (model == g_model_fields.end() && (g_live_resources || context == g_contextual_index.end())) {
         pthread_mutex_lock(&g_font_state_lock);
         bool released_output = g_font_catalogue.contains(source);
         pthread_mutex_unlock(&g_font_state_lock);
@@ -799,8 +805,11 @@ void *translate_managed_string(void *managed_text, const std::string &stable_id 
     }
     // An unscoped numeric UI value is data, not a global glossary label. In
     // particular, a floor-name rule must never turn a timer's :30 into :30层.
-    if (context == g_contextual_index.end() && limbus_font_proof::numeric_display(source)) return managed_text;
-    if (context != g_contextual_index.end()) {
+    if (model == g_model_fields.end() && context == g_contextual_index.end() &&
+        limbus_font_proof::numeric_display(source)) return managed_text;
+    if (model != g_model_fields.end()) {
+        translated = model->second;
+    } else if (context != g_contextual_index.end()) {
         translated = context->second;
         uint64_t hits = g_contextual_hits.fetch_add(1, std::memory_order_relaxed) + 1;
         if (hits == 1 || hits % 100 == 0) {
@@ -1009,13 +1018,14 @@ void translate_object_string_fields(void *instance, bool story_dialog = false,
         g_field_set_value == nullptr || g_type_get_name == nullptr || g_il2cpp_free == nullptr) {
         return;
     }
-    std::string stable_id = !object_context.empty() ? object_context : g_contextual_index.empty() ? std::string() :
+    const bool has_scopes = !g_contextual_index.empty() || !g_model_fields.empty();
+    std::string stable_id = !object_context.empty() ? object_context : !has_scopes ? std::string() :
             read_text_object_id(instance, story_dialog ? "OriginalId" : "id");
     if (story_dialog && !g_story_scene_key.empty()) {
         const auto scoped = limbus_text_provenance::story_dialog_key(g_story_scene_key, stable_id);
         stable_id = scoped.empty() ? g_story_scene_key : scoped;
     }
-    if (!story_dialog && stable_id.empty() && !g_contextual_index.empty()) {
+    if (!story_dialog && stable_id.empty() && has_scopes) {
         stable_id = read_text_object_id(instance, "key");
     }
     if (!story_dialog && object_context.empty() && !stable_id.empty()) {
@@ -1023,6 +1033,10 @@ void translate_object_string_fields(void *instance, bool story_dialog = false,
         if (g_buf_text_class && klass == g_buf_text_class) stable_id = "@buf:" + stable_id;
         else if (g_battle_keyword_text_class && klass == g_battle_keyword_text_class)
             stable_id = "@battle-keyword:" + stable_id;
+        else if (g_skill_tag_text_class && klass == g_skill_tag_text_class)
+            stable_id = "@skill-tag:" + stable_id;
+        else if (g_gift_category_text_class && klass == g_gift_category_text_class)
+            stable_id = "@gift-category:" + stable_id;
     }
     for (void *klass = g_object_get_class(instance); klass != nullptr;
          klass = g_class_get_parent(klass)) {
@@ -1217,6 +1231,113 @@ void translate_object_graph(void *instance, std::vector<std::string> *translated
     translate_object_graph_impl(instance, 0, &visited, translated_fields);
 }
 
+// Typed table retrieval precedes tiny getters, formatting and every UI consumer.
+// Shared generic native bodies also serve non-localization callers: only the
+// closed classes discovered from TextDataSet may opt into this boundary.
+struct LocalizedTableHook {
+    void *original = nullptr;
+    std::unordered_set<void *> owners;
+};
+constexpr size_t kLocalizedTableSlots = 32;
+LocalizedTableHook g_localized_tables[3][kLocalizedTableSlots]; // reference, int32, list
+std::unordered_set<void *> g_localized_models;
+limbus_managed::Registry<bool> g_prepared_models(g_gc, 131072);
+struct LocalizedTableLoad { const void *field; void *owner; const void *get_list; };
+std::vector<LocalizedTableLoad> g_localized_loads;
+
+void prepare_localized_model(void *value) {
+    if (!value || !g_object_get_class || !g_localized_models.count(g_object_get_class(value))) return;
+    pthread_mutex_lock(&g_font_state_lock);
+    const bool prepared = g_prepared_models.find(value) != nullptr;
+    pthread_mutex_unlock(&g_font_state_lock);
+    if (prepared || !ensure_tmp_font()) return;
+    auto root = limbus_managed::retain(g_gc, value);
+    if (!root) return;
+    translate_object_graph(value, nullptr);
+    pthread_mutex_lock(&g_font_state_lock);
+    g_prepared_models.put(value, 0, true);
+    pthread_mutex_unlock(&g_font_state_lock);
+    static std::atomic<uint64_t> prepared_count{0};
+    const auto count = prepared_count.fetch_add(1) + 1;
+    if (count == 1 || count % 1000 == 0) {
+        char event[80]; snprintf(event, sizeof(event), "localized_models_prepared=%llu", static_cast<unsigned long long>(count));
+        append_native_metadata("font-state.log", event);
+    }
+}
+
+void prepare_localized_list(void *value) {
+    if (!value || !g_object_get_class || !g_class_get_method || !g_runtime_invoke || !g_object_unbox) return;
+    if (!ensure_tmp_font()) return;
+    auto root = limbus_managed::retain(g_gc, value);
+    if (!root) return;
+    void *klass = g_object_get_class(value);
+    const void *count_method = g_class_get_method(klass, "get_Count", 0);
+    const void *item_method = g_class_get_method(klass, "get_Item", 1);
+    if (!count_method || !item_method) return;
+    void *exception = nullptr;
+    void *boxed = g_runtime_invoke(count_method, value, nullptr, &exception);
+    if (!boxed || exception) return;
+    const auto count_value = static_cast<int32_t *>(g_object_unbox(boxed));
+    if (!count_value) return;
+    const int32_t count = *count_value;
+    if (count < 0 || count > 100000) return;
+    for (int32_t i = 0; i < count; ++i) {
+        void *args[] = {&i}; exception = nullptr;
+        void *model = g_runtime_invoke(item_method, value, args, &exception);
+        if (exception) return;
+        prepare_localized_model(model);
+    }
+}
+
+void prepare_loaded_localization(void *data_set) {
+    if (!data_set || !g_field_get_value || !g_runtime_invoke || !g_object_get_class || !ensure_tmp_font()) return;
+    auto root = limbus_managed::retain(g_gc, data_set);
+    if (!root) return;
+    for (const auto &entry : g_localized_loads) {
+        void *table = nullptr;
+        g_field_get_value(data_set, entry.field, &table);
+        if (!table || g_object_get_class(table) != entry.owner) continue;
+        void *exception = nullptr;
+        // Calling a verified getter through runtime_invoke is safe even when
+        // its native body is too short to patch. Direct list consumers see the
+        // same prepared models as GetData/Find consumers.
+        void *list = g_runtime_invoke(entry.get_list, table, nullptr, &exception);
+        if (!exception) prepare_localized_list(list);
+    }
+}
+
+template<size_t Slot> void *replacement_table_ref(void *instance, void *key, const void *method) {
+    auto &hook = g_localized_tables[0][Slot];
+    auto result = reinterpret_cast<void *(*)(void *, void *, const void *)>(hook.original)(instance, key, method);
+    if (instance && hook.owners.count(g_object_get_class(instance))) prepare_localized_model(result);
+    return result;
+}
+template<size_t Slot> void *replacement_table_int(void *instance, int32_t key, const void *method) {
+    auto &hook = g_localized_tables[1][Slot];
+    auto result = reinterpret_cast<void *(*)(void *, int32_t, const void *)>(hook.original)(instance, key, method);
+    if (instance && hook.owners.count(g_object_get_class(instance))) prepare_localized_model(result);
+    return result;
+}
+template<size_t Slot> void *replacement_table_list(void *instance, const void *method) {
+    auto &hook = g_localized_tables[2][Slot];
+    auto result = reinterpret_cast<void *(*)(void *, const void *)>(hook.original)(instance, method);
+    if (instance && hook.owners.count(g_object_get_class(instance))) prepare_localized_list(result);
+    return result;
+}
+#define LOCALIZED_TABLE_SLOTS(X) \
+    X(0) X(1) X(2) X(3) X(4) X(5) X(6) X(7) X(8) X(9) X(10) X(11) X(12) X(13) X(14) X(15) \
+    X(16) X(17) X(18) X(19) X(20) X(21) X(22) X(23) X(24) X(25) X(26) X(27) X(28) X(29) X(30) X(31)
+#define TABLE_REF_ENTRY(N) reinterpret_cast<void *>(replacement_table_ref<N>),
+#define TABLE_INT_ENTRY(N) reinterpret_cast<void *>(replacement_table_int<N>),
+#define TABLE_LIST_ENTRY(N) reinterpret_cast<void *>(replacement_table_list<N>),
+void *const kTableRefHooks[] = {LOCALIZED_TABLE_SLOTS(TABLE_REF_ENTRY)};
+void *const kTableIntHooks[] = {LOCALIZED_TABLE_SLOTS(TABLE_INT_ENTRY)};
+void *const kTableListHooks[] = {LOCALIZED_TABLE_SLOTS(TABLE_LIST_ENTRY)};
+#undef TABLE_REF_ENTRY
+#undef TABLE_INT_ENTRY
+#undef TABLE_LIST_ENTRY
+#undef LOCALIZED_TABLE_SLOTS
+
 void *finish_formatted_translation(void *result, const std::vector<std::string> &fields) {
     void *translated = translate_managed_string(result);
     if (translated == nullptr || fields.empty() || is_translated_managed_string(translated)) {
@@ -1310,6 +1431,7 @@ void replacement_localization_load(void *instance, int32_t language, const void 
         append_native_metadata("font-state.log", status);
     }
     g_original_localization_load[Slot](instance, language, method);
+    if (g_live_resources && language == 2) prepare_loaded_localization(instance);
 }
 acquisition0_fn g_original_gift_text_data = nullptr;
 void *replacement_gift_text_data(void *instance, const void *method) {
@@ -2657,6 +2779,76 @@ void *apply_tmp_component_layout_markup(void *instance, void *managed_text) {
     return retained ? replacement : managed_text;
 }
 
+limbus_managed::Registry<bool> g_language_font_targets(g_gc, 16384);
+struct LanguageFontBinding {
+    const void *target = nullptr;
+    const void *category = nullptr;
+    const void *use_category = nullptr;
+    const void *language = nullptr;
+    std::unordered_set<int32_t> categories;
+    void *original = nullptr;
+};
+LanguageFontBinding g_language_font_bindings[4];
+
+bool is_language_font_target(void *target) {
+    if (!g_live_resources) return false;
+    const int32_t id = component_id(target);
+    if (!id) return false;
+    pthread_mutex_lock(&g_font_state_lock);
+    const bool owned = g_language_font_targets.find(target, id) != nullptr;
+    pthread_mutex_unlock(&g_font_state_lock);
+    return owned;
+}
+
+void *bind_language_font_target(void *owner, size_t slot, int32_t language = 2) {
+    auto &binding = g_language_font_bindings[slot];
+    if (!g_live_resources || !owner || !binding.target || !g_field_get_value) return nullptr;
+    void *target = nullptr;
+    g_field_get_value(owner, binding.target, &target);
+    if (!target) return nullptr;
+    if (binding.language) g_field_get_value(owner, binding.language, &language);
+    bool use_category = binding.category != nullptr;
+    if (binding.use_category) g_field_get_value(owner, binding.use_category, &use_category);
+    bool owned = language == 2;
+    if (use_category) {
+        int32_t category = -1;
+        g_field_get_value(owner, binding.category, &category);
+        owned &= binding.categories.count(category) != 0;
+    }
+    // The language components also support explicitly assigned numeric fonts.
+    // Their identity is independent of the current label or selection history.
+    void *font = invoke_object_getter(g_tmp_get_font_info, target);
+    TmpComponentState saved;
+    if (font == g_tmp_font_asset && find_tmp_component_state(target, &saved)) font = saved.font;
+    const auto name = read_unity_object_name(font);
+    if (name.find("ExcelsiorSans") != std::string::npos || name.find("BebasKai") != std::string::npos) owned = false;
+    const int32_t id = component_id(target);
+    if (!id) return nullptr;
+    pthread_mutex_lock(&g_font_state_lock);
+    bool retained = owned && g_language_font_targets.put(target, id, true);
+    if (!owned) { bool previous = false; g_language_font_targets.take(target, id, &previous); }
+    pthread_mutex_unlock(&g_font_state_lock);
+    return retained ? target : nullptr;
+}
+
+void refresh_language_font_target(void *target) {
+    if (!target) return;
+    void *text = invoke_object_getter(g_tmp_get_text_info, target);
+    if (!text) text = new_managed_string("");
+    if (text) prepare_tmp_text(target, text, false);
+}
+
+void replacement_language_font(void *owner, int32_t language, const void *method) {
+    bind_language_font_target(owner, 0, language);
+    reinterpret_cast<void (*)(void *, int32_t, const void *)>(g_language_font_bindings[0].original)(owner, language, method);
+    refresh_language_font_target(bind_language_font_target(owner, 0, language));
+}
+template<size_t Slot> void replacement_language_font_state(void *owner, const void *method) {
+    bind_language_font_target(owner, Slot);
+    reinterpret_cast<void (*)(void *, const void *)>(g_language_font_bindings[Slot].original)(owner, method);
+    refresh_language_font_target(bind_language_font_target(owner, Slot));
+}
+
 void *prepare_tmp_text(void *instance, void *managed_text, bool restore_untranslated = true) {
     void *replacement = managed_text;
     if (instance != nullptr && managed_text != nullptr && g_string_length != nullptr &&
@@ -2693,7 +2885,7 @@ void *prepare_tmp_text(void *instance, void *managed_text, bool restore_untransl
                 return managed_text;
             }
             replacement = apply_tmp_component_layout_markup(instance, replacement);
-            bool translated = choice_proof || is_translated_managed_string(replacement);
+            bool translated = is_language_font_target(instance) || choice_proof || is_translated_managed_string(replacement);
             std::vector<void *> font_targets;
             if (!translated) translated = is_translated_tmp_fragment(instance, replacement, &font_targets);
             if (translated && ensure_tmp_font() && g_tmp_get_font != nullptr &&
@@ -2749,7 +2941,7 @@ void replacement_tmp_set_font(void *instance, void *requested, const void *metho
     static thread_local bool refreshing = false;
     if (refreshing || !instance || !g_font_ready || requested == g_tmp_font_asset) return;
     void *text = invoke_object_getter(g_tmp_get_text_info, instance);
-    if (!text || !(is_translated_managed_string(text) || is_choice_text(instance, text) ||
+    if (!text || !(is_language_font_target(instance) || is_translated_managed_string(text) || is_choice_text(instance, text) ||
                   is_translated_tmp_fragment(instance, text))) return;
     struct Guard { bool &value; Guard(bool &v) : value(v) { value = true; } ~Guard() { value = false; } } guard(refreshing);
     prepare_tmp_text(instance, text, false);
@@ -3199,7 +3391,7 @@ bool load_live_font_catalogue() {
     path += "live-fonts.bin";
     FILE *file = fopen(path.c_str(), "rb");
     if (!file) return false;
-    const unsigned char expected[] = {'L', 'Z', 'F', 'C', '1', 0};
+    const unsigned char expected[] = {'L', 'Z', 'F', 'C', '2', 0};
     unsigned char magic[sizeof(expected)] = {};
     uint32_t count = 0;
     bool valid = read_exact(file, magic, sizeof(magic)) && memcmp(magic, expected, sizeof(magic)) == 0 &&
@@ -3212,13 +3404,28 @@ bool load_live_font_catalogue() {
                 (bytes += text.size()) <= 64u * 1024u * 1024u;
         if (valid) labels.emplace(text, text);
     }
-    valid = valid && labels.size() == count && fgetc(file) == EOF;
+    uint32_t model_count = 0;
+    std::unordered_map<std::string, std::string> models;
+    valid = valid && labels.size() == count && read_u32(file, &model_count) && model_count <= kMaxEntries;
+    for (uint32_t n = 0; valid && n < model_count; ++n) {
+        std::string key, value;
+        valid = read_string(file, &key) && read_string(file, &value);
+        const auto separator = key.find('\x1f');
+        valid = valid && !key.empty() && key.front() == '@' && key.size() <= 320 &&
+                separator != std::string::npos && separator == key.rfind('\x1f') &&
+                is_display_string_field(key.c_str() + separator + 1) &&
+                is_usable_display_text(value) && !value.empty() &&
+                (bytes += key.size() + value.size()) <= 64u * 1024u * 1024u &&
+                models.emplace(key, value).second;
+    }
+    valid = valid && fgetc(file) == EOF;
     fclose(file);
     if (!valid) return false;
+    g_model_fields = std::move(models);
     for (const auto &entry : labels) g_font_catalogue.add(entry.second);
     labels.insert(g_index.begin(), g_index.end());
     rebuild_package_line_break_index(labels);
-    LT_LOGI("Prepared live resource font catalogue labels=%u", count);
+    LT_LOGI("Prepared live resource font catalogue labels=%u models=%u", count, model_count);
     return true;
 }
 
@@ -3418,6 +3625,10 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
     void *story_dialog_class = nullptr;
     void *story_data_class = nullptr;
     void *text_data_set_class = nullptr, *gift_popup_data_class = nullptr;
+    void *localize_model_base = nullptr;
+    void *language_font_classes[4] = {};
+    const char *language_font_names[] = {"TextMeshProLanguageSetter", "TextMeshProLanguageSetterWithStatus",
+                                        "FontSetter", "FontTypesCategorySetter"};
     void *announcer_ui_class = nullptr;
     void *choice_scroll_class = nullptr;
     void *choice_gift_class = nullptr;
@@ -3521,6 +3732,11 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             g_buf_text_class = class_from_name(image, "", "TextData_Buf");
         if (g_battle_keyword_text_class == nullptr)
             g_battle_keyword_text_class = class_from_name(image, "", "TextData_BattleKeywords");
+        if (!g_skill_tag_text_class) g_skill_tag_text_class = class_from_name(image, "", "TextData_SkillTag");
+        if (!g_gift_category_text_class) g_gift_category_text_class = class_from_name(image, "", "TextData_EgoGiftCategory");
+        if (!localize_model_base) localize_model_base = class_from_name(image, "", "LocalizeTextData");
+        for (size_t slot = 0; slot < 4; ++slot)
+            if (!language_font_classes[slot]) language_font_classes[slot] = class_from_name(image, "UtilityUI", language_font_names[slot]);
         if (!text_data_set_class) text_data_set_class = class_from_name(image, "", "TextDataSet");
         if (!gift_popup_data_class) gift_popup_data_class = class_from_name(image, "MainUI", "EgoGiftPopupData");
         if (!localize_resource_class)
@@ -3606,6 +3822,80 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             if (klass != nullptr) {
                 get_global_language_method = class_get_method_from_name(klass, "get_Lang", 0);
                 get_global_language_class = klass;
+            }
+        }
+    }
+    struct TableTarget { void *owner; void *declaring; const void *method; int abi; };
+    std::vector<TableTarget> table_targets;
+    std::vector<std::pair<const void *, void *>> table_fields;
+    if (text_data_set_class && localize_model_base && class_get_fields && field_get_type &&
+        field_get_flags && class_from_type && class_get_parent && class_get_methods &&
+        method_get_name && method_get_class && method_get_flags && method_get_return_type &&
+        method_get_param_count && method_get_param && method_is_generic && type_get_name && il2cpp_free) {
+        std::unordered_set<void *> seen;
+        void *fields = nullptr;
+        while (const void *field = class_get_fields(text_data_set_class, &fields)) {
+            if (field_get_flags(field) & 0x0010u) continue;
+            void *owner = class_from_type(field_get_type(field));
+            if (owner) table_fields.emplace_back(field, owner);
+            if (!owner || !seen.insert(owner).second) continue;
+            void *table = owner;
+            for (int depth = 0; table && depth < 8; ++depth) {
+                const char *name = class_get_name(table);
+                if (name && strcmp(name, "JsonDataList`1") == 0) break;
+                table = class_get_parent(table);
+            }
+            if (!table || !class_get_name(table) || strcmp(class_get_name(table), "JsonDataList`1") != 0) continue;
+            void *model = nullptr;
+            std::vector<const void *> methods;
+            void *it = nullptr;
+            while (const void *entry = class_get_methods(table, &it)) {
+                methods.push_back(entry);
+                void *pointer = nullptr; memcpy(&pointer, entry, sizeof(pointer));
+                if (pointer) managed_method_addresses.push_back(reinterpret_cast<uintptr_t>(pointer));
+                const char *name = method_get_name(entry);
+                if (name && strcmp(name, "GetData") == 0) {
+                    void *candidate = class_from_type(method_get_return_type(entry));
+                    for (void *parent = candidate; parent; parent = class_get_parent(parent)) {
+                        if (parent == localize_model_base) { model = candidate; break; }
+                    }
+                }
+            }
+            if (!model) continue;
+            g_localized_models.insert(model);
+            for (const void *entry : methods) {
+                uint32_t flags = 0;
+                if (method_is_generic(entry) || method_get_class(entry) != table ||
+                    (method_get_flags(entry, &flags) & 0x0010u)) continue;
+                const char *name = method_get_name(entry);
+                if (!name) continue;
+                const uint32_t argc = method_get_param_count(entry);
+                int abi = -1;
+                if (argc == 1 && (strcmp(name, "GetData") == 0 || strcmp(name, "Find") == 0) &&
+                    class_from_type(method_get_return_type(entry)) == model) {
+                    char *arg = type_get_name(method_get_param(entry, 0));
+                    if (arg && strcmp(name, "GetData") == 0) {
+                        if (strcmp(arg, "System.Int32") == 0) abi = 1;
+                        else if (strcmp(arg, "System.String") == 0) abi = 0;
+                    } else if (arg && strcmp(name, "Find") == 0) {
+                        const std::string a(arg), m(class_get_name(model));
+                        if (a == "System.Predicate<" + m + ">" || a == "System.Predicate`1<" + m + ">") abi = 0;
+                    }
+                    if (arg) il2cpp_free(arg);
+                } else if (argc == 0 && strcmp(name, "GetList") == 0) {
+                    char *result = type_get_name(method_get_return_type(entry));
+                    if (limbus_text_provenance::text_collection_type(result, class_get_name(model), false)) abi = 2;
+                    if (result) il2cpp_free(result);
+                }
+                if (abi >= 0) table_targets.push_back({owner, table, entry, abi});
+            }
+        }
+        for (const auto &field : table_fields) {
+            for (const auto &target : table_targets) {
+                if (target.abi == 2 && target.owner == field.second) {
+                    g_localized_loads.push_back({field.first, target.owner, target.method});
+                    break;
+                }
             }
         }
     }
@@ -4033,6 +4323,32 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                     position + 1 != managed_method_addresses.end() &&
                     *(position + 1) - address >= ((address & 7u) ? 20u : 16u);
         };
+        std::unordered_map<void *, std::pair<int, size_t>> table_addresses;
+        size_t table_counts[3] = {};
+        for (const auto &target : table_targets) {
+            void *pointer = nullptr; memcpy(&pointer, target.method, sizeof(pointer));
+            if (!has_inline_hook_space(target.declaring, pointer)) continue;
+            auto found = table_addresses.find(pointer);
+            if (found != table_addresses.end()) {
+                if (found->second.first == target.abi)
+                    g_localized_tables[target.abi][found->second.second].owners.insert(target.owner);
+                continue;
+            }
+            const size_t slot = table_counts[target.abi];
+            if (slot >= kLocalizedTableSlots) continue;
+            auto &hook = g_localized_tables[target.abi][slot];
+            void *replacement = target.abi == 0 ? kTableRefHooks[slot] :
+                    target.abi == 1 ? kTableIntHooks[slot] : kTableListHooks[slot];
+            hook.owners.insert(target.owner);
+            hook_limbus_owned_function(pointer, replacement, &hook.original);
+            if (!hook.original) { hook.owners.clear(); continue; }
+            table_addresses.emplace(pointer, std::make_pair(target.abi, slot));
+            ++table_counts[target.abi];
+        }
+        char table_status[144];
+        snprintf(table_status, sizeof(table_status), "localized_tables candidates=%zu models=%zu ref=%zu int=%zu list=%zu load=%zu",
+                table_targets.size(), g_localized_models.size(), table_counts[0], table_counts[1], table_counts[2], g_localized_loads.size());
+        append_native_metadata("font-state.log", table_status);
         if (method_get_class && method_is_generic && method_get_flags && method_get_return_type) {
             auto verified_entry = [&](void *klass, const char *name, const char *parameters,
                                       const char *returns, bool is_static) -> const void * {
@@ -4475,6 +4791,50 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 "LocalGameOptionData.GetLanguage", get_language_pointer, next_managed_method(get_language_pointer));
         const bool global_language_installed = global_language_valid && install_language_getter(
                 "GlobalGameManager.get_Lang", get_global_language_pointer, next_managed_method(get_global_language_pointer));
+        // All four components use the same verified Int32 JP language contract.
+        if (global_language_installed) {
+            for (size_t slot = 0; slot < 4; ++slot) {
+                void *klass = language_font_classes[slot];
+                auto &binding = g_language_font_bindings[slot];
+                binding.target = choice_field(klass, slot < 2 ? "_text" : "_tmp", "TMPro.TextMeshProUGUI");
+                if (slot == 0) binding.use_category = choice_field(klass, "_useFontCategory", "System.Boolean");
+                if (slot == 1) binding.language = choice_field(klass, "_currentLang", "LOCALIZE_LANGUAGE");
+                else binding.category = choice_field(klass, "_fontType", slot == 2 ? "UtilityUI.FontType" : "UtilityUI.FontTypesCategory");
+                bool valid = binding.target && (slot == 1 ? binding.language != nullptr : binding.category != nullptr);
+                if (slot == 0) valid &= binding.use_category != nullptr;
+                if (binding.category && class_from_type && class_is_enum && class_get_field_from_name && field_static_get_value) {
+                    void *category = class_from_type(field_get_type(binding.category));
+                    const void *value = category && class_is_enum(category) ? class_get_field_from_name(category, "value__") : nullptr;
+                    char *underlying = value ? type_get_name(field_get_type(value)) : nullptr;
+                    const bool int32_enum = underlying && strcmp(underlying, "System.Int32") == 0;
+                    if (underlying) il2cpp_free(underlying);
+                    valid &= int32_enum;
+                    void *it = nullptr;
+                    while (int32_enum) {
+                        const void *field = class_get_fields(category, &it);
+                        if (!field) break;
+                        const char *name = field_get_name(field);
+                        if ((field_get_flags(field) & 0x0050u) != 0x0050u || !name ||
+                            (strncmp(name, "Title", 5) != 0 && strncmp(name, "Sub", 3) != 0)) continue;
+                        int32_t number = -1; field_static_get_value(field, &number);
+                        binding.categories.insert(number);
+                    }
+                }
+                if (!valid || (binding.category && binding.categories.empty())) continue;
+                void *replacement = slot == 0 ? reinterpret_cast<void *>(replacement_language_font) :
+                        slot == 1 ? reinterpret_cast<void *>(replacement_language_font_state<1>) :
+                        slot == 2 ? reinterpret_cast<void *>(replacement_language_font_state<2>) :
+                                    reinterpret_cast<void *>(replacement_language_font_state<3>);
+                hook_choice_method(klass, slot == 1 ? "UpdateTMPByCurrentLang" : "UpdateTMP",
+                        slot == 0 ? "LOCALIZE_LANGUAGE" : "", "System.Void", replacement, &binding.original);
+            }
+            g_language_font_targets.set_alive(unity_object_alive);
+            char language_fonts[100];
+            snprintf(language_fonts, sizeof(language_fonts), "language_font_owners regular=%d state=%d role=%d category=%d",
+                    g_language_font_bindings[0].original != nullptr, g_language_font_bindings[1].original != nullptr,
+                    g_language_font_bindings[2].original != nullptr, g_language_font_bindings[3].original != nullptr);
+            append_native_metadata("font-state.log", language_fonts);
+        }
         size_t acquisition_counts[] = {0, 0, 0};
         std::unordered_set<void *> acquisition_pointers;
         bool acquisition_ready = class_get_methods != nullptr && method_get_name != nullptr &&
@@ -4801,6 +5161,7 @@ void configure_limbus_translation_runtime(const char *active_index_pointer, bool
     g_index.clear();
     g_contextual_index.clear();
     g_terms.clear();
+    g_model_fields.clear();
     g_package_line_breaks.clear();
     g_term_trie.clear();
     const bool loaded = load_active_index();

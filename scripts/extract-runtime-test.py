@@ -12,6 +12,13 @@ for signature in ("bool remember_translated_text(", "void *translate_managed_str
 output = pathlib.Path(sys.argv[1])
 output.mkdir(parents=True, exist_ok=True)
 (output / "runtime-translation-under-test.inc").write_text("\n\n".join(pieces), encoding="utf-8")
+catalogue = []
+for signature in ("bool utf8_to_utf16(", "bool is_usable_display_text(", "bool is_display_string_field(",
+                  "bool read_exact(", "bool read_u32(", "bool read_string(", "bool load_live_font_catalogue("):
+    start = source.index(signature)
+    end = source.index("\n}", start) + 2
+    catalogue.append(source[start:end])
+(output / "runtime-live-catalogue-under-test.inc").write_text("\n\n".join(catalogue), encoding="utf-8")
 start = source.index("bool read_flow_text(")
 end = source.index("\n// Observation only:", start)
 (output / "runtime-flow-under-test.inc").write_text(source[start:end], encoding="utf-8")
@@ -45,6 +52,12 @@ end = source.index("\nvoid *prepare_ui_text(", start)
 start = source.index("void replacement_tmp_set_font(")
 end = source.index("\nvoid finalize_tmp_text(", start)
 (output / "runtime-font-refresh-under-test.inc").write_text(source[start:end], encoding="utf-8")
+start = source.index("limbus_managed::Registry<bool> g_language_font_targets(")
+end = source.index("\nvoid *prepare_tmp_text(", start)
+(output / "runtime-language-font-under-test.inc").write_text(source[start:end], encoding="utf-8")
+start = source.index("struct LocalizedTableHook {")
+end = source.index("\nvoid *finish_formatted_translation(", start)
+(output / "runtime-localized-table-under-test.inc").write_text(source[start:end], encoding="utf-8")
 start = source.index("template<size_t Slot>\nvoid replacement_localization_load(")
 end = source.index("\ntypedef void *(*acquisition1_fn)", start)
 (output / "runtime-loading-boundaries-under-test.inc").write_text(source[start:end], encoding="utf-8")

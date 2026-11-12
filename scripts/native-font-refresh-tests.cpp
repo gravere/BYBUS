@@ -14,6 +14,7 @@ void *invoke_object_getter(const void *,void *i) {return static_cast<Component *
 bool is_translated_managed_string(void *s) {return static_cast<Text *>(s)->translated;}
 bool is_choice_text(void *,void *s) {return static_cast<Text *>(s)->stream;}
 bool is_translated_tmp_fragment(void *,void *s) {return static_cast<Text *>(s)->fragment;}
+bool is_language_font_target(void *) {return false;}
 void *prepare_tmp_text(void *i,void *s,bool restore) {assert(!restore);++font_prepares;static_cast<Component *>(i)->font=g_tmp_font_asset;return s;}
 #include "runtime-font-refresh-under-test.inc"
 using acquisition0_fn=void *(*)(void *,const void *);
@@ -21,6 +22,8 @@ void append_native_metadata(const char *,const char *) {}
 using Load=void(*)(void *,int32_t,const void *);
 Load g_original_localization_load[2];
 bool ready_before_load=false; int loads=0,models=0;
+int completed_loads=0;
+void prepare_loaded_localization(void *) { assert(loads==completed_loads+1); ++completed_loads; }
 bool ensure_tmp_font() {ready_before_load=true;return true;}
 void load(void *,int32_t lang,const void *) {assert(ready_before_load&&lang==2);++loads;}
 struct Model {void *klass;}; Model valid{&model_class},wrong{&other_class};
@@ -40,7 +43,7 @@ int main() {
     g_font_ready=true;replacement_tmp_set_font(&c,&chinese,nullptr);assert(font_prepares==3);
     g_original_localization_load[0]=g_original_localization_load[1]=load;
     replacement_localization_load<0>(nullptr,2,nullptr);ready_before_load=false;
-    replacement_localization_load<1>(nullptr,2,nullptr);assert(loads==2);
+    replacement_localization_load<1>(nullptr,2,nullptr);assert(loads==2&&completed_loads==2);
     g_original_gift_text_data=getter;
     assert(replacement_gift_text_data(&valid,nullptr)==&valid);
     assert(replacement_gift_text_data(&wrong,nullptr)==&wrong);

@@ -19,7 +19,7 @@ struct TmpComponentState {
     uint32_t padded_crc = 0;
     bool has_padded_crc = false;
 };
-struct Component { int id; void *font; bool alive = true; void *material = nullptr; int padding_updates = 0; int redraws = 0; void *text = nullptr; };
+struct Component { int id; void *font; bool alive = true; void *material = nullptr; int padding_updates = 0; int redraws = 0; void *text = nullptr; bool language_owned = false; };
 struct Preset {
     int style = 0;
     float outline_width = 0, underlay_x = 0, underlay_y = 0, underlay_alpha = 0, face_dilate = 0;
@@ -185,6 +185,7 @@ uint64_t g_translation_hits = 0;
 #define LT_LOGI(...) ((void)0)
 #define __atomic_add_fetch(p, n, order) (*(p) += (n))
 #define __ATOMIC_RELAXED 0
+bool is_language_font_target(void *p) { return static_cast<Component *>(p)->language_owned; }
 #include "runtime-prepare-text-under-test.inc"
 #include "runtime-font-refresh-under-test.inc"
 
@@ -360,5 +361,21 @@ int main() {
     caption = codec.from_bytes("未知原文");
     replacement_tmp_set_font(&rebound, &japanese_font, nullptr);
     assert(rebound.font == &japanese_font && rebound.material == &changed);
+    // A language-owned target needs no recently seen whole-string proof.
+    // Typewriter prefixes and tag states keep one face while preserving the game's material.
+    rebound.language_owned = true;
+    const int restores_before_owner = restore_calls;
+    for (const auto part : {"", "事", "事件过程", "特性标签", "事"}) {
+        caption = codec.from_bytes(part);
+        prepare_tmp_text(&rebound, &caption);
+        assert(rebound.font == &chinese_font);
+        game_font_material = &changed;
+        replacement_tmp_set_font(&rebound, &japanese_font, nullptr);
+        assert(rebound.font == &chinese_font);
+        auto state = static_cast<Converted *>(rebound.material);
+        assert(state->outline_width == .2f && state->underlay_alpha == .6f);
+    }
+    assert(restore_calls == restores_before_owner);
+    forget(rebound);
     puts("Material styles, live sharing, cache boundary, destruction and failure fallback passed");
 }
