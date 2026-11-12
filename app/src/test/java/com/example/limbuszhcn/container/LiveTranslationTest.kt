@@ -13,6 +13,33 @@ import kotlin.io.path.writeText
 import kotlin.io.path.readText
 
 class LiveTranslationTest {
+    @Test fun typedModelFieldsDoNotDependOnPageSourceOrResourceOrder() {
+        val a = """{"dataList":[{"id":"Burn","name":"烧伤","desc":"获得[Burn]。","icon":"internal"}]}"""
+        val b = a.replace("烧伤", "技能标签")
+        val first = ReleasedModelFields().apply {
+            add("jp/JP_BattleKeywords.json", a); add("jp/JP_SkillTag.json", b)
+            add("jp/JP_BattleKeywords-extra.json", a)
+        }.fields()
+        val second = ReleasedModelFields().apply {
+            add("jp/JP_BattleKeywords-extra.json", a); add("jp/JP_SkillTag.json", b)
+            add("jp/JP_BattleKeywords.json", a)
+        }.fields()
+        assertEquals(first, second)
+        assertEquals("烧伤", first["@battle-keyword:Burn\u001fname"])
+        assertEquals("技能标签", first["@skill-tag:Burn\u001fname"])
+        assertEquals("获得[Burn]。", first["@battle-keyword:Burn\u001fdesc"])
+        assertFalse(first.keys.any { it.endsWith("icon") })
+        for (rows in listOf(listOf(a, b, a), listOf(b, a, a))) {
+            val conflicts = ReleasedModelFields()
+            rows.forEachIndexed { i, row -> conflicts.add("jp/JP_BattleKeywords-$i.json", row) }
+            assertFalse(conflicts.fields().containsKey("@battle-keyword:Burn\u001fname"))
+        }
+        assertTrue(ReleasedModelFields().apply { add("jp/JP_Unknown.json", a) }.fields().isEmpty())
+        assertTrue(ReleasedModelFields().apply {
+            add("jp/JP_BattleKeywords.json", """{"files":["BattleKeywords.json"]}""")
+        }.fields().isEmpty())
+    }
+
     @get:Rule val temporary = TemporaryFolder()
     private val cache get() = temporary.root.toPath()
     private val source = """{"dataList":[{"id":2,"content":"次の文","voicefile":"v2"},{"id":1,"content":"開始","model":"source","cost":17}]}"""

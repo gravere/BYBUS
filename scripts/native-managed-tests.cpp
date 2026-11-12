@@ -139,6 +139,20 @@ int main() {
         assert(text(translate_managed_string(new_managed_string("入場"), "other", "content")) == "进入战斗");
     }
     assert(g_ui_text_key.empty());
+    // Identical visible source text has different names in different typed tables.
+    // Stable release identity must win even after a previous pass or cache eviction.
+    g_model_fields[std::string("@skill-tag:X") + '\x1f' + "name"] = "技能特性";
+    g_model_fields[std::string("@battle-keyword:X") + '\x1f' + "name"] = "战斗特性";
+    for (const auto source : {"特性", "<color=red>特性</color>", "技能特性"}) {
+        auto input = new_managed_string(source);
+        assert(remember_translated_text(input, source));
+        assert(text(translate_managed_string(input, "@skill-tag:X", "name")) == "技能特性");
+        assert(text(translate_managed_string(input, "@battle-keyword:X", "name")) == "战斗特性");
+    }
+    font_ready = false;
+    auto blocked = new_managed_string("未翻訳");
+    assert(translate_managed_string(blocked, "@skill-tag:X", "name") == blocked);
+    font_ready = true;
     assert(text(translate_managed_string(new_managed_string("入場"))) == "进入战斗");
     g_index = {{"ガード", "防御"}, {"防御", "抵御"}};
     g_contextual_index[std::string("defense") + '\x1f' + "name" + '\x1f' + "防御"] = "抵御";
