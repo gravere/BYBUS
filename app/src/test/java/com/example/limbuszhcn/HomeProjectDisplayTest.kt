@@ -11,6 +11,14 @@ class HomeProjectDisplayTest {
     private val ai = TranslationSource("ai-one", "AI 译文", kind = "ai")
     private val sources = SourceState(listOf(TranslationSources.OFFICIAL, local, ai), local.id)
 
+    @Test fun pickerKeepsPhoneCompactAndGivesTabletsRoomForNames() {
+        assertEquals(264f, homeDisplayPopupWidth(411f, 1f), .01f)
+        assertEquals(328f, homeDisplayPopupWidth(800f, 1f), .01f)
+        assertEquals(328f, homeDisplayPopupWidth(1280f, 1f), .01f)
+        assertTrue(homeDisplayPopupWidth(320f, 1.5f) + 48 <= 320)
+        assertTrue(homeDisplayPopupWidth(800f, 1.5f) > homeDisplayPopupWidth(800f, 1f))
+    }
+
     @Test fun followingTracksTheGameSourceAndPinningDoesNotChangeIt() {
         assertEquals(local, HomeProjectDisplay.resolve(sources, null).source)
         assertEquals(ai, HomeProjectDisplay.resolve(sources.copy(selectedId = ai.id), null).source)

@@ -30,7 +30,7 @@ internal data class TranslationActions(
     val saveAi: (AiConfig, String, Boolean) -> Unit = { _, _, _ -> },
     val generateAi: (AiConfig, String) -> Unit = { _, _ -> }, val cancelAi: () -> Unit = {}, val clearKey: () -> Unit = {},
     val loadModels: (String, String) -> Unit = { _, _ -> }, val clearModels: () -> Unit = {},
-    val inspectCoverage: () -> Unit = {}
+    val inspectCoverage: () -> Unit = {}, val undoAi: () -> Unit = {}
 )
 
 @Composable
@@ -95,7 +95,7 @@ internal fun TranslationSourcesPane(state: LauncherUiState, actions: Translation
         DetailActionSection("添加") {
             SheetAction(Glyph.Import, "导入汉化包", !state.busy, onClick = { actions.import(null) })
             DetailActionDivider()
-            SheetAction(Glyph.Ai, "AI 翻译", navigation = true, onClick = onAi)
+            SheetAction(Glyph.Ai, "AI 翻译", !state.busy, navigation = true, onClick = onAi)
         }
         DetailActionSection("管理当前汉化源") {
             SheetAction(Glyph.Image, "更换图标", !state.busy, onClick = { actions.icon(selected.id) })

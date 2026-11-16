@@ -7,13 +7,18 @@ import java.net.URI
 import java.util.concurrent.CancellationException
 
 internal data class AiConfig(val endpoint: String = "https://api.openai.com/v1", val model: String = "gpt-4.1-mini",
-    val missingOnly: Boolean = true, val limit: Int = 100) {
+    val missingOnly: Boolean = true, val limit: Int = 100, val includeMissing: Boolean = true, val includeReview: Boolean = false) {
     fun validated(): AiConfig {
         val address = normalizedAiEndpoint(endpoint)
         require(validAiModelId(model)) { "模型名称无效" }
         require(limit in 1..1000) { "单次翻译上限为 1–1000 条" }
+        require(!missingOnly || includeMissing || includeReview) { "请选择未覆盖或待核对的文本" }
         return copy(endpoint = address)
     }
+}
+
+internal enum class AiScope(val label: String, val missing: Boolean, val review: Boolean) {
+    Missing("未覆盖", true, false), Review("待核对", false, true), Both("两者", true, true)
 }
 
 internal data class AiText(val id: String, val text: String, val context: String = "")

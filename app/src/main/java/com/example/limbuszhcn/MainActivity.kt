@@ -235,7 +235,7 @@ class MainActivity : ComponentActivity() {
                         saveAi = model::saveAi, generateAi = model::generateAi,
                         cancelAi = model::cancelAi, clearKey = model::clearAiKey,
                         loadModels = model::loadAiModels, clearModels = model::clearAiModels,
-                        inspectCoverage = model::inspectCoverage)
+                        inspectCoverage = model::inspectCoverage, undoAi = model::undoAi)
                 )
             }
         }
