@@ -5,6 +5,19 @@ import org.junit.Test
 import java.nio.file.Files
 
 class LauncherOperationFeedbackTest {
+    @Test fun aiTestFailureDoesNotChangeGameReadinessOrAnExistingOperation() {
+        for (initial in listOf(LauncherUiState(), LauncherUiState(busy = true, failed = true, stage = "准备启动", message = "原有错误", launchStep = 2))) {
+            val testing = initial.beginAiSettings("正在测试翻译")
+            assertEquals(initial, testing.copy(ai = initial.ai))
+            val failed = testing.finishAiSettings(Result.failure(IllegalArgumentException("API 授权失败")))
+            assertTrue(failed.ai.failed); assertFalse(failed.ai.settingsBusy)
+            assertEquals("API 授权失败", failed.ai.message)
+            assertEquals(initial, failed.copy(ai = initial.ai))
+            val success = failed.beginAiSettings("重试").finishAiSettings(Result.success("测试成功"))
+            assertFalse(success.ai.failed)
+            assertEquals(initial, success.copy(ai = initial.ai))
+        }
+    }
     @Test fun resumeRefreshRetainsFailureUntilAnExplicitOperation() {
         val failure = LauncherUiState(failed = true, message = "资源校验失败", stage = "准备启动")
         val refreshed = failure.beginOperation("正在检测游戏", true)
