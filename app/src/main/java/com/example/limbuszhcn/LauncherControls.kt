@@ -82,7 +82,7 @@ internal fun <T> SourceTabs(options: List<T>, selected: T, label: (T) -> String,
 internal enum class Glyph {
     Mark, Bus, Settings, Battery, Account, Arrow, Chevron, Refresh, File, Stop, Globe, Play, External, Check, Close, Info,
     Upgrade, Gamepad, Sync, Apps, Translation, ReleaseTag, Folder, Store, Progress, BookOpen, Import,
-    Search, Enter, Shield, Repair, Delete, Ai, Image, Edit, Export
+    Search, Enter, Shield, Repair, Delete, Ai, Image, Edit, Export, More, Pin
 }
 
 @Composable
@@ -195,6 +195,8 @@ internal fun LauncherGlyph(glyph: Glyph, color: Color, modifier: Modifier = Modi
                     line(12f, 15f, 12f, 3f); path(8f, 7f, 12f, 3f, 16f, 7f)
                     path(4f, 14f, 4f, 20f, 20f, 20f, 20f, 14f)
                 }
+                Glyph.More -> listOf(5f, 12f, 19f).forEach { drawCircle(color, 1.4f, Offset(it, 12f)) }
+                Glyph.Pin -> { path(8f, 3f, 16f, 3f, 15f, 9f, 18f, 12f, 18f, 14f, 6f, 14f, 6f, 12f, 9f, 9f, 8f, 3f); line(12f, 14f, 12f, 21f) }
                 Glyph.Stop -> { drawCircle(color, 8.5f, Offset(12f, 12f), style = stroke); line(6f, 18f, 18f, 6f) }
                 Glyph.Info -> { drawCircle(color, 9f, Offset(12f, 12f), style = stroke); line(12f, 11f, 12f, 17f); drawCircle(color, 1f, Offset(12f, 7f)) }
                 Glyph.Globe -> {

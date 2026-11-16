@@ -13,7 +13,8 @@ import kotlin.io.path.readText
 import kotlin.io.path.writeText
 
 internal data class TranslationSource(val id: String, val name: String, val kind: String = "local",
-    val revision: String = "", val archive: String = "", val icon: String? = null, val baseId: String? = null) {
+    val revision: String = "", val archive: String = "", val icon: String? = null, val baseId: String? = null,
+    val updatedAtMillis: Long = 0, val textFileCount: Int = 0) {
     val isOfficial get() = id == "zero"
     val label get() = when { isOfficial -> "自动更新"; kind == "ai" -> "AI 译文"; else -> "本地文件" }
 }
@@ -42,7 +43,8 @@ internal class TranslationSources(val cache: Path) {
             val id = it.getString("id"); require(validId(id)) { "汉化源标识无效" }
             TranslationSource(id, cleanName(it.getString("name")), it.getString("kind"),
                 it.optString("revision"), it.optString("archive"),
-                it.optString("icon").takeIf(String::isNotBlank), it.optString("baseId").takeIf(String::isNotBlank))
+                it.optString("icon").takeIf(String::isNotBlank), it.optString("baseId").takeIf(String::isNotBlank),
+                it.optLong("updatedAtMillis").coerceAtLeast(0), it.optInt("textFileCount").coerceAtLeast(0))
         } }
         require(sources.map { it.id }.distinct().size == sources.size && sources.none { it.isOfficial })
         val all = listOf(OFFICIAL.copy(icon = json.optString("officialIcon").takeIf(String::isNotBlank))) + sources
@@ -58,7 +60,8 @@ internal class TranslationSources(val cache: Path) {
             .put("sources", JSONArray().apply { state.sources.filterNot { it.isOfficial }.forEach { s ->
                 put(JSONObject().put("id", s.id).put("name", s.name).put("kind", s.kind)
                     .put("revision", s.revision).put("archive", s.archive).put("icon", s.icon.orEmpty())
-                    .put("baseId", s.baseId.orEmpty()))
+                    .put("baseId", s.baseId.orEmpty()).put("updatedAtMillis", s.updatedAtMillis)
+                    .put("textFileCount", s.textFileCount))
             } })
         writeAtomic(registry, json.toString())
     }
@@ -111,7 +114,8 @@ internal class TranslationSources(val cache: Path) {
                 previous?.name ?: cleanName((if (generatedId != null) name else name.substringBeforeLast('.'))
                     .ifBlank { "本地汉化" }.take(64)),
                 kind = if (generatedId != null) "ai" else "local", baseId = baseId,
-                revision = hash, archive = target.fileName.toString(), icon = previous?.icon)
+                revision = hash, archive = target.fileName.toString(), icon = previous?.icon,
+                updatedAtMillis = System.currentTimeMillis(), textFileCount = prepared.manifest.entries.size)
             val sources = if (previous == null) state.sources + source
                 else state.sources.map { if (it.id == source.id) source else it }
             save(state.copy(sources = sources, selectedId = source.id))
