@@ -32,13 +32,9 @@ internal fun AppUpdatesPane(state: AppUpdateState, onCheck: () -> Unit, onOpenPa
                 Text("当前 ${androidx.compose.ui.res.stringResource(R.string.app_version_name)}",
                     color = C.Muted, style = MaterialTheme.typography.bodySmall)
             }
-            IconButton(onClick = onCheck, enabled = !state.busy && retryRemaining == 0L) {
-                LauncherGlyph(Glyph.Refresh, if (state.busy || retryRemaining > 0) C.Muted else C.Ink,
-                    Modifier.size(21.dp), "检查应用更新")
-            }
-            IconButton(onClick = onOpenPage) {
-                LauncherGlyph(Glyph.External, C.Muted, Modifier.size(20.dp), "GitHub 发行页面")
-            }
+            ActionIconButton(Glyph.Refresh, "检查应用更新", onCheck,
+                enabled = !state.busy && retryRemaining == 0L, busy = state.busy && state.checking)
+            ActionIconButton(Glyph.External, "GitHub 发行页面", onOpenPage)
         }
         if (available) {
             Surface(color = C.AccentSoft, contentColor = C.OnAccentSoft, shape = RoundedCornerShape(20.dp)) {
@@ -84,32 +80,13 @@ internal fun AppUpdatesPane(state: AppUpdateState, onCheck: () -> Unit, onOpenPa
 }
 
 @Composable
-internal fun TranslationUpdatesPane(state: LauncherUiState) {
-    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            ZeroAssociationIcon()
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("都市零协会", style = MaterialTheme.typography.titleMedium)
-            }
-        }
-        DetailCard {
-            Text("本地汉化", color = C.Muted, style = MaterialTheme.typography.labelMedium)
-            Text(state.translation?.version ?: "尚未准备", style = MaterialTheme.typography.headlineSmall)
-            Text(if (state.translation != null) "已保存 · 启动前自动检查更新"
-                else if (state.container?.gameImported == true) "检查后下载最新汉化"
-                else "先在首页准备游戏", color = C.Muted, style = MaterialTheme.typography.bodySmall)
-        }
-    }
-}
-
-@Composable
 internal fun TranslationUpdateControls(state: LauncherUiState, onCheck: () -> Unit, horizontalPadding: Dp = 24.dp) {
-    val checking = state.busy && state.stage == "检查零协更新并校验汉化文件"
-    val showingResult = state.stage == "检查零协更新并校验汉化文件"
+    val checking = state.busy && state.stage == "校验与更新汉化资源"
+    val showingResult = state.stage == "校验与更新汉化资源"
     UpdateActionCard(message = state.message.takeIf { showingResult }, icon = Glyph.Translation,
         busy = checking, failed = showingResult && state.failed, description = "汉化更新操作",
         progressDescription = "汉化更新进度", horizontalPadding = horizontalPadding,
-        action = if (checking) null else "检查汉化更新",
+        action = if (checking) null else if (state.sources.selected.isOfficial) "检查汉化更新" else "校验汉化包",
         actionEnabled = !state.busy && state.container?.gameImported == true, onAction = onCheck)
 }
 

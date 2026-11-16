@@ -16,6 +16,8 @@ import com.example.limbuszhcn.selfupdate.AppUpdateState
 import com.example.limbuszhcn.selfupdate.ReleaseAsset
 import com.example.limbuszhcn.ui.theme.LimbusZhCNTheme
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /** Explicit rendering fixtures only: no repository, downloads, installation or game calls. */
 class UpdateControlProbeActivity : ComponentActivity() {
@@ -30,6 +32,7 @@ class UpdateControlProbeActivity : ComponentActivity() {
             "available" -> AppUpdateState(1, release = release, message = "有新版本可用")
             "ready" -> AppUpdateState(1, release = release, ready = true, message = "已准备好安装")
             "latest" -> AppUpdateState(2, release = release, checked = true, message = "已是最新版本")
+            "checking" -> AppUpdateState(2, busy = true, checking = true, message = "正在检查版本")
             "error" -> AppUpdateState(1, release = release, message = "更新未完成", error = "连接中断，请稍后重试")
             else -> AppUpdateState(1, busy = true, release = release, progress = 46,
                 message = "正在下载更新 · 1.6 MB / 3.5 MB")
@@ -37,9 +40,10 @@ class UpdateControlProbeActivity : ComponentActivity() {
         setContent {
             LimbusZhCNTheme {
                 var state by remember { mutableStateOf(initial) }
+                val scope = rememberCoroutineScope()
                 val translation = case == "translation"
                 val launcher = LauncherUiState(container = ContainerStatus(true, true, "渲染状态"),
-                    busy = translation, stage = "检查零协更新并校验汉化文件", message = "正在校验本地汉化文件")
+                    busy = translation, stage = "校验与更新汉化资源", message = "正在校验本地汉化文件")
                 Surface(Modifier.fillMaxSize(), color = C.Background) {
                     BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
                         val layout = LauncherLayout.calculate(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale)
@@ -50,7 +54,13 @@ class UpdateControlProbeActivity : ComponentActivity() {
                                 else AppUpdateControls(state, launcher, {}, {},
                                     { state = state.copy(busy = false, progress = null, message = "已取消，可重试") }, layout.detailPadding.dp)
                             }) {
-                            if (translation) TranslationUpdatesPane(launcher) else AppUpdatesPane(state, {}, {})
+                            if (translation) TranslationSourcesPane(launcher, TranslationActions(), {}) else AppUpdatesPane(state, {
+                                scope.launch {
+                                    state = state.copy(busy = true, checking = true, message = "正在检查版本")
+                                    delay(2400)
+                                    state = initial.copy(busy = false, checking = false, message = "已是最新版本")
+                                }
+                            }, {})
                         }
                     }
                 }

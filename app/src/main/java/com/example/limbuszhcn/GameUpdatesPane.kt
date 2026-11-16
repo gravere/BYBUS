@@ -45,11 +45,7 @@ internal fun GameUpdatesPane(state: LauncherUiState, onCheck: () -> Unit,
         }
 
         DetailSection("更新渠道", action = {
-            IconButton(onClick = onCheck, enabled = !state.gameUpdate.loading,
-                modifier = Modifier.size(48.dp).semantics { contentDescription = "刷新渠道版本" }) {
-                if (state.gameUpdate.loading) CircularProgressIndicator(Modifier.size(20.dp), color = C.Accent, strokeWidth = 2.dp)
-                else LauncherGlyph(Glyph.Refresh, C.Accent, Modifier.size(20.dp))
-            }
+            ActionIconButton(Glyph.Refresh, "刷新渠道版本", onCheck, busy = state.gameUpdate.loading)
         }) {
             Column(Modifier.padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 SourceTabs(GameUpdateSource.entries, selected, { it.label }, "更新渠道", onSelect, trackColor = C.Panel)

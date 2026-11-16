@@ -23,6 +23,21 @@ class ContainerWorkspaceStorage(
     private val migrationRoots: Map<String, Path> = mapOf("assets" to localizeRoot.parent.parent)
 ) : GameStorage {
     override fun resourceMigrationRoots(): Map<String, Path> = migrationRoots
+    override fun japaneseResources(): List<String> {
+        val jp = localizeRoot.resolve("jp")
+        if (!Files.isDirectory(jp, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return emptyList()
+        val base = localizeRoot.toRealPath()
+        return Files.walk(jp, 32).use { paths ->
+            val files = paths.filter { Files.isRegularFile(it, java.nio.file.LinkOption.NOFOLLOW_LINKS) &&
+                it.fileName.toString().startsWith("JP_") && it.fileName.toString().endsWith(".json") }
+                .limit(5001).iterator().asSequence().toList()
+            require(files.size <= 5000) { "游戏文本文件数量超出限制" }
+            files.map { path ->
+                require(path.toRealPath().startsWith(base) && Files.size(path) <= 2L * 1024 * 1024) { "游戏文本路径或大小无效" }
+                localizeRoot.relativize(path).toString().replace('\\', '/')
+            }.sorted()
+        }
+    }
     override fun clearDownloadedResources() =
         com.example.limbuszhcn.gamefs.DownloadedResourceCleaner.clear(localizeRoot, migrationRoots)
     override fun probe(): GameStorageProbe {
