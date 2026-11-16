@@ -203,6 +203,8 @@ class MainActivity : ComponentActivity() {
                     onEnableGooglePayment = model::enableGooglePayment,
                     onRefreshProject = { model.refreshProject(force = true) },
                     onSelectProjectSource = model::selectProjectSource,
+                    homeProjectSourceId = model.homeProjectSourceId,
+                    onHomeProjectSource = model::selectHomeProjectSource,
                     onOpenLink = { url ->
                         if (url in setOf(com.example.limbuszhcn.tracking.ZeroProject.URL,
                                 com.example.limbuszhcn.tracking.ZeroProject.SNAPSHOT_URL,

@@ -34,11 +34,9 @@ import java.util.Locale
 import kotlinx.coroutines.delay
 
 @Composable
-internal fun ProjectCard(tracking: ProjectTrackingState, modifier: Modifier = Modifier, onClick: () -> Unit) {
+internal fun ZeroProjectSummary(tracking: ProjectTrackingState) {
     val state = tracking.paratranz
-    HomeSummaryCard(onClick, modifier) {
-        SummaryHeading(Glyph.ReleaseTag, "都市零协会")
-        Spacer(Modifier.height(16.dp))
+    Column {
         Text(tracking.source.title, color = C.Muted, style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.height(6.dp))
         val snapshot = state.snapshot

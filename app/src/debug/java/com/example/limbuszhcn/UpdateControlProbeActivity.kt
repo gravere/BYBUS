@@ -54,7 +54,7 @@ class UpdateControlProbeActivity : ComponentActivity() {
                                 else AppUpdateControls(state, launcher, {}, {},
                                     { state = state.copy(busy = false, progress = null, message = "已取消，可重试") }, layout.detailPadding.dp)
                             }) {
-                            if (translation) TranslationSourcesPane(launcher, TranslationActions(), {}) else AppUpdatesPane(state, {
+                            if (translation) TranslationSourcesPane(launcher, TranslationActions(), onAi = {}) else AppUpdatesPane(state, {
                                 scope.launch {
                                     state = state.copy(busy = true, checking = true, message = "正在检查版本")
                                     delay(2400)
