@@ -9,6 +9,8 @@ import android.window.OnBackInvokedDispatcher
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.LocalOverscrollConfiguration
@@ -66,6 +68,7 @@ import com.example.limbuszhcn.ui.theme.LauncherColors as C
 @Composable
 internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
     onDismiss: () -> Unit, onBack: (() -> Unit)? = null,
+    animatedPresentation: Boolean = false, closeRequested: Boolean = false,
     navigation: @Composable (String) -> Unit = {},
     footer: @Composable (String) -> Unit = {}, content: @Composable (String) -> Unit) {
     // Keep every detail page at the same height; long menus scroll within the panel.
@@ -76,6 +79,17 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
     val density = LocalDensity.current.density
     val scope = rememberCoroutineScope()
     val currentDismiss by rememberUpdatedState(onDismiss)
+    var closing by remember(page) { mutableStateOf(false) }
+    val presentation = remember(page) { Animatable(if (animatedPresentation) 0f else 1f) }
+    val requestDismiss: () -> Unit = { if (animatedPresentation) closing = true else currentDismiss() }
+    LaunchedEffect(page, animatedPresentation, closing, closeRequested) {
+        if (animatedPresentation) {
+            val leaving = closing || closeRequested
+            presentation.animateTo(if (leaving) 0f else 1f,
+                tween(if (leaving) 180 else 260, easing = FastOutSlowInEasing))
+            if (leaving) currentDismiss()
+        } else presentation.snapTo(1f)
+    }
     val body: @Composable (DetailPanelDrag, Dp) -> Unit = { drag, contentHeight ->
       val compact = layout.compactHeight || contentHeight < 480.dp
       val bodyDrag = remember(drag) {
@@ -95,7 +109,7 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
             }
         }
       }
-        Column(Modifier.panelBackHandler(onBack ?: onDismiss).fillMaxWidth().height(contentHeight)) {
+        Column(Modifier.panelBackHandler(onBack ?: requestDismiss).fillMaxWidth().height(contentHeight)) {
             Column(Modifier.fillMaxWidth().draggable(rememberDraggableState { drag.drag(it) },
                 Orientation.Vertical, startDragImmediately = drag.offset > 0,
                 onDragStarted = { drag.stop() }, onDragStopped = { drag.settle(it) })) {
@@ -110,12 +124,12 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
                 Crossfade(page, animationSpec = tween(180), modifier = Modifier.weight(1f).padding(end = 12.dp), label = "detail title") { active ->
                     Text(when (active) {
                         "tools" -> "设置与工具"; "status" -> "运行状态"; "error" -> "准备未完成"
-                        "project" -> "翻译项目"; "updates" -> "游戏更新"; "app-update" -> "应用更新"
+                        "project" -> "翻译项目"; "home-display" -> "首页显示"; "updates" -> "游戏更新"; "app-update" -> "应用更新"
                         "translation" -> "汉化源与更新"; "ai-translation" -> "AI 翻译"; "clear-data" -> "清除数据"
                         "repair" -> "修复"; "resource-preparation" -> "准备游戏资源"; "google" -> "Google 账号与付款"; else -> "关于"
                     }, style = MaterialTheme.typography.headlineSmall)
                 }
-                ActionIconButton(Glyph.Close, "关闭面板", onDismiss)
+                ActionIconButton(Glyph.Close, "关闭面板", requestDismiss)
                 }
             }
             HorizontalDivider(color = C.Line)
@@ -139,7 +153,7 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
             if (!compact) footer(page)
         }
     }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(
+    Dialog(onDismissRequest = requestDismiss, properties = DialogProperties(
         dismissOnBackPress = false, dismissOnClickOutside = false,
         // In Compose 1.6.6, false remeasures against Configuration.screenHeightDp and
         // writes that size back to the Window. Keep native constraints for an edge-to-edge root.
@@ -157,6 +171,8 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
             // A native dim layer cannot follow the panel gesture. Compose owns this layer below.
             window?.setDimAmount(0f)
             window?.let {
+                // This chooser owns its transition; avoid a second platform zoom/fade.
+                if (animatedPresentation) it.setWindowAnimations(0)
                 it.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT)
                 WindowCompat.setDecorFitsSystemWindows(it, false)
                 it.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
@@ -205,14 +221,18 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
             }
             LaunchedEffect(page, drag) { drag.reset() }
             Box(Modifier.matchParentSize().drawBehind {
-                drawRect(Color.Black.copy(alpha = .36f * drag.scrimFraction))
-            }.pointerInput(Unit) { detectTapGestures { currentDismiss() } })
+                drawRect(Color.Black.copy(alpha = .36f * drag.scrimFraction * presentation.value))
+            }.pointerInput(requestDismiss) { detectTapGestures { requestDismiss() } })
             val panel = if (layout.centeredDetails) Modifier.align(Alignment.Center)
                 .padding(start = 24.dp + systemPadding.calculateStartPadding(direction),
                     end = 24.dp + systemPadding.calculateEndPadding(direction), top = 16.dp, bottom = 16.dp)
                 .widthIn(max = layout.panelWidth.dp).fillMaxWidth()
                 else Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-            Surface(panel.graphicsLayer { translationY = drag.offset + centerShift.value * density }.semantics { dismiss { onDismiss(); true } },
+            Surface(panel.graphicsLayer {
+                val distance = if (layout.centeredDetails) 18f else surfaceHeight.value
+                translationY = drag.offset + centerShift.value * density + (1f - presentation.value) * distance * density
+                alpha = if (layout.centeredDetails) presentation.value else 1f
+            }.semantics { dismiss { requestDismiss(); true } },
                 shape = if (layout.centeredDetails) RoundedCornerShape(28.dp)
                 else RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
                 color = C.Panel, contentColor = C.Ink, tonalElevation = 0.dp,

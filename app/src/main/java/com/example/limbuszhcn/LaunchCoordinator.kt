@@ -82,6 +82,9 @@ internal class LaunchCoordinator private constructor(application: Application) {
     private val translationSources by lazy { TranslationSources(translationCache) }
     private val aiSettings by lazy { AiSettingsStore(app) }
     private val aiCancelled = java.util.concurrent.atomic.AtomicBoolean()
+    private val modelsWorker = Executors.newSingleThreadExecutor { task -> Thread(task, "bybus-models") }
+    private var modelsTask: java.util.concurrent.Future<*>? = null
+    private val modelsRequest = java.util.concurrent.atomic.AtomicLong()
     private val gameUpdates = GameUpdateSource.entries.associateWith { source ->
         com.example.limbuszhcn.update.GameUpdateRepository(app.filesDir.toPath().resolve("game-update-${source.key}.properties"), source = source)
     }
@@ -257,6 +260,34 @@ internal class LaunchCoordinator private constructor(application: Application) {
         }
         publishSources("汉化包已导出，可用于备份或在其他设备导入")
         "汉化包已导出"
+    }
+
+    fun loadAiModels(endpoint: String, key: String) {
+        if (state.ai.models.loading) return
+        val request = modelsRequest.incrementAndGet()
+        state = state.copy(ai = state.ai.copy(models = AiModelsState(request, endpoint, loading = true)))
+        modelsTask = modelsWorker.submit {
+            val result = runCatching {
+                val credential = aiModelsKey(endpoint, aiSettings.config().endpoint, key) {
+                    if (aiSettings.hasKey()) aiSettings.key() else ""
+                }
+                AiModelsClient().list(endpoint, credential)
+            }
+            publish {
+                if (modelsRequest.get() != request) it else it.copy(ai = it.ai.copy(models =
+                    AiModelsState(request, endpoint, values = result.getOrDefault(emptyList()),
+                        error = result.exceptionOrNull()?.let { error ->
+                            if (error is IllegalArgumentException || error is IllegalStateException)
+                                error.message ?: "获取模型失败，请稍后重试或手动填写"
+                            else "获取模型失败，请稍后重试或手动填写"
+                        })))
+            }
+        }
+    }
+
+    fun clearAiModels() {
+        modelsRequest.incrementAndGet(); modelsTask?.cancel(true); modelsTask = null
+        state = state.copy(ai = state.ai.copy(models = AiModelsState()))
     }
 
     fun saveAi(config: AiConfig, key: String, test: Boolean = false) = perform(if (test) "测试 AI 翻译" else "保存 AI 设置") {

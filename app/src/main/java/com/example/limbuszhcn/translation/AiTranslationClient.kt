@@ -9,12 +9,10 @@ import java.util.concurrent.CancellationException
 internal data class AiConfig(val endpoint: String = "https://api.openai.com/v1", val model: String = "gpt-4.1-mini",
     val missingOnly: Boolean = true, val limit: Int = 100) {
     fun validated(): AiConfig {
-        val uri = URI(endpoint.trim().trimEnd('/'))
-        require(uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.rawUserInfo == null &&
-            uri.rawQuery == null && uri.rawFragment == null && uri.port in setOf(-1, 443)) { "API 地址需为不含凭据的 HTTPS 地址" }
-        require(model.matches(Regex("[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}"))) { "模型名称无效" }
+        val address = normalizedAiEndpoint(endpoint)
+        require(validAiModelId(model)) { "模型名称无效" }
         require(limit in 1..1000) { "单次翻译上限为 1–1000 条" }
-        return copy(endpoint = uri.toString())
+        return copy(endpoint = address)
     }
 }
 
