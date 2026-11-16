@@ -24,7 +24,7 @@
   `TranslationTextPolicy.DISPLAY_FIELDS` 白名单,并同步到 native 对象字段接管层后才能启用。
   不改 `id`、`personalityid`、`voicefile`、`usage`、`model`、图标键等元数据。
   `successDesc/failureDesc/result` 的纯字符串数组在父对象身份匹配后按相同长度配对；运行时只通过完整签名核对的 System.Array/List 方法读写，不推测托管内存偏移。集合元数据缓存按线程隔离。
-- Token、签名口令、账号信息等敏感配置不得写死进源码或文档；汉化包只允许从公开的 GitHub Releases 获取。
+- Token、签名口令、账号信息等敏感配置不得写死进源码或文档。零协仍通过公开 GitHub Releases 获取；用户可导入本地文本包及显式运行自带 Key 的 AI 翻译。来源隔离、切换和密钥边界见 `docs/translation-sources.md`。
 
 ## 容器硬约束
 
@@ -191,9 +191,7 @@
   使用 8 字节直接返回（保留 BTI 时为 12 字节），不得用普通 16/20 字节远跳覆盖短函数。
   安装结果不等于实际游戏语言已验证；没有真机观察时须明确标注。不得改写 PlayerPrefs
   中同一对象携带的 key、iv、账号或其他设置字段。
-- 首页的普通用户主路径为“启动汉化版游戏”:默认联网检查 GitHub Releases、复用已校验的
-  汉化包缓存、必要时同步游戏,再激活索引并启动。GitHub Releases 是唯一汉化获取途径；
-  生产界面固定都市零协会最新正式 Release 地址，不提供修改源、中转服务地址或 Token 配置。
+- 首页按选中的汉化源准备资源，默认零协仍检查固定 GitHub Releases。自定义源与 AI 结果独立保存，启动、更新和修复不得切回零协。AI 请求仅由用户明确发起，不在启动、修复或游戏文字 hook 中联网；密钥使用 Android Keystore 保护，禁止导出或写入诊断。
 - 汉化包已下载、日文资源已就绪、运行时索引已激活是三个独立状态。编译时若容器
   可读的 `jp/JP_*.json` 低于当前汉化 manifest 候选 JSON 的 90%,不得激活残缺索引、
   不得覆盖旧的可用索引。首次安装可按 `docs/first-run-android-compatibility.md` 独立准备

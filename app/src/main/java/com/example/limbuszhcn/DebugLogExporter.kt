@@ -447,6 +447,7 @@ internal fun String.redactedAndBounded(maxBytes: Int): String {
         "${match.groupValues[1]}<redacted-account>${match.groupValues[2]}"
     }
     value = JWT_VALUE.replace(value, "<redacted-jwt>")
+    value = API_KEY_VALUE.replace(value, "<redacted-api-key>")
     value = EMAIL_ADDRESS.replace(value, "<redacted-email>")
     val bytes = value.toByteArray(Charsets.UTF_8)
     if (bytes.size <= maxBytes) return value
@@ -455,6 +456,7 @@ internal fun String.redactedAndBounded(maxBytes: Int): String {
 }
 
 private val URL_CREDENTIAL = Regex("(https?://)[^\\s/@:]+(?::[^\\s/@]*)?@", RegexOption.IGNORE_CASE)
+private val API_KEY_VALUE = Regex("(?<![A-Za-z0-9_-])sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{16,}")
 private val CREDENTIAL_FIELD = Regex(
     "([\\\"']?(?:authorization|access[_-]?token|refresh[_-]?token|token|api[_-]?key|secret|password)[\\\"']?\\s*[:=]\\s*)(?:bearer\\s+)?(?:\\\"[^\\\"]*\\\"|'[^']*'|[^\\s,;&]+)",
     RegexOption.IGNORE_CASE
@@ -469,5 +471,6 @@ private val BINARY_SENSITIVE_PATTERNS = listOf(
     CREDENTIAL_FIELD,
     FIREBASE_USER,
     JWT_VALUE,
+    API_KEY_VALUE,
     EMAIL_ADDRESS
 )

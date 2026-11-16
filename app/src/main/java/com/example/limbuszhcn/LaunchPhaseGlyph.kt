@@ -11,7 +11,6 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.withTransform
 import kotlin.math.PI
 import kotlin.math.sin
 
@@ -22,7 +21,7 @@ internal enum class LaunchSymbol { Ready, Scan, Prepare, Translate, Depart, Work
 internal fun LaunchPhaseGlyph(symbol: LaunchSymbol, phase: State<Float>, moving: Boolean,
     color: Color, modifier: Modifier = Modifier) {
     Canvas(modifier) {
-        withTransform({ scale(size.width / 24f, size.height / 24f, pivot = Offset.Zero) }) {
+        inGlyphViewport {
             val p = if (moving) (phase.value * 2f) % 1f else .5f
             val wave = sin(2 * PI * p).toFloat()
             val stroke = Stroke(1.65f, cap = StrokeCap.Round, join = StrokeJoin.Round)

@@ -82,13 +82,14 @@ internal fun <T> SourceTabs(options: List<T>, selected: T, label: (T) -> String,
 internal enum class Glyph {
     Mark, Bus, Settings, Battery, Account, Arrow, Chevron, Refresh, File, Stop, Globe, Play, External, Check, Close, Info,
     Upgrade, Gamepad, Sync, Apps, Translation, ReleaseTag, Folder, Store, Progress, BookOpen, Import,
-    Search, Enter, Shield, Repair, Delete
+    Search, Enter, Shield, Repair, Delete, Ai, Image, Edit, Export
 }
 
 @Composable
 internal fun LauncherGlyph(glyph: Glyph, color: Color, modifier: Modifier = Modifier, description: String? = null) {
     val vector = when (glyph) {
         Glyph.Mark -> R.drawable.ic_bybus
+        Glyph.Ai -> R.drawable.ic_action_ai
         Glyph.Repair -> R.drawable.ic_action_repair
         Glyph.Delete -> R.drawable.ic_action_delete
         Glyph.Refresh -> R.drawable.ic_action_refresh
@@ -104,12 +105,21 @@ internal fun LauncherGlyph(glyph: Glyph, color: Color, modifier: Modifier = Modi
         Glyph.BookOpen -> R.drawable.ic_action_book
         else -> null
     }
-    if (vector != null) {
-        Icon(androidx.compose.ui.res.painterResource(vector), description, modifier, tint = color)
-        return
-    }
-    Canvas(if (description != null) modifier.semantics { contentDescription = description } else modifier) {
-        withTransform({ scale(size.width / 24f, size.height / 24f, pivot = Offset.Zero) }) {
+    val painter = vector?.let { androidx.compose.ui.res.painterResource(it) }
+    val canvas = modifier.defaultMinSize(minWidth = 24.dp, minHeight = 24.dp)
+    Canvas(if (description != null) canvas.semantics { contentDescription = description; role = Role.Image } else canvas) {
+        if (painter != null) {
+            val side = minOf(size.width, size.height)
+            if (side > 0f) withTransform({
+                translate((size.width - side) / 2f, (size.height - side) / 2f)
+            }) {
+                // VectorPainter caches a raster: draw at the final pixel size, never
+                // rasterize to the 24-unit design grid and then enlarge that bitmap.
+                with(painter) { draw(Size(side, side), colorFilter = ColorFilter.tint(color)) }
+            }
+            return@Canvas
+        }
+        inGlyphViewport {
             val stroke = Stroke(1.65f, cap = StrokeCap.Round, join = StrokeJoin.Round)
             fun line(x: Float, y: Float, x2: Float, y2: Float) = drawLine(color, Offset(x, y), Offset(x2, y2), strokeWidth = 1.65f, cap = StrokeCap.Round)
             fun path(vararg points: Float) {
@@ -136,7 +146,7 @@ internal fun LauncherGlyph(glyph: Glyph, color: Color, modifier: Modifier = Modi
                     line(12f, 7f, 12f, 12f); drawCircle(color, 1f, Offset(12f, 16f))
                 }
                 Glyph.Mark, Glyph.Refresh, Glyph.Upgrade, Glyph.Gamepad, Glyph.Sync, Glyph.Apps, Glyph.Translation,
-                Glyph.ReleaseTag, Glyph.Folder, Glyph.Store, Glyph.Progress, Glyph.BookOpen, Glyph.Repair, Glyph.Delete -> Unit // Vectors above.
+                Glyph.ReleaseTag, Glyph.Folder, Glyph.Store, Glyph.Progress, Glyph.BookOpen, Glyph.Repair, Glyph.Delete, Glyph.Ai -> Unit // Vectors above.
                 Glyph.Arrow -> { line(4f, 12f, 20f, 12f); path(14f, 6f, 20f, 12f, 14f, 18f) }
                 Glyph.Chevron -> path(9f, 6f, 15f, 12f, 9f, 18f)
                 Glyph.Play -> drawPath(Path().apply { moveTo(8f, 5f); lineTo(19f, 12f); lineTo(8f, 19f); close() }, color)
@@ -171,6 +181,19 @@ internal fun LauncherGlyph(glyph: Glyph, color: Color, modifier: Modifier = Modi
                 Glyph.File -> {
                     path(14f, 3f, 5f, 3f, 5f, 21f, 19f, 21f, 19f, 8f, 14f, 3f, 14f, 8f, 19f, 8f)
                     line(9f, 12f, 15f, 12f); line(9f, 16f, 15f, 16f)
+                }
+                Glyph.Image -> {
+                    drawRoundRect(color, Offset(3f, 3f), Size(18f, 18f), CornerRadius(3f), style = stroke)
+                    drawCircle(color, 1.5f, Offset(8f, 8f), style = stroke)
+                    path(3f, 17f, 8f, 12f, 12f, 16f, 16f, 11f, 21f, 16f)
+                }
+                Glyph.Edit -> {
+                    path(5f, 14f, 4f, 20f, 10f, 19f, 20f, 9f, 15f, 4f, 5f, 14f)
+                    line(12f, 7f, 17f, 12f)
+                }
+                Glyph.Export -> {
+                    line(12f, 15f, 12f, 3f); path(8f, 7f, 12f, 3f, 16f, 7f)
+                    path(4f, 14f, 4f, 20f, 20f, 20f, 20f, 14f)
                 }
                 Glyph.Stop -> { drawCircle(color, 8.5f, Offset(12f, 12f), style = stroke); line(6f, 18f, 18f, 6f) }
                 Glyph.Info -> { drawCircle(color, 9f, Offset(12f, 12f), style = stroke); line(12f, 11f, 12f, 17f); drawCircle(color, 1f, Offset(12f, 7f)) }

@@ -14,6 +14,7 @@ import androidx.compose.foundation.LocalOverscrollConfiguration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -26,10 +27,12 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -38,6 +41,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -70,9 +74,8 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
     val density = LocalDensity.current.density
     val scope = rememberCoroutineScope()
     val currentDismiss by rememberUpdatedState(onDismiss)
-    val drag = remember(panelHeight, density) { DetailPanelDrag(panelHeight.value * density, density, scope) { currentDismiss() } }
-    LaunchedEffect(page, drag) { drag.reset() }
-    val bodyDrag = remember(drag) {
+    val body: @Composable (DetailPanelDrag) -> Unit = { drag ->
+      val bodyDrag = remember(drag) {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset =
                 if (source == NestedScrollSource.Drag && available.y < 0 && drag.offset > 0)
@@ -88,8 +91,7 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
                 return Velocity(0f, available.y)
             }
         }
-    }
-    val body: @Composable () -> Unit = {
+      }
         Column(Modifier.panelBackHandler(onBack ?: onDismiss).fillMaxWidth().height(panelHeight)) {
             Column(Modifier.fillMaxWidth().draggable(rememberDraggableState { drag.drag(it) },
                 Orientation.Vertical, startDragImmediately = drag.offset > 0,
@@ -101,20 +103,16 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
                 Row(Modifier.fillMaxWidth().padding(horizontal = layout.detailPadding.dp,
                     vertical = if (layout.compactHeight) 0.dp else 6.dp),
                 verticalAlignment = Alignment.CenterVertically) {
-                if (onBack != null) IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                    LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(21.dp).rotate(180f), "返回上一页")
-                }
+                if (onBack != null) ActionIconButton(Glyph.Chevron, "返回上一页", onBack, rotation = 180f)
                 Crossfade(page, animationSpec = tween(180), modifier = Modifier.weight(1f).padding(end = 12.dp), label = "detail title") { active ->
                     Text(when (active) {
                         "tools" -> "设置与工具"; "status" -> "运行状态"; "error" -> "准备未完成"
                         "project" -> "翻译项目"; "updates" -> "游戏更新"; "app-update" -> "应用更新"
-                        "translation" -> "汉化资源"; "clear-data" -> "清除数据"
+                        "translation" -> "汉化源与更新"; "ai-translation" -> "AI 翻译"; "clear-data" -> "清除数据"
                         "repair" -> "修复"; "resource-preparation" -> "准备游戏资源"; "google" -> "Google 账号与付款"; else -> "关于"
                     }, style = MaterialTheme.typography.headlineSmall)
                 }
-                IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {
-                    LauncherGlyph(Glyph.Close, C.Muted, Modifier.size(21.dp), "关闭面板")
-                }
+                ActionIconButton(Glyph.Close, "关闭面板", onDismiss)
                 }
             }
             HorizontalDivider(color = C.Line)
@@ -139,12 +137,14 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
         }
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(
-        dismissOnBackPress = false, usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        dismissOnBackPress = false, dismissOnClickOutside = false,
+        usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         val window = (LocalView.current.parent as? DialogWindowProvider)?.window
         val lightNavigation = C.Panel.luminance() > .5f
         SideEffect {
-            window?.setGravity(if (layout.centeredDetails) Gravity.CENTER else Gravity.BOTTOM)
-            window?.setDimAmount(.36f)
+            window?.setGravity(Gravity.CENTER)
+            // A native dim layer cannot follow the panel gesture. Compose owns this layer below.
+            window?.setDimAmount(0f)
             window?.let {
                 // Older Compose floating themes retain the native fit-inset mask.
                 // Let this window paint to its edge; the Surface below pads controls.
@@ -161,16 +161,30 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
                 WindowCompat.getInsetsController(it, it.decorView).isAppearanceLightNavigationBars = lightNavigation
             }
         }
-        val panel = if (layout.centeredDetails) Modifier.padding(horizontal = 24.dp, vertical = 16.dp)
-            .widthIn(max = layout.panelWidth.dp).fillMaxWidth() else Modifier.fillMaxWidth()
-        Surface(panel.graphicsLayer { translationY = drag.offset }.semantics { dismiss { onDismiss(); true } },
-            shape = if (layout.centeredDetails) RoundedCornerShape(28.dp)
-            else RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-            color = C.Panel, contentColor = C.Ink, tonalElevation = 0.dp) {
-            // Paint the bar area with the panel, but keep every control above it.
-            // A centered dialog does not touch the bar and must not add a phantom footer.
-            val safeInsets = if (layout.centeredDetails) Modifier else Modifier.padding(systemPadding)
-            Column(safeInsets) { body() }
+        // The window must cover the whole viewport: translating a Surface inside a wrap-content
+        // Dialog clips its rounded bottom at the original window boundary, especially on tablets.
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val surfaceHeight = panelHeight + if (layout.centeredDetails) 0.dp else systemPadding.calculateBottomPadding()
+            val travel = DetailPanelDragPolicy.travel(maxHeight.value, surfaceHeight.value, layout.centeredDetails) * density
+            val drag = remember(panelHeight, density, travel) {
+                DetailPanelDrag(panelHeight.value * density, density, scope, travel) { currentDismiss() }
+            }
+            LaunchedEffect(page, drag) { drag.reset() }
+            Box(Modifier.matchParentSize().drawBehind {
+                drawRect(Color.Black.copy(alpha = .36f * drag.scrimFraction))
+            }.pointerInput(Unit) { detectTapGestures { currentDismiss() } })
+            val panel = if (layout.centeredDetails) Modifier.align(Alignment.Center)
+                .padding(horizontal = 24.dp, vertical = 16.dp)
+                .widthIn(max = layout.panelWidth.dp).fillMaxWidth()
+                else Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+            Surface(panel.graphicsLayer { translationY = drag.offset }.semantics { dismiss { onDismiss(); true } },
+                shape = if (layout.centeredDetails) RoundedCornerShape(28.dp)
+                else RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                color = C.Panel, contentColor = C.Ink, tonalElevation = 0.dp,
+                shadowElevation = if (layout.centeredDetails) 8.dp else 0.dp) {
+                val safeInsets = if (layout.centeredDetails) Modifier else Modifier.padding(systemPadding)
+                Column(safeInsets) { body(drag) }
+            }
         }
     }
 }

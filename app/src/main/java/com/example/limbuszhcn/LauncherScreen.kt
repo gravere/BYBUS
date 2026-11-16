@@ -55,35 +55,36 @@ internal fun LauncherScreen(
     onEnableGooglePayment: () -> Unit = {},
     onRefreshProject: () -> Unit,
     onSelectProjectSource: (ProjectSource) -> Unit,
-    onOpenLink: (String) -> Unit
+    onOpenLink: (String) -> Unit,
+    translationActions: TranslationActions = TranslationActions()
 ) {
     var sheet by rememberSaveable { mutableStateOf<String?>(null) }
-    var parentSheet by rememberSaveable { mutableStateOf<String?>(null) }
+    var parentSheets by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var confirmation by rememberSaveable { mutableStateOf<ConfirmedOperation?>(null) }
     var handledUpdatesRequest by rememberSaveable { mutableLongStateOf(0L) }
     var handledPreparationRequest by rememberSaveable { mutableLongStateOf(0L) }
     LaunchedEffect(state.resourcePreparationRequest) {
         if (state.resourcePreparationRequest > 0 && state.resourcePreparationRequest != handledPreparationRequest) {
             handledPreparationRequest = state.resourcePreparationRequest
-            parentSheet = null
+            parentSheets = emptyList()
             sheet = "resource-preparation"
         }
     }
     LaunchedEffect(state.updatesRequest) {
         if (state.updatesRequest > 0 && state.updatesRequest != handledUpdatesRequest) {
             handledUpdatesRequest = state.updatesRequest
-            parentSheet = null
+            parentSheets = emptyList()
             sheet = "updates"
         }
     }
     val haptic = LocalHapticFeedback.current
     fun open(page: String) {
         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-        parentSheet = null
+        parentSheets = emptyList()
         sheet = page
     }
-    fun openChild(page: String) { parentSheet = sheet; sheet = page }
-    fun close() { parentSheet = null; sheet = null }
+    fun openChild(page: String) { sheet?.let { parentSheets = parentSheets + it }; sheet = page }
+    fun close() { parentSheets = emptyList(); sheet = null }
 
     Surface(Modifier.fillMaxSize(), color = C.Background) {
         BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
@@ -100,11 +101,9 @@ internal fun LauncherScreen(
                         fontWeight = FontWeight.SemiBold, letterSpacing = 2.6.sp, color = C.Ink,
                         modifier = Modifier.padding(start = 11.dp).weight(1f))
                     Box {
-                        FilledIconButton(onClick = { open("tools") }, modifier = Modifier.size(48.dp).semantics {
+                        ActionIconButton(Glyph.Settings, "设置与工具", { open("tools") }, modifier = Modifier.semantics {
                             if (appUpdateState.updateAvailable) stateDescription = "有 BYBUS 新版本"
-                        }, colors = IconButtonDefaults.filledIconButtonColors(containerColor = C.Background)) {
-                            LauncherGlyph(Glyph.Settings, C.Ink, Modifier.size(22.dp), "设置与工具")
-                        }
+                        })
                         if (appUpdateState.updateAvailable) UpdateDot(Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 6.dp))
                     }
                 }
@@ -143,7 +142,7 @@ internal fun LauncherScreen(
             }
             sheet?.let { page ->
                 LauncherDetailSurface(layout, page, onDismiss = ::close,
-                    onBack = parentSheet?.let { parent -> { sheet = parent; parentSheet = null } },
+                    onBack = parentSheets.lastOrNull()?.let { parent -> { sheet = parent; parentSheets = parentSheets.dropLast(1) } },
                     footer = { active -> when (active) {
                         "app-update" -> AppUpdateControls(appUpdateState, state, onDownloadAppUpdate, onInstallAppUpdate, onCancelAppUpdate, layout.detailPadding.dp)
                         "translation" -> TranslationUpdateControls(state, { confirmation = ConfirmedOperation.Translation }, layout.detailPadding.dp)
@@ -165,7 +164,9 @@ internal fun LauncherScreen(
                     } else if (active == "app-update") {
                         AppUpdatesPane(appUpdateState, onCheckAppUpdate, onOpenAppRelease)
                     } else if (active == "translation") {
-                        TranslationUpdatesPane(state)
+                        TranslationSourcesPane(state, translationActions) { openChild("ai-translation") }
+                    } else if (active == "ai-translation") {
+                        AiTranslationPane(state, translationActions)
                     } else {
                         LauncherDetails(active, state, onGameStore = { openChild("updates") },
                             appUpdateAvailable = appUpdateState.updateAvailable,
@@ -222,7 +223,7 @@ private fun InstallationCard(state: LauncherUiState, modifier: Modifier = Modifi
                 else -> state.installedVersionName ?: state.installedVersion.toString() },
             if (state.gameUpdate.newerSources(state.installedVersionName).isNotEmpty()) "有新版" else null)
         HorizontalDivider(Modifier.padding(start = 32.dp, top = 12.dp, bottom = 12.dp), color = C.Line)
-        InstallationRow(Glyph.Translation, "本地汉化", state.translation?.version
+        InstallationRow(Glyph.Translation, "本地汉化", state.translationLabel
             ?: if (state.resourcePreparation != null) "汉化尚未就绪" else "首次启动时准备")
     }
 }

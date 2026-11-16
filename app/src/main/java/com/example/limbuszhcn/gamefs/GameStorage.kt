@@ -12,6 +12,8 @@ interface GameStorage {
     fun delete(path: String): Boolean
     fun resolvePatchTarget(targetPath: String): String
     fun rootPath(): String
+    /** Relative, bounded static Japanese resources only; never account or preference files. */
+    fun japaneseResources(): List<String> = emptyList()
     fun deleteResource(relativePath: String): Boolean = false
     fun resourceMigrationRoots(): Map<String, Path> = emptyMap()
     fun clearDownloadedResources(): ResourceClearResult = error("当前存储不支持清理游戏资源")

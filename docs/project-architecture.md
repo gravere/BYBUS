@@ -10,8 +10,8 @@ The app is an Android Chinese-localization companion for `com.ProjectMoon.Limbus
 The production path is container mode:
 
 1. Import or synchronize the officially signed Limbus APK/splits installed on the device, regardless of installation channel.
-2. Stop the previous guest, check the fixed LLC release source, and validate persistent translation files.
-3. Prepare a verified, persistent Zero Association resource manifest and font catalogue before launch; build the paired index when original text is already present.
+2. Stop the previous guest and validate the selected translation source. The default Zero Association source checks its fixed release endpoint; local and AI sources use their stored packages.
+3. Prepare the selected source's verified resource manifest and the built-in font catalogue before launch; build the paired index when original text is already present. Source changes invalidate derived indexes without mixing translations; AI requests require explicit user action. See [translation sources](translation-sources.md).
 4. Launch the game inside VirtualApp. Localized JSON is merged at the verified text-read boundary, including resources downloaded in this same session. The paired index remains a display fallback; original game resource files remain unchanged. See [first-run localization](live-localization.md).
 
 The project does not modify the game APK and does not rely on Frida or Shizuku.
