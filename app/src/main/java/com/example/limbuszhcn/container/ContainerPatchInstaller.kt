@@ -121,6 +121,9 @@ class ContainerPatchInstaller(
         return activateVerifiedRedirect(patchDirectory, manifest, FileDigestSession())
     }
 
+    internal fun activateImported(directory: Path, manifest: PatchManifest, forceRebuild: Boolean = false): PatchInstallSummary =
+        activateVerifiedRedirect(directory, manifest, FileDigestSession(), forceRebuild)
+
     private fun activateVerifiedRedirect(patchDirectory: Path, manifest: PatchManifest,
                                          digests: FileDigestSession, forceRebuild: Boolean = false): PatchInstallSummary {
         onProgress("校验游戏文本与汉化索引")
@@ -287,8 +290,11 @@ class ContainerPatchInstaller(
             }
         }
         runCatching {
-            val retained = store.pruneAndRetainedVersions() + manifest.requestedVersion
-            com.example.limbuszhcn.update.TranslationRepository(cacheRoot).prune(retained)
+            if (!Files.exists(cacheRoot.resolve(".source-switch/ready"))) {
+                val retained = store.pruneAndRetainedVersions() + manifest.requestedVersion
+                if (!manifest.requestedVersion.startsWith("local-"))
+                    com.example.limbuszhcn.update.TranslationRepository(cacheRoot).prune(retained)
+            }
         }
         runCatching { com.example.limbuszhcn.PersistentDiagnosticLog.info("LimbusStartup",
             "phase=translation_index_rebuild elapsedMs=${(System.nanoTime() - rebuildStarted) / 1_000_000}" +

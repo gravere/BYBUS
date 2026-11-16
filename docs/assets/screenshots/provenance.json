@@ -1,13 +1,11 @@
 {
-  "release": "v1.0.43-build.86",
-  "apk_sha256": "f9c14db85a15e7a16457a89d0d5601dc6813042662a5026b96d25a564f9ec2a6",
-  "source_commit": "5f344305f096387d25521216bb2e153918011c1f",
-  "workflow_run": "https://github.com/gravere/BYBUS/actions/runs/42982167441",
-  "profile": "Android 16 x86_64, ARM native bridge, 4 KB",
-  "capture": "Original screencap PNG from the signed v1.0.43 candidate; emulator status icons hidden; no image or app state edits",
+  "release": "v1.0.53-build.100",
+  "apk_sha256": "f8e967a25fafc3f37a4ad79d1631a443547c2c2b9a94e01ccfdd7bd1cd12d82e",
+  "profile": "Android 15, owned headless emulator",
+  "capture": "Original PNG screencaps from signed release; status icons hidden with Android statusbar command; no image or app-state edits",
   "files": {
-    "home.png": "d179a25eb8eeb64574db3a0feb064d5766eba790195c3f812d5e72de332ff784",
-    "project.png": "373753f24e34448b4dc621dd62ae0707ec0dd844944dc2366688c44c47b1d9ad",
-    "settings.png": "5cfd426c6e461d6ac472f7404873ac53b2a3a9eae42348fcf126cfb0034595fe"
+    "home.png": "9dffcf691caeea814e8bbd266e88a81b412ba48b422331a38f6bf9fa471063e1",
+    "sources.png": "eb45be02975a502d7a72490c8eb99944727f5ed34b5b197be83f70877131090d",
+    "settings.png": "25ac722603d20cf815e03d368adb40ba2dfa1c9a09072d56caf922dc05f9e58c"
   }
 }

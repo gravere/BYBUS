@@ -45,7 +45,7 @@ internal fun ClearDataPane(state: LauncherUiState, onClear: () -> Unit) {
             modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
             colors = ButtonDefaults.outlinedButtonColors(contentColor = C.Error)) {
             if (clear.running) {
-                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = C.Error)
+                LauncherSpinner(Modifier.size(18.dp), strokeWidth = 2.dp, color = C.Error)
                 Spacer(Modifier.width(10.dp))
             }
             Text(if (clear.running) "正在清除" else "清除游戏资源")

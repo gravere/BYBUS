@@ -24,8 +24,11 @@ import com.example.limbuszhcn.update.GameInstallReview
 import com.example.limbuszhcn.update.PreparedGameUpdate
 import android.content.Intent
 import android.content.pm.PackageInstaller
+import com.example.limbuszhcn.translation.*
 
 internal data class LauncherUiState(
+    val sources: SourceState = SourceState(),
+    val ai: AiUiState = AiUiState(),
     val container: ContainerStatus? = null,
     val installedVersion: Long? = null,
     val installedVersionName: String? = null,
@@ -53,7 +56,11 @@ internal data class LauncherUiState(
     val message: String = "正在检测手机上的边狱巴士",
     val failed: Boolean = false,
     val exportRequest: File? = null
-)
+) {
+    val translationLabel: String? get() = translation?.let {
+        if (sources.selected.isOfficial) it.version else sources.selected.name
+    }
+}
 
 /** Application-owned operations survive Activity replacement; one shared state and file lock. */
 internal class LaunchCoordinator private constructor(application: Application) {
@@ -71,6 +78,10 @@ internal class LaunchCoordinator private constructor(application: Application) {
         { measureStartup("release_metadata") { github.releaseForLaunch() } })
     private val updatePreferences = app.getSharedPreferences("game-updates", 0)
     private val preparationPreferences = app.getSharedPreferences("resource-preparation", 0)
+    private val translationCache get() = app.filesDir.toPath().resolve("translation-cache")
+    private val translationSources by lazy { TranslationSources(translationCache) }
+    private val aiSettings by lazy { AiSettingsStore(app) }
+    private val aiCancelled = java.util.concurrent.atomic.AtomicBoolean()
     private val gameUpdates = GameUpdateSource.entries.associateWith { source ->
         com.example.limbuszhcn.update.GameUpdateRepository(app.filesDir.toPath().resolve("game-update-${source.key}.properties"), source = source)
     }
@@ -142,6 +153,168 @@ internal class LaunchCoordinator private constructor(application: Application) {
         return container to installed
     }
 
+    private fun publishSources(message: String? = null) {
+        val sources = translationSources.read().copy(message = message)
+        val config = aiSettings.config(); val keyPresent = aiSettings.hasKey()
+        publish { it.copy(sources = sources, ai = it.ai.copy(config = config, hasKey = keyPresent)) }
+    }
+
+    private fun prepareTranslation(patch: ContainerPatchInstaller, repair: Boolean = false): PatchInstallSummary {
+        val source = translationSources.read().selected
+        val result = SourceActivation(translationCache).run(source.id, source.revision.takeUnless { source.isOfficial }) {
+            if (!source.isOfficial) {
+                val prepared = translationSources.prepare(source)
+                patch.activateImported(prepared.directory, prepared.manifest, repair)
+            } else if (repair) runCatching { patch.verifyCachedForLaunch(forceRebuild = true) }.getOrElse {
+                if (it is java.util.concurrent.CancellationException || Thread.currentThread().isInterrupted) throw it
+                patch.installFromGitHub(RELEASE_URL, forceRebuild = true)
+            } else runCatching { patch.installFromGitHub(RELEASE_URL) }.getOrElse { error ->
+                if (error is java.util.concurrent.CancellationException || Thread.currentThread().isInterrupted) throw error
+                val cached = runCatching { patch.verifyCachedForLaunch() }
+                cached.getOrNull()?.also { PersistentDiagnosticLog.warn(TAG, "Update unavailable; verified cached translation", error) }
+                    ?: throw IllegalStateException("${error.updateFailureLabel()}；本地汉化未通过完整校验", cached.exceptionOrNull() ?: error)
+            }
+        }
+        runCatching { translationSources.pruneUnused() }.onFailure {
+            PersistentDiagnosticLog.warn(TAG, "Unable to clean obsolete custom translations", it)
+        }
+        return result
+    }
+
+    fun selectTranslationSource(id: String) = perform("切换汉化源") {
+        stopGame()
+        translationSources.select(id)
+        preparationPreferences.edit().remove("pending").apply()
+        publish { it.copy(translation = null, resourcePreparation = null) }
+        publishSources("已切换，下次启动使用此汉化源")
+        "汉化源已切换，游戏资源与账号保留"
+    }
+
+    fun importTranslation(uri: Uri, replaceId: String?) = perform("导入汉化包") {
+        stopGame()
+        val name = app.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+            if (it.moveToFirst()) it.getString(0)?.take(80) else null
+        } ?: "本地汉化.zip"
+        app.contentResolver.openInputStream(uri).use { input ->
+            translationSources.import(requireNotNull(input) { "无法读取汉化包" }, name.take(64), replaceId)
+        }
+        publish { it.copy(translation = null, resourcePreparation = null) }
+        publishSources("已导入，下次启动使用此汉化包")
+        "汉化包已导入"
+    }
+
+    fun renameTranslation(id: String, name: String) = perform("修改汉化名称") {
+        require(id != "zero") { "默认来源名称保持不变" }
+        translationSources.rename(id, name); publishSources(); "名称已保存"
+    }
+
+    fun setTranslationIcon(id: String, uri: Uri?) = perform("设置汉化图标") {
+        val png = uri?.let {
+            val bytes = java.io.ByteArrayOutputStream()
+            app.contentResolver.openInputStream(it).use { input ->
+                TranslationSources.copyBounded(requireNotNull(input), bytes, 16L * 1024 * 1024)
+            }
+            TranslationIcon.normalize(bytes.toByteArray())
+        }
+        translationSources.setIcon(id, png); publishSources(); "图标已保存"
+    }
+
+    fun removeTranslation(id: String) = perform("卸载汉化文件") {
+        val source = translationSources.read().selected
+        require(source.id == id) { "当前汉化源已改变，请重新选择" }
+        stopGame()
+        SourceActivation(translationCache).recover()
+        installer().uninstallLatest()
+        try {
+            SourceActivation(translationCache).discardDerived()
+            if (source.isOfficial) com.example.limbuszhcn.update.TranslationRepository(translationCache).prune(emptySet())
+            else translationSources.remove(id)
+            translationSources.pruneUnused()
+        } finally {
+            preparationPreferences.edit().remove("pending").apply()
+            publish { it.copy(translation = null, resourcePreparation = null) }
+            publishSources()
+        }
+        val message = if (source.isOfficial) "汉化文件已卸载，下次使用此来源时会重新下载"
+            else "汉化源已删除，已切回都市零协会"
+        publishSources(message)
+        message
+    }
+
+    fun exportTranslation(id: String, destination: Uri) = perform("导出汉化包", allowPackageUpdate = true) {
+        try {
+            val source = requireNotNull(translationSources.read().sources.find { it.id == id }) { "汉化源已不存在" }
+            val prepared = if (source.isOfficial) {
+                val cached = com.example.limbuszhcn.update.TranslationRepository(translationCache).verifiedForLaunch(null)
+                PreparedTranslation(cached.outputDirectory, cached.manifest)
+            } else translationSources.prepare(source)
+            app.contentResolver.openOutputStream(destination, "wt").use { output ->
+                TranslationBackup.write(prepared, requireNotNull(output) { "无法写入所选位置" })
+            }
+        } catch (error: Exception) {
+            runCatching { android.provider.DocumentsContract.deleteDocument(app.contentResolver, destination) }
+            throw error
+        }
+        publishSources("汉化包已导出，可用于备份或在其他设备导入")
+        "汉化包已导出"
+    }
+
+    fun saveAi(config: AiConfig, key: String, test: Boolean = false) = perform(if (test) "测试 AI 翻译" else "保存 AI 设置") {
+        aiSettings.save(config, key); publishSources()
+        val message = if (test) {
+            val result = AiTranslationClient(config, aiSettings.key()).translate(listOf(AiText("connection", "接続中…")))
+            "连接成功 · ${result.translations.getValue("connection")} · ${result.inputTokens + result.outputTokens} tokens"
+        } else "API 设置已保存"
+        publish { it.copy(ai = it.ai.copy(message = message, failed = false)) }
+        message
+    }
+
+    fun clearAiKey() = perform("移除 API Key") {
+        aiSettings.clearKey(); publishSources(); "本机 API Key 已移除"
+    }
+
+    fun cancelAi() { aiCancelled.set(true); publish { it.copy(ai = it.ai.copy(message = "正在暂停，已完成的译文会保留")) } }
+
+    fun generateAi(config: AiConfig, key: String) = perform("生成 AI 汉化") {
+        aiSettings.save(config, key); publishSources(); stopGame()
+        aiCancelled.set(false)
+        publish { it.copy(ai = it.ai.copy(running = true, failed = false, message = "正在读取游戏原文", progress = AiProgress())) }
+        try {
+            val selected = translationSources.read().selected
+            val base = if (selected.kind == "ai") {
+                translationSources.read().sources.find { it.id == selected.baseId } ?: run {
+                    require(!config.missingOnly) { "原汉化源已删除，请先选择需要补全的汉化源" }
+                    TranslationSources.OFFICIAL
+                }
+            } else selected
+            val prepared = if (config.missingOnly) {
+                if (base.isOfficial) {
+                    val repository = com.example.limbuszhcn.update.TranslationRepository(translationCache, github::releaseForLaunch)
+                    val extracted = runCatching { repository.checkLatest(RELEASE_URL, null) }.getOrElse { error ->
+                        if (error is java.util.concurrent.CancellationException) throw error
+                        repository.verifiedForLaunch(null)
+                    }
+                    PreparedTranslation(extracted.outputDirectory, extracted.manifest)
+                } else translationSources.prepare(base)
+            } else null
+            val result = AiTranslationJob(translationCache, runtime.storage(), config,
+                AiTranslationClient(config, aiSettings.key()), aiCancelled::get) { progress ->
+                publish { it.copy(ai = it.ai.copy(progress = progress, message = progress.message)) }
+            }.run(base.id, prepared)
+            translationSources.addGenerated(result.archive, base.id, result.identity,
+                if (config.missingOnly) "${base.name.take(48)} · AI 补全" else "AI 汉化")
+            publish { it.copy(translation = null, resourcePreparation = null,
+                ai = it.ai.copy(running = false, message = result.progress.message, progress = result.progress)) }
+            publishSources("AI 汉化已保存，下次启动加载")
+            result.progress.message
+        } catch (e: Exception) {
+            val cancelled = e is java.util.concurrent.CancellationException
+            publish { it.copy(ai = it.ai.copy(running = false, failed = !cancelled,
+                message = if (cancelled) "已暂停，继续时会复用已完成的译文" else "翻译未完成：${e.userMessage()}")) }
+            if (cancelled) "已暂停，译文缓存已保留" else throw e
+        }
+    }
+
     fun checkGameUpdate(force: Boolean = false) {
         if (state.gameUpdate.loading) return
         state = state.copy(gameUpdate = GameUpdateCatalog(state.gameUpdate.channels.mapValues { it.value.copy(loading = true) }))
@@ -189,15 +362,22 @@ internal class LaunchCoordinator private constructor(application: Application) {
 
     fun refresh(preserveFailure: Boolean = false) = perform("正在检测游戏", allowPackageUpdate = true,
         preserveFailure = preserveFailure) {
+        SourceActivation(translationCache).recover()
+        publishSources()
         val (container, installed) = readGameStatus()
         val nativeIssue = if (installed != null) runCatching { gameCompatibility.requireApproved() }
             .exceptionOrNull()?.message ?: "" else ""
         val patch = installer()
-        var active = runCatching { patch.activeInstallSummary() }.getOrNull()
+        val selectedSource = translationSources.read().selected
+        var active = if (SourceActivation(translationCache).owner() == selectedSource.id)
+            runCatching { patch.activeInstallSummary() }.getOrNull()?.takeIf {
+                selectedSource.isOfficial || it.version == "local-${selectedSource.revision}"
+            } else null
         // A return from the explicit download mode prepares the cached translation without
         // terminating a potentially still-running resource download or starting another game.
-        val preparation = if (preparationPreferences.getBoolean("pending", false) && container.gameImported) {
-            runCatching { patch.verifyCachedForLaunch() }.getOrNull().also {
+        val preparation = if (preparationPreferences.getBoolean("pending", false) && container.gameImported &&
+            translationSources.read().selected.isOfficial) {
+            runCatching { prepareTranslation(patch, repair = true) }.getOrNull().also {
                 active = patch.activeInstallSummary()
                 if (active != null) preparationPreferences.edit().remove("pending").apply()
             }
@@ -321,21 +501,14 @@ internal class LaunchCoordinator private constructor(application: Application) {
             stage("检查游戏兼容性", 0)
             val localCandidate = com.example.limbuszhcn.update.TranslationRepository(
                 app.filesDir.toPath().resolve("translation-cache")).hasLaunchCandidate()
-            val metadata = releaseCheck.start(if (localCandidate) 4_000 else 15_000)
+            val selectedSource = translationSources.read().selected
+            val metadata = if (selectedSource.isOfficial) releaseCheck.start(if (localCandidate) 4_000 else 15_000) else null
             val approvedBuild = measureStartup("compatibility") { gameCompatibility.requireApproved() }
             measureStartup("game_sync") { prepareGame() }
             measureStartup("stop_previous_game") { stopGame() }
-            val patch = installer(metadata::await) { stage(it, 1) }
-            stage("检查零协更新并校验汉化文件", 1)
-            val update = runCatching { patch.installFromGitHub(RELEASE_URL) }
-            val summary = update.getOrElse { error ->
-                // Validate only when needed; a failed check never discards a previously usable index.
-                if (error is java.util.concurrent.CancellationException || Thread.currentThread().isInterrupted) throw error
-                val cached = runCatching { patch.verifyCachedForLaunch() }
-                cached.getOrNull()?.also {
-                    PersistentDiagnosticLog.warn(TAG, "Update unavailable; revalidated cached translation", error)
-                } ?: throw IllegalStateException("${error.updateFailureLabel()}；本地汉化未通过完整校验", cached.exceptionOrNull() ?: error)
-            }
+            val patch = installer({ metadata?.await() ?: error("本地汉化不请求零协更新") }) { stage(it, 1) }
+            stage("校验汉化文件", 1)
+            val summary = prepareTranslation(patch)
             val active = if (summary.indexActivated) summary else patch.activeInstallSummary()
             val mode = translationLaunchMode(active, prepareResources)
             publish { it.copy(translation = active, resourcePreparation = summary.takeIf { active == null }) }
@@ -355,16 +528,15 @@ internal class LaunchCoordinator private constructor(application: Application) {
             measureStartup("container_launch") { runtime.launchGame() }
             val canResume = runtime.hasRunningGame()
             publish { it.copy(canResumeGame = canResume) }
-            if (update.isFailure) "${update.exceptionOrNull()!!.updateFailureLabel()}；${summary.description()}；游戏已打开"
-            else "${summary.description()}；游戏已打开"
+            "${summary.description()}；游戏已打开"
         }
     }
 
-    fun updateTranslation() = perform("检查零协更新并校验汉化文件") {
+    fun updateTranslation() = perform("校验与更新汉化资源") {
         require(readGameStatus().first.gameImported) { "请先启动一次游戏以准备容器" }
         stopGame()
         val patch = installer()
-        val summary = patch.installFromGitHub(RELEASE_URL)
+        val summary = prepareTranslation(patch)
         val active = if (summary.indexActivated) summary else patch.activeInstallSummary()
         publish { it.copy(translation = active) }
         summary.description()
@@ -383,16 +555,12 @@ internal class LaunchCoordinator private constructor(application: Application) {
             com.lody.virtual.helper.compat.LimbusTranslationAssets.prepare(app)
             progress(2, "正在重建汉化文件")
             val patch = installer(onProgress = { progress(2, it) })
-            val summary = runCatching { patch.verifyCachedForLaunch(forceRebuild = true) }
-                .getOrElse { error ->
-                    if (error is java.util.concurrent.CancellationException || Thread.currentThread().isInterrupted) throw error
-                    patch.installFromGitHub(RELEASE_URL, forceRebuild = true)
-                }
+            val summary = prepareTranslation(patch, repair = true)
             check(summary.liveResourcesReady) { "汉化文件尚未准备完成，请联网后重试" }
             preparationPreferences.edit().remove("pending").apply()
             val active = patch.activeInstallSummary()
             publish { it.copy(translation = active, resourcePreparation = null) }
-            "修复完成，回到首页即可启动游戏。"
+            "文件修复完成，回到首页启动游戏即可检查效果。"
         }
         publish { it.copy(repair = RepairState(
             if (result.isSuccess) RepairPhase.Complete else RepairPhase.Failed,
@@ -514,7 +682,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
 }
 
 private fun PatchInstallSummary.description(): String = when {
-    liveResourcesReady -> "汉化 $version 已准备，游戏加载文本时自动应用"
+    liveResourcesReady -> "汉化文件已准备，游戏加载文本时自动应用"
     indexActivated && reusedIndex -> "汉化 $version 已校验，复用现有索引"
     indexActivated -> "汉化 $version 索引已保存，有效资源 $availableSourceFiles/$candidateSourceFiles"
     previousIndexPreserved -> "${pendingReason ?: "资源尚未完整"}；继续使用现有汉化"

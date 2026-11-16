@@ -54,10 +54,10 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
                     SheetAction(Glyph.Info, "使用说明与版本", navigation = true, onClick = onAbout)
                 }
                 DetailActionSection("汉化设置") {
-                    SheetAction(Glyph.Translation, "汉化资源", navigation = true, onClick = onTranslation)
+                    SheetAction(Glyph.Translation, "汉化源与更新", navigation = true, onClick = onTranslation)
                 }
             }
-            "status" -> RuntimeStatusPane(state, onGameStore, onRefresh)
+            "status" -> RuntimeStatusPane(state, onGameStore, onTranslation, onRefresh)
             "error" -> {
                 Text(state.message, color = C.Muted, style = MaterialTheme.typography.bodyMedium)
                 DetailActionSection("操作") {
@@ -76,10 +76,12 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
 @Composable
 internal fun SheetAction(icon: Glyph, title: String, enabled: Boolean = true, subtitle: String? = null,
     external: Boolean = false, navigation: Boolean = false, showUpdate: Boolean = false, onClick: () -> Unit) {
+    val opacity by androidx.compose.animation.core.animateFloatAsState(if (enabled) 1f else .4f,
+        androidx.compose.animation.core.tween(140), label = "row enabled")
     // The containing group owns the rounded outline; the entire row owns its feedback.
     Row(Modifier.fillMaxWidth().clickable(enabled = enabled, role = Role.Button, onClick = onClick)
         .semantics { if (showUpdate) stateDescription = "有 BYBUS 新版本" }
-        .heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 10.dp).graphicsLayer { alpha = if (enabled) 1f else .4f },
+        .heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 10.dp).graphicsLayer { alpha = opacity },
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         IconTile(icon)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -103,6 +105,8 @@ internal fun DetailCard(modifier: Modifier = Modifier, content: @Composable Colu
 @Composable
 internal fun DetailDisclosure(title: String, content: @Composable ColumnScope.() -> Unit) {
     var expanded by rememberSaveable { mutableStateOf(false) }
+    val angle by androidx.compose.animation.core.animateFloatAsState(if (expanded) 270f else 90f,
+        androidx.compose.animation.core.tween(160), label = "disclosure direction")
     Surface(color = C.Background, shape = RoundedCornerShape(20.dp)) {
         Column(Modifier.fillMaxWidth()) {
             Row(Modifier.fillMaxWidth()
@@ -111,7 +115,7 @@ internal fun DetailDisclosure(title: String, content: @Composable ColumnScope.()
                 .heightIn(min = 52.dp).padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(16.dp).rotate(if (expanded) 270f else 90f))
+                LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(16.dp).rotate(angle))
             }
             ExpandableDetails(expanded, Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
@@ -132,7 +136,7 @@ private fun AboutPane() {
     }
     DetailSection("开始使用") {
         Column(Modifier.padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            listOf("安装官方游戏，回到 BYBUS 点击启动。", "汉化包准备好后进入游戏，登录并下载资源，汉化会随资源加载生效。", "以后从 BYBUS 启动，自动检查汉化更新。").forEachIndexed { index, text ->
+            listOf("安装官方游戏，回到 BYBUS 点击启动。", "汉化包准备好后进入游戏，登录并下载资源，汉化会随资源加载生效。", "以后从 BYBUS 启动。默认汉化源自动检查更新，也可在汉化设置中导入本地包或生成 AI 译文。").forEachIndexed { index, text ->
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
                     Text("0${index + 1}", color = C.Accent, style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.padding(top = 3.dp))

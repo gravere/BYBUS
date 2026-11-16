@@ -19,5 +19,7 @@
         <activity android:name=".AccountRegistryProbeActivity" android:exported="true" />
         <activity android:name=".MigrationProbeActivity" android:exported="true" />
         <activity android:name=".ResourceImportProbeActivity" android:exported="true" />
+        <activity android:name=".TranslationSourceProbeActivity" android:exported="true" />
+        <activity android:name=".IconRenderingProbeActivity" android:exported="true" />
     </application>
 </manifest>

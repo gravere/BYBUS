@@ -84,6 +84,22 @@ class MainActivity : ComponentActivity() {
             val appUpdater = model.appUpdater
             val packagePicker = rememberLauncherForActivityResult(
                 ActivityResultContracts.OpenMultipleDocuments(), model::preparePackageUpdate)
+            val pendingPack = androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf<String?>(null) }
+            val replacingPack = androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf<String?>(null) }
+            val iconTarget = androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf<String?>(null) }
+            val exportSource = androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf<String?>(null) }
+            val exportDestination = androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf<String?>(null) }
+            val sourceExportPicker = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+                exportDestination.value = uri?.toString()
+                if (uri == null) exportSource.value = null
+            }
+            val translationPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+                pendingPack.value = uri?.toString()
+            }
+            val translationIconPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+                val id = iconTarget.value; iconTarget.value = null
+                if (id != null && uri != null) model.translationIcon(id, uri)
+            }
             val resumed = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
             androidx.compose.runtime.DisposableEffect(lifecycle) {
                 val observer = androidx.lifecycle.LifecycleEventObserver { _, _ ->
@@ -95,7 +111,16 @@ class MainActivity : ComponentActivity() {
             androidx.compose.runtime.LaunchedEffect(resumed.value) {
                 if (resumed.value) while (true) {
                     appUpdater.checkForNotice()
-                    kotlinx.coroutines.delay(com.example.limbuszhcn.selfupdate.AppUpdateNotice.INTERVAL)
+                    kotlinx.coroutines.delay(appUpdater.nextNoticeDelay())
+                }
+            }
+            // Returning from the picker also schedules a refresh. Wait for it instead of losing the export.
+            androidx.compose.runtime.LaunchedEffect(exportDestination.value, resumed.value, state.busy) {
+                val destination = exportDestination.value
+                val id = exportSource.value
+                if (resumed.value && !state.busy && destination != null && id != null) {
+                    exportDestination.value = null; exportSource.value = null
+                    model.exportTranslation(id, android.net.Uri.parse(destination))
                 }
             }
             androidx.compose.runtime.LaunchedEffect(state.gameInstallConfirmation, resumed.value) {
@@ -122,6 +147,17 @@ class MainActivity : ComponentActivity() {
                 }
             }
             LimbusZhCNTheme {
+                pendingPack.value?.let { selectedUri ->
+                    androidx.compose.material3.AlertDialog(onDismissRequest = { pendingPack.value = null },
+                        title = { androidx.compose.material3.Text("导入并使用汉化包？") },
+                        text = { androidx.compose.material3.Text("将关闭游戏并校验所选文本包。账号和游戏资源会保留。") },
+                        confirmButton = { androidx.compose.material3.TextButton(onClick = {
+                            pendingPack.value = null
+                            model.importTranslation(android.net.Uri.parse(selectedUri), replacingPack.value)
+                            replacingPack.value = null
+                        }, enabled = !state.busy) { androidx.compose.material3.Text("导入") } },
+                        dismissButton = { androidx.compose.material3.TextButton(onClick = { pendingPack.value = null }) { androidx.compose.material3.Text("取消") } })
+                }
                 LauncherScreen(
                     state = state,
                     projectState = model.projectState,
@@ -180,7 +216,20 @@ class MainActivity : ComponentActivity() {
                     onSettings = {
                         runCatching { startActivity(DeviceCompatibility(applicationContext).settingsIntent()) }
                             .onFailure(model::showError)
-                    }
+                    },
+                    translationActions = TranslationActions(
+                        select = model::selectTranslation,
+                        import = { id -> replacingPack.value = id
+                            runCatching { translationPicker.launch(arrayOf("*/*")) }.onFailure(model::showError) },
+                        icon = { id -> iconTarget.value = id
+                            runCatching { translationIconPicker.launch(arrayOf("image/*")) }.onFailure(model::showError) },
+                        resetIcon = { model.translationIcon(it, null) }, rename = model::renameTranslation,
+                        remove = model::removeTranslation,
+                        export = { source -> exportSource.value = source.id
+                            runCatching { sourceExportPicker.launch(com.example.limbuszhcn.translation.TranslationBackup.fileName(source)) }
+                                .onFailure { exportSource.value = null; model.showError(it) } },
+                        saveAi = model::saveAi, generateAi = model::generateAi,
+                        cancelAi = model::cancelAi, clearKey = model::clearAiKey)
                 )
             }
         }

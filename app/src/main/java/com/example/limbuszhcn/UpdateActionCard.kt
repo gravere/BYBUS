@@ -1,5 +1,6 @@
 package com.example.limbuszhcn
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -38,11 +39,8 @@ internal fun UpdateActionCard(
                                 style = MaterialTheme.typography.labelLarge)
                         }
                         if (busy && onCancel != null) {
-                            FilledTonalIconButton(onClick = onCancel, modifier = Modifier.size(48.dp),
-                                colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                    containerColor = C.Panel, contentColor = C.Muted)) {
-                                LauncherGlyph(Glyph.Close, C.Muted, Modifier.size(18.dp), "取消更新")
-                            }
+                            ActionIconButton(Glyph.Close, "取消更新", onCancel,
+                                modifier = Modifier.clip(CircleShape).background(C.Panel))
                         }
                     }
                 }

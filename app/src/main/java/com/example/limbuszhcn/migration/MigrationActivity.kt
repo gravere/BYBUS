@@ -27,6 +27,7 @@ import com.example.limbuszhcn.ui.theme.LimbusZhCNTheme
 import io.github.gravere.bybus.migration.core.MigrationArchive
 import java.io.File
 import java.io.InterruptedIOException
+import java.util.concurrent.CancellationException
 import java.util.concurrent.Executors
 
 internal object MigrationAccess {
@@ -40,26 +41,29 @@ internal object MigrationAccess {
         !preferences(context).getBoolean("complete", false) && sourceIsOurs(context)
 }
 
-internal enum class MigrationOperation { Inspect, Legacy, Resources }
+internal enum class MigrationOperation { Inspect, Legacy, Resources, Export }
 
 internal data class MigrationState(val busy: Boolean = false, val copied: Long = 0, val total: Long = 0,
     val done: Boolean = false, val message: String = "正在读取旧版数据…", val ready: Boolean = false,
     val pending: Boolean = false, val hasLegacy: Boolean = false,
     val operation: MigrationOperation = MigrationOperation.Inspect, val failed: Boolean = false,
-    val progressFiles: Boolean = false)
+    val progressFiles: Boolean = false, val canExport: Boolean = false, val notice: String? = null)
 
 internal class MigrationModel(application: Application) : AndroidViewModel(application) {
     private val context = application.applicationContext
     private val executor = Executors.newSingleThreadExecutor()
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var input: ParcelFileDescriptor? = null
+    private val exportCancelled = java.util.concurrent.atomic.AtomicBoolean()
+    private val exportState = ResourceExportState(context.filesDir.toPath().resolve("resource-exports"))
     private val runtime by lazy {
         AndroidContainerRuntimeFactory.create(context, context.filesDir.toPath().resolve("container-workspace"))
     }
-    private fun resourceTransfer(progress: (com.example.limbuszhcn.gamefs.ResourceTransferProgress) -> Unit = {}): GameResourceTransfer {
+    private fun resourceTransfer(version: Long = 1L, cancelled: () -> Boolean = { Thread.currentThread().isInterrupted },
+        progress: (com.example.limbuszhcn.gamefs.ResourceTransferProgress) -> Unit = {}): GameResourceTransfer {
         check(runtime.status().available) { "容器暂不可用，已保留导入恢复记录，请重新打开应用后检测" }
-        return GameResourceTransfer(runtime.storage(), context.filesDir.toPath().resolve("resource-transfers"), 1L,
-            cancelled = { Thread.currentThread().isInterrupted }, progress = progress)
+        return GameResourceTransfer(runtime.storage(), context.filesDir.toPath().resolve("resource-transfers"), version,
+            cancelled = cancelled, progress = progress)
     }
     var state by mutableStateOf(MigrationState(pending = MigrationAccess.preferences(context).getBoolean("pending", false)))
         private set
@@ -67,9 +71,10 @@ internal class MigrationModel(application: Application) : AndroidViewModel(appli
     private fun publish(value: MigrationState) { handler.post { state = value } }
     private fun inspect() {
         state = state.copy(busy = true, failed = false, operation = MigrationOperation.Inspect,
-            message = "正在查找旧版数据…", copied = 0, total = 0, progressFiles = false)
+            message = "正在检查可迁移的数据…", copied = 0, total = 0, progressFiles = false, notice = null)
         executor.execute {
             runCatching {
+                OperationLock.run(context.filesDir.toPath()) { cleanupExport() }
                 if (MigrationAccess.preferences(context).getBoolean("resource_pending", false)) {
                     OperationLock.run(context.filesDir.toPath()) {
                         stopOwnedContainerProcesses()
@@ -77,10 +82,11 @@ internal class MigrationModel(application: Application) : AndroidViewModel(appli
                         clearResourcePending()
                     }
                 }
+                val canExport = runtime.status().let { it.available && (it.importedVersionCode ?: 0L) > 0 }
                 val ours = MigrationAccess.sourceIsOurs(context)
                 if (!ours || !MigrationAccess.ready(context)) {
                     val pending = MigrationAccess.preferences(context).getBoolean("pending", false)
-                    publish(MigrationState(hasLegacy = ours, pending = pending, failed = pending,
+                    publish(MigrationState(hasLegacy = ours, pending = pending, failed = pending, canExport = canExport,
                         message = if (pending && !ours) "上次迁移尚未完成，请恢复保留原数据的旧版后重新检测。暂不能改用资源文件继续。"
                             else if (ours) "请保留旧版，先在旧版检查更新并完成一次覆盖更新，然后回来重新检测。"
                             else "未检测到旧版，可选择已导出的资源文件。"))
@@ -89,7 +95,7 @@ internal class MigrationModel(application: Application) : AndroidViewModel(appli
                 context.contentResolver.acquireContentProviderClient(MigrationArchive.AUTHORITY).use { client ->
                     val info = checkNotNull(client?.call("summary", null, null))
                     check(info.getInt("schema") == 1)
-                    publish(MigrationState(ready = true, hasLegacy = true, total = info.getLong("bytes"),
+                    publish(MigrationState(ready = true, hasLegacy = true, total = info.getLong("bytes"), canExport = canExport,
                         pending = MigrationAccess.preferences(context).getBoolean("pending", false),
                         message = "将导入旧版的游戏资源与账号配置，替换新版中的同名数据。旧版数据仍保留，资源版本无需相同。"))
                 }
@@ -98,6 +104,101 @@ internal class MigrationModel(application: Application) : AndroidViewModel(appli
         }
     }
     fun refresh() { if (!state.busy) inspect() }
+
+    fun pickerFailed(error: Throwable) {
+        state = state.copy(failed = true, message = error.message ?: "无法打开文件选择器")
+    }
+
+    private fun releaseExportGrant(uri: Uri) {
+        runCatching { context.contentResolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
+    }
+
+    private fun deleteExportDocument(uri: Uri) {
+        try {
+            check(android.provider.DocumentsContract.deleteDocument(context.contentResolver, uri)) {
+                "未完成的资源包暂时无法清理，请连接原保存位置后重新检测"
+            }
+        } catch (_: java.io.FileNotFoundException) { /* Already removed by the user/provider. */ }
+        releaseExportGrant(uri)
+    }
+
+    private fun cleanupExport() = exportState.recover { deleteExportDocument(Uri.parse(it)) }
+
+    fun exportResources(uri: Uri) {
+        if (state.busy) return
+        runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
+        exportCancelled.set(false)
+        state = state.copy(busy = true, done = false, failed = false, operation = MigrationOperation.Export,
+            copied = 0, total = 0, progressFiles = false, notice = null, message = "正在准备迁出资源…")
+        executor.execute {
+            var writerEntered = false
+            val result = runCatching {
+                OperationLock.run(context.filesDir.toPath()) {
+                    writerEntered = true
+                    var recorded = false
+                    try {
+                        exportState.begin(uri.toString())
+                        recorded = true
+                        if (exportCancelled.get()) throw CancellationException("已取消迁出")
+                        check(!MigrationAccess.preferences(context).getBoolean("pending", false)) { "请先完成上次迁入" }
+                        val status = runtime.status()
+                        val version = requireNotNull(status.importedVersionCode?.takeIf { it > 0 }) { "请先在 BYBUS 中下载游戏资源" }
+                        check(status.available) { "容器暂不可用，请重新检测" }
+                        stopOwnedContainerProcesses()
+                        if (exportCancelled.get()) throw CancellationException("已取消迁出")
+                        val descriptor = checkNotNull(context.contentResolver.openFileDescriptor(uri, "wt")) { "无法写入所选位置" }
+                        input = descriptor
+                        val copied = ParcelFileDescriptor.AutoCloseOutputStream(descriptor).use { output ->
+                            resourceTransfer(version, { exportCancelled.get() || Thread.currentThread().isInterrupted }) { update ->
+                                publish(state.copy(copied = update.bytes, total = update.total, message = update.phase))
+                            }.exportResources(output)
+                        }
+                        input = null
+                        exportState.complete() // Success only after the ZIP and its output descriptor are closed.
+                        releaseExportGrant(uri)
+                        copied
+                    } catch (error: Exception) {
+                        runCatching { input?.close() }; input = null
+                        // Cleanup shares the same lock as the writer; another migration window
+                        // cannot mistake an in-progress output for an interrupted export.
+                        try { if (recorded) cleanupExport() else deleteExportDocument(uri) }
+                        catch (cleanup: Exception) { throw java.io.IOException(cleanup.message, error) }
+                        // Closing a blocked provider stream for cancellation usually throws IOException.
+                        // It is a normal cancellation only after cleanup has actually succeeded.
+                        if (exportCancelled.get()) throw CancellationException("已取消迁出")
+                        throw error
+                    }
+                }
+            }
+            result.onSuccess { copied ->
+                publish(state.copy(busy = false, done = true, copied = copied.bytes, total = copied.bytes,
+                    message = "资源包已保存"))
+            }.onFailure { error ->
+                if (!writerEntered) {
+                    // The file picker already created an empty document, even if another
+                    // process prevented this worker from acquiring the operation lock.
+                    val cleanup = runCatching { deleteExportDocument(uri) }.exceptionOrNull()
+                    if (cleanup != null) {
+                        publish(state.copy(busy = false, failed = true,
+                            message = "迁出未开始，空文件未能删除，请到保存位置手动删除：${cleanup.message ?: "无法访问文件"}"))
+                        return@onFailure
+                    }
+                }
+                val cancelled = exportCancelled.get() && error is CancellationException
+                publish(state.copy(busy = false, failed = !cancelled,
+                    notice = if (cancelled) "已取消迁出，本机数据保留。" else null,
+                    message = error.message ?: "迁出未完成，请重试"))
+            }
+        }
+    }
+
+    fun cancelExport() {
+        if (state.busy && state.operation == MigrationOperation.Export) {
+            exportCancelled.set(true)
+            runCatching { input?.close() }
+            state = state.copy(message = "正在取消迁出…")
+        }
+    }
     fun start(prepareTarget: Boolean) {
         if (state.busy || !state.ready) return
         state = state.copy(busy = true, done = false, failed = false, copied = 0,
@@ -242,6 +343,17 @@ open class MigrationActivity : ComponentActivity() {
                 val state = model.state
                 var confirmation by rememberSaveable { mutableStateOf<ConfirmedOperation?>(null) }
                 var selectedResource by rememberSaveable { mutableStateOf<String?>(null) }
+                var exportDestination by rememberSaveable { mutableStateOf<String?>(null) }
+                val exportPicker = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+                    exportDestination = uri?.toString()
+                }
+                LaunchedEffect(exportDestination, state.busy) {
+                    val destination = exportDestination
+                    if (destination != null && !state.busy) {
+                        exportDestination = null
+                        model.exportResources(Uri.parse(destination))
+                    }
+                }
                 val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
                     if (uri != null) {
                         selectedResource = uri.toString()
@@ -251,10 +363,11 @@ open class MigrationActivity : ComponentActivity() {
                 BackHandler { if (!state.busy && !state.pending) leaveMigration() }
                 MigrationScreen(state = state, onBack = ::leaveMigration, onRefresh = model::refresh,
                     onMigrate = { confirmation = ConfirmedOperation.Migrate },
-                    onSelectFile = { picker.launch(arrayOf("application/zip", "application/octet-stream")) },
+                    onSelectFile = { runCatching { picker.launch(arrayOf("application/zip", "application/octet-stream")) }.onFailure(model::pickerFailed) },
                     onOpenLegacy = {
                         packageManager.getLaunchIntentForPackage(MigrationArchive.LEGACY)?.let(::startActivity)
-                    }, onFinish = ::leaveMigration)
+                    }, onFinish = ::leaveMigration,
+                    onExport = { confirmation = ConfirmedOperation.ExportResources }, onCancelExport = model::cancelExport)
                 confirmation?.let { operation ->
                     OperationConfirmation(operation, enabled = !state.busy,
                         onDismiss = { confirmation = null; selectedResource = null }) {
@@ -263,6 +376,7 @@ open class MigrationActivity : ComponentActivity() {
                         selectedResource = null
                         if (!state.busy) when (operation) {
                             ConfirmedOperation.Migrate -> model.start(prepareTarget())
+                            ConfirmedOperation.ExportResources -> runCatching { exportPicker.launch("BYBUS-resources.zip") }.onFailure(model::pickerFailed)
                             ConfirmedOperation.ImportResources -> resource?.let {
                                 val uri = Uri.parse(it)
                                 // Selecting a document is not consent to retain access after

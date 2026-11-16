@@ -10,6 +10,16 @@ import org.junit.Test
  * 验证公开诊断包写入前的敏感信息脱敏与长度限制。
  */
 class DebugLogExporterTest {
+    @Test fun redactsApiKeysEvenWithoutAnAuthorizationLabel() {
+        val fixture = "sk-proj-" + "fixture_not_a_real_credential_12345"
+        val line = "Failed value $fixture; safe message"
+        assertFalse(line.redactedAndBounded(4096).contains(fixture))
+        val bytes = line.toByteArray(Charsets.UTF_8)
+        val redacted = bytes.redactedBinaryCopy()
+        assertEquals(bytes.size, redacted.size)
+        assertFalse(String(redacted, Charsets.UTF_8).contains(fixture))
+        assertTrue(String(redacted, Charsets.UTF_8).contains("safe message"))
+    }
     /** 验证凭据、账号标识和 JWT 形态字符串都会被替换。 */
     @Test
     fun redactsCredentialsAccountsAndJwtValues() {

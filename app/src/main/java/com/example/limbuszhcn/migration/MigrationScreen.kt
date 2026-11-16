@@ -25,7 +25,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.limbuszhcn.Glyph
-import com.example.limbuszhcn.ExpandableDetails
+import com.example.limbuszhcn.SourceTabs
+import com.example.limbuszhcn.ActionIconButton
 import com.example.limbuszhcn.IconTile
 import com.example.limbuszhcn.LauncherGlyph
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
@@ -34,7 +35,9 @@ import com.example.limbuszhcn.ui.theme.LauncherColors as C
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun MigrationScreen(state: MigrationState, onBack: () -> Unit, onRefresh: () -> Unit,
-    onMigrate: () -> Unit, onSelectFile: () -> Unit, onOpenLegacy: () -> Unit, onFinish: () -> Unit) {
+    onMigrate: () -> Unit, onSelectFile: () -> Unit, onOpenLegacy: () -> Unit, onFinish: () -> Unit,
+    onExport: () -> Unit = {}, onCancelExport: () -> Unit = {}) {
+    var exporting by rememberSaveable { mutableStateOf(false) }
     Surface(Modifier.fillMaxSize(), color = C.Background, contentColor = C.Ink) {
         BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding(), contentAlignment = Alignment.TopCenter) {
             val wide = maxWidth >= 840.dp && maxWidth > maxHeight && LocalDensity.current.fontScale <= 1.3f
@@ -43,43 +46,40 @@ internal fun MigrationScreen(state: MigrationState, onBack: () -> Unit, onRefres
                 .padding(horizontal = inset)) {
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp),
                     verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onBack, enabled = !state.busy && !state.pending,
-                        modifier = Modifier.size(48.dp).clip(CircleShape).background(C.Panel)) {
-                        LauncherGlyph(Glyph.Chevron, if (state.busy || state.pending) C.Line else C.Ink,
-                            Modifier.size(21.dp).rotate(180f), "返回上一页")
-                    }
+                    ActionIconButton(Glyph.Chevron, "返回上一页", onBack, enabled = !state.busy && !state.pending,
+                        rotation = 180f, modifier = Modifier.clip(CircleShape).background(C.Panel))
                     Text("数据迁移", Modifier.weight(1f).padding(horizontal = 16.dp).semantics { heading() },
                         style = MaterialTheme.typography.titleLarge)
-                    if (!state.done) IconButton(onClick = onRefresh, enabled = !state.busy,
-                        modifier = Modifier.size(48.dp)) {
-                        LauncherGlyph(Glyph.Refresh, if (state.busy) C.Line else C.Muted,
-                            Modifier.size(21.dp), "重新检测")
-                    }
+                    if (!state.done) ActionIconButton(Glyph.Refresh, "重新检测", onRefresh,
+                        enabled = !state.busy, busy = state.busy && state.operation == MigrationOperation.Inspect)
                 }
                 CompositionLocalProvider(LocalOverscrollConfiguration provides null) {
                     val scroll = rememberScrollState()
-                    LaunchedEffect(state.busy, state.done, state.failed, state.pending, state.operation) {
+                    LaunchedEffect(state.busy, state.done, state.failed, state.pending, state.operation, exporting) {
                         scroll.scrollTo(0)
                     }
                     Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(scroll)
                         .padding(top = 16.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                         if (state.busy || state.done) {
-                            MigrationTransferCard(state, onFinish)
+                            MigrationTransferCard(state, onFinish, onCancelExport)
                         } else {
-                            Text(if (state.pending) "继续上次迁移" else "选择数据来源",
-                                style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
+                            if (!state.pending) SourceTabs(listOf(false, true), exporting,
+                                { if (it) "迁出" else "迁入" }, "迁移方向", { exporting = it })
                             if (state.failed) MigrationFailure(state)
-                            if (wide && !state.pending) {
+                            state.notice?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+                            if (state.pending) {
+                                LegacySourceCard(state, onMigrate, onOpenLegacy)
+                            } else if (wide) {
                                 Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                                    LegacySourceCard(state, onMigrate, onOpenLegacy,
+                                    ResourceActionCard(state, exporting, if (exporting) onExport else onSelectFile,
                                         Modifier.weight(1f).fillMaxHeight(), stretch = true)
-                                    ResourceSourceCard(onSelectFile, Modifier.weight(1f).fillMaxHeight(), stretch = true)
+                                    MigrationSteps(exporting, Modifier.weight(1f).fillMaxHeight())
                                 }
                             } else {
-                                LegacySourceCard(state, onMigrate, onOpenLegacy)
-                                if (!state.pending) ResourceSourceCard(onSelectFile)
+                                ResourceActionCard(state, exporting, if (exporting) onExport else onSelectFile)
+                                MigrationSteps(exporting)
                             }
-                            MigrationNotes(state.pending)
+                            if (!state.pending && !exporting && state.hasLegacy) LegacySourceCard(state, onMigrate, onOpenLegacy)
                         }
                     }
                 }
@@ -102,7 +102,7 @@ private fun LegacySourceCard(state: MigrationState, onMigrate: () -> Unit, onOpe
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             IconTile(Glyph.Apps, accent = state.ready)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text("旧版 BYBUS", style = MaterialTheme.typography.titleMedium)
+                Text("从旧版 BYBUS 迁入", style = MaterialTheme.typography.titleMedium)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Box(Modifier.size(5.dp).clip(CircleShape).background(if (state.ready) C.Ready else C.Muted))
                     Text(if (state.ready) "可以直接迁移" else if (state.hasLegacy) "需要更新旧版" else "未检测到旧版",
@@ -113,17 +113,14 @@ private fun LegacySourceCard(state: MigrationState, onMigrate: () -> Unit, onOpe
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (state.ready) Text(byteSize(state.total), style = MaterialTheme.typography.headlineSmall)
             Text(when {
-                state.ready -> "游戏资源与账号配置"
-                state.hasLegacy -> "在旧版完成一次覆盖更新，再回来检测。"
-                state.pending -> "需要保留原数据的旧版才能继续这次迁移。"
-                else -> "安装着旧版时，这里会自动识别。"
-            }, style = MaterialTheme.typography.bodyMedium, color = C.Muted)
+                state.ready -> "直接读取这台设备上的旧版数据，包含游戏资源与账号配置。"
+                state.hasLegacy -> "先在旧版完成更新，再点右上角重新检测。"
+                else -> "上次迁入还未完成。请恢复保留数据的旧版，再重新检测。"
+            }, style = MaterialTheme.typography.bodyMedium)
         }
-        if (state.ready) Text("新版同名数据将被替换，旧版数据保留。",
-            style = MaterialTheme.typography.bodySmall, color = C.Muted)
         if (stretch) Spacer(Modifier.weight(1f))
         if (state.ready) {
-            MigrationPrimaryButton(if (state.pending) "继续迁移" else "开始迁移", onMigrate, Glyph.Import)
+            MigrationPrimaryButton(if (state.pending) "继续迁入" else "从旧版迁入", onMigrate, Glyph.Import)
         } else if (state.hasLegacy) {
             MigrationPrimaryButton("打开旧版 BYBUS", onOpenLegacy, Glyph.External)
         }
@@ -131,39 +128,55 @@ private fun LegacySourceCard(state: MigrationState, onMigrate: () -> Unit, onOpe
 }
 
 @Composable
-private fun ResourceSourceCard(onSelectFile: () -> Unit, modifier: Modifier = Modifier, stretch: Boolean = false) {
+private fun ResourceActionCard(state: MigrationState, exporting: Boolean, onAction: () -> Unit,
+    modifier: Modifier = Modifier, stretch: Boolean = false) {
     MigrationPanel(modifier) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            IconTile(Glyph.File)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text("资源文件", style = MaterialTheme.typography.titleMedium)
-                Text("从已导出的 ZIP 导入", style = MaterialTheme.typography.bodySmall, color = C.Muted)
+            IconTile(if (exporting) Glyph.Export else Glyph.Import, accent = true)
+            Text(if (exporting) "保存游戏资源" else "导入游戏资源", style = MaterialTheme.typography.titleMedium)
+        }
+        Text(if (exporting) "保存已下载的游戏资源，换设备时直接导入。"
+            else "导入已保存的资源包，减少重复下载。", style = MaterialTheme.typography.bodyMedium)
+        if (exporting && !state.canExport) Text("先在 BYBUS 中下载游戏资源，再来迁出。",
+            style = MaterialTheme.typography.bodyMedium, color = C.Muted)
+        if (stretch) Spacer(Modifier.weight(1f))
+        MigrationPrimaryButton(if (exporting) "保存资源包" else "选择资源包", onAction,
+            if (exporting) Glyph.Export else Glyph.Folder, !exporting || state.canExport)
+    }
+}
+
+@Composable
+private fun MigrationSteps(exporting: Boolean, modifier: Modifier = Modifier) {
+    MigrationPanel(modifier) {
+        Text(if (exporting) "保存后怎么用" else "迁入步骤", style = MaterialTheme.typography.titleMedium)
+        val steps = if (exporting) listOf("把保存的 ZIP 传到接收设备。",
+            "接收设备安装官方游戏和 BYBUS，在「迁入」中选择这个包。", "登录游戏，按提示补齐更新资源。")
+            else listOf("先安装官方游戏，无需打开原版下载资源。", "导入资源包，保留本机已有文件。", "导入后从 BYBUS 启动游戏，补齐版本差异。")
+        steps.forEachIndexed { index, text ->
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("${index + 1}", color = C.Accent, style = MaterialTheme.typography.titleSmall)
+                Text(text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
             }
         }
-        Text("补充资源，保留已有文件与账号。", style = MaterialTheme.typography.bodyMedium, color = C.Muted)
-        if (stretch) Spacer(Modifier.weight(1f))
-        FilledTonalButton(onClick = onSelectFile, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
-            shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.filledTonalButtonColors(
-                containerColor = C.AccentSoft, contentColor = C.OnAccentSoft),
-            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp)) {
-            Text("选择资源文件", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-            LauncherGlyph(Glyph.Folder, C.OnAccentSoft, Modifier.size(20.dp))
-        }
+        HorizontalDivider(color = C.Line)
+        Text("资源包包含游戏下载的内容与缓存。账号在接收设备重新登录；汉化源在「汉化源与更新」中单独导入。",
+            style = MaterialTheme.typography.bodyMedium)
     }
 }
 
 @Composable
-private fun MigrationPrimaryButton(label: String, onClick: () -> Unit, glyph: Glyph) {
-    Button(onClick = onClick, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+private fun MigrationPrimaryButton(label: String, onClick: () -> Unit, glyph: Glyph, enabled: Boolean = true) {
+    Button(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
         shape = RoundedCornerShape(18.dp), contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp)) {
         Text(label, Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
-        LauncherGlyph(glyph, MaterialTheme.colorScheme.onPrimary, Modifier.size(20.dp))
+        LauncherGlyph(glyph, LocalContentColor.current, Modifier.size(20.dp))
     }
 }
 
 @Composable
-private fun MigrationTransferCard(state: MigrationState, onFinish: () -> Unit) {
+private fun MigrationTransferCard(state: MigrationState, onFinish: () -> Unit, onCancelExport: () -> Unit) {
     val inspecting = state.operation == MigrationOperation.Inspect
+    val exporting = state.operation == MigrationOperation.Export
     val hasProgress = state.total > 0 && (state.copied > 0 || state.progressFiles)
     val progress = if (hasProgress) (state.copied.toDouble() / state.total).toFloat().coerceIn(0f, 1f) else 0f
     MigrationPanel {
@@ -171,30 +184,27 @@ private fun MigrationTransferCard(state: MigrationState, onFinish: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(Modifier.size(52.dp).clip(RoundedCornerShape(18.dp)).background(C.AccentSoft),
                 contentAlignment = Alignment.Center) {
-                LauncherGlyph(if (state.done) Glyph.Check else if (inspecting) Glyph.Apps else Glyph.Import,
+                LauncherGlyph(if (state.done) Glyph.Check else if (inspecting) Glyph.Apps else if (exporting) Glyph.Export else Glyph.Import,
                     C.Accent, Modifier.size(25.dp))
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(when {
-                    state.done -> "数据已就位"
+                    state.done -> if (exporting) "资源包已保存" else "迁入完成"
                     inspecting -> "正在检测"
-                    state.operation == MigrationOperation.Resources -> "正在导入资源"
-                    else -> "正在迁移数据"
+                    exporting -> "正在迁出"
+                    else -> "正在迁入"
                 }, style = MaterialTheme.typography.headlineSmall)
-                Text(if (state.done) "导入完成" else if (inspecting) "查找可用的旧版数据" else "请保持此页面打开",
-                    color = C.Muted, style = MaterialTheme.typography.bodySmall)
             }
         }
         if (state.done) {
             if (state.total > 0) Text(byteSize(state.total), style = MaterialTheme.typography.displaySmall)
             HorizontalDivider(color = C.Line)
-            Text(if (state.operation == MigrationOperation.Resources) "已有资源和账号已保留，源文件未改动。"
-                else "旧版数据已保留，确认游戏正常后再卸载旧版。", color = C.Muted,
-                style = MaterialTheme.typography.bodyMedium)
-            Text(if (state.operation == MigrationOperation.Resources) "游戏会校验并补齐资源。"
-                else "游戏会补齐资源；账号可能需要重新授权。", color = C.Muted,
-                style = MaterialTheme.typography.bodySmall)
-            MigrationPrimaryButton("进入 BYBUS", onFinish, Glyph.Arrow)
+            Text(when {
+                exporting -> "本机数据已保留。把 ZIP 传到接收设备，在 BYBUS 的「数据迁移 → 迁入」中选择它。"
+                state.operation == MigrationOperation.Resources -> "已有资源和账号已保留。回到首页启动游戏，补齐版本差异即可。"
+                else -> "旧版数据已保留。先确认游戏正常，再卸载旧版；账号如需授权，请重新登录。"
+            }, style = MaterialTheme.typography.bodyMedium)
+            MigrationPrimaryButton("返回 BYBUS", onFinish, Glyph.Check)
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) {
@@ -205,10 +215,14 @@ private fun MigrationTransferCard(state: MigrationState, onFinish: () -> Unit) {
                         color = C.Accent, trackColor = C.AccentSoft)
                 } else LinearProgressIndicator(Modifier.fillMaxWidth().height(4.dp).clip(CircleShape),
                     color = C.Accent, trackColor = C.AccentSoft)
-                Text(state.message, style = MaterialTheme.typography.bodyMedium, color = C.Muted)
+                Text(state.message, style = MaterialTheme.typography.bodyMedium)
                 if (hasProgress) Text(if (state.progressFiles) "${state.copied} / ${state.total} 个文件"
                     else "${byteSize(state.copied)} / ${byteSize(state.total)}",
                     style = MaterialTheme.typography.labelMedium, color = C.Muted)
+            }
+            if (exporting) {
+                Text("请保持页面打开，完成后再传输资源包。", style = MaterialTheme.typography.bodyMedium)
+                OutlinedButton(onClick = onCancelExport, modifier = Modifier.fillMaxWidth()) { Text("取消迁出") }
             }
         }
     }
@@ -224,29 +238,6 @@ private fun MigrationFailure(state: MigrationState) {
                 Text(if (state.pending) "迁移尚未完成" else "暂时无法继续", color = C.Error,
                     style = MaterialTheme.typography.titleSmall)
                 Text(state.message, color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodyMedium)
-            }
-        }
-    }
-}
-
-@Composable
-private fun MigrationNotes(pending: Boolean) {
-    var expanded by rememberSaveable { mutableStateOf(false) }
-    Column(Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            LauncherGlyph(Glyph.Check, C.Muted, Modifier.size(16.dp))
-            Text("来源数据会保留", Modifier.weight(1f).padding(start = 8.dp),
-                style = MaterialTheme.typography.bodySmall, color = C.Muted)
-            TextButton(onClick = { expanded = !expanded }, contentPadding = PaddingValues(horizontal = 8.dp)) {
-                Text(if (expanded) "收起说明" else "迁移须知", style = MaterialTheme.typography.labelMedium, color = C.Muted)
-                LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.padding(start = 4.dp).size(16.dp).rotate(if (expanded) 270f else 90f))
-            }
-        }
-        ExpandableDetails(expanded) {
-            Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (pending) Text("请先完成上次迁移，再启动游戏。", style = MaterialTheme.typography.bodySmall, color = C.Muted)
-                Text("旧版迁移包含资源与账号配置；文件导入只补充缺少的资源。", style = MaterialTheme.typography.bodySmall, color = C.Muted)
-                Text("资源版本无需相同，进入游戏后会校验更新。", style = MaterialTheme.typography.bodySmall, color = C.Muted)
             }
         }
     }
