@@ -33,7 +33,7 @@ import com.example.limbuszhcn.translation.normalizedAiEndpoint
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
 @Composable
-internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActions) {
+internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActions, onCoverage: () -> Unit = {}) {
     val ai = state.ai
     var endpoint by remember(ai.config.endpoint) { mutableStateOf(ai.config.endpoint) }
     var model by remember(ai.config.model) { mutableStateOf(ai.config.model) }
@@ -50,7 +50,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
     val keyboard = LocalSoftwareKeyboardController.current
     fun finishEditing() { focus.clearFocus(); keyboard?.hide() }
     fun config() = AiConfig(endpoint.trim(), model.trim(), missing, limit)
-    val enabled = !state.busy
+    val enabled = !state.busy && !ai.settingsBusy && !ai.running
     val savedKeyAvailable = ai.hasKey && runCatching {
         normalizedAiEndpoint(endpoint) == normalizedAiEndpoint(ai.config.endpoint)
     }.getOrDefault(false)
@@ -61,6 +61,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
     }
     DisposableEffect(Unit) { onDispose { actions.clearModels() } }
     Column(Modifier.imePadding(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        CoverageSummary(state, onCoverage)
         DetailCard {
             Text("连接设置", style = MaterialTheme.typography.titleSmall)
             AiField("服务地址", endpoint, { if (it.length <= 2048) endpoint = it }, "https://api.openai.com/v1",
@@ -119,8 +120,11 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 FilledTonalButton({ finishEditing(); val value = key; key = ""; reveal = false; actions.saveAi(config(), value, false) },
                     enabled = enabled, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("保存设置") }
-                TextButton({ finishEditing(); val value = key; key = ""; reveal = false; actions.saveAi(config(), value, true) },
-                    enabled = enabled && hasCredential, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("测试翻译") }
+                TextButton({ finishEditing(); reveal = false; actions.saveAi(config(), key, true) },
+                    enabled = enabled && hasCredential, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text(if (ai.settingsBusy) "处理中" else "测试翻译") }
+            }
+            ai.message?.takeUnless { ai.running }?.let {
+                Text(it, color = if (ai.failed) C.Error else C.Accent, style = MaterialTheme.typography.bodySmall)
             }
         }
         DetailCard {
@@ -138,8 +142,6 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
                 TextButton(actions.cancelAi, modifier = Modifier.fillMaxWidth()) { Text("暂停翻译") }
             }
         } else {
-            val message = if (state.failed && state.stage in setOf("生成 AI 汉化", "测试 AI 翻译", "保存 AI 设置")) state.message else ai.message
-            message?.let { Text(it, color = if (ai.failed || state.failed) C.Error else C.Ink, style = MaterialTheme.typography.bodyMedium) }
             Button({ finishEditing(); confirm = true }, enabled = enabled && hasCredential,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("生成并使用") }
         }

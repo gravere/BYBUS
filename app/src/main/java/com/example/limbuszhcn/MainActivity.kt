@@ -70,6 +70,8 @@ class MainActivity : ComponentActivity() {
             splashScreen.setOnExitAnimationListener { it.remove() }
         }
         enableEdgeToEdge()
+        // Compose lays the detail panel out against IME insets; never let the host pan its header offscreen.
+        window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         if (android.os.Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = false
         getSharedPreferences("limbus_zhcn", MODE_PRIVATE).edit()
             .remove(LEGACY_KEY_RELAY_BASE_URL).remove(LEGACY_KEY_TOKEN)
@@ -232,7 +234,8 @@ class MainActivity : ComponentActivity() {
                                 .onFailure { exportSource.value = null; model.showError(it) } },
                         saveAi = model::saveAi, generateAi = model::generateAi,
                         cancelAi = model::cancelAi, clearKey = model::clearAiKey,
-                        loadModels = model::loadAiModels, clearModels = model::clearAiModels)
+                        loadModels = model::loadAiModels, clearModels = model::clearAiModels,
+                        inspectCoverage = model::inspectCoverage)
                 )
             }
         }

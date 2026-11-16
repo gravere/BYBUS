@@ -42,20 +42,20 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
             val bytes = storage.read(storage.rootPath().trimEnd('/') + "/$key") ?: continue
             totalBytes += bytes.size; require(totalBytes <= 128L * 1024 * 1024) { "本次游戏文本总量超出限制" }
             val raw = bytes.toString(Charsets.UTF_8)
-            val original = parse(raw)
+            val original = TranslationFields.parse(raw)
             val baseline = if (c.missingOnly) originals[key]?.let { entry ->
                 val text = String(Files.readAllBytes(requireNotNull(base).directory.resolve(entry.cachePath)), Charsets.UTF_8)
                 TranslationJsonPairer.mergeWithCoverage("Localize/$key", raw, text)
             } else null
-            val document = baseline?.document ?: parse(raw)
-            val leaves = mutableListOf<Leaf>()
-            collect(original, document, "", key, leaves, 0, baseline)
+            val document = baseline?.document ?: TranslationFields.parse(raw)
+            val leaves = TranslationFields.collect(original, document, key, baseline).filter { !it.covered }
+                .onEach { it.clear() }.filter { it.canTranslate }
             // Coverage is recomputed above. A new base release must not rebill unchanged missing text.
             val cacheKey = digest("${c.endpoint}|${c.model}|$key|${digest(raw)}|${c.missingOnly}")
             val savedFile = root.resolve("cache/$cacheKey.json")
             val saved = if (Files.isRegularFile(savedFile) && Files.size(savedFile) <= 8 * 1024 * 1024)
                 runCatching { JSONObject(String(Files.readAllBytes(savedFile), Charsets.UTF_8)) }.getOrDefault(JSONObject()) else JSONObject()
-            val pending = mutableListOf<Leaf>()
+            val pending = mutableListOf<TranslationField>()
             for (leaf in leaves) {
                 val old = saved.optString(leaf.id)
                 if (old.isNotBlank()) {
@@ -67,7 +67,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
             var cursor = 0
             while (cursor < pending.size && done < c.limit) {
                 checkCancelled()
-                val batch = mutableListOf<Leaf>(); var characters = 0
+                val batch = mutableListOf<TranslationField>(); var characters = 0
                 while (cursor < pending.size && batch.size < 8 && batch.size < c.limit - done) {
                     val leaf = pending[cursor]
                     if (characters + leaf.text.length > 6000 && batch.isNotEmpty()) break
@@ -110,49 +110,6 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
         return AiJobResult(archive, identity, result, remaining)
     }
 
-    private data class Leaf(val id: String, val text: String, val context: String, val apply: (String) -> Unit)
-    private fun collect(original: Any, target: Any, pointer: String, resource: String, result: MutableList<Leaf>,
-        depth: Int, baseline: TranslationJsonPairer.CoveredMerge?, displayArray: Boolean = false) {
-        require(depth <= 64)
-        when {
-            original is JSONObject && target is JSONObject -> original.keys().asSequence().toList().sorted().forEach { field ->
-                val before = original.get(field); val after = target.opt(field)
-                val path = "$pointer/${field.replace("~", "~0").replace("/", "~1")}"
-                if (before is String && after is String && TranslationTextPolicy.isDisplayField(field)) {
-                    if (baseline?.contains(target, field) != true) {
-                        target.remove(field)
-                        leaf(resource, path, before, result) { target.put(field, it) }
-                    }
-                } else if (before is JSONObject || before is JSONArray) if (after != null)
-                    collect(before, after, path, resource, result, depth + 1, baseline, field in TranslationTextPolicy.STRING_ARRAY_FIELDS)
-            }
-            original is JSONArray && target is JSONArray -> {
-                require(original.length() == target.length())
-                for (i in 0 until original.length()) {
-                    val before = original.get(i); val after = target.get(i)
-                    if (displayArray && before is String && after is String) {
-                        if (baseline?.contains(target, i.toString()) != true) {
-                            target.put(i, "") // Keep array length and matching positions.
-                            leaf(resource, "$pointer/$i", before, result) { target.put(i, it) }
-                        }
-                    } else if (before is JSONObject || before is JSONArray)
-                        collect(before, after, "$pointer/$i", resource, result, depth + 1, baseline)
-                }
-            }
-        }
-    }
-    private fun leaf(resource: String, path: String, before: String,
-        result: MutableList<Leaf>, setter: (String) -> Unit) {
-        if (before.isBlank() || before.length > 6000 ||
-            !TranslationTextPolicy.isUsableDisplayText(before) || !before.any { it.isLetter() } ||
-            before.contains(Regex("⟦P[0-9]+⟧"))) return
-        val id = digest("$resource|$path|$before")
-        result += Leaf(id, before, "$resource $path", setter)
-    }
-    private fun parse(text: String): Any {
-        val clean = text.trimStart('\uFEFF', ' ', '\r', '\n', '\t')
-        return if (clean.startsWith('[')) JSONArray(clean) else JSONObject(clean)
-    }
     companion object {
         fun digest(text: String): String = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it.toInt() and 255) }

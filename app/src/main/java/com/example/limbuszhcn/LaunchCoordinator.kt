@@ -29,6 +29,7 @@ import com.example.limbuszhcn.translation.*
 internal data class LauncherUiState(
     val sources: SourceState = SourceState(),
     val ai: AiUiState = AiUiState(),
+    val coverage: CoverageState = CoverageState(),
     val container: ContainerStatus? = null,
     val installedVersion: Long? = null,
     val installedVersionName: String? = null,
@@ -83,6 +84,9 @@ internal class LaunchCoordinator private constructor(application: Application) {
     private val aiSettings by lazy { AiSettingsStore(app) }
     private val aiCancelled = java.util.concurrent.atomic.AtomicBoolean()
     private val modelsWorker = Executors.newSingleThreadExecutor { task -> Thread(task, "bybus-models") }
+    private val aiSettingsWorker = Executors.newSingleThreadExecutor { task -> Thread(task, "bybus-ai-settings") }
+    private val coverageWorker = Executors.newSingleThreadExecutor { task -> Thread(task, "bybus-coverage") }
+    private val coverageRequest = java.util.concurrent.atomic.AtomicLong()
     private var modelsTask: java.util.concurrent.Future<*>? = null
     private val modelsRequest = java.util.concurrent.atomic.AtomicLong()
     private val gameUpdates = GameUpdateSource.entries.associateWith { source ->
@@ -159,10 +163,18 @@ internal class LaunchCoordinator private constructor(application: Application) {
     private fun publishSources(message: String? = null) {
         val sources = translationSources.read().copy(message = message)
         val config = aiSettings.config(); val keyPresent = aiSettings.hasKey()
-        publish { it.copy(sources = sources, ai = it.ai.copy(config = config, hasKey = keyPresent)) }
+        publish {
+            val changed = sources.selected.id != it.sources.selected.id || sources.selected.revision != it.sources.selected.revision ||
+                sources.officialDownloaded != it.sources.officialDownloaded
+            if (changed) coverageRequest.incrementAndGet()
+            it.copy(sources = sources, coverage = if (changed) CoverageState() else it.coverage,
+                ai = it.ai.copy(config = config, hasKey = keyPresent))
+        }
     }
 
     private fun prepareTranslation(patch: ContainerPatchInstaller, repair: Boolean = false): PatchInstallSummary {
+        coverageRequest.incrementAndGet()
+        publish { it.copy(coverage = CoverageState()) }
         val source = translationSources.read().selected
         val result = SourceActivation(translationCache).run(source.id, source.revision.takeUnless { source.isOfficial }) {
             if (!source.isOfficial) {
@@ -285,22 +297,60 @@ internal class LaunchCoordinator private constructor(application: Application) {
         }
     }
 
+    fun inspectCoverage() {
+        if (state.busy || state.coverage.loading) return
+        val request = coverageRequest.incrementAndGet()
+        state = state.copy(coverage = CoverageState(loading = true))
+        coverageWorker.execute {
+            val result = runCatching {
+                val storage = runtime.storage()
+                require(storage.japaneseResources().isNotEmpty()) { "还没有本地游戏文本。请先从 BYBUS 进入游戏完成资源下载，再回来检查。" }
+                val pair = com.example.limbuszhcn.storage.OperationLock.run(app.filesDir.toPath()) {
+                    val source = translationSources.read().selected
+                    val base = if (source.isOfficial) {
+                        val extracted = com.example.limbuszhcn.update.TranslationRepository(translationCache).verifiedForLaunch(null)
+                        PreparedTranslation(extracted.outputDirectory, extracted.manifest)
+                    } else translationSources.prepare(source)
+                    source to base
+                }
+                TranslationCoverage.scan(storage, pair.second, pair.first.name)
+            }
+            publish {
+                if (coverageRequest.get() != request) it else it.copy(coverage = CoverageState(
+                    report = result.getOrNull(), error = result.exceptionOrNull()?.let { error ->
+                        if (error is IllegalArgumentException || error is IllegalStateException) error.message
+                        else "本地文本读取失败，请在资源下载完成后重新检查"
+                    }))
+            }
+        }
+    }
+
     fun clearAiModels() {
         modelsRequest.incrementAndGet(); modelsTask?.cancel(true); modelsTask = null
         state = state.copy(ai = state.ai.copy(models = AiModelsState()))
     }
 
-    fun saveAi(config: AiConfig, key: String, test: Boolean = false) = perform(if (test) "测试 AI 翻译" else "保存 AI 设置") {
-        aiSettings.save(config, key); publishSources()
-        val message = if (test) {
-            val result = AiTranslationClient(config, aiSettings.key()).translate(listOf(AiText("connection", "接続中…")))
-            "连接成功 · ${result.translations.getValue("connection")} · ${result.inputTokens + result.outputTokens} tokens"
-        } else "API 设置已保存"
-        publish { it.copy(ai = it.ai.copy(message = message, failed = false)) }
-        message
+    private fun aiSettingsOperation(label: String, task: () -> String) {
+        if (state.ai.settingsBusy || state.ai.running) return
+        state = state.beginAiSettings(label)
+        aiSettingsWorker.execute {
+            val result = runCatching(task)
+            result.exceptionOrNull()?.let { PersistentDiagnosticLog.error(TAG, label, it) }
+            publish { it.finishAiSettings(result) }
+        }
     }
 
-    fun clearAiKey() = perform("移除 API Key") {
+    fun saveAi(config: AiConfig, key: String, test: Boolean = false) = aiSettingsOperation(if (test) "正在测试翻译" else "正在保存设置") {
+        val settings = config.validated()
+        if (test) {
+            val result = aiSettings.test(settings, key)
+            "测试成功：${result.translations.getValue("connection")}。配置尚未保存，游戏汉化未改变。"
+        } else {
+            aiSettings.save(settings, key); publishSources(); "API 设置已保存"
+        }
+    }
+
+    fun clearAiKey() = aiSettingsOperation("正在移除 Key") {
         aiSettings.clearKey(); publishSources(); "本机 API Key 已移除"
     }
 

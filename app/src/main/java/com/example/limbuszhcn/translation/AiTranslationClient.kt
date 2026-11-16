@@ -111,7 +111,7 @@ internal class ProtectedTranslation(private val original: String) {
         }.toSet()
         require(found.filter { it in structural } == structural.toList()) { "AI 改动了标签或段落顺序" }
         val plain = PLACEHOLDER.replace(text, "")
-        require(!plain.contains(Regex("[<>]|\\{[^}]*}|\\[[A-Za-z][A-Za-z0-9_]*]|[0-9]|[\\r\\n]"))) { "AI 添加了额外格式或数值" }
+        require(!plain.contains(Regex("[<>]|\\{[^}]*\\}|\\[[A-Za-z][A-Za-z0-9_]*\\]|[0-9]|[\\r\\n]"))) { "AI 添加了额外格式或数值" }
         return PLACEHOLDER.replace(text) { m -> parts[m.groupValues[1].toInt()] }
     }
     fun maskTranslated(text: String): String {
@@ -125,6 +125,6 @@ internal class ProtectedTranslation(private val original: String) {
     }
     companion object {
         private val PLACEHOLDER = Regex("⟦P([0-9]+)⟧")
-        private val TOKENS = Regex("<[^>]*>|\\{[^{}]*}|\\[[A-Za-z][A-Za-z0-9_]*]|%(?:[0-9]+\\$)?[-+0 #]*[0-9]*(?:\\.[0-9]+)?[sdif]|[-+]?[0-9]+(?:[.,][0-9]+)*%?|\\\\[nrt]|\\r\\n|[\\n\\r\\t]")
+        private val TOKENS = Regex("<[^>]*>|\\{[^{}]*\\}|\\[[A-Za-z][A-Za-z0-9_]*\\]|%(?:[0-9]+\\$)?[-+0 #]*[0-9]*(?:\\.[0-9]+)?[sdif]|[-+]?[0-9]+(?:[.,][0-9]+)*%?|\\\\[nrt]|\\r\\n|[\\n\\r\\t]")
     }
 }
