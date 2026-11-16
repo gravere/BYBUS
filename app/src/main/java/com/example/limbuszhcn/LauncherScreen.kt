@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalAccessibilityManager
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -64,7 +65,6 @@ internal fun LauncherScreen(
     var parentSheets by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var confirmation by rememberSaveable { mutableStateOf<ConfirmedOperation?>(null) }
     var confirmZeroSource by rememberSaveable { mutableStateOf(false) }
-    var closingHomeDisplay by remember { mutableStateOf(false) }
     var handledUpdatesRequest by rememberSaveable { mutableLongStateOf(0L) }
     var handledPreparationRequest by rememberSaveable { mutableLongStateOf(0L) }
     LaunchedEffect(state.resourcePreparationRequest) {
@@ -85,20 +85,27 @@ internal fun LauncherScreen(
     fun open(page: String) {
         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         parentSheets = emptyList()
-        closingHomeDisplay = false
         sheet = page
     }
     fun openChild(page: String) { sheet?.let { parentSheets = parentSheets + it }; sheet = page }
-    fun close() { parentSheets = emptyList(); sheet = null; closingHomeDisplay = false }
+    fun close() { parentSheets = emptyList(); sheet = null }
+    fun openCoverage() {
+        if (state.coverage.report == null && !state.coverage.loading) translationActions.inspectCoverage()
+        openChild("coverage")
+    }
 
     Surface(Modifier.fillMaxSize(), color = C.Background) {
-        BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
             // Use the space allocated to this window, including split screen.
             // Large text needs a wider column, not a smaller font.
-            val layout = LauncherLayout.calculate(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale)
+            val homeInsets = WindowInsets.systemBars.union(WindowInsets.displayCutout).asPaddingValues()
+            val direction = androidx.compose.ui.platform.LocalLayoutDirection.current
+            val layout = LauncherLayout.calculate((maxWidth - homeInsets.calculateLeftPadding(direction) - homeInsets.calculateRightPadding(direction)).value,
+                (maxHeight - homeInsets.calculateTopPadding() - homeInsets.calculateBottomPadding()).value, LocalDensity.current.fontScale)
             val homeScroll = rememberScrollState()
             Column(Modifier.widthIn(max = layout.contentMaxWidth.dp).fillMaxSize().align(Alignment.TopCenter)
-                .padding(horizontal = layout.margin.dp)) {
+                .padding(homeInsets).padding(horizontal = layout.margin.dp)
+                .then(if (sheet != null) Modifier.clearAndSetSemantics { } else Modifier)) {
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 8.dp).heightIn(min = 56.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     LauncherGlyph(Glyph.Mark, C.Accent, Modifier.size(30.dp))
@@ -124,7 +131,7 @@ internal fun LauncherScreen(
                                 LaunchActions(state, onLaunch, onRefresh, resumed && sheet == null,
                                     onDetails = { open(if (state.failed) "error" else "status") },
                                     modifier = Modifier.width(layout.actionWidth.dp))
-                                HomeProjectCard(state, projectState, homeProjectSourceId, { open("home-display") },
+                                HomeProjectCard(state, projectState, homeProjectSourceId, onHomeProjectSource,
                                     onProject = { open("project") }, onSources = { open("translation") },
                                     onAi = { open("translation"); openChild("ai-translation") },
                                     modifier = Modifier.weight(1f).fillMaxHeight())
@@ -140,7 +147,7 @@ internal fun LauncherScreen(
                             LaunchActions(state, onLaunch, onRefresh, resumed && sheet == null,
                                 onDetails = { open(if (state.failed) "error" else "status") },
                                 modifier = Modifier.widthIn(max = layout.actionWidth.dp).fillMaxWidth())
-                            HomeProjectCard(state, projectState, homeProjectSourceId, { open("home-display") },
+                            HomeProjectCard(state, projectState, homeProjectSourceId, onHomeProjectSource,
                                 onProject = { open("project") }, onSources = { open("translation") },
                                 onAi = { open("translation"); openChild("ai-translation") })
                         }
@@ -151,13 +158,7 @@ internal fun LauncherScreen(
                 }
             }
             sheet?.let { page ->
-                val displayPicker = page == "home-display"
-                val displayScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
-                val detailLayout = if (displayPicker) layout.copy(
-                    panelHeight = minOf(layout.panelHeight, (280f + 76f * state.sources.sources.size) * displayScale),
-                    panelWidth = minOf(layout.panelWidth, 480f * displayScale)) else layout
-                LauncherDetailSurface(detailLayout, page, onDismiss = ::close,
-                    animatedPresentation = displayPicker, closeRequested = displayPicker && closingHomeDisplay,
+                LauncherDetailSurface(layout, page, onDismiss = ::close,
                     onBack = parentSheets.lastOrNull()?.let { parent -> { sheet = parent; parentSheets = parentSheets.dropLast(1) } },
                     footer = { active -> when (active) {
                         "app-update" -> AppUpdateControls(appUpdateState, state, onDownloadAppUpdate, onInstallAppUpdate, onCancelAppUpdate, layout.detailPadding.dp)
@@ -167,11 +168,8 @@ internal fun LauncherScreen(
                             horizontalPadding = layout.detailPadding.dp, action = "使用此汉化源",
                             actionEnabled = !state.busy, onAction = { confirmZeroSource = true })
                     } }) { active ->
-                    if (active == "home-display") {
-                        HomeProjectDisplayPane(state.sources, homeProjectSourceId, !closingHomeDisplay) { id ->
-                            onHomeProjectSource(id)
-                            closingHomeDisplay = true
-                        }
+                    if (active == "coverage") {
+                        TranslationCoveragePane(state, translationActions.inspectCoverage)
                     } else if (active == "repair") {
                         RepairPane(state, { confirmation = ConfirmedOperation.Repair }, onExport)
                     } else if (active == "clear-data") {
@@ -189,9 +187,9 @@ internal fun LauncherScreen(
                     } else if (active == "app-update") {
                         AppUpdatesPane(appUpdateState, onCheckAppUpdate, onOpenAppRelease)
                     } else if (active == "translation") {
-                        TranslationSourcesPane(state, translationActions, onProject = { openChild("project") }) { openChild("ai-translation") }
+                        TranslationSourcesPane(state, translationActions, onProject = { openChild("project") }, onCoverage = ::openCoverage) { openChild("ai-translation") }
                     } else if (active == "ai-translation") {
-                        AiTranslationPane(state, translationActions)
+                        AiTranslationPane(state, translationActions, onCoverage = ::openCoverage)
                     } else {
                         LauncherDetails(active, state, onGameStore = { openChild("updates") },
                             appUpdateAvailable = appUpdateState.updateAvailable,
