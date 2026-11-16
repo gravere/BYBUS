@@ -29,27 +29,32 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.example.limbuszhcn.translation.AiConfig
+import com.example.limbuszhcn.translation.AiScope
 import com.example.limbuszhcn.translation.normalizedAiEndpoint
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
 @Composable
-internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActions, onCoverage: () -> Unit = {}) {
+internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActions, onCoverage: () -> Unit = {}, requestedScope: AiScope? = null) {
     val ai = state.ai
     var endpoint by remember(ai.config.endpoint) { mutableStateOf(ai.config.endpoint) }
     var model by remember(ai.config.model) { mutableStateOf(ai.config.model) }
-    var missing by remember(ai.config.missingOnly) { mutableStateOf(ai.config.missingOnly) }
+    var missing by remember(ai.config.missingOnly, requestedScope) { mutableStateOf(requestedScope != null || ai.config.missingOnly) }
+    var scope by remember(ai.config.includeMissing, ai.config.includeReview, requestedScope) {
+        mutableStateOf(requestedScope ?: if (ai.config.includeReview) if (ai.config.includeMissing) AiScope.Both else AiScope.Review else AiScope.Missing)
+    }
     var limit by remember(ai.config.limit) { mutableIntStateOf(ai.config.limit) }
     // Never saved in a Bundle or ViewModel; the persisted value is encrypted separately.
     var key by remember { mutableStateOf("") }
     var reveal by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf(false) }
     var clear by remember { mutableStateOf(false) }
+    var undo by remember { mutableStateOf(false) }
     var showModels by remember { mutableStateOf(false) }
     var search by remember { mutableStateOf("") }
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     fun finishEditing() { focus.clearFocus(); keyboard?.hide() }
-    fun config() = AiConfig(endpoint.trim(), model.trim(), missing, limit)
+    fun config() = AiConfig(endpoint.trim(), model.trim(), missing, limit, scope.missing, scope.review)
     val enabled = !state.busy && !ai.settingsBusy && !ai.running
     val savedKeyAvailable = ai.hasKey && runCatching {
         normalizedAiEndpoint(endpoint) == normalizedAiEndpoint(ai.config.endpoint)
@@ -129,7 +134,12 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
         }
         DetailCard {
             Text("翻译方式", style = MaterialTheme.typography.titleSmall)
-            SourceTabs(listOf(true, false), missing, { if (it) "补全缺失" else "独立翻译" }, "翻译方式", { if (enabled) missing = it })
+            SourceTabs(listOf(true, false), missing, { if (it) "补充当前汉化" else "独立翻译" }, "翻译方式", { if (enabled) missing = it })
+            if (missing) {
+                Text("处理范围", style = MaterialTheme.typography.titleSmall)
+                SourceTabs(AiScope.entries.toList(), scope, { it.label }, "处理范围", { if (enabled) scope = it })
+                if (scope.review) Text("待核对不一定是漏译，请先查看原文与现有译文。处理结果另存，原包保留。", style = MaterialTheme.typography.bodySmall, color = C.Muted)
+            }
             Text("单次最多翻译", style = MaterialTheme.typography.titleSmall)
             SourceTabs(listOf(100, 500, 1000), limit, { "$it 条" }, "翻译上限", { if (enabled) limit = it })
             Text("按已下载的游戏文本分批处理。测试和翻译会使用你的 API 额度，已完成的译文会保留。",
@@ -145,15 +155,21 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
             Button({ finishEditing(); confirm = true }, enabled = enabled && hasCredential,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("生成并使用") }
         }
+        if (state.sources.undo != null) OutlinedButton({ finishEditing(); undo = true }, enabled = enabled,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("撤回上次 AI 生成") }
     }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("开始 AI 翻译？") },
-        text = { Text("将关闭游戏，并向你配置的 API 发送游戏文本。本批最多处理 $limit 条，费用由服务商计入你的账户。生成的汉化独立保存，账号和原汉化包会保留。") },
+        text = { Text("将关闭游戏，处理${if (missing) scope.label else "全部"}文本，本批最多 $limit 条。文本会发送到你配置的 API，费用计入你的账户。原汉化包保留，生成后可撤回。") },
         confirmButton = { TextButton({ confirm = false; val value = key; key = ""; reveal = false; actions.generateAi(config(), value) }, enabled = enabled) { Text("开始翻译") } },
         dismissButton = { TextButton({ confirm = false }) { Text("取消") } })
     if (clear) AlertDialog(onDismissRequest = { clear = false }, title = { Text("移除 API Key？") },
         text = { Text("已生成的译文会保留。再次使用 API 时需要重新填写 Key。") },
         confirmButton = { TextButton({ clear = false; key = ""; reveal = false; actions.clearModels(); actions.clearKey() }, enabled = enabled) { Text("移除") } },
         dismissButton = { TextButton({ clear = false }) { Text("取消") } })
+    if (undo) AlertDialog(onDismissRequest = { undo = false }, title = { Text("撤回上次 AI 生成？") },
+        text = { Text("将关闭游戏，恢复上次生成前的汉化和来源选择。游戏资源、账号与 API 设置会保留；已产生的 API 费用不会返还。") },
+        confirmButton = { TextButton({ undo = false; actions.undoAi() }, enabled = enabled) { Text("撤回") } },
+        dismissButton = { TextButton({ undo = false }) { Text("取消") } })
 }
 
 @Composable

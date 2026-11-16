@@ -20,9 +20,13 @@ internal data class TranslationSource(val id: String, val name: String, val kind
 }
 
 internal data class SourceState(val sources: List<TranslationSource> = listOf(TranslationSources.OFFICIAL),
-    val selectedId: String = "zero", val message: String? = null, val officialDownloaded: Boolean = false) {
+    val selectedId: String = "zero", val message: String? = null, val officialDownloaded: Boolean = false,
+    val undo: AiUndoPoint? = null) {
     val selected get() = sources.firstOrNull { it.id == selectedId } ?: TranslationSources.OFFICIAL
 }
+
+internal data class AiUndoPoint(val sourceId: String, val generatedRevision: String,
+    val previous: TranslationSource?, val previousSelectedId: String)
 
 internal data class PreparedTranslation(val directory: Path, val manifest: PatchManifest)
 
@@ -50,13 +54,27 @@ internal class TranslationSources(val cache: Path) {
         val all = listOf(OFFICIAL.copy(icon = json.optString("officialIcon").takeIf(String::isNotBlank))) + sources
         val selected = json.optString("selected", "zero")
         require(all.any { it.id == selected }) { "选中的汉化源已不存在，请重新选择" }
-        return SourceState(all, selected, officialDownloaded = downloaded)
+        val undo = json.optJSONObject("aiUndo")?.let { point -> runCatching {
+            val id = point.getString("sourceId"); val revision = point.getString("generatedRevision")
+            require(all.any { it.id == id && it.kind == "ai" && it.revision == revision })
+            val previous = point.optJSONObject("previous")?.let { old ->
+                require(old.getString("id") == id)
+                TranslationSource(id, cleanName(old.getString("name")), old.getString("kind"),
+                    old.getString("revision"), old.getString("archive"), old.optString("icon").takeIf(String::isNotBlank),
+                    old.optString("baseId").takeIf(String::isNotBlank), old.optLong("updatedAtMillis"), old.optInt("textFileCount"))
+            }
+            AiUndoPoint(id, revision, previous, point.getString("previousSelectedId"))
+        }.getOrNull() }
+        return SourceState(all, selected, officialDownloaded = downloaded, undo = undo)
     }
 
     private fun save(state: SourceState) {
         Files.createDirectories(root)
         val json = JSONObject().put("selected", state.selectedId)
             .put("officialIcon", state.sources.first().icon.orEmpty())
+            .put("aiUndo", state.undo?.let { point -> JSONObject().put("sourceId", point.sourceId)
+                .put("generatedRevision", point.generatedRevision).put("previousSelectedId", point.previousSelectedId)
+                .put("previous", point.previous?.let(::sourceJson)) })
             .put("sources", JSONArray().apply { state.sources.filterNot { it.isOfficial }.forEach { s ->
                 put(JSONObject().put("id", s.id).put("name", s.name).put("kind", s.kind)
                     .put("revision", s.revision).put("archive", s.archive).put("icon", s.icon.orEmpty())
@@ -65,6 +83,10 @@ internal class TranslationSources(val cache: Path) {
             } })
         writeAtomic(registry, json.toString())
     }
+
+    private fun sourceJson(s: TranslationSource) = JSONObject().put("id", s.id).put("name", s.name).put("kind", s.kind)
+        .put("revision", s.revision).put("archive", s.archive).put("icon", s.icon.orEmpty())
+        .put("baseId", s.baseId.orEmpty()).put("updatedAtMillis", s.updatedAtMillis).put("textFileCount", s.textFileCount)
 
     fun select(id: String): SourceState = read().let { state ->
         require(state.sources.any { it.id == id }) { "汉化源不存在" }
@@ -118,7 +140,9 @@ internal class TranslationSources(val cache: Path) {
                 updatedAtMillis = System.currentTimeMillis(), textFileCount = prepared.manifest.entries.size)
             val sources = if (previous == null) state.sources + source
                 else state.sources.map { if (it.id == source.id) source else it }
-            save(state.copy(sources = sources, selectedId = source.id))
+            val undo = if (generatedId != null) AiUndoPoint(source.id, source.revision, previous, state.selectedId)
+                else state.undo?.takeUnless { it.sourceId == source.id }
+            save(state.copy(sources = sources, selectedId = source.id, undo = undo))
             return source
         } finally { Files.deleteIfExists(staged) }
     }
@@ -137,10 +161,28 @@ internal class TranslationSources(val cache: Path) {
         return Files.newInputStream(archive).use { importArchive(it, name, previous?.id, id, baseId) }
     }
 
+    fun undoGenerated(): SourceState {
+        val state = read(); val point = requireNotNull(state.undo) { "没有可撤回的 AI 生成" }
+        val current = state.sources.first { it.id == point.sourceId }
+        val restored = point.previous?.let { old ->
+            prepare(old) // Validate the retained archive before changing the live registry.
+            old.copy(name = current.name, icon = current.icon)
+        }
+        val sources = state.sources.mapNotNull { if (it.id == point.sourceId) restored else it }
+        val selected = point.previousSelectedId.takeIf { id -> sources.any { it.id == id } }
+            ?: current.baseId?.takeIf { id -> sources.any { it.id == id } } ?: "zero"
+        val next = state.copy(sources = sources, selectedId = selected, undo = null)
+        save(next)
+        if (restored == null) Files.deleteIfExists(root.resolve("icons/${point.sourceId}.png"))
+        return next
+    }
+
     /** Run only after a successful activation, while the operation lock excludes game launch. */
     fun pruneUnused() {
         if (Files.exists(cache.resolve(".source-switch/ready"))) return
-        val retained = read().sources.map { it.revision }.toMutableSet()
+        val state = read()
+        val retained = state.sources.map { it.revision }.toMutableSet()
+        state.undo?.previous?.revision?.let(retained::add)
         com.example.limbuszhcn.container.LiveTranslationStore(cache).read()?.archive?.let(retained::add)
         val indexes = com.example.limbuszhcn.container.TranslationIndexStore(cache.resolve("translation-index"))
         listOfNotNull(indexes.activeManifest(), indexes.bootstrapManifest()).forEach {
@@ -163,11 +205,12 @@ internal class TranslationSources(val cache: Path) {
         require(id != "zero") { "默认汉化源不能删除" }
         val state = read(); require(state.sources.any { it.id == id })
         val remaining = state.sources.filterNot { it.id == id }
-        val next = state.copy(sources = remaining, selectedId = if (state.selectedId == id) "zero" else state.selectedId)
+        val next = state.copy(sources = remaining, selectedId = if (state.selectedId == id) "zero" else state.selectedId,
+            undo = state.undo?.takeUnless { it.sourceId == id })
         save(next) // Detach before deleting disposable resources.
         Files.deleteIfExists(root.resolve("icons/$id.png"))
         val removed = state.sources.first { it.id == id }
-        if (removed.archive.isNotEmpty() && remaining.none { it.archive == removed.archive } &&
+        if (removed.archive.isNotEmpty() && remaining.none { it.archive == removed.archive } && next.undo?.previous?.archive != removed.archive &&
             removed.archive.matches(Regex("[a-f0-9]{64}\\.pack"))) Files.deleteIfExists(archives.resolve(removed.archive))
         return next
     }

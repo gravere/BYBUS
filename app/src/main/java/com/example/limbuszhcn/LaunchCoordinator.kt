@@ -313,7 +313,10 @@ internal class LaunchCoordinator private constructor(application: Application) {
                     } else translationSources.prepare(source)
                     source to base
                 }
-                TranslationCoverage.scan(storage, pair.second, pair.first.name)
+                TranslationCoverage.scan(storage, pair.second, pair.first.name).also { report ->
+                    PersistentDiagnosticLog.info(TAG, "Coverage files=${report.files} total=${report.total} covered=${report.covered} " +
+                        "missing=${report.missing} review=${report.review} shared=${report.shared} excluded=${report.excluded} unreadable=${report.unreadable}")
+                }
             }
             publish {
                 if (coverageRequest.get() != request) it else it.copy(coverage = CoverageState(
@@ -331,7 +334,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
     }
 
     private fun aiSettingsOperation(label: String, task: () -> String) {
-        if (state.ai.settingsBusy || state.ai.running) return
+        if (state.busy || state.ai.settingsBusy || state.ai.running) return
         state = state.beginAiSettings(label)
         aiSettingsWorker.execute {
             val result = runCatching(task)
@@ -362,12 +365,8 @@ internal class LaunchCoordinator private constructor(application: Application) {
         publish { it.copy(ai = it.ai.copy(running = true, failed = false, message = "正在读取游戏原文", progress = AiProgress())) }
         try {
             val selected = translationSources.read().selected
-            val base = if (selected.kind == "ai") {
-                translationSources.read().sources.find { it.id == selected.baseId } ?: run {
-                    require(!config.missingOnly) { "原汉化源已删除，请先选择需要补全的汉化源" }
-                    TranslationSources.OFFICIAL
-                }
-            } else selected
+            // Continuing a generated source must preserve its previous translated batches.
+            val base = selected
             val prepared = if (config.missingOnly) {
                 if (base.isOfficial) {
                     val repository = com.example.limbuszhcn.update.TranslationRepository(translationCache, github::releaseForLaunch)
@@ -381,12 +380,12 @@ internal class LaunchCoordinator private constructor(application: Application) {
             val result = AiTranslationJob(translationCache, runtime.storage(), config,
                 AiTranslationClient(config, aiSettings.key()), aiCancelled::get) { progress ->
                 publish { it.copy(ai = it.ai.copy(progress = progress, message = progress.message)) }
-            }.run(base.id, prepared)
-            translationSources.addGenerated(result.archive, base.id, result.identity,
+            }.run(base.baseId ?: base.id, prepared, base.id.takeIf { base.kind == "ai" }?.removePrefix("ai-"))
+            if (result.progress.completed + result.progress.reused > 0) translationSources.addGenerated(result.archive, base.baseId ?: base.id, result.identity,
                 if (config.missingOnly) "${base.name.take(48)} · AI 补全" else "AI 汉化")
             publish { it.copy(translation = null, resourcePreparation = null,
                 ai = it.ai.copy(running = false, message = result.progress.message, progress = result.progress)) }
-            publishSources("AI 汉化已保存，下次启动加载")
+            publishSources(if (result.progress.completed + result.progress.reused > 0) "AI 汉化已保存，可撤回上次生成" else "所选范围没有需要 AI 处理的文本")
             result.progress.message
         } catch (e: Exception) {
             val cancelled = e is java.util.concurrent.CancellationException
@@ -394,6 +393,17 @@ internal class LaunchCoordinator private constructor(application: Application) {
                 message = if (cancelled) "已暂停，继续时会复用已完成的译文" else "翻译未完成：${e.userMessage()}")) }
             if (cancelled) "已暂停，译文缓存已保留" else throw e
         }
+    }
+
+    fun undoAi() = perform("撤回 AI 翻译") {
+        require(!state.ai.running) { "请先暂停翻译" }
+        stopGame()
+        translationSources.undoGenerated()
+        preparationPreferences.edit().remove("pending").apply()
+        publish { it.copy(translation = null, resourcePreparation = null,
+            ai = it.ai.copy(progress = AiProgress(), failed = false, message = "已撤回上次生成，下次启动使用恢复的汉化")) }
+        publishSources("已恢复上次生成前的汉化")
+        "已撤回上次 AI 生成"
     }
 
     fun checkGameUpdate(force: Boolean = false) {

@@ -21,16 +21,18 @@ internal data class AiJobResult(val archive: Path, val identity: String, val pro
 internal class AiTranslationJob(private val cache: Path, private val storage: GameStorage,
     private val config: AiConfig, private val client: AiTranslationClient,
     private val cancelled: () -> Boolean = { false }, private val progress: (AiProgress) -> Unit = {}) {
-    fun run(baseId: String, base: PreparedTranslation?): AiJobResult {
+    fun run(baseId: String, base: PreparedTranslation?, identityOverride: String? = null): AiJobResult {
         val resources = storage.japaneseResources()
         require(resources.isNotEmpty()) { "尚无可翻译的游戏原文，请先进入游戏完成资源下载，再回来生成 AI 汉化" }
         val c = config.validated()
-        val identity = digest("v1|$baseId|${c.endpoint}|${c.model}|${c.missingOnly}").take(32)
+        val identity = identityOverride ?: digest("v1|$baseId|${c.endpoint}|${c.model}|${c.missingOnly}").take(32)
+        require(identity.matches(Regex("[a-f0-9]{32}")))
         val root = cache.resolve("ai-jobs/$identity"); Files.createDirectories(root)
         val output = root.resolve("output")
         if (Files.exists(output)) AtomicFiles.deleteOwnedTree(root, output)
         Files.createDirectories(output)
         val originals = base?.manifest?.entries?.associateBy { resourceKey(it.targetPath) }.orEmpty()
+        val shared = if (c.missingOnly) TranslationInspection(storage, base, cancelled).sharedTranslations() else emptyMap()
         if (c.missingOnly && base != null) for ((key, entry) in originals) {
             val target = output.resolve(key); Files.createDirectories(target.parent)
             Files.copy(base.directory.resolve(entry.cachePath), target, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
@@ -48,8 +50,16 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
                 TranslationJsonPairer.mergeWithCoverage("Localize/$key", raw, text)
             } else null
             val document = baseline?.document ?: TranslationFields.parse(raw)
-            val leaves = TranslationFields.collect(original, document, key, baseline).filter { !it.covered }
-                .onEach { it.clear() }.filter { it.canTranslate }
+            val fields = TranslationFields.collect(original, document, key, baseline)
+            val leaves = fields.filter { leaf ->
+                if (!leaf.covered) {
+                    val publicText = shared[leaf.text]
+                    if (publicText != null) leaf.apply(publicText) else leaf.clear()
+                    leaf.canTranslate && (!c.missingOnly ||
+                        (publicText == null && c.includeMissing) ||
+                        (publicText != null && c.includeReview && TranslationFields.hasResidualLanguage(publicText)))
+                } else leaf.canTranslate && c.includeReview && leaf.needsReview
+            }
             // Coverage is recomputed above. A new base release must not rebill unchanged missing text.
             val cacheKey = digest("${c.endpoint}|${c.model}|$key|${digest(raw)}|${c.missingOnly}")
             val savedFile = root.resolve("cache/$cacheKey.json")
@@ -57,7 +67,8 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
                 runCatching { JSONObject(String(Files.readAllBytes(savedFile), Charsets.UTF_8)) }.getOrDefault(JSONObject()) else JSONObject()
             val pending = mutableListOf<TranslationField>()
             for (leaf in leaves) {
-                val old = saved.optString(leaf.id)
+                val savedId = if (leaf.covered) leaf.id + "-" + digest(leaf.translated.orEmpty()).take(16) else leaf.id
+                val old = saved.optString(savedId)
                 if (old.isNotBlank()) {
                     val validated = runCatching { ProtectedTranslation(leaf.text).restore(old) }.getOrNull()
                     if (validated != null) { leaf.apply(validated); reused++; continue }
@@ -79,7 +90,8 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
                     val value = result.translations.getValue(leaf.id)
                     leaf.apply(value)
                     // Store the protected form so reading cache applies the same validator.
-                    saved.put(leaf.id, protectTranslated(leaf.text, value))
+                    val savedId = if (leaf.covered) leaf.id + "-" + digest(leaf.translated.orEmpty()).take(16) else leaf.id
+                    saved.put(savedId, protectTranslated(leaf.text, value))
                 }
                 TranslationSources.writeAtomic(savedFile, saved.toString())
                 done += batch.size; input += result.inputTokens; tokens += result.outputTokens
@@ -105,7 +117,8 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
             AtomicFiles.move(pendingArchive, archive, true)
         } finally { Files.deleteIfExists(pendingArchive) }
         val result = AiProgress(done, c.limit, reused, input, tokens,
-            if (remaining > 0) "本批完成，还有 $remaining 条可继续翻译" else "翻译完成，下次启动时加载")
+            if (done + reused == 0) "所选范围没有需要 AI 处理的文本"
+            else if (remaining > 0) "本批完成，还有 $remaining 条可继续翻译" else "翻译完成，下次启动时加载")
         progress(result)
         return AiJobResult(archive, identity, result, remaining)
     }
