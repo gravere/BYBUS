@@ -64,6 +64,7 @@ internal fun LauncherScreen(
     var parentSheets by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var confirmation by rememberSaveable { mutableStateOf<ConfirmedOperation?>(null) }
     var confirmZeroSource by rememberSaveable { mutableStateOf(false) }
+    var closingHomeDisplay by remember { mutableStateOf(false) }
     var handledUpdatesRequest by rememberSaveable { mutableLongStateOf(0L) }
     var handledPreparationRequest by rememberSaveable { mutableLongStateOf(0L) }
     LaunchedEffect(state.resourcePreparationRequest) {
@@ -84,10 +85,11 @@ internal fun LauncherScreen(
     fun open(page: String) {
         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         parentSheets = emptyList()
+        closingHomeDisplay = false
         sheet = page
     }
     fun openChild(page: String) { sheet?.let { parentSheets = parentSheets + it }; sheet = page }
-    fun close() { parentSheets = emptyList(); sheet = null }
+    fun close() { parentSheets = emptyList(); sheet = null; closingHomeDisplay = false }
 
     Surface(Modifier.fillMaxSize(), color = C.Background) {
         BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
@@ -122,7 +124,7 @@ internal fun LauncherScreen(
                                 LaunchActions(state, onLaunch, onRefresh, resumed && sheet == null,
                                     onDetails = { open(if (state.failed) "error" else "status") },
                                     modifier = Modifier.width(layout.actionWidth.dp))
-                                HomeProjectCard(state, projectState, homeProjectSourceId, onHomeProjectSource,
+                                HomeProjectCard(state, projectState, homeProjectSourceId, { open("home-display") },
                                     onProject = { open("project") }, onSources = { open("translation") },
                                     onAi = { open("translation"); openChild("ai-translation") },
                                     modifier = Modifier.weight(1f).fillMaxHeight())
@@ -138,7 +140,7 @@ internal fun LauncherScreen(
                             LaunchActions(state, onLaunch, onRefresh, resumed && sheet == null,
                                 onDetails = { open(if (state.failed) "error" else "status") },
                                 modifier = Modifier.widthIn(max = layout.actionWidth.dp).fillMaxWidth())
-                            HomeProjectCard(state, projectState, homeProjectSourceId, onHomeProjectSource,
+                            HomeProjectCard(state, projectState, homeProjectSourceId, { open("home-display") },
                                 onProject = { open("project") }, onSources = { open("translation") },
                                 onAi = { open("translation"); openChild("ai-translation") })
                         }
@@ -149,7 +151,13 @@ internal fun LauncherScreen(
                 }
             }
             sheet?.let { page ->
-                LauncherDetailSurface(layout, page, onDismiss = ::close,
+                val displayPicker = page == "home-display"
+                val displayScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
+                val detailLayout = if (displayPicker) layout.copy(
+                    panelHeight = minOf(layout.panelHeight, (280f + 76f * state.sources.sources.size) * displayScale),
+                    panelWidth = minOf(layout.panelWidth, 480f * displayScale)) else layout
+                LauncherDetailSurface(detailLayout, page, onDismiss = ::close,
+                    animatedPresentation = displayPicker, closeRequested = displayPicker && closingHomeDisplay,
                     onBack = parentSheets.lastOrNull()?.let { parent -> { sheet = parent; parentSheets = parentSheets.dropLast(1) } },
                     footer = { active -> when (active) {
                         "app-update" -> AppUpdateControls(appUpdateState, state, onDownloadAppUpdate, onInstallAppUpdate, onCancelAppUpdate, layout.detailPadding.dp)
@@ -159,7 +167,12 @@ internal fun LauncherScreen(
                             horizontalPadding = layout.detailPadding.dp, action = "使用此汉化源",
                             actionEnabled = !state.busy, onAction = { confirmZeroSource = true })
                     } }) { active ->
-                    if (active == "repair") {
+                    if (active == "home-display") {
+                        HomeProjectDisplayPane(state.sources, homeProjectSourceId, !closingHomeDisplay) { id ->
+                            onHomeProjectSource(id)
+                            closingHomeDisplay = true
+                        }
+                    } else if (active == "repair") {
                         RepairPane(state, { confirmation = ConfirmedOperation.Repair }, onExport)
                     } else if (active == "clear-data") {
                         ClearDataPane(state) { confirmation = ConfirmedOperation.ClearResources }

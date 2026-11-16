@@ -92,6 +92,8 @@ internal class LauncherViewModel(application: Application) : AndroidViewModel(ap
     fun saveAi(config: com.example.limbuszhcn.translation.AiConfig, key: String, test: Boolean) = coordinator.saveAi(config, key, test)
     fun generateAi(config: com.example.limbuszhcn.translation.AiConfig, key: String) = coordinator.generateAi(config, key)
     fun cancelAi() = coordinator.cancelAi()
+    fun loadAiModels(endpoint: String, key: String) = coordinator.loadAiModels(endpoint, key)
+    fun clearAiModels() = coordinator.clearAiModels()
     fun clearAiKey() = coordinator.clearAiKey()
     fun checkGameUpdate() = coordinator.checkGameUpdate(force = true)
     fun requestGameUpdates() = coordinator.requestGameUpdates()
