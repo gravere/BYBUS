@@ -65,6 +65,7 @@ internal fun LauncherScreen(
     var parentSheets by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var confirmation by rememberSaveable { mutableStateOf<ConfirmedOperation?>(null) }
     var confirmZeroSource by rememberSaveable { mutableStateOf(false) }
+    var requestedAiScope by remember { mutableStateOf<com.example.limbuszhcn.translation.AiScope?>(null) }
     var handledUpdatesRequest by rememberSaveable { mutableLongStateOf(0L) }
     var handledPreparationRequest by rememberSaveable { mutableLongStateOf(0L) }
     LaunchedEffect(state.resourcePreparationRequest) {
@@ -133,7 +134,7 @@ internal fun LauncherScreen(
                                     modifier = Modifier.width(layout.actionWidth.dp))
                                 HomeProjectCard(state, projectState, homeProjectSourceId, onHomeProjectSource,
                                     onProject = { open("project") }, onSources = { open("translation") },
-                                    onAi = { open("translation"); openChild("ai-translation") },
+                                    onAi = { requestedAiScope = null; open("translation"); openChild("ai-translation") },
                                     modifier = Modifier.weight(1f).fillMaxHeight())
                             }
                         }
@@ -149,7 +150,7 @@ internal fun LauncherScreen(
                                 modifier = Modifier.widthIn(max = layout.actionWidth.dp).fillMaxWidth())
                             HomeProjectCard(state, projectState, homeProjectSourceId, onHomeProjectSource,
                                 onProject = { open("project") }, onSources = { open("translation") },
-                                onAi = { open("translation"); openChild("ai-translation") })
+                                onAi = { requestedAiScope = null; open("translation"); openChild("ai-translation") })
                         }
                     }
                 }
@@ -169,7 +170,9 @@ internal fun LauncherScreen(
                             actionEnabled = !state.busy, onAction = { confirmZeroSource = true })
                     } }) { active ->
                     if (active == "coverage") {
-                        TranslationCoveragePane(state, translationActions.inspectCoverage)
+                        TranslationCoveragePane(state, translationActions.inspectCoverage) { scope ->
+                            requestedAiScope = scope; openChild("ai-translation")
+                        }
                     } else if (active == "repair") {
                         RepairPane(state, { confirmation = ConfirmedOperation.Repair }, onExport)
                     } else if (active == "clear-data") {
@@ -187,9 +190,11 @@ internal fun LauncherScreen(
                     } else if (active == "app-update") {
                         AppUpdatesPane(appUpdateState, onCheckAppUpdate, onOpenAppRelease)
                     } else if (active == "translation") {
-                        TranslationSourcesPane(state, translationActions, onProject = { openChild("project") }, onCoverage = ::openCoverage) { openChild("ai-translation") }
+                        TranslationSourcesPane(state, translationActions, onProject = { openChild("project") }, onCoverage = ::openCoverage) {
+                            requestedAiScope = null; openChild("ai-translation")
+                        }
                     } else if (active == "ai-translation") {
-                        AiTranslationPane(state, translationActions, onCoverage = ::openCoverage)
+                        AiTranslationPane(state, translationActions, onCoverage = ::openCoverage, requestedScope = requestedAiScope)
                     } else {
                         LauncherDetails(active, state, onGameStore = { openChild("updates") },
                             appUpdateAvailable = appUpdateState.updateAvailable,

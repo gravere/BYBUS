@@ -1,21 +1,23 @@
 package com.example.limbuszhcn
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import com.example.limbuszhcn.translation.AiScope
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
 @Composable
 internal fun CoverageSummary(state: LauncherUiState, onOpen: () -> Unit) {
-    val coverage = state.coverage
-    val report = coverage.report
+    val coverage = state.coverage; val report = coverage.report
     DetailCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -32,60 +34,104 @@ internal fun CoverageSummary(state: LauncherUiState, onOpen: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun TranslationCoveragePane(state: LauncherUiState, onCheck: () -> Unit) {
-    val coverage = state.coverage
-    val report = coverage.report
-    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+internal fun TranslationCoveragePane(state: LauncherUiState, onCheck: () -> Unit, onTranslate: (AiScope) -> Unit = {}) {
+    val coverage = state.coverage; val report = coverage.report
+    var expanded by remember(report?.checkedAt) { mutableStateOf<String?>(null) }
+    var page by remember(report?.checkedAt, expanded) { mutableIntStateOf(0) }
+    var scope by remember { mutableStateOf(AiScope.Missing) }
+    LaunchedEffect(report?.checkedAt) { if (report != null && report.aiEligible == 0 && report.reviewEligible > 0) scope = AiScope.Review }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         DetailCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(report?.sourceName ?: state.sources.selected.name, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                TextButton(onCheck, enabled = !coverage.loading && !state.busy) {
-                    if (coverage.loading) LauncherSpinner(Modifier.size(16.dp)) else LauncherGlyph(Glyph.Refresh, C.Accent, Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp));Text(if (coverage.loading) "检查中" else "重新检查")
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(report?.sourceName ?: state.sources.selected.name, style = MaterialTheme.typography.titleMedium)
+                    if (report != null) Text(DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.systemDefault())
+                        .format(Instant.ofEpochMilli(report.checkedAt)), style = MaterialTheme.typography.labelSmall, color = C.Muted)
+                }
+                IconButton(onCheck, enabled = !coverage.loading && !state.busy) {
+                    if (coverage.loading) LauncherSpinner(Modifier.size(20.dp))
+                    else LauncherGlyph(Glyph.Refresh, C.Accent, Modifier.size(22.dp), "重新检查")
                 }
             }
-            Text("对照当前汉化包与本机已下载的游戏文本，不使用 API 额度。", color = C.Muted, style = MaterialTheme.typography.bodySmall)
             coverage.error?.let { Text(it, color = C.Error, style = MaterialTheme.typography.bodyMedium) }
             if (coverage.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (report != null) {
-                Text("${report.total} 条文本中，${report.covered} 条已有对应译文", style = MaterialTheme.typography.bodyMedium)
-                Text("未覆盖 ${report.missing} 条，其中 ${report.aiEligible} 条可用 AI 补全；另有 ${report.review} 条译文仍含日韩文，建议核对。",
-                    style = MaterialTheme.typography.bodyMedium)
-                if (report.unreadable > 0) Text("${report.unreadable} 个文件未能读取，尚未计入结果。", color = C.Error, style = MaterialTheme.typography.bodySmall)
-                Text("检查于 " + DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(report.checkedAt)),
-                    color = C.Muted, style = MaterialTheme.typography.labelSmall)
+                Text("已对照 ${report.total} 条本地文本", style = MaterialTheme.typography.bodyMedium)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CoverageMetric("已覆盖", report.covered)
+                    CoverageMetric("未覆盖", report.missing)
+                    CoverageMetric("待核对", report.review)
+                }
+                if (report.shared > 0 || report.excluded > 0) Text("公共译文覆盖 ${report.shared} 条 · 已排除内部备注及未使用文本 ${report.excluded} 条",
+                    style = MaterialTheme.typography.bodySmall)
+                if (report.unreadable > 0) Text("${report.unreadable} 个文件未能读取，未计入结果。", color = C.Error, style = MaterialTheme.typography.bodySmall)
+                Text("未覆盖表示本地未找到可用译文；待核对表示可能仍含原文。未下载内容不计入。", style = MaterialTheme.typography.bodySmall)
             }
         }
         if (report != null) {
+            if (report.aiEligible + report.reviewEligible > 0) DetailCard {
+                Text("交给 AI 处理", style = MaterialTheme.typography.titleSmall)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AiScope.entries.forEach { item ->
+                        val count = (if (item.missing) report.aiEligible else 0) + (if (item.review) report.reviewEligible else 0)
+                        FilterChip(scope == item, { scope = item }, enabled = !coverage.loading && !state.busy && count > 0,
+                            label = { Text("${item.label} $count") })
+                    }
+                }
+                val count = (if (scope.missing) report.aiEligible else 0) + (if (scope.review) report.reviewEligible else 0)
+                FilledTonalButton({ onTranslate(scope) }, enabled = count > 0 && !coverage.loading && !state.busy,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("选择模型并确认") }
+            }
             if (report.details.isEmpty()) DetailCard { Text(if (report.unreadable == 0) "本次本地检查没有发现未覆盖文本。" else "已读文件未发现缺失，仍有文件未能检查。") }
             report.details.groupBy { it.category }.forEach { (category, files) ->
-                var expanded by remember(report.checkedAt, category) { mutableStateOf(false) }
-                var count by remember(report.checkedAt, category) { mutableIntStateOf(12) }
+                val isOpen = expanded == category
                 DetailCard {
-                    TextButton({ expanded = !expanded }, contentPadding = PaddingValues(0.dp), modifier = Modifier.fillMaxWidth()) {
+                    Row(Modifier.fillMaxWidth().clickable(role = Role.Button) { expanded = if (isOpen) null else category }
+                        .heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text(category, style = MaterialTheme.typography.titleSmall, color = C.Ink)
+                            Text(category, style = MaterialTheme.typography.titleSmall)
                             Text("未覆盖 ${files.sumOf { it.missing }} · 待核对 ${files.sumOf { it.review }}", color = C.Muted, style = MaterialTheme.typography.bodySmall)
                         }
-                        LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(18.dp).rotate(if (expanded) 270f else 90f))
+                        LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(18.dp).rotate(if (isOpen) 270f else 90f))
                     }
-                    if (expanded) {
-                        files.take(count).forEach { file ->
-                            HorizontalDivider(color = C.Line)
-                            Text(file.resource.removePrefix("jp/").removePrefix("JP_"), style = MaterialTheme.typography.labelMedium)
-                            Text("未覆盖 ${file.missing} · 待核对 ${file.review}", color = C.Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                if (isOpen) {
+                    // Bounded pages avoid huge clipped layers and thousands of laid-out texts.
+                    files.drop(page * 3).take(3).forEach { file ->
+                        DetailCard {
+                            Text(file.resource.removePrefix("jp/").replace("_", "_\u200b").replace("/", "/\u200b"),
+                                modifier = Modifier.fillMaxWidth(), style = MaterialTheme.typography.labelMedium)
+                            Text("未覆盖 ${file.missing} · 待核对 ${file.review}", style = MaterialTheme.typography.bodySmall, color = C.Muted)
                             file.examples.forEach { sample ->
-                                Text((if (sample.review) "待核对示例：" else "未覆盖原文：") + sample.text,
-                                    style = MaterialTheme.typography.bodySmall, color = C.Ink)
+                                HorizontalDivider(color = C.Line)
+                                Text(sample.reason, style = MaterialTheme.typography.labelMedium)
+                                Text("原文示例", style = MaterialTheme.typography.labelSmall, color = C.Muted)
+                                Text(sample.text, modifier = Modifier.fillMaxWidth(), style = MaterialTheme.typography.bodyMedium)
+                                sample.translation?.let {
+                                    Text("现有译文", style = MaterialTheme.typography.labelSmall, color = C.Muted)
+                                    Text(it, modifier = Modifier.fillMaxWidth(), style = MaterialTheme.typography.bodyMedium)
+                                }
                             }
                         }
-                        if (files.size > count) TextButton({ count += 12 }) { Text("再显示 ${minOf(12, files.size - count)} 个文件") }
+                    }
+                    if (files.size > 3) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween) {
+                        TextButton({ page-- }, enabled = page > 0) { Text("上一组") }
+                        Text("${page + 1} / ${(files.size + 2) / 3}", style = MaterialTheme.typography.labelMedium)
+                        TextButton({ page++ }, enabled = (page + 1) * 3 < files.size) { Text("下一组") }
                     }
                 }
             }
         }
-        Text("只检查已下载的文本文件；未下载的章节、图片内文字和服务端临时消息不在统计内。待核对可能包含专名，不会自动覆盖已有译文。游戏或汉化更新后，可重新检查。",
-            color = C.Muted, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
+private fun CoverageMetric(label: String, count: Int) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(count.toString(), style = MaterialTheme.typography.titleLarge)
+        Text(label, style = MaterialTheme.typography.labelMedium, color = C.Muted)
     }
 }
