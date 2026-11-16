@@ -16,6 +16,12 @@ internal class AiSettingsStore(context: Context) {
     fun config() = AiConfig(prefs.getString("endpoint", null) ?: AiConfig().endpoint,
         prefs.getString("model", null) ?: AiConfig().model, prefs.getBoolean("missingOnly", true), prefs.getInt("limit", 100))
     fun hasKey() = !prefs.getString("credential", null).isNullOrEmpty()
+    /** A connection test reads credentials but never commits configuration. */
+    fun test(config: AiConfig, replacement: String, transport: AiHttpTransport = AiHttpTransport(AiTranslationClient::post)): AiResult {
+        val settings = config.validated()
+        val credential = aiModelsKey(settings.endpoint, this.config().endpoint, replacement) { if (hasKey()) key() else "" }
+        return AiTranslationClient(settings, credential, transport).translate(listOf(AiText("connection", "接続中…")))
+    }
     fun save(config: AiConfig, replacement: String) {
         val c = config.validated()
         val old = this.config()

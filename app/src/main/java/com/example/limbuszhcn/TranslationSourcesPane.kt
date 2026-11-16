@@ -29,7 +29,8 @@ internal data class TranslationActions(
     val export: (TranslationSource) -> Unit = {},
     val saveAi: (AiConfig, String, Boolean) -> Unit = { _, _, _ -> },
     val generateAi: (AiConfig, String) -> Unit = { _, _ -> }, val cancelAi: () -> Unit = {}, val clearKey: () -> Unit = {},
-    val loadModels: (String, String) -> Unit = { _, _ -> }, val clearModels: () -> Unit = {}
+    val loadModels: (String, String) -> Unit = { _, _ -> }, val clearModels: () -> Unit = {},
+    val inspectCoverage: () -> Unit = {}
 )
 
 @Composable
@@ -51,7 +52,7 @@ internal fun TranslationSourceIcon(source: TranslationSource, modifier: Modifier
 }
 
 @Composable
-internal fun TranslationSourcesPane(state: LauncherUiState, actions: TranslationActions, onProject: () -> Unit = {}, onAi: () -> Unit) {
+internal fun TranslationSourcesPane(state: LauncherUiState, actions: TranslationActions, onProject: () -> Unit = {}, onCoverage: () -> Unit = {}, onAi: () -> Unit) {
     val selected = state.sources.selected
     var select by remember { mutableStateOf<String?>(null) }
     var remove by remember(selected.id) { mutableStateOf(false) }
@@ -67,6 +68,7 @@ internal fun TranslationSourcesPane(state: LauncherUiState, actions: Translation
                     else selected.label, color = C.Muted, style = MaterialTheme.typography.bodySmall)
             }
         }
+        CoverageSummary(state, onCoverage)
         DetailActionSection("汉化源") {
             Column(Modifier.selectableGroup()) {
             state.sources.sources.forEachIndexed { index, source ->

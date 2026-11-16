@@ -1,17 +1,9 @@
 package com.example.limbuszhcn
 
-import android.os.Build
-import android.view.View
-import android.view.Gravity
-import android.view.WindowManager
-import android.window.OnBackInvokedCallback
-import android.window.OnBackInvokedDispatcher
-import androidx.annotation.RequiresApi
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.LocalOverscrollConfiguration
 import androidx.compose.foundation.background
@@ -29,23 +21,13 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -54,13 +36,10 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.dismiss
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.DialogWindowProvider
-import androidx.core.view.WindowCompat
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
 /** Fixed header and a bounded scrolling body on both tablets and compact windows. */
@@ -68,27 +47,22 @@ import com.example.limbuszhcn.ui.theme.LauncherColors as C
 @Composable
 internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
     onDismiss: () -> Unit, onBack: (() -> Unit)? = null,
-    animatedPresentation: Boolean = false, closeRequested: Boolean = false,
     navigation: @Composable (String) -> Unit = {},
     footer: @Composable (String) -> Unit = {}, content: @Composable (String) -> Unit) {
     // Keep every detail page at the same height; long menus scroll within the panel.
     val panelHeight = layout.panelHeight.dp
-    // Read the host's live insets: older floating dialogs dispatch zero bar insets.
-    val hostInsets = WindowInsets.safeDrawing
     val pageStates = rememberSaveableStateHolder()
     val density = LocalDensity.current.density
     val scope = rememberCoroutineScope()
     val currentDismiss by rememberUpdatedState(onDismiss)
-    var closing by remember(page) { mutableStateOf(false) }
-    val presentation = remember(page) { Animatable(if (animatedPresentation) 0f else 1f) }
-    val requestDismiss: () -> Unit = { if (animatedPresentation) closing = true else currentDismiss() }
-    LaunchedEffect(page, animatedPresentation, closing, closeRequested) {
-        if (animatedPresentation) {
-            val leaving = closing || closeRequested
-            presentation.animateTo(if (leaving) 0f else 1f,
-                tween(if (leaving) 180 else 260, easing = FastOutSlowInEasing))
-            if (leaving) currentDismiss()
-        } else presentation.snapTo(1f)
+    var closing by remember { mutableStateOf(false) }
+    val presentation = remember { Animatable(0f) }
+    val requestDismiss: () -> Unit = { closing = true }
+    androidx.activity.compose.BackHandler(onBack = onBack ?: requestDismiss)
+    LaunchedEffect(closing) {
+        presentation.animateTo(if (closing) 0f else 1f,
+            tween(if (closing) 160 else 220, easing = FastOutSlowInEasing))
+        if (closing) currentDismiss()
     }
     val body: @Composable (DetailPanelDrag, Dp) -> Unit = { drag, contentHeight ->
       val compact = layout.compactHeight || contentHeight < 480.dp
@@ -109,7 +83,7 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
             }
         }
       }
-        Column(Modifier.panelBackHandler(onBack ?: requestDismiss).fillMaxWidth().height(contentHeight)) {
+        Column(Modifier.fillMaxWidth().height(contentHeight)) {
             Column(Modifier.fillMaxWidth().draggable(rememberDraggableState { drag.drag(it) },
                 Orientation.Vertical, startDragImmediately = drag.offset > 0,
                 onDragStarted = { drag.stop() }, onDragStopped = { drag.settle(it) })) {
@@ -124,7 +98,7 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
                 Crossfade(page, animationSpec = tween(180), modifier = Modifier.weight(1f).padding(end = 12.dp), label = "detail title") { active ->
                     Text(when (active) {
                         "tools" -> "设置与工具"; "status" -> "运行状态"; "error" -> "准备未完成"
-                        "project" -> "翻译项目"; "home-display" -> "首页显示"; "updates" -> "游戏更新"; "app-update" -> "应用更新"
+                        "project" -> "翻译项目"; "coverage" -> "汉化覆盖"; "updates" -> "游戏更新"; "app-update" -> "应用更新"
                         "translation" -> "汉化源与更新"; "ai-translation" -> "AI 翻译"; "clear-data" -> "清除数据"
                         "repair" -> "修复"; "resource-preparation" -> "准备游戏资源"; "google" -> "Google 账号与付款"; else -> "关于"
                     }, style = MaterialTheme.typography.headlineSmall)
@@ -153,63 +127,13 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
             if (!compact) footer(page)
         }
     }
-    Dialog(onDismissRequest = requestDismiss, properties = DialogProperties(
-        dismissOnBackPress = false, dismissOnClickOutside = false,
-        // In Compose 1.6.6, false remeasures against Configuration.screenHeightDp and
-        // writes that size back to the Window. Keep native constraints for an edge-to-edge root.
-        usePlatformDefaultWidth = true, decorFitsSystemWindows = false)) {
-        val window = (LocalView.current.parent as? DialogWindowProvider)?.window
-        val lightNavigation = C.Panel.luminance() > .5f
-        val lightStatus = C.Background.luminance() > .5f
-        val safeInsets = WindowInsets.safeDrawing.union(hostInsets)
+    Box(Modifier.fillMaxSize().semantics { paneTitle = "详情面板" }) {
+        val safeInsets = WindowInsets.safeDrawing
         val systemPadding = safeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom).asPaddingValues()
         val safeTop = with(LocalDensity.current) { safeInsets.getTop(this).toDp() }
         val safeBottom = systemPadding.calculateBottomPadding()
         val direction = LocalLayoutDirection.current
-        SideEffect {
-            window?.setGravity(Gravity.CENTER)
-            // A native dim layer cannot follow the panel gesture. Compose owns this layer below.
-            window?.setDimAmount(0f)
-            window?.let {
-                // This chooser owns its transition; avoid a second platform zoom/fade.
-                if (animatedPresentation) it.setWindowAnimations(0)
-                it.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT)
-                WindowCompat.setDecorFitsSystemWindows(it, false)
-                it.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-                it.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
-                it.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS or WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION)
-                // Older Compose floating themes retain the native fit-inset mask.
-                // Let this window paint to its edge; the Surface below pads controls.
-                if (Build.VERSION.SDK_INT >= 28) {
-                    val cutout = if (Build.VERSION.SDK_INT >= 30) WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-                        else WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-                    val attributes = it.attributes
-                    if (attributes.layoutInDisplayCutoutMode != cutout || Build.VERSION.SDK_INT >= 30 && attributes.fitInsetsTypes != 0) {
-                        attributes.layoutInDisplayCutoutMode = cutout
-                        if (Build.VERSION.SDK_INT >= 30) attributes.setFitInsetsTypes(0)
-                        it.attributes = attributes
-                    }
-                }
-                @Suppress("DEPRECATION")
-                it.navigationBarColor = android.graphics.Color.TRANSPARENT
-                @Suppress("DEPRECATION")
-                it.statusBarColor = android.graphics.Color.TRANSPARENT
-                if (Build.VERSION.SDK_INT >= 28) {
-                    @Suppress("DEPRECATION")
-                    it.navigationBarDividerColor = android.graphics.Color.TRANSPARENT
-                }
-                if (Build.VERSION.SDK_INT >= 29) {
-                    it.isNavigationBarContrastEnforced = false
-                    it.isStatusBarContrastEnforced = false
-                }
-                WindowCompat.getInsetsController(it, it.decorView).apply {
-                    isAppearanceLightNavigationBars = lightNavigation
-                    isAppearanceLightStatusBars = lightStatus
-                }
-            }
-        }
-        // The window must cover the whole viewport: translating a Surface inside a wrap-content
-        // Dialog clips its rounded bottom at the original window boundary, especially on tablets.
+        // Draw in the host window from the first frame, including the status-bar backdrop.
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val contentHeight = minOf(panelHeight, (maxHeight - safeTop - safeBottom -
                 if (layout.centeredDetails) 32.dp else 0.dp).coerceAtLeast(0.dp))
@@ -221,7 +145,7 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
             }
             LaunchedEffect(page, drag) { drag.reset() }
             Box(Modifier.matchParentSize().drawBehind {
-                drawRect(Color.Black.copy(alpha = .36f * drag.scrimFraction * presentation.value))
+                drawRect(Color.Black.copy(alpha = .24f * drag.scrimFraction * presentation.value))
             }.pointerInput(requestDismiss) { detectTapGestures { requestDismiss() } })
             val panel = if (layout.centeredDetails) Modifier.align(Alignment.Center)
                 .padding(start = 24.dp + systemPadding.calculateStartPadding(direction),
@@ -243,54 +167,5 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
                 Column(padding.consumeWindowInsets(safeInsets)) { body(drag, contentHeight) }
             }
         }
-    }
-}
-
-/** Handle back in the panel's own window, before a modal can hide itself. */
-@Composable
-private fun Modifier.panelBackHandler(onBack: () -> Unit): Modifier {
-    val view = LocalView.current
-    val currentBack by rememberUpdatedState(onBack)
-    val focus = remember { FocusRequester() }
-    DisposableEffect(view) {
-        var unregister: (() -> Unit)? = null
-        fun register() {
-            unregister?.invoke()
-            unregister = if (Build.VERSION.SDK_INT >= 33) {
-                PanelBackApi33.register(view) { currentBack() }
-            } else null
-        }
-        val listener = object : View.OnAttachStateChangeListener {
-            override fun onViewAttachedToWindow(v: View) = register()
-            override fun onViewDetachedFromWindow(v: View) {
-                unregister?.invoke()
-                unregister = null
-            }
-        }
-        view.addOnAttachStateChangeListener(listener)
-        if (view.isAttachedToWindow) register()
-        onDispose {
-            view.removeOnAttachStateChangeListener(listener)
-            unregister?.invoke()
-        }
-    }
-    LaunchedEffect(focus) { focus.requestFocus() }
-    return onPreviewKeyEvent { event ->
-        if (event.key != Key.Back) false
-        else {
-            if (event.type == KeyEventType.KeyUp && !event.nativeKeyEvent.isCanceled) currentBack()
-            true
-        }
-    }.focusRequester(focus).focusable()
-}
-
-@RequiresApi(33)
-private object PanelBackApi33 {
-    fun register(view: View, onBack: () -> Unit): (() -> Unit)? {
-        val dispatcher = view.findOnBackInvokedDispatcher() ?: return null
-        val callback = OnBackInvokedCallback(onBack)
-        // Dialog has its own default-priority callback; consume back in this modal window first.
-        dispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_OVERLAY, callback)
-        return { dispatcher.unregisterOnBackInvokedCallback(callback) }
     }
 }
