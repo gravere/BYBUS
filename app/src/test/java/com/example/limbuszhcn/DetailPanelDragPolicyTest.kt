@@ -4,6 +4,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DetailPanelDragPolicyTest {
+    @Test fun centeredPanelTravelsBeyondItsOriginalWindowAndFadesTheWholeBackdrop() {
+        val travel = DetailPanelDragPolicy.travel(800f, 600f, centered = true)
+        assertEquals(700f, travel, 0f)
+        assertEquals(800f, (800f - 600f) / 2f + travel, 0f)
+        assertEquals(1f, DetailPanelDragPolicy.scrimFraction(0f, travel), 0f)
+        assertEquals(.5f, DetailPanelDragPolicy.scrimFraction(travel / 2f, travel), .001f)
+        assertEquals(0f, DetailPanelDragPolicy.scrimFraction(travel, travel), 0f)
+        assertEquals(624f, DetailPanelDragPolicy.travel(800f, 624f, centered = false), 0f)
+    }
+
     @Test fun upwardPullCannotMoveTheExpandedPanelOrOvershootItsBottom() {
         assertEquals(0f, DetailPanelDragPolicy.offset(0f, -120f, 600f), 0f)
         assertEquals(0f, DetailPanelDragPolicy.offset(40f, -120f, 600f), 0f)

@@ -33,6 +33,21 @@ internal object TranslationJsonPairer {
         return if (records.any { it.source != it.translation }) original.toString() else null
     }
 
+    /** Supplement jobs need exact coverage even when a translated name equals the original. */
+    class CoveredMerge(val document: Any, private val matched: java.util.IdentityHashMap<Any, MutableSet<String>>) {
+        fun contains(parent: Any, field: String) = matched[parent]?.contains(field) == true
+    }
+
+    fun mergeWithCoverage(path: String, originalJson: String, translationJson: String): CoveredMerge {
+        val original = parse(originalJson)
+        val matched = java.util.IdentityHashMap<Any, MutableSet<String>>()
+        val edits = mutableListOf<() -> Unit>()
+        collect(original, parse(translationJson), path, "$", mutableListOf(), 0, edits = edits,
+            onMatched = { parent, field -> matched.getOrPut(parent) { mutableSetOf() }.add(field) })
+        edits.forEach { it() }
+        return CoveredMerge(original, matched)
+    }
+
     fun releasedModelRecords(path: String, json: String): List<TranslationIndexRecord> {
         val root = parse(json)
         val records = mutableListOf<TranslationIndexRecord>()
@@ -100,7 +115,8 @@ internal object TranslationJsonPairer {
                         records: MutableList<TranslationIndexRecord>, depth: Int,
                         displayArray: String? = null, arrayOwnerId: String? = null,
                         skillContext: String? = null, skillRelation: String? = null,
-                        objectScope: String? = null, edits: MutableList<() -> Unit>? = null) {
+                        objectScope: String? = null, edits: MutableList<() -> Unit>? = null,
+                        onMatched: ((Any, String) -> Unit)? = null) {
         require(depth <= 64) { "Resource nesting exceeds limit" }
         when {
             original is JSONObject && translated is JSONObject -> {
@@ -137,7 +153,7 @@ internal object TranslationJsonPairer {
                     if (field == "simpleDesc" && tableScope?.startsWith("@ego-gift:") == true && !tableScope.contains('/')) {
                         if (source is JSONArray && target is JSONArray) {
                             collectGiftAbilities(source, target, path, "$objectContext.$field",
-                                records, depth + 1, tableScope, edits)
+                                records, depth + 1, tableScope, edits, onMatched)
                         }
                         return@forEach
                     }
@@ -147,7 +163,7 @@ internal object TranslationJsonPairer {
                     if ((eventOptions || guideStories || rpgDialogue) && tableScope != null && !tableScope.contains('/')) {
                         if (source is JSONArray && target is JSONArray) {
                             collectTableChildren(source, target, path, "$objectContext.$field", records,
-                                depth + 1, tableScope, if (guideStories) "level" else if (rpgDialogue) "index" else null, edits)
+                                depth + 1, tableScope, if (guideStories) "level" else if (rpgDialogue) "index" else null, edits, onMatched)
                         }
                         return@forEach
                     }
@@ -156,10 +172,11 @@ internal object TranslationJsonPairer {
                         TranslationTextPolicy.isUsableDisplayText(source) && TranslationTextPolicy.isUsableDisplayText(target)) {
                         records += TranslationIndexRecord(path, objectContext, field, source, target, stableId)
                         edits?.add { original.put(field, target) }
+                        onMatched?.invoke(original, field)
                     } else if (source is JSONObject || source is JSONArray) {
                         collect(source, target, path, "$objectContext.$field", records, depth + 1,
                             field.takeIf { it in TranslationTextPolicy.STRING_ARRAY_FIELDS }, stableId,
-                            skillRoot.takeIf { field.lowercase() in SKILL_CHILD_FIELDS }, field.lowercase(), edits = edits)
+                            skillRoot.takeIf { field.lowercase() in SKILL_CHILD_FIELDS }, field.lowercase(), edits = edits, onMatched = onMatched)
                     }
                 }
             }
@@ -177,6 +194,7 @@ internal object TranslationJsonPairer {
                             records += TranslationIndexRecord(path, "$context[$index]", displayArray,
                                 source, target, arrayOwnerId)
                             edits?.add { original.put(index, target) }
+                            onMatched?.invoke(original, index.toString())
                         }
                     }
                     return
@@ -213,7 +231,7 @@ internal object TranslationJsonPairer {
                         }
                     }?.takeIf { it.length <= 256 }
                     collect(source, target, path, "$context[$index]", records, depth + 1,
-                        skillContext = nestedSkill, edits = edits)
+                        skillContext = nestedSkill, edits = edits, onMatched = onMatched)
                 }
             }
         }
@@ -221,7 +239,8 @@ internal object TranslationJsonPairer {
 
     private fun collectGiftAbilities(original: JSONArray, translated: JSONArray, path: String,
                                      context: String, records: MutableList<TranslationIndexRecord>,
-                                     depth: Int, parent: String, edits: MutableList<() -> Unit>?) {
+                                     depth: Int, parent: String, edits: MutableList<() -> Unit>?,
+                                     onMatched: ((Any, String) -> Unit)?) {
         fun groups(array: JSONArray) = (0 until array.length()).mapNotNull { index ->
             array.optJSONObject(index)?.let { row ->
                 row.opt("abilityID")?.toString()?.takeIf { it.isSkillNumber() }?.let { it to row }
@@ -248,7 +267,7 @@ internal object TranslationJsonPairer {
             // Ability IDs are metadata, not a license to pair changed structures.
             if (!equivalentJson(nonDisplayMetadata(source), nonDisplayMetadata(target))) continue
             collect(source, target, path, "$context[$index]", records, depth + 1,
-                objectScope = "$parent/ability:$id", edits = edits)
+                objectScope = "$parent/ability:$id", edits = edits, onMatched = onMatched)
         }
     }
 
@@ -269,7 +288,8 @@ internal object TranslationJsonPairer {
 
     private fun collectTableChildren(original: JSONArray, translated: JSONArray, path: String,
                                      context: String, records: MutableList<TranslationIndexRecord>,
-                                     depth: Int, parent: String, identityField: String?, edits: MutableList<() -> Unit>?) {
+                                     depth: Int, parent: String, identityField: String?, edits: MutableList<() -> Unit>?,
+                                     onMatched: ((Any, String) -> Unit)?) {
         if (identityField == null && original.length() != translated.length()) return
         fun identities(array: JSONArray) = (0 until array.length()).mapNotNull { index ->
             array.optJSONObject(index)?.let { row ->
@@ -291,7 +311,7 @@ internal object TranslationJsonPairer {
                 "index" -> "$parent/text:$identity"
                 else -> "$parent/option:$index"
             }
-            collect(source, target, path, "$context[$index]", records, depth + 1, objectScope = key, edits = edits)
+            collect(source, target, path, "$context[$index]", records, depth + 1, objectScope = key, edits = edits, onMatched = onMatched)
         }
     }
 

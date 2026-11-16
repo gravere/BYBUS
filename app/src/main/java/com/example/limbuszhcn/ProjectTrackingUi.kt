@@ -73,7 +73,7 @@ internal fun ProjectCard(tracking: ProjectTrackingState, modifier: Modifier = Mo
         } else {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 if (state.loading) {
-                    CircularProgressIndicator(Modifier.size(14.dp), color = C.Muted, strokeWidth = 1.5.dp)
+                    LauncherSpinner(Modifier.size(14.dp), color = C.Muted, strokeWidth = 1.5.dp)
                     Spacer(Modifier.width(10.dp))
                 }
                 Text(if (state.loading) "正在读取项目进度" else "暂时无法获取进度",
@@ -102,11 +102,7 @@ internal fun ProjectDetails(tracking: ProjectTrackingState, onRefresh: () -> Uni
             Column(Modifier.weight(1f).padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("都市零协会", style = MaterialTheme.typography.titleMedium)
             }
-            IconButton(onClick = onRefresh, enabled = !tracking.loading && !waiting,
-                modifier = Modifier.size(48.dp).semantics { contentDescription = "刷新项目状态" }) {
-                if (tracking.loading) CircularProgressIndicator(Modifier.size(21.dp), strokeWidth = 2.dp, color = C.Accent)
-                else LauncherGlyph(Glyph.Refresh, if (waiting) C.Muted else C.Accent, Modifier.size(20.dp))
-            }
+            ActionIconButton(Glyph.Refresh, "刷新项目状态", onRefresh, enabled = !waiting, busy = tracking.loading)
         }
         SourceTabs(ProjectSource.entries, tracking.source, { it.title }, "项目来源", onSelectSource)
         Crossfade(tracking.source, animationSpec = tween(180), label = "project source") { source ->

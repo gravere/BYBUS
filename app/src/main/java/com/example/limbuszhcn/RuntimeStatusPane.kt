@@ -13,7 +13,7 @@ import androidx.compose.ui.unit.dp
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
 @Composable
-internal fun RuntimeStatusPane(state: LauncherUiState, onGameUpdates: () -> Unit, onRefresh: () -> Unit) {
+internal fun RuntimeStatusPane(state: LauncherUiState, onGameUpdates: () -> Unit, onTranslation: () -> Unit, onRefresh: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         DetailSection("游戏与汉化", contentPadding = PaddingValues(0.dp)) {
             Row(Modifier.fillMaxWidth()
@@ -37,8 +37,33 @@ internal fun RuntimeStatusPane(state: LauncherUiState, onGameUpdates: () -> Unit
                     state.nativeCompatibilityIssue != null -> "当前构建待适配"
                     else -> "当前构建已匹配"
                 })
-                DetailRow("本地汉化", state.translation?.version ?: "尚未准备")
                 state.nativeCompatibilityIssue?.let { Text(it, color = C.Error, style = MaterialTheme.typography.bodySmall) }
+            }
+            DetailActionDivider()
+            Row(Modifier.fillMaxWidth().clickable(role = Role.Button, onClickLabel = "汉化源与更新", onClick = onTranslation)
+                .heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                DetailRow("本地汉化", if (state.sources.selected.isOfficial) state.translation?.version ?: "未准备"
+                    else state.sources.selected.label, modifier = Modifier.weight(1f))
+                LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(15.dp))
+            }
+            DetailActionDivider()
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                val source = state.sources.selected
+                val prepared = state.translation ?: state.resourcePreparation
+                DetailRow("汉化来源", source.name)
+                DetailRow("资源状态", when {
+                    prepared?.liveResourcesReady == true -> "已准备，随游戏资源加载"
+                    prepared?.indexActivated == true -> "已准备，下次启动使用"
+                    prepared?.startupIndexAvailable == true -> "启动页已准备"
+                    !source.isOfficial -> "已导入，启动时校验"
+                    else -> "尚未准备，启动时下载"
+                })
+                DetailRow("更新方式", when {
+                    source.isOfficial -> "启动前自动检查"
+                    source.kind == "ai" -> "在 AI 翻译中继续生成"
+                    else -> "导入新包替换"
+                })
             }
         }
         state.compatibility?.let { device ->
@@ -51,11 +76,7 @@ internal fun RuntimeStatusPane(state: LauncherUiState, onGameUpdates: () -> Unit
             }
         }
         DetailSection("上次启动", action = {
-            IconButton(onClick = onRefresh, enabled = !state.busy,
-                modifier = Modifier.size(48.dp).semantics { contentDescription = "重新检测" }) {
-                if (state.busy) CircularProgressIndicator(Modifier.size(20.dp), color = C.Accent, strokeWidth = 2.dp)
-                else LauncherGlyph(Glyph.Refresh, C.Accent, Modifier.size(20.dp))
-            }
+            ActionIconButton(Glyph.Refresh, "重新检测", onRefresh, busy = state.busy)
         }) {
             Column(Modifier.padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 val record = state.runtimeStatus

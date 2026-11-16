@@ -16,18 +16,20 @@ class AppUpdateNoticeTest {
         assertFalse(AppUpdateState(59, knownVersionCode = restored.versionCode).updateAvailable)
     }
 
-    @Test fun resumeAndForegroundPollingDiscoverReleasesAfterOneMinute() {
+    @Test fun repeatedForegroundVisitsReuseSuccessfulChecksForSixHours() {
         assertTrue(AppUpdateNotice().shouldCheck(now))
         val saved = AppUpdateNotice().checked(59, now)
-        assertFalse(saved.shouldCheck(now + 60_000L - 1))
-        assertTrue(saved.shouldCheck(now + 60_000L))
+        assertFalse(saved.shouldCheck(now + AppUpdateNotice.INTERVAL - 1))
+        assertTrue(saved.shouldCheck(now + AppUpdateNotice.INTERVAL))
+        assertEquals(AppUpdateNotice.INTERVAL - 1000, saved.nextCheckDelay(now + 1000))
     }
 
-    @Test fun failedAttemptKeepsNoticeAndRetriesAfterOneMinute() {
+    @Test fun failedAttemptKeepsNoticeAndWaitsFifteenMinutes() {
         val failed = AppUpdateNotice(59).attempted(now)
         assertTrue(failed.hasNewer(58))
-        assertFalse(failed.shouldCheck(now + 60_000L - 1))
-        assertTrue(failed.shouldCheck(now + 60_000L))
+        assertFalse(failed.shouldCheck(now + AppUpdateNotice.RETRY_INTERVAL - 1))
+        assertTrue(failed.shouldCheck(now + AppUpdateNotice.RETRY_INTERVAL))
+        assertEquals(AppUpdateNotice.RETRY_INTERVAL, failed.nextCheckDelay(now))
     }
 
     @Test fun withdrawnReleaseClearsStaleNoticeAfterSuccessfulCheck() {

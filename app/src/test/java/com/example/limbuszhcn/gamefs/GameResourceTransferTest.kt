@@ -156,4 +156,39 @@ class GameResourceTransferTest {
         assertArrayEquals(bytes, target.resolve("assets/large.bundle").readBytes())
         assertEquals(483L, result.sourceVersion)
     }
+
+    @Test
+    fun cancellationDuringExportPreservesSourceAndDoesNotReportSuccess() {
+        val source = Files.createTempDirectory("export-cancel")
+        val bytes = ByteArray(400_000) { (it % 251).toByte() }
+        Files.createDirectories(source.resolve("assets"))
+        source.resolve("assets/large.bundle").writeBytes(bytes)
+        var cancelled = false
+        val phases = mutableListOf<String>()
+        assertThrows(CancellationException::class.java) {
+            transfer(source, { cancelled }) { phases += it.phase; cancelled = it.bytes > 0 }
+                .exportResources(ByteArrayOutputStream())
+        }
+        assertArrayEquals(bytes, source.resolve("assets/large.bundle").readBytes())
+        assertFalse(phases.contains("迁出完成"))
+    }
+
+    @Test
+    fun outputWriteOrCloseFailureNeverReportsSuccessOrChangesSource() {
+        for (failOnClose in listOf(false, true)) {
+            val source = Files.createTempDirectory("export-io-error")
+            file(source, "assets/original.bundle", "unchanged")
+            val phases = mutableListOf<String>()
+            val output = object : ByteArrayOutputStream() {
+                override fun write(bytes: ByteArray, offset: Int, length: Int) {
+                    if (!failOnClose) throw IOException("No space left")
+                    super.write(bytes, offset, length)
+                }
+                override fun close() { if (failOnClose) throw IOException("Provider failed to commit") }
+            }
+            assertThrows(IOException::class.java) { transfer(source, progress = { phases += it.phase }).exportResources(output) }
+            assertEquals("unchanged", source.resolve("assets/original.bundle").readText())
+            assertFalse(phases.contains("迁出完成"))
+        }
+    }
 }

@@ -32,7 +32,7 @@ internal fun RepairPane(state: LauncherUiState, onRepair: () -> Unit, onExport: 
                     horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     val completed = repair.phase == RepairPhase.Complete || repair.step > index
                     if (repair.phase == RepairPhase.Running && repair.step == index)
-                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = C.Accent)
+                        LauncherSpinner(Modifier.size(20.dp), strokeWidth = 2.dp, color = C.Accent)
                     else if (completed) LauncherGlyph(Glyph.Check, C.Accent, Modifier.size(20.dp))
                     else Text("${index + 1}", modifier = Modifier.width(20.dp), color = C.Muted,
                         style = MaterialTheme.typography.labelLarge)
