@@ -1,5 +1,7 @@
 package com.example.limbuszhcn
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -27,14 +29,13 @@ internal data class HomeProjectDisplay(val source: TranslationSource, val pinned
 
 @Composable
 internal fun HomeProjectCard(state: LauncherUiState, tracking: ProjectTrackingState, pinnedId: String?,
-    onPin: (String?) -> Unit, onProject: () -> Unit, onSources: () -> Unit, onAi: () -> Unit,
+    onDisplayOptions: () -> Unit, onProject: () -> Unit, onSources: () -> Unit, onAi: () -> Unit,
     modifier: Modifier = Modifier) {
     val display = HomeProjectDisplay.resolve(state.sources, pinnedId)
     val source = display.source
-    var choose by remember { mutableStateOf(false) }
     val continueAi = source.kind == "ai" && source.id == state.sources.selectedId
     val open = if (source.isOfficial) onProject else if (continueAi) onAi else onSources
-    HomeSummaryCard(open, modifier.semantics {
+    HomeSummaryCard(open, modifier.animateContentSize(tween(220)).semantics {
         stateDescription = if (display.pinned) "固定显示：${source.name}" else "跟随当前汉化源：${source.name}"
     }) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
@@ -42,22 +43,7 @@ internal fun HomeProjectCard(state: LauncherUiState, tracking: ProjectTrackingSt
             TranslationSourceIcon(source, Modifier.size(28.dp))
             Text(source.name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             if (display.pinned) LauncherGlyph(Glyph.Pin, C.Muted, Modifier.size(16.dp), "固定显示")
-            Box {
-                ActionIconButton(Glyph.More, "首页卡片显示", { choose = true })
-                DropdownMenu(choose, onDismissRequest = { choose = false }, modifier = Modifier.heightIn(max = 360.dp)) {
-                    DropdownMenuItem(text = { Text("跟随当前汉化源") }, onClick = { choose = false; onPin(null) },
-                        trailingIcon = { if (!display.pinned) LauncherGlyph(Glyph.Check, C.Accent, Modifier.size(18.dp)) })
-                    HorizontalDivider()
-                    Text("固定显示", color = C.Muted, style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
-                    state.sources.sources.forEach { option ->
-                        DropdownMenuItem(text = { Text(option.name) }, onClick = { choose = false; onPin(option.id) },
-                            leadingIcon = { TranslationSourceIcon(option, Modifier.size(24.dp)) },
-                            trailingIcon = { if (display.pinned && option.id == source.id)
-                                LauncherGlyph(Glyph.Check, C.Accent, Modifier.size(18.dp)) })
-                    }
-                }
-            }
+            ActionIconButton(Glyph.More, "首页卡片显示", onDisplayOptions)
         }
         Spacer(Modifier.height(12.dp))
         if (source.isOfficial) ZeroProjectSummary(tracking) else {

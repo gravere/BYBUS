@@ -39,6 +39,15 @@ whether their use and redistribution of this component are permitted.
 The APK files are bundled so a fresh container can bootstrap the Google-service
 compatibility layer without downloading executable code at first launch.
 
+## Google Material refresh icon
+
+- Source: https://github.com/google/material-design-icons/blob/master/src/navigation/refresh/materialiconsround/24px.svg
+- Copyright: Google LLC
+- License: Apache License 2.0; bundled text: `app/src/main/assets/licenses/Material-Icons-Apache-2.0.txt`
+- Asset: `app/src/main/res/drawable/ic_action_refresh.xml`
+
+The original SVG path is retained and converted to Android VectorDrawable syntax.
+
 ## Zero Association project icon
 
 - Copyright: 都市零协会 / LocalizeLimbusCompany

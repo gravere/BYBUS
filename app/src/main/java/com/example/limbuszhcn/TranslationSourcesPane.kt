@@ -8,7 +8,6 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -17,8 +16,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.example.limbuszhcn.translation.*
 import kotlinx.coroutines.Dispatchers
@@ -31,7 +28,8 @@ internal data class TranslationActions(
     val rename: (String, String) -> Unit = { _, _ -> }, val remove: (String) -> Unit = {},
     val export: (TranslationSource) -> Unit = {},
     val saveAi: (AiConfig, String, Boolean) -> Unit = { _, _, _ -> },
-    val generateAi: (AiConfig, String) -> Unit = { _, _ -> }, val cancelAi: () -> Unit = {}, val clearKey: () -> Unit = {}
+    val generateAi: (AiConfig, String) -> Unit = { _, _ -> }, val cancelAi: () -> Unit = {}, val clearKey: () -> Unit = {},
+    val loadModels: (String, String) -> Unit = { _, _ -> }, val clearModels: () -> Unit = {}
 )
 
 @Composable
@@ -152,76 +150,4 @@ internal fun TranslationSourceSwitchDialog(source: TranslationSource, enabled: B
         text = { Text("将关闭游戏，下次启动使用“${source.name}”。游戏资源和账号会保留。") },
         confirmButton = { TextButton(onConfirm, enabled = enabled) { Text("切换") } },
         dismissButton = { TextButton(onDismiss) { Text("取消") } })
-}
-
-@Composable
-internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActions) {
-    val ai = state.ai
-    var endpoint by remember(ai.config.endpoint) { mutableStateOf(ai.config.endpoint) }
-    var model by remember(ai.config.model) { mutableStateOf(ai.config.model) }
-    var missing by remember(ai.config.missingOnly) { mutableStateOf(ai.config.missingOnly) }
-    var limit by remember(ai.config.limit) { mutableIntStateOf(ai.config.limit) }
-    // Never saved in a Bundle or ViewModel; the persisted value is encrypted separately.
-    var key by remember { mutableStateOf("") }
-    var confirm by remember { mutableStateOf(false) }
-    var clear by remember { mutableStateOf(false) }
-    fun config() = AiConfig(endpoint.trim(), model.trim(), missing, limit)
-    val enabled = !state.busy
-    Column(Modifier.imePadding(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            IconTile(Glyph.Ai, true)
-            Column {
-                Text("AI 翻译", style = MaterialTheme.typography.titleMedium)
-                Text("生成后保存在本机，下次启动加载", color = C.Muted, style = MaterialTheme.typography.bodySmall)
-            }
-        }
-        DetailCard {
-            OutlinedTextField(model, { model = it }, label = { Text("模型") }, singleLine = true, enabled = enabled, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(key, { key = it }, label = { Text("API Key") },
-                placeholder = { Text(if (ai.hasKey) "已保存，留空继续使用" else "填写自己的 Key") },
-                singleLine = true, enabled = enabled, visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth())
-            DetailDisclosure("接口地址") {
-                OutlinedTextField(endpoint, { endpoint = it }, label = { Text("OpenAI 兼容地址") },
-                    singleLine = false, enabled = enabled, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth())
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton({ val value = key; key = ""; actions.saveAi(config(), value, false) }, enabled = enabled,
-                    modifier = Modifier.weight(1f)) { Text("保存") }
-                OutlinedButton({ val value = key; key = ""; actions.saveAi(config(), value, true) },
-                    enabled = enabled && (ai.hasKey || key.isNotBlank()), modifier = Modifier.weight(1f)) { Text("测试翻译") }
-            }
-            if (ai.hasKey) TextButton({ clear = true }, enabled = enabled) { Text("移除本机 Key") }
-        }
-        DetailCard {
-            Text("翻译方式", style = MaterialTheme.typography.titleSmall)
-            SourceTabs(listOf(true, false), missing, { if (it) "补全缺失" else "独立翻译" }, "翻译方式",
-                { if (enabled) missing = it })
-            Text("单次最多翻译", style = MaterialTheme.typography.titleSmall)
-            SourceTabs(listOf(100, 500, 1000), limit, { "$it 条" }, "翻译上限", { if (enabled) limit = it })
-            Text("按已下载的游戏文本分批处理，完成内容可复用。测试和翻译均使用你的 API 额度。",
-                color = C.Muted, style = MaterialTheme.typography.bodySmall)
-        }
-        if (ai.running) {
-            DetailCard {
-                LinearProgressIndicator(progress = { (ai.progress.completed.toFloat() / limit).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
-                Text(ai.message.orEmpty(), style = MaterialTheme.typography.bodyMedium)
-                TextButton(actions.cancelAi, modifier = Modifier.fillMaxWidth()) { Text("暂停翻译") }
-            }
-        } else {
-            val message = if (state.failed && state.stage in setOf("生成 AI 汉化", "测试 AI 翻译", "保存 AI 设置")) state.message else ai.message
-            message?.let { Text(it, color = if (ai.failed || state.failed) C.Error else C.Ink, style = MaterialTheme.typography.bodyMedium) }
-            Button({ confirm = true }, enabled = enabled && (ai.hasKey || key.isNotBlank()), modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
-                Text("生成并使用")
-            }
-        }
-    }
-    if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("开始 AI 翻译？") },
-        text = { Text("将关闭游戏，并向你配置的 API 发送游戏文本。本批最多处理 $limit 条，费用由服务商计入你的账户。生成的汉化独立保存，账号和原汉化包会保留。") },
-        confirmButton = { TextButton({ confirm = false; val value = key; key = ""; actions.generateAi(config(), value) }, enabled = enabled) { Text("开始翻译") } },
-        dismissButton = { TextButton({ confirm = false }) { Text("取消") } })
-    if (clear) AlertDialog(onDismissRequest = { clear = false }, title = { Text("移除 API Key？") },
-        text = { Text("已生成的译文会保留。再次使用 API 时需要重新填写 Key。") },
-        confirmButton = { TextButton({ clear = false; key = ""; actions.clearKey() }, enabled = enabled) { Text("移除") } },
-        dismissButton = { TextButton({ clear = false }) { Text("取消") } })
 }
