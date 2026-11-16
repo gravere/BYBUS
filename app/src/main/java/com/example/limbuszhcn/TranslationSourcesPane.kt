@@ -3,6 +3,7 @@ package com.example.limbuszhcn
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.layout.*
@@ -52,7 +53,7 @@ internal fun TranslationSourceIcon(source: TranslationSource, modifier: Modifier
 }
 
 @Composable
-internal fun TranslationSourcesPane(state: LauncherUiState, actions: TranslationActions, onAi: () -> Unit) {
+internal fun TranslationSourcesPane(state: LauncherUiState, actions: TranslationActions, onProject: () -> Unit = {}, onAi: () -> Unit) {
     val selected = state.sources.selected
     var select by remember { mutableStateOf<String?>(null) }
     var remove by remember(selected.id) { mutableStateOf(false) }
@@ -72,8 +73,10 @@ internal fun TranslationSourcesPane(state: LauncherUiState, actions: Translation
             Column(Modifier.selectableGroup()) {
             state.sources.sources.forEachIndexed { index, source ->
                 if (index > 0) DetailActionDivider()
-                Row(Modifier.fillMaxWidth().selectable(selected = selected.id == source.id, enabled = !state.busy,
-                    role = Role.RadioButton, onClick = { if (selected.id != source.id) select = source.id }).heightIn(min = 64.dp).padding(16.dp),
+                val action = if (source.isOfficial) Modifier.clickable(role = Role.Button, onClick = onProject)
+                    else Modifier.selectable(selected = selected.id == source.id, enabled = !state.busy,
+                        role = Role.RadioButton, onClick = { if (selected.id != source.id) select = source.id })
+                Row(Modifier.fillMaxWidth().then(action).heightIn(min = 64.dp).padding(16.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     TranslationSourceIcon(source)
                     Column(Modifier.weight(1f)) {
@@ -84,6 +87,7 @@ internal fun TranslationSourcesPane(state: LauncherUiState, actions: Translation
                         animationSpec = androidx.compose.animation.core.tween(140), label = "source selection") { checked ->
                         if (checked) LauncherGlyph(Glyph.Check, C.Accent, Modifier.fillMaxSize())
                     }
+                    if (source.isOfficial) LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(17.dp), "查看零协项目状态")
                 }
             }
             }
@@ -120,11 +124,10 @@ internal fun TranslationSourcesPane(state: LauncherUiState, actions: Translation
         state.sources.message?.let { Text(it, color = C.Muted, style = MaterialTheme.typography.bodySmall) }
         if (state.failed && !state.busy) Text(state.message, color = C.Error, style = MaterialTheme.typography.bodyMedium)
     }
-    select?.let { id ->
-        AlertDialog(onDismissRequest = { select = null }, title = { Text("切换汉化源？") },
-            text = { Text("将关闭游戏，下次启动使用所选汉化。游戏资源和账号会保留。") },
-            confirmButton = { TextButton({ select = null; actions.select(id) }, enabled = !state.busy) { Text("切换") } },
-            dismissButton = { TextButton({ select = null }) { Text("取消") } })
+    state.sources.sources.firstOrNull { it.id == select }?.let { source ->
+        TranslationSourceSwitchDialog(source, !state.busy, { select = null }) {
+            select = null; actions.select(source.id)
+        }
     }
     if (remove) AlertDialog(onDismissRequest = { remove = false }, title = { Text(if (selected.isOfficial) "卸载汉化文件？" else "删除此汉化源？") },
         text = { Text(if (selected.isOfficial) "将关闭游戏并移除零协汉化文件，保留来源入口，下次使用时会重新下载。游戏资源、账号和其他汉化源会保留。"
@@ -140,6 +143,15 @@ internal fun TranslationSourcesPane(state: LauncherUiState, actions: Translation
         text = { OutlinedTextField(name, { if (it.length <= 64) name = it }, singleLine = true) },
         confirmButton = { TextButton({ rename = false; actions.rename(selected.id, name) }, enabled = !state.busy && name.isNotBlank()) { Text("保存") } },
         dismissButton = { TextButton({ rename = false }) { Text("取消") } })
+}
+
+@Composable
+internal fun TranslationSourceSwitchDialog(source: TranslationSource, enabled: Boolean,
+    onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("切换汉化源？") },
+        text = { Text("将关闭游戏，下次启动使用“${source.name}”。游戏资源和账号会保留。") },
+        confirmButton = { TextButton(onConfirm, enabled = enabled) { Text("切换") } },
+        dismissButton = { TextButton(onDismiss) { Text("取消") } })
 }
 
 @Composable

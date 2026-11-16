@@ -3,6 +3,7 @@ package com.example.limbuszhcn
 import android.os.Build
 import android.view.View
 import android.view.Gravity
+import android.view.WindowManager
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import androidx.annotation.RequiresApi
@@ -44,6 +45,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -52,6 +54,7 @@ import androidx.compose.ui.semantics.dismiss
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
@@ -68,13 +71,13 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
     // Keep every detail page at the same height; long menus scroll within the panel.
     val panelHeight = layout.panelHeight.dp
     // Read the host's live insets: older floating dialogs dispatch zero bar insets.
-    val systemPadding = WindowInsets.safeDrawing
-        .only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom).asPaddingValues()
+    val hostInsets = WindowInsets.safeDrawing
     val pageStates = rememberSaveableStateHolder()
     val density = LocalDensity.current.density
     val scope = rememberCoroutineScope()
     val currentDismiss by rememberUpdatedState(onDismiss)
-    val body: @Composable (DetailPanelDrag) -> Unit = { drag ->
+    val body: @Composable (DetailPanelDrag, Dp) -> Unit = { drag, contentHeight ->
+      val compact = layout.compactHeight || contentHeight < 480.dp
       val bodyDrag = remember(drag) {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset =
@@ -92,16 +95,16 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
             }
         }
       }
-        Column(Modifier.panelBackHandler(onBack ?: onDismiss).fillMaxWidth().height(panelHeight)) {
+        Column(Modifier.panelBackHandler(onBack ?: onDismiss).fillMaxWidth().height(contentHeight)) {
             Column(Modifier.fillMaxWidth().draggable(rememberDraggableState { drag.drag(it) },
                 Orientation.Vertical, startDragImmediately = drag.offset > 0,
                 onDragStarted = { drag.stop() }, onDragStopped = { drag.settle(it) })) {
-                Box(Modifier.fillMaxWidth().height(if (layout.compactHeight) 12.dp else 22.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxWidth().height(if (compact) 12.dp else 22.dp), contentAlignment = Alignment.Center) {
                     Box(Modifier.size(width = 32.dp, height = 4.dp).clip(CircleShape).background(C.Line)
                         .semantics { contentDescription = "下拉关闭面板" })
                 }
                 Row(Modifier.fillMaxWidth().padding(horizontal = layout.detailPadding.dp,
-                    vertical = if (layout.compactHeight) 0.dp else 6.dp),
+                    vertical = if (compact) 0.dp else 6.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 if (onBack != null) ActionIconButton(Glyph.Chevron, "返回上一页", onBack, rotation = 180f)
                 Crossfade(page, animationSpec = tween(180), modifier = Modifier.weight(1f).padding(end = 12.dp), label = "detail title") { active ->
@@ -116,7 +119,7 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
                 }
             }
             HorizontalDivider(color = C.Line)
-            if (!layout.compactHeight) navigation(page)
+            if (!compact) navigation(page)
             // A child page starts at its top; returning restores its parent's scroll and disclosure state.
             Crossfade(page, animationSpec = tween(180), modifier = Modifier.weight(1f).fillMaxWidth()
                 .nestedScroll(bodyDrag), label = "detail page") { active ->
@@ -126,64 +129,98 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
                         Column(Modifier.fillMaxSize().background(C.Panel).clipToBounds()
                             .verticalScroll(rememberScrollState())) {
                             // A short window must keep the body reachable even with tall actions.
-                            if (layout.compactHeight) navigation(active)
+                            if (compact) navigation(active)
                             Column(Modifier.padding(layout.detailPadding.dp)) { content(active) }
-                            if (layout.compactHeight) footer(active)
+                            if (compact) footer(active)
                         }
                     }
                 }
             }
-            if (!layout.compactHeight) footer(page)
+            if (!compact) footer(page)
         }
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(
         dismissOnBackPress = false, dismissOnClickOutside = false,
-        usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        // In Compose 1.6.6, false remeasures against Configuration.screenHeightDp and
+        // writes that size back to the Window. Keep native constraints for an edge-to-edge root.
+        usePlatformDefaultWidth = true, decorFitsSystemWindows = false)) {
         val window = (LocalView.current.parent as? DialogWindowProvider)?.window
         val lightNavigation = C.Panel.luminance() > .5f
+        val lightStatus = C.Background.luminance() > .5f
+        val safeInsets = WindowInsets.safeDrawing.union(hostInsets)
+        val systemPadding = safeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom).asPaddingValues()
+        val safeTop = with(LocalDensity.current) { safeInsets.getTop(this).toDp() }
+        val safeBottom = systemPadding.calculateBottomPadding()
+        val direction = LocalLayoutDirection.current
         SideEffect {
             window?.setGravity(Gravity.CENTER)
             // A native dim layer cannot follow the panel gesture. Compose owns this layer below.
             window?.setDimAmount(0f)
             window?.let {
+                it.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT)
+                WindowCompat.setDecorFitsSystemWindows(it, false)
+                it.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+                it.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+                it.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS or WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION)
                 // Older Compose floating themes retain the native fit-inset mask.
                 // Let this window paint to its edge; the Surface below pads controls.
-                if (Build.VERSION.SDK_INT >= 30 && it.attributes.fitInsetsTypes != 0) {
-                    it.attributes = it.attributes.apply { setFitInsetsTypes(0) }
+                if (Build.VERSION.SDK_INT >= 28) {
+                    val cutout = if (Build.VERSION.SDK_INT >= 30) WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                        else WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                    val attributes = it.attributes
+                    if (attributes.layoutInDisplayCutoutMode != cutout || Build.VERSION.SDK_INT >= 30 && attributes.fitInsetsTypes != 0) {
+                        attributes.layoutInDisplayCutoutMode = cutout
+                        if (Build.VERSION.SDK_INT >= 30) attributes.setFitInsetsTypes(0)
+                        it.attributes = attributes
+                    }
                 }
                 @Suppress("DEPRECATION")
                 it.navigationBarColor = android.graphics.Color.TRANSPARENT
+                @Suppress("DEPRECATION")
+                it.statusBarColor = android.graphics.Color.TRANSPARENT
                 if (Build.VERSION.SDK_INT >= 28) {
                     @Suppress("DEPRECATION")
                     it.navigationBarDividerColor = android.graphics.Color.TRANSPARENT
                 }
-                if (Build.VERSION.SDK_INT >= 29) it.isNavigationBarContrastEnforced = false
-                WindowCompat.getInsetsController(it, it.decorView).isAppearanceLightNavigationBars = lightNavigation
+                if (Build.VERSION.SDK_INT >= 29) {
+                    it.isNavigationBarContrastEnforced = false
+                    it.isStatusBarContrastEnforced = false
+                }
+                WindowCompat.getInsetsController(it, it.decorView).apply {
+                    isAppearanceLightNavigationBars = lightNavigation
+                    isAppearanceLightStatusBars = lightStatus
+                }
             }
         }
         // The window must cover the whole viewport: translating a Surface inside a wrap-content
         // Dialog clips its rounded bottom at the original window boundary, especially on tablets.
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            val surfaceHeight = panelHeight + if (layout.centeredDetails) 0.dp else systemPadding.calculateBottomPadding()
-            val travel = DetailPanelDragPolicy.travel(maxHeight.value, surfaceHeight.value, layout.centeredDetails) * density
-            val drag = remember(panelHeight, density, travel) {
-                DetailPanelDrag(panelHeight.value * density, density, scope, travel) { currentDismiss() }
+            val contentHeight = minOf(panelHeight, (maxHeight - safeTop - safeBottom -
+                if (layout.centeredDetails) 32.dp else 0.dp).coerceAtLeast(0.dp))
+            val centerShift = if (layout.centeredDetails) (safeTop - safeBottom) / 2 else 0.dp
+            val surfaceHeight = contentHeight + if (layout.centeredDetails) 0.dp else safeBottom
+            val travel = (DetailPanelDragPolicy.travel(maxHeight.value, surfaceHeight.value, layout.centeredDetails) - centerShift.value) * density
+            val drag = remember(contentHeight, density, travel) {
+                DetailPanelDrag(contentHeight.value * density, density, scope, travel) { currentDismiss() }
             }
             LaunchedEffect(page, drag) { drag.reset() }
             Box(Modifier.matchParentSize().drawBehind {
                 drawRect(Color.Black.copy(alpha = .36f * drag.scrimFraction))
             }.pointerInput(Unit) { detectTapGestures { currentDismiss() } })
             val panel = if (layout.centeredDetails) Modifier.align(Alignment.Center)
-                .padding(horizontal = 24.dp, vertical = 16.dp)
+                .padding(start = 24.dp + systemPadding.calculateStartPadding(direction),
+                    end = 24.dp + systemPadding.calculateEndPadding(direction), top = 16.dp, bottom = 16.dp)
                 .widthIn(max = layout.panelWidth.dp).fillMaxWidth()
                 else Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-            Surface(panel.graphicsLayer { translationY = drag.offset }.semantics { dismiss { onDismiss(); true } },
+            Surface(panel.graphicsLayer { translationY = drag.offset + centerShift.value * density }.semantics { dismiss { onDismiss(); true } },
                 shape = if (layout.centeredDetails) RoundedCornerShape(28.dp)
                 else RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
                 color = C.Panel, contentColor = C.Ink, tonalElevation = 0.dp,
                 shadowElevation = if (layout.centeredDetails) 8.dp else 0.dp) {
-                val safeInsets = if (layout.centeredDetails) Modifier else Modifier.padding(systemPadding)
-                Column(safeInsets) { body(drag) }
+                val padding = if (layout.centeredDetails) Modifier else Modifier.padding(systemPadding)
+                // The panel bounds already reserve these insets. Descendant editors must not
+                // add the same keyboard space again through imePadding().
+                Column(padding.consumeWindowInsets(safeInsets)) { body(drag, contentHeight) }
             }
         }
     }

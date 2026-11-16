@@ -30,6 +30,31 @@ class TranslationManagementTest {
         }
     }.toByteArray()
 
+    @Test fun sourceSummaryMetadataSurvivesRenamingAndOlderRegistriesRemainReadable() {
+        val sources = TranslationSources(cache)
+        val before = System.currentTimeMillis()
+        val imported = sources.import(pack().inputStream(), "文本.zip")
+        assertEquals(2, imported.textFileCount)
+        assertTrue(imported.updatedAtMillis >= before)
+        sources.rename(imported.id, "重命名")
+        val renamed = sources.read().selected
+        assertEquals(imported.updatedAtMillis, renamed.updatedAtMillis)
+        assertEquals(imported.textFileCount, renamed.textFileCount)
+        val registry = cache.resolve("sources/sources.json")
+        val json = org.json.JSONObject(registry.readText())
+        json.getJSONArray("sources").getJSONObject(0).apply {
+            remove("updatedAtMillis"); remove("textFileCount")
+        }
+        registry.writeText(json.toString())
+        assertEquals(imported.id, sources.read().selected.id)
+        assertEquals(0L, sources.read().selected.updatedAtMillis)
+        assertEquals(0, sources.read().selected.textFileCount)
+        val replaced = sources.import(pack().inputStream(), "替换.zip", imported.id)
+        assertEquals("重命名", replaced.name)
+        assertEquals(2, replaced.textFileCount)
+        assertTrue(replaced.updatedAtMillis >= imported.updatedAtMillis)
+    }
+
     @Test fun textBackupsRoundTripForLocalAndAiWithoutPrivateFilesOrPlugins() {
         val sources = TranslationSources(cache)
         val local = sources.import(pack().inputStream(), "文本.zip")
