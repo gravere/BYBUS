@@ -56,11 +56,14 @@ internal fun LauncherScreen(
     onRefreshProject: () -> Unit,
     onSelectProjectSource: (ProjectSource) -> Unit,
     onOpenLink: (String) -> Unit,
-    translationActions: TranslationActions = TranslationActions()
+    translationActions: TranslationActions = TranslationActions(),
+    homeProjectSourceId: String? = null,
+    onHomeProjectSource: (String?) -> Unit = {}
 ) {
     var sheet by rememberSaveable { mutableStateOf<String?>(null) }
     var parentSheets by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var confirmation by rememberSaveable { mutableStateOf<ConfirmedOperation?>(null) }
+    var confirmZeroSource by rememberSaveable { mutableStateOf(false) }
     var handledUpdatesRequest by rememberSaveable { mutableLongStateOf(0L) }
     var handledPreparationRequest by rememberSaveable { mutableLongStateOf(0L) }
     LaunchedEffect(state.resourcePreparationRequest) {
@@ -119,7 +122,10 @@ internal fun LauncherScreen(
                                 LaunchActions(state, onLaunch, onRefresh, resumed && sheet == null,
                                     onDetails = { open(if (state.failed) "error" else "status") },
                                     modifier = Modifier.width(layout.actionWidth.dp))
-                                ProjectCard(projectState, Modifier.weight(1f).fillMaxHeight()) { open("project") }
+                                HomeProjectCard(state, projectState, homeProjectSourceId, onHomeProjectSource,
+                                    onProject = { open("project") }, onSources = { open("translation") },
+                                    onAi = { open("translation"); openChild("ai-translation") },
+                                    modifier = Modifier.weight(1f).fillMaxHeight())
                             }
                         }
                     } else {
@@ -132,7 +138,9 @@ internal fun LauncherScreen(
                             LaunchActions(state, onLaunch, onRefresh, resumed && sheet == null,
                                 onDetails = { open(if (state.failed) "error" else "status") },
                                 modifier = Modifier.widthIn(max = layout.actionWidth.dp).fillMaxWidth())
-                            ProjectCard(projectState) { open("project") }
+                            HomeProjectCard(state, projectState, homeProjectSourceId, onHomeProjectSource,
+                                onProject = { open("project") }, onSources = { open("translation") },
+                                onAi = { open("translation"); openChild("ai-translation") })
                         }
                     }
                 }
@@ -146,6 +154,10 @@ internal fun LauncherScreen(
                     footer = { active -> when (active) {
                         "app-update" -> AppUpdateControls(appUpdateState, state, onDownloadAppUpdate, onInstallAppUpdate, onCancelAppUpdate, layout.detailPadding.dp)
                         "translation" -> TranslationUpdateControls(state, { confirmation = ConfirmedOperation.Translation }, layout.detailPadding.dp)
+                        "project" -> if (!state.sources.selected.isOfficial) UpdateActionCard(null, Glyph.Translation,
+                            busy = false, description = "选择都市零协会汉化", progressDescription = "",
+                            horizontalPadding = layout.detailPadding.dp, action = "使用此汉化源",
+                            actionEnabled = !state.busy, onAction = { confirmZeroSource = true })
                     } }) { active ->
                     if (active == "repair") {
                         RepairPane(state, { confirmation = ConfirmedOperation.Repair }, onExport)
@@ -164,7 +176,7 @@ internal fun LauncherScreen(
                     } else if (active == "app-update") {
                         AppUpdatesPane(appUpdateState, onCheckAppUpdate, onOpenAppRelease)
                     } else if (active == "translation") {
-                        TranslationSourcesPane(state, translationActions) { openChild("ai-translation") }
+                        TranslationSourcesPane(state, translationActions, onProject = { openChild("project") }) { openChild("ai-translation") }
                     } else if (active == "ai-translation") {
                         AiTranslationPane(state, translationActions)
                     } else {
@@ -181,6 +193,11 @@ internal fun LauncherScreen(
                 }
             }
         }
+    }
+    if (confirmZeroSource) TranslationSourceSwitchDialog(com.example.limbuszhcn.translation.TranslationSources.OFFICIAL,
+        !state.busy, { confirmZeroSource = false }) {
+        confirmZeroSource = false
+        translationActions.select("zero")
     }
     confirmation?.let { operation ->
         OperationConfirmation(operation, enabled = !state.busy, onDismiss = { confirmation = null }) {

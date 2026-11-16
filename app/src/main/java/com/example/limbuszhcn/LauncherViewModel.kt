@@ -22,6 +22,13 @@ internal class LauncherViewModel(application: Application) : AndroidViewModel(ap
     private val trackerWorker = Executors.newSingleThreadExecutor { task -> Thread(task, "limbus-project-tracker") }
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
     private val closed = AtomicBoolean(false)
+    var homeProjectSourceId by mutableStateOf(preferences.getString("home-source-id", null))
+        private set
+    fun selectHomeProjectSource(id: String?) {
+        if (closed.get() || id != null && state.sources.sources.none { it.id == id }) return
+        homeProjectSourceId = id
+        preferences.edit().putString("home-source-id", id).apply()
+    }
     var projectState by mutableStateOf(ProjectTrackingState(
         source = ProjectSource.fromPreference(preferences.getString("source", null))))
         private set
