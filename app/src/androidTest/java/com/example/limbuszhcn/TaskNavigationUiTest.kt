@@ -94,13 +94,47 @@ class TaskNavigationUiTest {
         capture("coverage-inline")
         compose.runOnIdle {
             assertEquals(1, scans)
-            val report = CoverageReport("都市零协会", 17L, 2460, 183682, 183540, 142, 83, 142, 0, emptyList(), reviewEligible = 83)
-            state = state.copy(coverage = CoverageState(report = report))
+            val report = CoverageReport("都市零协会 · AI 补全", 17L, 2460, 183682, 183664, 18, 83, 18, 0,
+                listOf(CoverageFile("jp/StoryData/JP_Story.json", "剧情与对话", 18, 70,
+                    listOf(CoverageSample("待翻译的原文", false, reason = "没有可用译文"),
+                        CoverageSample("待核对的原文", true, "包含原文的现有译文", "译文中仍含原文"))),
+                    CoverageFile("jp/JP_Skills.json", "战斗与技能", 0, 13, emptyList())), reviewEligible = 83)
+            state = state.copy(coverage = CoverageState(report = report, fingerprint = "current"))
         }
         compose.onNodeWithText("查看结果").performClick()
-        compose.onNodeWithText("已对照 183682 条本地文本").assertIsDisplayed()
+        compose.onNodeWithText("检查结果").assertIsDisplayed()
+        capture("coverage-result")
+        compose.onNodeWithText("剧情与对话").performScrollTo().performClick()
+        compose.onNodeWithText("没有可用译文").performScrollTo().assertIsDisplayed()
+        capture("coverage-expanded")
         compose.runOnIdle { state = state.copy(coverage = state.coverage.copy(stale = true)) }
-        compose.onNodeWithText("汉化或游戏文本已变动，以下保留上次结果。重新检查后再选择补译范围。").assertExists()
-        compose.onNodeWithText("选择模型并确认").assertIsNotEnabled()
+        compose.onNodeWithText("上次检查结果").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("设置 AI 翻译").assertIsNotEnabled()
+        capture("coverage-stale")
+    }
+
+    @Test fun newTranslationRequiresCoverageAndCannotUseAStaleConfirmation() {
+        var state by mutableStateOf(LauncherUiState(ai = AiUiState(hasKey = true)))
+        var scans = 0; var generations = 0
+        val actions = TranslationActions(inspectCoverage = { scans++; state = state.copy(coverage = CoverageState(loading = true)) },
+            generateAi = { _, _ -> generations++ })
+        compose.setContent { Screen(state, actions) }
+        compose.onNodeWithContentDescription("设置与工具").performClick()
+        compose.onNodeWithText("汉化源与更新").performScrollTo().performClick()
+        compose.onNodeWithText("AI 翻译").performScrollTo().performClick()
+        compose.onNodeWithText("生成并使用").assertDoesNotExist()
+        compose.onNodeWithText("先检查汉化覆盖").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertEquals(1, scans)
+            state = state.copy(coverage = CoverageState(report = CoverageReport("source", 1, 1, 10, 10, 0, 2, 0, 0,
+                emptyList(), reviewEligible = 2), fingerprint = "current"))
+        }
+        compose.onNodeWithText("所选范围已无需补译").assertIsNotEnabled()
+        compose.onNodeWithText("待核对").performScrollTo().performClick()
+        compose.onNodeWithText("生成并使用").performScrollTo().performClick()
+        compose.onNodeWithText("开始翻译").assertIsEnabled()
+        compose.runOnIdle { state = state.copy(coverage = state.coverage.copy(stale = true)) }
+        compose.onNodeWithText("开始翻译").assertIsNotEnabled()
+        compose.runOnIdle { assertEquals(0, generations) }
     }
 }

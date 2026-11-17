@@ -436,10 +436,18 @@ internal class LaunchCoordinator private constructor(application: Application) {
 
     fun generateAi(config: AiConfig, key: String) {
         if (state.busy || state.ai.hasPendingTask) return
+        if (!state.coverage.canGenerate(config)) {
+            state = state.copy(ai = state.ai.copy(message = if (state.coverage.current) "所选范围没有可补译条目" else "请先检查汉化覆盖，再选择翻译范围"))
+            return
+        }
+        val checkedFingerprint = state.coverage.fingerprint
         synchronized(aiControl) { aiCancelled.set(false); aiDiscarded.set(false); aiCommitting = false }
         perform("生成 AI 汉化", preserveFailure = true, page = "ai-translation") {
             runAiTask {
                 check(!aiTaskStore.exists()) { "请先继续或取消已有翻译任务" }
+                check(coverageStore.fingerprint(translationSources.read().selected, runtime.storage()) == checkedFingerprint) {
+                    "汉化或游戏文本已变化，请重新检查后再翻译"
+                }
                 aiSettings.save(config, key); publishSources(); stopGame()
                 val source = translationSources.read().selected
                 // Freeze the local package the coverage report examined; do not silently change the scope by downloading a newer base.
@@ -474,12 +482,17 @@ internal class LaunchCoordinator private constructor(application: Application) {
             publish { it.copy(ai = it.ai.copy(task = task, progress = task.progress)) }
             val prepared = aiTaskStore.prepared("base")
             val reference = aiTaskStore.prepared("reference") ?: prepared
+            val previous = translationSources.read().sources.firstOrNull {
+                it.kind == "ai" && it.id == "ai-${task.outputIdentity}" && it.revision == prepared?.manifest?.archiveSha256
+            }
+            val reusable = if (previous != null && prepared != null)
+                AiTranslationReuse.collect(translationCache, previous, prepared, runtime.storage(), aiCancelled::get) else emptyMap()
             val result = AiTranslationJob(translationCache, runtime.storage(), task.config,
                 AiTranslationClient(task.config, aiSettings.key()), aiCancelled::get) { progress ->
                 val saved = aiTaskStore.read()
                 publish { it.copy(ai = it.ai.copy(task = saved, progress = progress,
                     message = if (it.ai.stopping) it.ai.message else progress.message)) }
-            }.run(task.baseId, prepared, task.outputIdentity, reference = reference, session = aiTaskStore)
+            }.run(task.baseId, prepared, task.outputIdentity, reuse = reusable, reference = reference, session = aiTaskStore)
             synchronized(aiControl) {
                 if (aiCancelled.get()) throw java.util.concurrent.CancellationException()
                 aiCommitting = true
@@ -495,7 +508,12 @@ internal class LaunchCoordinator private constructor(application: Application) {
             publish { it.copy(translation = null, resourcePreparation = null,
                 ai = it.ai.copy(task = null, recoveryIssue = false, running = false, stopping = false, message = result.progress.message, progress = result.progress)) }
             publishSources(if (result.progress.completed + result.progress.reused > 0) "AI 汉化已保存，可撤回上次生成" else "所选范围没有需要 AI 处理的文本")
-            return AiRunResult(true, result.progress.message)
+            val report = refreshCoverageAfterTranslation()
+            val message = report?.let { "本批已保存 ${result.progress.completed + result.progress.reused} 条 · 未覆盖 ${it.missing} · 待核对 ${it.review}" }
+                ?: "汉化已保存；覆盖检查未完成，可稍后重查"
+            PersistentDiagnosticLog.info(TAG, "AI completed selected=${task.plan?.total ?: result.progress.limit} translated=${result.progress.completed} reused=${result.progress.reused} remaining=${result.remaining} missing=${report?.missing} review=${report?.review}")
+            publish { it.copy(ai = it.ai.copy(message = message)) }
+            return AiRunResult(true, message)
         } catch (e: Exception) {
             val paused = e is java.util.concurrent.CancellationException
             if (!paused) PersistentDiagnosticLog.error(TAG, "AI task paused", e)
@@ -512,6 +530,27 @@ internal class LaunchCoordinator private constructor(application: Application) {
             synchronized(aiControl) { aiCommitting = false }
             publish { it.copy(ai = it.ai.copy(running = false, stopping = false)) }
         }
+    }
+
+    private fun refreshCoverageAfterTranslation(): CoverageReport? {
+        coverageRequest.incrementAndGet()
+        publish { it.copy(coverage = it.coverage.copy(loading = true, stale = true, error = null), stage = "正在核对翻译结果") }
+        val result = runCatching {
+            val source = translationSources.read().selected
+            val storage = runtime.storage()
+            val fingerprint = coverageStore.fingerprint(source, storage)
+            val base = if (source.isOfficial) {
+                val extracted = com.example.limbuszhcn.update.TranslationRepository(translationCache).verifiedForLaunch(null)
+                PreparedTranslation(extracted.outputDirectory, extracted.manifest)
+            } else translationSources.prepare(source)
+            val report = TranslationCoverage.scan(storage, base, source.name)
+            check(coverageStore.fingerprint(source, storage) == fingerprint) { "游戏文本仍在变化，请下载完成后重新检查" }
+            SavedCoverage(fingerprint, report).also(coverageStore::save)
+        }
+        publish { current -> result.fold(
+            { saved -> current.copy(coverage = CoverageState(report = saved.report, fingerprint = saved.fingerprint)) },
+            { current.copy(coverage = current.coverage.copy(loading = false, stale = true, error = "汉化已保存，覆盖检查未完成。请重新检查。")) }) }
+        return result.getOrNull()?.report
     }
 
     fun undoAi() = perform("撤回 AI 翻译", page = "ai-translation") {

@@ -75,7 +75,7 @@ internal fun TranslationSourcesPane(state: LauncherUiState, actions: Translation
                     else selected.label, color = C.Muted, style = MaterialTheme.typography.bodySmall)
             }
         }
-        CoverageSummary(state, onCoverage)
+        CoverageSummary(state, onCoverage, actions.inspectCoverage)
         DetailActionSection("汉化源") {
             Column(Modifier.selectableGroup()) {
             state.sources.sources.forEachIndexed { index, source ->
