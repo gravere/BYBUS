@@ -2,7 +2,6 @@ package com.example.limbuszhcn;
 
 import android.app.Application;
 import android.app.Instrumentation;
-import android.content.AttributionSource;
 import android.content.ContentProviderClient;
 import android.content.ContentResolver;
 import android.content.Context;
@@ -11,6 +10,7 @@ import android.content.IContentProvider;
 import android.content.res.Configuration;
 import android.net.Uri;
 import android.os.Binder;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.IInterface;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -46,9 +46,13 @@ public class ProviderRoutingTest {
                     if (method.getName().equals("asBinder")) return new Binder();
                     if (method.getName().equals("call")) {
                         // The virtual package remains on the guest Context, not the Binder request.
-                        AttributionSource source = (AttributionSource) args[0];
-                        assertEquals(host.getPackageName(), source.getPackageName());
-                        assertEquals(host.getApplicationInfo().uid, source.getUid());
+                        if (Build.VERSION.SDK_INT >= 31) {
+                            Object source = args[0];
+                            assertEquals(host.getPackageName(), source.getClass().getMethod("getPackageName").invoke(source));
+                            assertEquals(host.getApplicationInfo().uid, source.getClass().getMethod("getUid").invoke(source));
+                        } else {
+                            assertEquals(host.getPackageName(), args[0]);
+                        }
                         calls++;
                         Bundle value = new Bundle(); value.putString("result", "fixture"); return value;
                     }
@@ -190,9 +194,6 @@ public class ProviderRoutingTest {
         GuestContext(Context base) { super(base); }
         @Override public String getPackageName() { return "com.google.android.gms"; }
         @Override public String getOpPackageName() { return getPackageName(); }
-        @Override public AttributionSource getAttributionSource() {
-            return new AttributionSource.Builder(getApplicationInfo().uid).setPackageName(getPackageName()).build();
-        }
         @Override public ContentResolver getContentResolver() { return resolver == null ? super.getContentResolver() : resolver; }
         private Context derived(Context c) { GuestContext value = new GuestContext(c); value.resolver = resolver; return value; }
         @Override public Context createConfigurationContext(Configuration c) { return derived(super.createConfigurationContext(c)); }

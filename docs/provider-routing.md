@@ -47,7 +47,9 @@ the routing contract, not physical-device validation for every vendor ROM.
 `ProviderRoutingTest` covers these contracts on Android; `ProviderRoutePolicyTest`
 covers authority and caller scope. The `provider-login` cloud inspection also
 exercises bundled microG configuration, service capability and its login entry on
-Android 11 and 17 without an account or purchase. Release APK verification rejects
+Android 17 without an account or purchase. Android 11 runs the framework contract
+fixture: its x86 emulator ARM translator fails before the guest Application is
+created, so it cannot establish full-container login behavior. Release APK verification rejects
 packaged hidden-interface stubs and checks that the resolver overrides survive R8.
 
 References: AOSP [ContentResolver](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/core/java/android/content/ContentResolver.java),

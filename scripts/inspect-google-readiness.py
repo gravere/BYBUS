@@ -43,6 +43,19 @@ def inspect(api, release, verifier, windows_only=False, settings_only=False, ses
         raise RuntimeError('Google fixture timed out: ' + stage)
 
     try:
+        if provider_only and api['REPORT']['profile'] == 'android11':
+            # The Android 11 x86 ARM translator fails before guest Application creation.
+            # Exercise the Java/framework contract directly; do not label this a real login test.
+            report['contract_probe_sha256'] = api['install_component_probe'](release, verifier, 'bybus-provider-tests.apk')
+            output = adb('shell', 'am', 'instrument', '-w', '-e', 'class',
+                         'com.example.limbuszhcn.ProviderRoutingTest',
+                         package + '.test/androidx.test.runner.AndroidJUnitRunner', timeout=90)
+            (out / 'provider-contract-tests.txt').write_text(output, encoding='utf-8')
+            assert 'OK (6 tests)' in output and 'FAILURES' not in output, 'Android provider contract tests failed'
+            report['checks'].append('six real Android framework contract tests; virtual-provider dispatch uses a fixture')
+            report['payment_runtime'] = 'not tested; Android 11 ARM translation blocks full container startup in this x86 emulator'
+            report['result'] = 'Provider framework contract inspection completed'
+            return
         if session_only:
             inspect_session(api, probe)
             report['result'] = 'Existing virtual task background/resume inspection completed'
