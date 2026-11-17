@@ -162,16 +162,23 @@ AI 页面提供「全局提示词」，内置按零协公开规范整理的文�
 
 ## 致谢
 
-感谢以下项目及其贡献者，也感谢 [UMP40](https://github.com/UMP40) 对原生运行时与 Google 登录兼容的代码贡献。
+感谢以下项目提供的汉化资源与基础组件。
 
-| 项目 | 贡献 |
+| 项目 | 在 BYBUS 中的用途 |
 | --- | --- |
-| [BBBEANNN / limbusZhCN](https://github.com/BBBEANNN/limbusZhCN) | BYBUS 的基础项目，提供 Android 汉化与容器接入实现 |
-| [都市零协会 / LocalizeLimbusCompany](https://github.com/LocalizeLimbusCompany/LocalizeLimbusCompany) | 简体中文翻译、校对、汉化资源与持续维护；项目图标使用其官方 GitHub 头像 |
-| [ServenScorpion / VirtualApp](https://github.com/ServenScorpion/VirtualApp) | Android 应用容器；同时感谢 VirtualApp 原项目的贡献者 |
-| [microG / GmsCore](https://github.com/microg/GmsCore) | Google 服务兼容组件与 Companion |
-| [be5invis / Sarasa Gothic](https://github.com/be5invis/Sarasa-Gothic) | 更纱黑体，游戏中文字体来源 |
-| [Android Open Source Project](https://source.android.com/) 与 [AndroidX](https://developer.android.com/jetpack/androidx) | Android 基础组件、签名验证与界面框架 |
+| [都市零协会 / LocalizeLimbusCompany](https://github.com/LocalizeLimbusCompany/LocalizeLimbusCompany) | 默认简体中文汉化资源、译文校对与持续更新，以及来源图标 |
+| [VirtualApp](https://github.com/ServenScorpion/VirtualApp) | 运行游戏的 Android 应用容器 |
+| [microG / GmsCore](https://github.com/microg/GmsCore) | 容器内的 Google 服务与商店兼容组件 |
+| [更纱黑体 / Sarasa Gothic](https://github.com/be5invis/Sarasa-Gothic) | 游戏中的中文字体 |
+| [Android Open Source Project](https://source.android.com/) 与 [AndroidX](https://developer.android.com/jetpack/androidx) | Android 基础组件、APK 签名验证与界面框架 |
+| [Google Material Icons](https://github.com/google/material-design-icons) | 刷新图标 |
+
+同时感谢以下代码贡献：
+
+- [UMP40](https://github.com/UMP40)：原生运行时与 Google 登录兼容修复。
+- [BBBEANNN / limbusZhCN](https://github.com/BBBEANNN/limbusZhCN)：资源导入导出的兼容实现，以及部分原生运行时修复。
+
+具体代码来源、组件版本与许可见[第三方声明](THIRD_PARTY_NOTICES.md)。
 
 ## 许可证
 
