@@ -11,6 +11,47 @@ apk = Path(sys.argv[1])
 report_path = Path(sys.argv[2])
 result = {"apk": str(apk), "size_bytes": apk.stat().st_size, "sha256": hashlib.file_digest(apk.open('rb'), 'sha256').hexdigest()}
 
+def provider_dex_contract(data):
+    """Read definitions, not just string references: hidden compile stubs must stay off-device."""
+    def u32(offset): return struct.unpack_from('<I', data, offset)[0]
+    def leb(offset):
+        value = shift = 0
+        for _ in range(5):
+            byte = data[offset]; offset += 1
+            value |= (byte & 127) << shift
+            if not byte & 128: return value, offset
+            shift += 7
+        raise AssertionError('Invalid DEX integer')
+    strings_size, strings_offset = struct.unpack_from('<II', data, 56)
+    strings = []
+    for i in range(strings_size):
+        _, offset = leb(u32(strings_offset + 4 * i))
+        strings.append(data[offset:data.index(b'\0', offset)].decode('utf-8', errors='replace'))
+    type_count, type_offset = struct.unpack_from('<II', data, 64)
+    types = [strings[u32(type_offset + i * 4)] for i in range(type_count)]
+    class_count, class_offset = struct.unpack_from('<II', data, 96)
+    methods_offset = u32(92)
+    target_methods = set()
+    for i in range(class_count):
+        offset = class_offset + i * 32
+        name = types[u32(offset)]
+        assert name != 'Landroid/content/IContentProvider;', 'Compile-only platform stub was packaged'
+        assert not name.startswith('Lcom/example/limbuszhcn/ProviderProbe'), 'Test provider was packaged'
+        if name != 'Lcom/lody/virtual/client/hook/providers/RoutedContentResolver;': continue
+        cursor = u32(offset + 24)
+        counts = []
+        for _ in range(4):
+            count, cursor = leb(cursor); counts.append(count)
+        for _ in range(counts[0] + counts[1]):
+            _, cursor = leb(cursor); _, cursor = leb(cursor)
+        for count in counts[2:]:
+            method_idx = 0
+            for _ in range(count):
+                diff, cursor = leb(cursor); method_idx += diff
+                _, cursor = leb(cursor); _, cursor = leb(cursor)
+                target_methods.add(strings[u32(methods_offset + method_idx * 8 + 4)])
+    return target_methods
+
 def digest_entries(archive, names):
     digest = hashlib.sha256()
     for name in names:
@@ -22,6 +63,14 @@ def digest_entries(archive, names):
 
 with zipfile.ZipFile(apk) as archive:
     names = archive.namelist()
+    provider_methods = set()
+    for name in names:
+        if name.startswith('classes') and name.endswith('.dex'):
+            provider_methods.update(provider_dex_contract(archive.read(name)))
+    required = {'acquireProvider', 'acquireExistingProvider', 'acquireUnstableProvider',
+                'releaseProvider', 'releaseUnstableProvider', 'unstableProviderDied', 'appNotRespondingViaProvider'}
+    assert required <= provider_methods, 'R8 removed/renamed hidden ContentResolver overrides'
+    result['provider_contract'] = {'hidden_overrides': sorted(required), 'compile_stub_packaged': False}
     assert 'lib/arm64-v8a/libv++_64.so' in names, 'VirtualApp native library missing'
     libraries = []
     for item in archive.infolist():

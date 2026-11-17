@@ -9,6 +9,7 @@ __pycache__/
 /app/build
 /migration/build
 /migration-core/build
+/platform-stubs/build
 /captures
 .externalNativeBuild
 .cxx

@@ -5,6 +5,10 @@
 -keep class com.xdja.** { *; }
 -keep class mirror.** { *; }
 -keep class android.** { *; }
+# IContentProvider is supplied by Android, never packaged from the compile-only stub module.
+-dontwarn android.content.IContentProvider
+# Explicit hidden overrides must retain their descriptors even if container keep rules change.
+-keep class com.lody.virtual.client.hook.providers.RoutedContentResolver { *; }
 -keep class com.google.** { *; }
 # These four compile-only bridge types are supplied by the guest game's classloader.
 # Packaging a second GMS Task implementation in the host breaks Firebase C++ bridging.

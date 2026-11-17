@@ -48,8 +48,8 @@ android {
         minSdk = 26
         targetSdk = 35
         // 显示版本使用 BYBUS 命名；内部版本号保持递增，确保旧版可直接覆盖升级。
-        versionCode = 106
-        versionName = "v1.0.59"
+        versionCode = 107
+        versionName = "v1.0.60"
         // 版本页随资源更新，避免 Kotlin 增量编译保留旧的 BuildConfig 内联常量。
         resValue("string", "app_version_name", requireNotNull(versionName))
 
@@ -143,6 +143,8 @@ tasks.named("preBuild").configure { dependsOn(prepareCompactAssets, verifyBundle
 dependencies {
 
     implementation(project(":virtualapp"))
+    compileOnly(project(":platform-stubs"))
+    androidTestCompileOnly(project(":platform-stubs"))
     implementation(project(":migration-core"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
