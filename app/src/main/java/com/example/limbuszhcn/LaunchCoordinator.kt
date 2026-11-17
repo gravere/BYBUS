@@ -22,6 +22,7 @@ import com.example.limbuszhcn.update.GameInstallSource
 import com.example.limbuszhcn.update.GamePackageInstaller
 import com.example.limbuszhcn.update.GameInstallReview
 import com.example.limbuszhcn.update.PreparedGameUpdate
+import com.example.limbuszhcn.update.sha256
 import android.content.Intent
 import android.content.pm.PackageInstaller
 import com.example.limbuszhcn.translation.*
@@ -54,6 +55,7 @@ internal data class LauncherUiState(
     val repair: RepairState = RepairState(),
     val clearing: DataClearState = DataClearState(),
     val busy: Boolean = false,
+    val taskPage: String? = null,
     val stage: String = "正在读取状态",
     val launchStep: Int = -1,
     val message: String = "正在检测手机上的边狱巴士",
@@ -86,10 +88,15 @@ internal class LaunchCoordinator private constructor(application: Application) {
     private val translationSources by lazy { TranslationSources(translationCache) }
     private val aiSettings by lazy { AiSettingsStore(app) }
     private val aiCancelled = java.util.concurrent.atomic.AtomicBoolean()
+    private val aiDiscarded = java.util.concurrent.atomic.AtomicBoolean()
+    private val aiControl = Any()
+    private var aiCommitting = false
+    private val aiTaskStore by lazy { AiTaskStore(translationCache) }
     private val modelsWorker = Executors.newSingleThreadExecutor { task -> Thread(task, "bybus-models") }
     private val aiSettingsWorker = Executors.newSingleThreadExecutor { task -> Thread(task, "bybus-ai-settings") }
     private val coverageWorker = Executors.newSingleThreadExecutor { task -> Thread(task, "bybus-coverage") }
     private val coverageRequest = java.util.concurrent.atomic.AtomicLong()
+    private val coverageStore by lazy { CoverageStore(translationCache) }
     private var modelsTask: java.util.concurrent.Future<*>? = null
     private val modelsRequest = java.util.concurrent.atomic.AtomicLong()
     private val gameUpdates = GameUpdateSource.entries.associateWith { source ->
@@ -114,6 +121,17 @@ internal class LaunchCoordinator private constructor(application: Application) {
 
     init {
         worker.execute {
+            runCatching { coverageStore.read() }.getOrNull()?.let { saved ->
+                publish { it.copy(coverage = CoverageState(report = saved.report, fingerprint = saved.fingerprint)) }
+            }
+            runCatching { aiTaskStore.recover(translationSources.read()) }
+                .onSuccess { task -> if (task != null) publish { it.copy(ai = it.ai.copy(task = task,
+                    progress = task.progress, message = task.error ?: "翻译任务已暂停，可继续或取消")) } }
+                .onFailure { error ->
+                    val pending = aiTaskStore.exists()
+                    publish { it.copy(ai = it.ai.copy(failed = true, recoveryIssue = pending,
+                        message = "翻译任务读取失败，可取消后重新生成：${error.userMessage()}")) }
+                }
             runCatching { com.example.limbuszhcn.storage.OperationLock.run(app.filesDir.toPath()) { packageUpdates.recover() } }
                 .onSuccess { pending -> publish { it.copy(gameInstallPending = pending) } }
                 .onFailure { PersistentDiagnosticLog.error(TAG, "Recover package update", it) }
@@ -129,13 +147,13 @@ internal class LaunchCoordinator private constructor(application: Application) {
     private fun stage(label: String, step: Int = -1) = publish { it.copy(stage = label, launchStep = step) }
 
     private fun perform(label: String, allowPackageUpdate: Boolean = false,
-        preserveFailure: Boolean = false, task: () -> String) {
-        if (state.busy || exportSaveQueued) return
+        preserveFailure: Boolean = false, page: String = "status", task: () -> String) {
+        if (state.busy || exportSaveQueued || com.example.limbuszhcn.migration.MigrationModel.currentState()?.busy == true) return
         if (!allowPackageUpdate && (state.gameInstallPending || state.gameInstallReview != null)) {
             state = state.copy(updatesRequest = nextUpdatesRequest(state))
             return
         }
-        state = state.beginOperation(label, preserveFailure)
+        state = state.beginOperation(label, preserveFailure).copy(taskPage = page)
         worker.execute {
             val start = System.nanoTime()
             val result = runCatching { com.example.limbuszhcn.storage.OperationLock.run(app.filesDir.toPath()) {
@@ -145,9 +163,10 @@ internal class LaunchCoordinator private constructor(application: Application) {
                 task()
             } }
             result.exceptionOrNull()?.let { PersistentDiagnosticLog.error(TAG, label, it) }
+            refreshCoverageFreshness()
             PersistentDiagnosticLog.info(TAG, "Task finished stage=$label elapsedMs=${(System.nanoTime() - start) / 1_000_000} success=${result.isSuccess}")
             publish { it.finishOperation(result.getOrElse { error -> error.userMessage() },
-                failed = result.isFailure, preserveFailure = preserveFailure) }
+                failed = result.isFailure && result.exceptionOrNull() !is java.util.concurrent.CancellationException, preserveFailure = preserveFailure) }
         }
     }
 
@@ -170,14 +189,14 @@ internal class LaunchCoordinator private constructor(application: Application) {
             val changed = sources.selected.id != it.sources.selected.id || sources.selected.revision != it.sources.selected.revision ||
                 sources.officialDownloaded != it.sources.officialDownloaded
             if (changed) coverageRequest.incrementAndGet()
-            it.copy(sources = sources, coverage = if (changed) CoverageState() else it.coverage,
+            it.copy(sources = sources, coverage = if (changed) it.coverage.copy(loading = false, stale = it.coverage.report != null) else it.coverage,
                 ai = it.ai.copy(config = config, hasKey = keyPresent))
         }
     }
 
     private fun prepareTranslation(patch: ContainerPatchInstaller, repair: Boolean = false): PatchInstallSummary {
         coverageRequest.incrementAndGet()
-        publish { it.copy(coverage = CoverageState()) }
+        publish { it.copy(coverage = it.coverage.copy(loading = false)) }
         val source = translationSources.read().selected
         val result = SourceActivation(translationCache).run(source.id, source.revision.takeUnless { source.isOfficial }) {
             if (!source.isOfficial) {
@@ -199,7 +218,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
         return result
     }
 
-    fun selectTranslationSource(id: String) = perform("切换汉化源") {
+    fun selectTranslationSource(id: String) = perform("切换汉化源", page = "translation") {
         stopGame()
         translationSources.select(id)
         preparationPreferences.edit().remove("pending").apply()
@@ -208,7 +227,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
         "汉化源已切换，游戏资源与账号保留"
     }
 
-    fun importTranslation(uri: Uri, replaceId: String?) = perform("导入汉化包") {
+    fun importTranslation(uri: Uri, replaceId: String?) = perform("导入汉化包", page = "translation") {
         stopGame()
         val name = app.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
             if (it.moveToFirst()) it.getString(0)?.take(80) else null
@@ -221,12 +240,12 @@ internal class LaunchCoordinator private constructor(application: Application) {
         "汉化包已导入"
     }
 
-    fun renameTranslation(id: String, name: String) = perform("修改汉化名称") {
+    fun renameTranslation(id: String, name: String) = perform("修改汉化名称", page = "translation") {
         require(id != "zero") { "默认来源名称保持不变" }
         translationSources.rename(id, name); publishSources(); "名称已保存"
     }
 
-    fun setTranslationIcon(id: String, uri: Uri?) = perform("设置汉化图标") {
+    fun setTranslationIcon(id: String, uri: Uri?) = perform("设置汉化图标", page = "translation") {
         val png = uri?.let {
             val bytes = java.io.ByteArrayOutputStream()
             app.contentResolver.openInputStream(it).use { input ->
@@ -237,11 +256,11 @@ internal class LaunchCoordinator private constructor(application: Application) {
         translationSources.setIcon(id, png); publishSources(); "图标已保存"
     }
 
-    fun removeTranslation(id: String) = perform("卸载汉化文件") {
+    fun removeTranslation(id: String) = perform("卸载汉化文件", page = "translation") {
         removeSelectedTranslation(id)
     }
 
-    fun removeAiTranslation(id: String) = perform("删除 AI 汉化") {
+    fun removeAiTranslation(id: String) = perform("删除 AI 汉化", page = "ai-translation") {
         val sources = translationSources.read()
         require(sources.sources.any { it.id == id && it.kind == "ai" }) { "此 AI 汉化已不存在" }
         if (sources.selectedId == id) removeSelectedTranslation(id)
@@ -276,7 +295,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
         return message
     }
 
-    fun exportTranslation(id: String, destination: Uri) = perform("导出汉化包", allowPackageUpdate = true) {
+    fun exportTranslation(id: String, destination: Uri) = perform("导出汉化包", allowPackageUpdate = true, page = "translation") {
         try {
             val source = requireNotNull(translationSources.read().sources.find { it.id == id }) { "汉化源已不存在" }
             val prepared = if (source.isOfficial) {
@@ -320,7 +339,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
     fun inspectCoverage() {
         if (state.busy || state.coverage.loading) return
         val request = coverageRequest.incrementAndGet()
-        state = state.copy(coverage = CoverageState(loading = true))
+        state = state.copy(coverage = state.coverage.copy(loading = true, error = null))
         coverageWorker.execute {
             val result = runCatching {
                 val storage = runtime.storage()
@@ -331,20 +350,35 @@ internal class LaunchCoordinator private constructor(application: Application) {
                         val extracted = com.example.limbuszhcn.update.TranslationRepository(translationCache).verifiedForLaunch(null)
                         PreparedTranslation(extracted.outputDirectory, extracted.manifest)
                     } else translationSources.prepare(source)
-                    source to base
+                    Triple(source, base, coverageStore.fingerprint(source, storage))
                 }
-                TranslationCoverage.scan(storage, pair.second, pair.first.name).also { report ->
+                val report = TranslationCoverage.scan(storage, pair.second, pair.first.name).also { report ->
                     PersistentDiagnosticLog.info(TAG, "Coverage files=${report.files} total=${report.total} covered=${report.covered} " +
                         "missing=${report.missing} review=${report.review} shared=${report.shared} excluded=${report.excluded} unreadable=${report.unreadable}")
                 }
+                check(coverageRequest.get() == request && coverageStore.fingerprint(translationSources.read().selected, storage) == pair.third) {
+                    "检查期间资源发生变化，请重新检查"
+                }
+                SavedCoverage(pair.third, report).also(coverageStore::save)
             }
             publish {
-                if (coverageRequest.get() != request) it else it.copy(coverage = CoverageState(
-                    report = result.getOrNull(), error = result.exceptionOrNull()?.let { error ->
+                if (coverageRequest.get() != request) it else it.copy(coverage = it.coverage.copy(loading = false,
+                    report = result.getOrNull()?.report ?: it.coverage.report,
+                    fingerprint = result.getOrNull()?.fingerprint ?: it.coverage.fingerprint,
+                    stale = if (result.isSuccess) false else it.coverage.stale,
+                    error = result.exceptionOrNull()?.let { error ->
                         if (error is IllegalArgumentException || error is IllegalStateException) error.message
                         else "本地文本读取失败，请在资源下载完成后重新检查"
                     }))
             }
+        }
+    }
+
+    private fun refreshCoverageFreshness() {
+        val saved = runCatching { coverageStore.read() }.getOrNull() ?: return
+        val current = runCatching { coverageStore.fingerprint(translationSources.read().selected, runtime.storage()) }.getOrNull()
+        publish {
+            if (it.coverage.report?.checkedAt != saved.report.checkedAt) it else it.copy(coverage = it.coverage.copy(stale = current != saved.fingerprint))
         }
     }
 
@@ -380,49 +414,107 @@ internal class LaunchCoordinator private constructor(application: Application) {
         aiSettings.savePrompt(prompt); publishSources(); "全局提示词已保存，仅影响之后的翻译请求"
     }
 
-    fun cancelAi() { aiCancelled.set(true); publish { it.copy(ai = it.ai.copy(message = "正在暂停，已完成的译文会保留")) } }
+    fun pauseAi() = synchronized(aiControl) {
+        if (!state.ai.running || aiCommitting) return@synchronized
+        aiCancelled.set(true)
+        state = state.copy(ai = state.ai.copy(stopping = true, message = "正在暂停，当前请求结束后保存进度"))
+    }
 
-    fun generateAi(config: AiConfig, key: String) = perform("生成 AI 汉化") {
-        aiSettings.save(config, key); publishSources(); stopGame()
-        aiCancelled.set(false)
-        publish { it.copy(ai = it.ai.copy(running = true, failed = false, message = "正在读取游戏原文", progress = AiProgress())) }
-        try {
-            val selected = translationSources.read().selected
-            // Continuing a generated source must preserve its previous translated batches.
-            val base = selected
-            val prepared = if (config.missingOnly) {
-                if (base.isOfficial) {
-                    val repository = com.example.limbuszhcn.update.TranslationRepository(translationCache, github::releaseForLaunch)
-                    val extracted = runCatching { repository.checkLatest(RELEASE_URL, null) }.getOrElse { error ->
-                        if (error is java.util.concurrent.CancellationException) throw error
-                        repository.verifiedForLaunch(null)
-                    }
-                    PreparedTranslation(extracted.outputDirectory, extracted.manifest)
-                } else translationSources.prepare(base)
-            } else null
-            val reference = if (base.isOfficial && prepared != null) prepared else runCatching {
-                com.example.limbuszhcn.update.TranslationRepository(translationCache).verifiedForLaunch(null)
-            }.getOrNull()?.let { PreparedTranslation(it.outputDirectory, it.manifest) }
-            val result = AiTranslationJob(translationCache, runtime.storage(), config,
-                AiTranslationClient(config, aiSettings.key()), aiCancelled::get) { progress ->
-                publish { it.copy(ai = it.ai.copy(progress = progress, message = progress.message)) }
-            }.run(base.baseId ?: base.id, prepared, base.id.takeIf { base.kind == "ai" }?.removePrefix("ai-"), reference = reference)
-            if (result.progress.completed + result.progress.reused > 0) translationSources.addGenerated(result.archive, base.baseId ?: base.id, result.identity,
-                if (config.missingOnly) "${base.name.take(48)} · AI 补全" else "AI 汉化",
-                if (config.missingOnly && base.isOfficial) prepared?.manifest?.requestedVersion?.toLongOrNull() else base.officialVersion)
-            publish { it.copy(translation = null, resourcePreparation = null,
-                ai = it.ai.copy(running = false, message = result.progress.message, progress = result.progress)) }
-            publishSources(if (result.progress.completed + result.progress.reused > 0) "AI 汉化已保存，可撤回上次生成" else "所选范围没有需要 AI 处理的文本")
-            result.progress.message
-        } catch (e: Exception) {
-            val cancelled = e is java.util.concurrent.CancellationException
-            publish { it.copy(ai = it.ai.copy(running = false, failed = !cancelled,
-                message = if (cancelled) "已暂停，继续时会复用已完成的译文" else "翻译未完成：${e.userMessage()}")) }
-            if (cancelled) "已暂停，译文缓存已保留" else throw e
+    fun cancelAi() = synchronized(aiControl) {
+        if (aiCommitting) return@synchronized
+        if (state.ai.running) {
+            aiDiscarded.set(true); aiCancelled.set(true)
+            runCatching { aiTaskStore.requestDiscard() }.onFailure { PersistentDiagnosticLog.error(TAG, "Save AI cancellation", it) }
+            state = state.copy(ai = state.ai.copy(stopping = true, message = "正在取消并删除本次译文"))
+        } else perform("取消翻译任务", preserveFailure = true, page = "ai-translation") {
+            aiTaskStore.discard()
+            publish { it.copy(ai = it.ai.copy(task = null, recoveryIssue = false, progress = AiProgress(), failed = false,
+                stopping = false, message = "任务已取消，本次未完成的译文已删除")) }
+            "翻译任务已取消"
         }
     }
 
-    fun undoAi() = perform("撤回 AI 翻译") {
+    fun generateAi(config: AiConfig, key: String) {
+        if (state.busy || state.ai.hasPendingTask) return
+        synchronized(aiControl) { aiCancelled.set(false); aiDiscarded.set(false); aiCommitting = false }
+        perform("生成 AI 汉化", preserveFailure = true, page = "ai-translation") {
+            runAiTask {
+                check(!aiTaskStore.exists()) { "请先继续或取消已有翻译任务" }
+                aiSettings.save(config, key); publishSources(); stopGame()
+                val source = translationSources.read().selected
+                // Freeze the local package the coverage report examined; do not silently change the scope by downloading a newer base.
+                val prepared = if (!config.missingOnly) null else if (source.isOfficial) {
+                    val repository = com.example.limbuszhcn.update.TranslationRepository(translationCache, github::releaseForLaunch)
+                    val extracted = runCatching { repository.verifiedForLaunch(null) }.getOrElse { repository.checkLatest(RELEASE_URL, null) }
+                    PreparedTranslation(extracted.outputDirectory, extracted.manifest)
+                } else translationSources.prepare(source)
+                val reference = if (source.isOfficial && prepared != null) prepared else runCatching {
+                    com.example.limbuszhcn.update.TranslationRepository(translationCache).verifiedForLaunch(null)
+                }.getOrNull()?.let { PreparedTranslation(it.outputDirectory, it.manifest) }
+                aiTaskStore.create(config, source, prepared, reference)
+            }.message
+        }
+    }
+
+    fun resumeAi() {
+        if (state.busy || state.ai.task == null) return
+        synchronized(aiControl) { aiCancelled.set(false); aiDiscarded.set(false); aiCommitting = false }
+        perform("继续 AI 翻译", preserveFailure = true, page = "ai-translation") {
+            runAiTask { requireNotNull(aiTaskStore.read()).also { stopGame() } }.message
+        }
+    }
+
+    private data class AiRunResult(val completed: Boolean, val message: String)
+    private fun runAiTask(prepare: () -> AiTaskSnapshot): AiRunResult {
+        publish { it.copy(ai = it.ai.copy(running = true, stopping = false, failed = false, message = "正在读取已保存的任务")) }
+        try {
+            val task = aiTaskStore.write(prepare().copy(phase = AiTaskPhase.Running, error = null))
+            PersistentDiagnosticLog.info(TAG, "AI task scope=${task.scopeLabel} limit=${task.config.limit} resumed=${task.plan != null}")
+            require(aiSettings.config().endpoint == task.config.endpoint) { "请把连接设置改回此任务使用的服务地址，再继续翻译" }
+            publish { it.copy(ai = it.ai.copy(task = task, progress = task.progress)) }
+            val prepared = aiTaskStore.prepared("base")
+            val reference = aiTaskStore.prepared("reference") ?: prepared
+            val result = AiTranslationJob(translationCache, runtime.storage(), task.config,
+                AiTranslationClient(task.config, aiSettings.key()), aiCancelled::get) { progress ->
+                val saved = aiTaskStore.read()
+                publish { it.copy(ai = it.ai.copy(task = saved, progress = progress,
+                    message = if (it.ai.stopping) it.ai.message else progress.message)) }
+            }.run(task.baseId, prepared, task.outputIdentity, reference = reference, session = aiTaskStore)
+            synchronized(aiControl) {
+                if (aiCancelled.get()) throw java.util.concurrent.CancellationException()
+                aiCommitting = true
+            }
+            val applying = aiTaskStore.write(requireNotNull(aiTaskStore.read()).copy(phase = AiTaskPhase.Applying,
+                resultHash = result.archive.sha256()))
+            publish { it.copy(ai = it.ai.copy(task = applying, stopping = true, message = "正在保存汉化包")) }
+            if (result.progress.completed + result.progress.reused > 0) {
+                aiTaskStore.retainCommittedCache(result.identity)
+                translationSources.addGenerated(result.archive, task.baseId, result.identity, task.outputName, task.officialVersion)
+            }
+            aiTaskStore.discard()
+            publish { it.copy(translation = null, resourcePreparation = null,
+                ai = it.ai.copy(task = null, recoveryIssue = false, running = false, stopping = false, message = result.progress.message, progress = result.progress)) }
+            publishSources(if (result.progress.completed + result.progress.reused > 0) "AI 汉化已保存，可撤回上次生成" else "所选范围没有需要 AI 处理的文本")
+            return AiRunResult(true, result.progress.message)
+        } catch (e: Exception) {
+            val paused = e is java.util.concurrent.CancellationException
+            if (!paused) PersistentDiagnosticLog.error(TAG, "AI task paused", e)
+            val discarded = aiDiscarded.get()
+            val saved = if (discarded) { aiTaskStore.discard(); null } else runCatching { aiTaskStore.read()?.let {
+                aiTaskStore.write(it.copy(phase = AiTaskPhase.Paused, error = if (paused) null else e.userMessage()))
+            } }.getOrNull()
+            val message = if (discarded) "任务已取消，本次未完成的译文已删除" else if (paused) "已暂停，可随时继续" else "翻译已暂停：${e.userMessage()}"
+            publish { it.copy(ai = it.ai.copy(running = false,
+                stopping = false, task = saved, recoveryIssue = saved == null && aiTaskStore.exists(),
+                progress = saved?.progress ?: AiProgress(), failed = !paused && !discarded, message = message)) }
+            return AiRunResult(false, message)
+        } finally {
+            synchronized(aiControl) { aiCommitting = false }
+            publish { it.copy(ai = it.ai.copy(running = false, stopping = false)) }
+        }
+    }
+
+    fun undoAi() = perform("撤回 AI 翻译", page = "ai-translation") {
         require(!state.ai.running) { "请先暂停翻译" }
         stopGame()
         translationSources.undoGenerated()
@@ -451,7 +543,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
         if (choice == null) return
         val decision = AiUpstreamDecision(offer, choice)
         if (offer.launchAfter) launch(update = decision)
-        else if (choice != AiUpdateChoice.Current) perform("更新汉化资源") {
+        else if (choice != AiUpdateChoice.Current) perform("更新汉化资源", page = "translation") {
             stopGame()
             val message = applyAiUpdate(decision)
             val summary = prepareTranslation(installer({ offer.metadata }))
@@ -468,6 +560,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
         AiUpstreamUpdate.requireCurrent(offer, source)
         if (decision.choice == AiUpdateChoice.Current) return "继续使用当前汉化"
         if (decision.choice == AiUpdateChoice.Supplement) {
+            check(!aiTaskStore.exists()) { "请先继续或取消当前 AI 翻译任务" }
             require(aiSettings.hasKey()) { "请先在 AI 翻译中保存 API 设置" }
             AiUpstreamUpdate.supplementConfig(offer.config)
         }
@@ -481,7 +574,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
             publishSources("已更新都市零协会，旧 AI 包保留")
             return "已更新都市零协会"
         }
-        aiCancelled.set(false)
+        synchronized(aiControl) { aiCancelled.set(false); aiDiscarded.set(false); aiCommitting = false }
         val supplement = decision.choice == AiUpdateChoice.Supplement
         val config = if (supplement) AiUpstreamUpdate.supplementConfig(offer.config) else AiConfig()
         publish { it.copy(aiPreparingLaunch = supplement,
@@ -491,6 +584,17 @@ internal class LaunchCoordinator private constructor(application: Application) {
             val previous = translationSources.prepare(source)
             val reusable = AiTranslationReuse.collect(translationCache, source, previous, runtime.storage(), aiCancelled::get)
             val identity = AiTranslationJob.digest("upstream-v1|${source.id}|${source.revision}|${offer.version}|${config.endpoint}|${config.model}|${AiTranslationJob.digest(config.prompt)}").take(32)
+            if (supplement) {
+                // Reuse is local and free; the subsequent paid batch uses the same durable lifecycle as manual translation.
+                val reused = AiTranslationJob(translationCache, runtime.storage(), config,
+                    AiTranslationClient(config, ""), aiCancelled::get).run("zero", base, identity, reusable, reuseOnly = true)
+                val prepared = LocalTranslationArchive(translationCache).extract(reused.archive, "local-${reused.archive.sha256()}")
+                val outcome = runAiTask {
+                    aiTaskStore.create(config, TranslationSources.OFFICIAL, prepared, base, identity, offer.version)
+                }
+                if (!outcome.completed) throw java.util.concurrent.CancellationException(outcome.message)
+                return outcome.message
+            }
             val result = AiTranslationJob(translationCache, runtime.storage(), config,
                 AiTranslationClient(config, if (supplement) aiSettings.key() else ""), aiCancelled::get) { progress ->
                 publish { it.copy(ai = it.ai.copy(progress = progress, message = progress.message)) }
@@ -536,14 +640,14 @@ internal class LaunchCoordinator private constructor(application: Application) {
         checkGameUpdate()
     }
 
-    fun openGoogleSettings() = perform("准备 Google 账号与付款") {
+    fun openGoogleSettings() = perform("准备 Google 账号与付款", page = "google") {
         val virtualRuntime = runtime as? com.example.limbuszhcn.container.VirtualAppContainerRuntime
             ?: error("当前容器不支持 Google 账号设置")
         virtualRuntime.openGoogleSettings()
         "商店服务已启用，请在容器 Google 设置中登录账号"
     }
 
-    fun checkGooglePayment(enable: Boolean = false) = perform(if (enable) "启用付款服务" else "检查付款设置") {
+    fun checkGooglePayment(enable: Boolean = false) = perform(if (enable) "启用付款服务" else "检查付款设置", page = "google") {
         val result = runCatching {
             val virtual = runtime as? com.example.limbuszhcn.container.VirtualAppContainerRuntime
                 ?: error("当前容器不支持 Google 账号设置")
@@ -600,7 +704,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
     fun preparePackageUpdate(uris: List<Uri>) {
         if (uris.isEmpty()) return
         state = state.copy(updatesRequest = nextUpdatesRequest(state))
-        perform("读取安装包") {
+        perform("读取安装包", page = "updates") {
             val prepared = packageUpdates.prepare(uris) { stage(it) }
             preparedUpdate = prepared
             publish { it.copy(gameInstallReview = prepared.review) }
@@ -608,7 +712,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
         }
     }
 
-    fun installPackageUpdate() = perform("准备系统安装", allowPackageUpdate = true) {
+    fun installPackageUpdate() = perform("准备系统安装", allowPackageUpdate = true, page = "updates") {
         require(app.packageManager.canRequestPackageInstalls()) { "请在系统设置中允许 BYBUS 安装应用" }
         stopGame()
         if (packageUpdates.hasSession()) packageUpdates.resume()
@@ -624,7 +728,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
         "请完成系统安装确认，游戏资源会保留"
     }
 
-    fun cancelPackageUpdate() = perform("取消安装", allowPackageUpdate = true) {
+    fun cancelPackageUpdate() = perform("取消安装", allowPackageUpdate = true, page = "updates") {
         packageUpdates.cancel()
         preparedUpdate = null
         publish { it.copy(gameInstallReview = null, gameInstallPending = false, gameInstallConfirmation = null) }
@@ -748,7 +852,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
         }
     }
 
-    fun updateTranslation() = perform("校验与更新汉化资源") {
+    fun updateTranslation() = perform("校验与更新汉化资源", page = "translation") {
         val source = translationSources.read().selected
         if (source.kind == "ai") {
             if (offerAiUpdate(source, releaseCheck.start(15_000).await(), launchAfter = false, force = true))
@@ -764,7 +868,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
         summary.description()
     }
 
-    fun repair() = perform("正在修复") {
+    fun repair() = perform("正在修复", page = "repair") {
         fun progress(step: Int, text: String) {
             stage(text)
             publish { it.copy(repair = RepairState(RepairPhase.Running, step, text)) }
@@ -791,7 +895,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
         result.getOrThrow()
     }
 
-    fun clearGameResources() = perform("正在清除游戏资源") {
+    fun clearGameResources() = perform("正在清除游戏资源", page = "clear-data") {
         val result = runCatching {
             publish { it.copy(clearing = DataClearState(running = true)) }
             check(readGameStatus().first.available) { "容器暂不可用，请稍后重试" }

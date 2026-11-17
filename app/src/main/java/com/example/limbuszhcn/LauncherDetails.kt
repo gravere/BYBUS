@@ -38,16 +38,16 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
                     SheetAction(Glyph.Gamepad, "游戏更新", navigation = true, onClick = onGameStore)
                 }
                 DetailActionSection("管理") {
-                    SheetAction(Glyph.Import, "数据迁移", enabled, navigation = true, onClick = onMigration)
+                    SheetAction(Glyph.Import, "数据迁移", navigation = true, onClick = onMigration)
                     DetailActionDivider()
                     SheetAction(Glyph.Battery, "后台运行", enabled, navigation = true, onClick = onSettings)
                     DetailActionDivider()
                     SheetAction(Glyph.Account, "Google 账号与付款", enabled, navigation = true,
                         onClick = onGoogleSettings)
                     DetailActionDivider()
-                    SheetAction(Glyph.Repair, "修复", enabled, navigation = true, onClick = onRepair)
+                    SheetAction(Glyph.Repair, "修复", navigation = true, onClick = onRepair)
                     DetailActionDivider()
-                    SheetAction(Glyph.Delete, "清除数据", enabled, navigation = true, onClick = onClearData)
+                    SheetAction(Glyph.Delete, "清除数据", navigation = true, onClick = onClearData)
                     DetailActionDivider()
                     SheetAction(Glyph.File, "导出诊断", enabled, onClick = onExport)
                     DetailActionDivider()

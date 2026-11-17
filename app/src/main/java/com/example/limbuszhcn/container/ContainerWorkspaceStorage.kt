@@ -23,6 +23,11 @@ class ContainerWorkspaceStorage(
     private val migrationRoots: Map<String, Path> = mapOf("assets" to localizeRoot.parent.parent)
 ) : GameStorage {
     override fun resourceMigrationRoots(): Map<String, Path> = migrationRoots
+    override fun japaneseResourceMetadata(): Map<String, String> = japaneseResources().associateWith { key ->
+            val attrs = Files.readAttributes(localizeRoot.resolve(key), java.nio.file.attribute.BasicFileAttributes::class.java,
+                java.nio.file.LinkOption.NOFOLLOW_LINKS)
+            "${attrs.size()}|${attrs.lastModifiedTime()}|${attrs.fileKey()}"
+    }
     override fun japaneseResources(): List<String> {
         val jp = localizeRoot.resolve("jp")
         if (!Files.isDirectory(jp, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return emptyList()

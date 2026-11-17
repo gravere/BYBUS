@@ -46,7 +46,7 @@ internal fun MigrationScreen(state: MigrationState, onBack: () -> Unit, onRefres
                 .padding(horizontal = inset)) {
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp),
                     verticalAlignment = Alignment.CenterVertically) {
-                    ActionIconButton(Glyph.Chevron, "返回上一页", onBack, enabled = !state.busy && !state.pending,
+                    ActionIconButton(Glyph.Chevron, "返回上一页", onBack,
                         rotation = 180f, modifier = Modifier.clip(CircleShape).background(C.Panel))
                     Text("数据迁移", Modifier.weight(1f).padding(horizontal = 16.dp).semantics { heading() },
                         style = MaterialTheme.typography.titleLarge)

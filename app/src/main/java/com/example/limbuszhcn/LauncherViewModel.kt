@@ -35,7 +35,7 @@ internal class LauncherViewModel(application: Application) : AndroidViewModel(ap
     private val stopObserving = github.observe { updated ->
         main.post { if (!closed.get()) projectState = projectState.copy(github = updated) }
     }
-    val state: LauncherUiState get() = coordinator.state
+    val state: LauncherUiState get() = coordinator.state.withMigrationTask(com.example.limbuszhcn.migration.MigrationModel.currentState())
     fun launch() = coordinator.launch()
     fun refresh() {
         refreshStatus(preserveFailure = false)
@@ -94,6 +94,8 @@ internal class LauncherViewModel(application: Application) : AndroidViewModel(ap
     fun exportTranslation(id: String, destination: Uri) = coordinator.exportTranslation(id, destination)
     fun saveAi(config: com.example.limbuszhcn.translation.AiConfig, key: String, test: Boolean) = coordinator.saveAi(config, key, test)
     fun generateAi(config: com.example.limbuszhcn.translation.AiConfig, key: String) = coordinator.generateAi(config, key)
+    fun pauseAi() = coordinator.pauseAi()
+    fun resumeAi() = coordinator.resumeAi()
     fun cancelAi() = coordinator.cancelAi()
     fun loadAiModels(endpoint: String, key: String) = coordinator.loadAiModels(endpoint, key)
     fun clearAiModels() = coordinator.clearAiModels()

@@ -234,7 +234,7 @@ class MainActivity : ComponentActivity() {
                             runCatching { sourceExportPicker.launch(com.example.limbuszhcn.translation.TranslationBackup.fileName(source)) }
                                 .onFailure { exportSource.value = null; model.showError(it) } },
                         saveAi = model::saveAi, generateAi = model::generateAi,
-                        cancelAi = model::cancelAi, clearKey = model::clearAiKey,
+                        cancelAi = model::cancelAi, pauseAi = model::pauseAi, resumeAi = model::resumeAi, clearKey = model::clearAiKey,
                         loadModels = model::loadAiModels, clearModels = model::clearAiModels,
                         inspectCoverage = model::inspectCoverage, undoAi = model::undoAi,
                         removeAi = model::removeAiTranslation, chooseAiUpdate = model::chooseAiUpdate,

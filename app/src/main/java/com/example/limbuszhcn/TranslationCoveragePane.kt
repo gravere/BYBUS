@@ -24,13 +24,18 @@ internal fun CoverageSummary(state: LauncherUiState, onOpen: () -> Unit) {
                 Text("汉化覆盖", style = MaterialTheme.typography.titleSmall)
                 Text(when {
                     coverage.loading -> "正在对照本地文本"
+                    coverage.stale && report != null -> "资源已变动，上次结果待更新"
                     report != null -> "${report.missing} 条未覆盖 · ${report.review} 条待核对"
                     coverage.error != null -> "本次检查未完成"
                     else -> "还未检查本地游戏文本"
                 }, color = C.Muted, style = MaterialTheme.typography.bodySmall)
             }
-            TextButton(onOpen, enabled = !state.busy) { Text(if (report != null || coverage.error != null) "查看" else "检查") }
+            TextButton(onOpen, enabled = report != null || !state.busy && !coverage.loading) {
+                Text(if (report != null) "查看结果" else if (coverage.loading) "检查中" else "检查")
+            }
         }
+        if (coverage.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+        coverage.error?.let { Text(it, color = C.Error, style = MaterialTheme.typography.bodySmall) }
     }
 }
 
@@ -56,6 +61,10 @@ internal fun TranslationCoveragePane(state: LauncherUiState, onCheck: () -> Unit
                 }
             }
             coverage.error?.let { Text(it, color = C.Error, style = MaterialTheme.typography.bodyMedium) }
+            if (coverage.stale) {
+                Text("汉化或游戏文本已变动，以下保留上次结果。重新检查后再选择补译范围。", style = MaterialTheme.typography.bodyMedium)
+                FilledTonalButton(onCheck, enabled = !coverage.loading && !state.busy) { Text("重新检查") }
+            }
             if (coverage.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (report != null) {
                 Text("已对照 ${report.total} 条本地文本", style = MaterialTheme.typography.bodyMedium)
@@ -76,12 +85,12 @@ internal fun TranslationCoveragePane(state: LauncherUiState, onCheck: () -> Unit
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     AiScope.entries.forEach { item ->
                         val count = (if (item.missing) report.aiEligible else 0) + (if (item.review) report.reviewEligible else 0)
-                        FilterChip(scope == item, { scope = item }, enabled = !coverage.loading && !state.busy && count > 0,
+                        FilterChip(scope == item, { scope = item }, enabled = !coverage.stale && !coverage.loading && !state.busy && count > 0,
                             label = { Text("${item.label} $count") })
                     }
                 }
                 val count = (if (scope.missing) report.aiEligible else 0) + (if (scope.review) report.reviewEligible else 0)
-                FilledTonalButton({ onTranslate(scope) }, enabled = count > 0 && !coverage.loading && !state.busy,
+                FilledTonalButton({ onTranslate(scope) }, enabled = count > 0 && !coverage.stale && !coverage.loading && !state.busy && !state.ai.hasPendingTask,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("选择模型并确认") }
             }
             if (report.details.isEmpty()) DetailCard { Text(if (report.unreadable == 0) "本次本地检查没有发现未覆盖文本。" else "已读文件未发现缺失，仍有文件未能检查。") }

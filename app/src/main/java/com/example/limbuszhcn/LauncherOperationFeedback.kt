@@ -1,5 +1,12 @@
 package com.example.limbuszhcn
 
+internal fun LauncherUiState.withMigrationTask(task: com.example.limbuszhcn.migration.MigrationState?): LauncherUiState =
+    if (task?.busy == true || task?.pending == true) copy(busy = true, taskPage = "migration", launchStep = -1,
+        stage = task.message, message = task.message) else this
+
+internal fun LauncherUiState.taskDestination(): String =
+    if (ai.running) "ai-translation" else taskPage ?: if (ai.hasPendingTask) "ai-translation" else "status"
+
 /** Lifecycle refreshes update device facts without erasing an actionable failure. */
 internal fun LauncherUiState.beginOperation(label: String, preserveFailure: Boolean): LauncherUiState =
     copy(busy = true, launchStep = -1,
@@ -8,7 +15,7 @@ internal fun LauncherUiState.beginOperation(label: String, preserveFailure: Bool
         failed = preserveFailure && failed)
 
 internal fun LauncherUiState.finishOperation(message: String, failed: Boolean,
-    preserveFailure: Boolean): LauncherUiState = copy(busy = false, launchStep = -1,
+    preserveFailure: Boolean): LauncherUiState = copy(busy = false, launchStep = -1, taskPage = null,
     failed = if (preserveFailure && this.failed) true else failed,
     message = if (preserveFailure && this.failed) this.message else message)
 
