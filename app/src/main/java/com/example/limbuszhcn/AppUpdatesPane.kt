@@ -86,8 +86,8 @@ internal fun TranslationUpdateControls(state: LauncherUiState, onCheck: () -> Un
     UpdateActionCard(message = state.message.takeIf { showingResult }, icon = Glyph.Translation,
         busy = checking, failed = showingResult && state.failed, description = "汉化更新操作",
         progressDescription = "汉化更新进度", horizontalPadding = horizontalPadding,
-        action = if (checking) null else if (state.sources.selected.isOfficial) "检查汉化更新" else "校验汉化包",
-        actionEnabled = !state.busy && state.container?.gameImported == true, onAction = onCheck)
+        action = if (checking) null else if (state.sources.selected.isOfficial || state.sources.selected.kind == "ai") "检查汉化更新" else "校验汉化包",
+        actionEnabled = !state.busy && (state.container?.gameImported == true || state.sources.selected.kind == "ai"), onAction = onCheck)
 }
 
 /** Keep transfer feedback beside its action, outside long release notes. */

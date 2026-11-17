@@ -24,3 +24,25 @@ internal data class AppUpdateNotice(val versionCode: Long = 0, val checkedAt: Lo
         const val RETRY_INTERVAL = 15 * 60_000L
     }
 }
+
+/** A new app opening checks once; ordinary resumes and recompositions keep the same session. */
+internal class AppUpdateNoticeSession {
+    private var openingPending = true
+    fun opened() { openingPending = true }
+    fun attempted() { openingPending = false }
+    fun shouldCheck(notice: AppUpdateNotice, now: Long) = openingPending || notice.shouldCheck(now)
+    fun nextDelay(notice: AppUpdateNotice, now: Long) = if (openingPending) 1_000L else notice.nextCheckDelay(now)
+}
+
+/** Launcher/recents may resume the existing task without onNewIntent. Ignore our own pickers. */
+internal class AppForegroundOpening {
+    private var stopped = false
+    private var outgoingActivity = false
+    fun launchedActivity() { outgoingActivity = true }
+    fun stopped(changingConfiguration: Boolean) { stopped = !changingConfiguration }
+    fun started(): Boolean {
+        val opened = stopped && !outgoingActivity
+        stopped = false; outgoingActivity = false
+        return opened
+    }
+}

@@ -44,5 +44,4 @@ def render_release_notes(manifest: dict, source: str) -> str:
 
 首次安装或手动更新，只需下载上方 `BYBUS-Android.apk`。已安装 BYBUS，也可在“设置与工具 → 应用更新”中更新。
 
-`BYBUS.apk` 是旧版数据迁移文件，不是第二个游戏安装包。仅迁移旧版数据时使用，普通安装无需下载；具体步骤见[使用说明](https://github.com/gravere/BYBUS#开始使用)。
-'''
+'''.rstrip() + '\n'

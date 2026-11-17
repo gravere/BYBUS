@@ -30,6 +30,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.example.limbuszhcn.translation.AiConfig
 import com.example.limbuszhcn.translation.AiScope
+import com.example.limbuszhcn.translation.AiTranslationPrompt
 import com.example.limbuszhcn.translation.normalizedAiEndpoint
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
@@ -49,12 +50,17 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
     var confirm by remember { mutableStateOf(false) }
     var clear by remember { mutableStateOf(false) }
     var undo by remember { mutableStateOf(false) }
+    var prompt by remember(ai.config.prompt) { mutableStateOf(ai.config.prompt) }
+    var editPrompt by remember { mutableStateOf(false) }
+    var resetPrompt by remember { mutableStateOf(false) }
+    var restoreDefault by remember { mutableStateOf(false) }
+    var deleteAi by remember { mutableStateOf<com.example.limbuszhcn.translation.TranslationSource?>(null) }
     var showModels by remember { mutableStateOf(false) }
     var search by remember { mutableStateOf("") }
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     fun finishEditing() { focus.clearFocus(); keyboard?.hide() }
-    fun config() = AiConfig(endpoint.trim(), model.trim(), missing, limit, scope.missing, scope.review)
+    fun config() = AiConfig(endpoint.trim(), model.trim(), missing, limit, scope.missing, scope.review, prompt)
     val enabled = !state.busy && !ai.settingsBusy && !ai.running
     val savedKeyAvailable = ai.hasKey && runCatching {
         normalizedAiEndpoint(endpoint) == normalizedAiEndpoint(ai.config.endpoint)
@@ -133,6 +139,29 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
             }
         }
         DetailCard {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("全局提示词", style = MaterialTheme.typography.titleSmall)
+                    Text(if (prompt == AiTranslationPrompt.DEFAULT) "零协风格参考 · 默认" else "自定义", color = C.Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                TextButton({ editPrompt = !editPrompt }, enabled = enabled) { Text(if (editPrompt) "收起" else "编辑") }
+            }
+            AnimatedVisibility(editPrompt) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(prompt, { if (it.length <= AiTranslationPrompt.MAX_LENGTH) prompt = it },
+                        Modifier.fillMaxWidth().semantics { contentDescription = "全局翻译提示词" }, enabled = enabled,
+                        minLines = 6, maxLines = 12, shape = RoundedCornerShape(14.dp), textStyle = MaterialTheme.typography.bodyMedium,
+                        colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = C.Panel, unfocusedContainerColor = C.Panel,
+                            focusedBorderColor = C.Accent, unfocusedBorderColor = C.Line))
+                    Text("影响之后的翻译请求，已有译文不会自动重译。数值、格式和明确译名仍会校验。", style = MaterialTheme.typography.bodySmall)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilledTonalButton({ finishEditing(); actions.savePrompt(prompt) }, enabled = enabled && prompt.isNotBlank(), modifier = Modifier.weight(1f)) { Text("保存提示词") }
+                        TextButton({ finishEditing(); resetPrompt = true }, enabled = enabled && prompt != AiTranslationPrompt.DEFAULT, modifier = Modifier.weight(1f)) { Text("恢复默认") }
+                    }
+                }
+            }
+        }
+        DetailCard {
             Text("翻译方式", style = MaterialTheme.typography.titleSmall)
             SourceTabs(listOf(true, false), missing, { if (it) "补充当前汉化" else "独立翻译" }, "翻译方式", { if (enabled) missing = it })
             if (missing) {
@@ -157,6 +186,26 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
         }
         if (state.sources.undo != null) OutlinedButton({ finishEditing(); undo = true }, enabled = enabled,
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("撤回上次 AI 生成") }
+        val generated = state.sources.sources.filter { it.kind == "ai" }
+        if (generated.isNotEmpty()) DetailCard {
+            Text("已生成的汉化", style = MaterialTheme.typography.titleSmall)
+            SheetAction(Glyph.Translation, "恢复默认汉化", enabled && !state.sources.selected.isOfficial,
+                onClick = { finishEditing(); restoreDefault = true })
+            generated.forEach { source ->
+                HorizontalDivider(color = C.Line)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    TranslationSourceIcon(source, Modifier.size(32.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(source.name, style = MaterialTheme.typography.bodyMedium)
+                        if (source.id == state.sources.selectedId) Text("当前使用", color = C.Accent,
+                            style = MaterialTheme.typography.labelSmall)
+                    }
+                    ActionIconButton(Glyph.Delete, "删除 ${source.name}",
+                        { finishEditing(); deleteAi = source }, enabled = enabled)
+                }
+            }
+        }
     }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("开始 AI 翻译？") },
         text = { Text("将关闭游戏，处理${if (missing) scope.label else "全部"}文本，本批最多 $limit 条。文本会发送到你配置的 API，费用计入你的账户。原汉化包保留，生成后可撤回。") },
@@ -170,6 +219,18 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
         text = { Text("将关闭游戏，恢复上次生成前的汉化和来源选择。游戏资源、账号与 API 设置会保留；已产生的 API 费用不会返还。") },
         confirmButton = { TextButton({ undo = false; actions.undoAi() }, enabled = enabled) { Text("撤回") } },
         dismissButton = { TextButton({ undo = false }) { Text("取消") } })
+    if (resetPrompt) AlertDialog(onDismissRequest = { resetPrompt = false }, title = { Text("恢复默认提示词？") },
+        text = { Text("将替换当前输入的自定义提示词，保存后生效。已有汉化包不会改变。") },
+        confirmButton = { TextButton({ resetPrompt = false; prompt = AiTranslationPrompt.DEFAULT }, enabled = enabled) { Text("恢复") } },
+        dismissButton = { TextButton({ resetPrompt = false }) { Text("取消") } })
+    if (restoreDefault) AlertDialog(onDismissRequest = { restoreDefault = false }, title = { Text("恢复默认汉化？") },
+        text = { Text("将关闭游戏并切回都市零协会，下次启动检查正式汉化更新。已生成的 AI 汉化会保留，可随时重新选择；游戏数据与账号不变。") },
+        confirmButton = { TextButton({ restoreDefault = false; actions.select("zero") }, enabled = enabled) { Text("恢复") } },
+        dismissButton = { TextButton({ restoreDefault = false }) { Text("取消") } })
+    deleteAi?.let { source -> AlertDialog(onDismissRequest = { deleteAi = null }, title = { Text("删除 AI 汉化？") },
+        text = { Text("删除“${source.name}”及其生成缓存，不能撤回。${if (source.id == state.sources.selectedId) "将关闭游戏并切回都市零协会。" else "当前使用的汉化不变。"}游戏数据、账号、其他汉化源与 API 设置会保留。") },
+        confirmButton = { TextButton({ deleteAi = null; actions.removeAi(source.id) }, enabled = enabled) { Text("删除") } },
+        dismissButton = { TextButton({ deleteAi = null }) { Text("取消") } }) }
 }
 
 @Composable

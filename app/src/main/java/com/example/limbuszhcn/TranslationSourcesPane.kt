@@ -30,7 +30,9 @@ internal data class TranslationActions(
     val saveAi: (AiConfig, String, Boolean) -> Unit = { _, _, _ -> },
     val generateAi: (AiConfig, String) -> Unit = { _, _ -> }, val cancelAi: () -> Unit = {}, val clearKey: () -> Unit = {},
     val loadModels: (String, String) -> Unit = { _, _ -> }, val clearModels: () -> Unit = {},
-    val inspectCoverage: () -> Unit = {}, val undoAi: () -> Unit = {}
+    val inspectCoverage: () -> Unit = {}, val undoAi: () -> Unit = {}, val removeAi: (String) -> Unit = {},
+    val chooseAiUpdate: (com.example.limbuszhcn.translation.AiUpdateChoice?) -> Unit = {},
+    val savePrompt: (String) -> Unit = {}
 )
 
 @Composable

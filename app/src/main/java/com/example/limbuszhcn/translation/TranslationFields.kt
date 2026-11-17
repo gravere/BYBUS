@@ -23,16 +23,17 @@ internal object TranslationFields {
         baseline: TranslationJsonPairer.CoveredMerge?): List<TranslationField> {
         val result = mutableListOf<TranslationField>()
         fun leaf(path: String, before: String, translated: String, covered: Boolean,
-            clear: () -> Unit, apply: (String) -> Unit, excluded: String?) {
+            clear: () -> Unit, apply: (String) -> Unit, excluded: String?, speaker: String? = null) {
             if (before.isBlank() || !TranslationTextPolicy.isUsableDisplayText(before) || !before.any(Char::isLetter)) return
             result += TranslationField(AiTranslationJob.digest("$resource|$path|$before"), before,
-                "$resource $path", covered, translated.takeIf { covered }, clear, apply, excluded)
+                "$resource $path" + speaker?.let { " | speaker=$it" }.orEmpty(), covered, translated.takeIf { covered }, clear, apply, excluded)
         }
-        fun visit(source: Any, destination: Any, pointer: String, depth: Int, displayArray: Boolean = false, excluded: String? = null) {
+        fun visit(source: Any, destination: Any, pointer: String, depth: Int, displayArray: Boolean = false, excluded: String? = null, speaker: String? = null) {
             require(depth <= 64) { "文本结构过深，无法检查" }
             when {
                 source is JSONObject && destination is JSONObject -> source.keys().asSequence().toList().sorted().forEach { field ->
                     val before = source.get(field); val after = destination.opt(field)
+                    val who = listOf("teller", "speaker", "model").mapNotNull { (source.opt(it) as? String)?.takeIf { value -> value.isNotBlank() && value.length <= 80 } }.firstOrNull() ?: speaker
                     val path = "$pointer/${field.replace("~", "~0").replace("/", "~1")}"
                     val reason = excluded ?: if (source.keys().asSequence().any { key ->
                         TranslationTextPolicy.isDisplayField(key) && (source.opt(key) as? String)?.let(::unusedMarker) == true
@@ -43,9 +44,9 @@ internal object TranslationFields {
                         "明确的制作说明" else null
                     if (before is String && after is String && TranslationTextPolicy.isDisplayField(field)) {
                         leaf(path, before, after, baseline?.contains(destination, field) == true,
-                            { destination.remove(field); Unit }, { destination.put(field, it) }, reason)
+                            { destination.remove(field); Unit }, { destination.put(field, it) }, reason, who)
                     } else if ((before is JSONObject || before is JSONArray) && after != null)
-                        visit(before, after, path, depth + 1, field in TranslationTextPolicy.STRING_ARRAY_FIELDS, reason)
+                        visit(before, after, path, depth + 1, field in TranslationTextPolicy.STRING_ARRAY_FIELDS, reason, who)
                 }
                 source is JSONArray && destination is JSONArray -> {
                     require(source.length() == destination.length()) { "游戏文本结构发生变化，请重新检查" }
@@ -53,8 +54,8 @@ internal object TranslationFields {
                         val before = source.get(i); val after = destination.get(i)
                         if (displayArray && before is String && after is String)
                             leaf("$pointer/$i", before, after, baseline?.contains(destination, i.toString()) == true,
-                                { destination.put(i, ""); Unit }, { destination.put(i, it) }, excluded)
-                        else if (before is JSONObject || before is JSONArray) visit(before, after, "$pointer/$i", depth + 1, excluded = excluded)
+                                { destination.put(i, ""); Unit }, { destination.put(i, it) }, excluded, speaker)
+                        else if (before is JSONObject || before is JSONArray) visit(before, after, "$pointer/$i", depth + 1, excluded = excluded, speaker = speaker)
                     }
                 }
             }

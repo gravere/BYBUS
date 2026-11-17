@@ -34,6 +34,7 @@ class MainActivity : ComponentActivity() {
     private var homeCreated = false
     private var pendingLauncherRoute = false
     private var entryRoute: Job? = null
+    private val foregroundOpening = com.example.limbuszhcn.selfupdate.AppForegroundOpening()
     @Volatile private var entryGeneration = 0
     @Volatile private var entryVisible = false
     private val containerRuntime: ContainerRuntime by lazy {
@@ -110,7 +111,7 @@ class MainActivity : ComponentActivity() {
                 lifecycle.addObserver(observer)
                 onDispose { lifecycle.removeObserver(observer) }
             }
-            androidx.compose.runtime.LaunchedEffect(resumed.value) {
+            androidx.compose.runtime.LaunchedEffect(resumed.value, appUpdater.openingGeneration) {
                 if (resumed.value) while (true) {
                     appUpdater.checkForNotice()
                     kotlinx.coroutines.delay(appUpdater.nextNoticeDelay())
@@ -235,7 +236,9 @@ class MainActivity : ComponentActivity() {
                         saveAi = model::saveAi, generateAi = model::generateAi,
                         cancelAi = model::cancelAi, clearKey = model::clearAiKey,
                         loadModels = model::loadAiModels, clearModels = model::clearAiModels,
-                        inspectCoverage = model::inspectCoverage, undoAi = model::undoAi)
+                        inspectCoverage = model::inspectCoverage, undoAi = model::undoAi,
+                        removeAi = model::removeAiTranslation, chooseAiUpdate = model::chooseAiUpdate,
+                        savePrompt = model::saveAiPrompt)
                 )
             }
         }
@@ -270,9 +273,28 @@ class MainActivity : ComponentActivity() {
         startActivity(Intent.createChooser(Intent(page).setComponent(null), "打开项目页面"))
     }
 
+    override fun onStop() {
+        foregroundOpening.stopped(isChangingConfigurations)
+        super.onStop()
+    }
+
+    override fun startActivity(intent: Intent, options: Bundle?) {
+        super.startActivity(intent, options)
+        foregroundOpening.launchedActivity()
+    }
+
+    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+    override fun startActivityForResult(intent: Intent, requestCode: Int, options: Bundle?) {
+        super.startActivityForResult(intent, requestCode, options)
+        foregroundOpening.launchedActivity()
+    }
+
     /** Returning from the guest refreshes its last launch receipt. */
     override fun onResume() {
         super.onResume()
+        // Also clear an outgoing flow that only paused us (for example a translucent picker).
+        if (foregroundOpening.started() && homeCreated)
+            androidx.lifecycle.ViewModelProvider(this)[LauncherViewModel::class.java].appUpdater.onAppOpened()
         entryVisible = true
         logEntry("resume")
         if (isFinishing) return
@@ -347,6 +369,8 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (isDesktopEntry(intent)) {
+            if (homeCreated) androidx.lifecycle.ViewModelProvider(this)[LauncherViewModel::class.java]
+                .appUpdater.onAppOpened()
             pendingLauncherRoute = true
             routeDesktopEntry()
             return

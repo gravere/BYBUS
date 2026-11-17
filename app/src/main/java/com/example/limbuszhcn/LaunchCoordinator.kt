@@ -30,6 +30,8 @@ internal data class LauncherUiState(
     val sources: SourceState = SourceState(),
     val ai: AiUiState = AiUiState(),
     val coverage: CoverageState = CoverageState(),
+    val aiUpstreamOffer: AiUpstreamOffer? = null,
+    val aiPreparingLaunch: Boolean = false,
     val container: ContainerStatus? = null,
     val installedVersion: Long? = null,
     val installedVersionName: String? = null,
@@ -79,6 +81,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
         { measureStartup("release_metadata") { github.releaseForLaunch() } })
     private val updatePreferences = app.getSharedPreferences("game-updates", 0)
     private val preparationPreferences = app.getSharedPreferences("resource-preparation", 0)
+    private val aiUpdatePreferences = app.getSharedPreferences("ai-upstream-update", 0)
     private val translationCache get() = app.filesDir.toPath().resolve("translation-cache")
     private val translationSources by lazy { TranslationSources(translationCache) }
     private val aiSettings by lazy { AiSettingsStore(app) }
@@ -235,6 +238,23 @@ internal class LaunchCoordinator private constructor(application: Application) {
     }
 
     fun removeTranslation(id: String) = perform("卸载汉化文件") {
+        removeSelectedTranslation(id)
+    }
+
+    fun removeAiTranslation(id: String) = perform("删除 AI 汉化") {
+        val sources = translationSources.read()
+        require(sources.sources.any { it.id == id && it.kind == "ai" }) { "此 AI 汉化已不存在" }
+        if (sources.selectedId == id) removeSelectedTranslation(id)
+        else {
+            translationSources.remove(id)
+            translationSources.pruneUnused()
+            publishSources("AI 汉化已删除，当前汉化保留")
+        }
+        publish { it.copy(ai = it.ai.copy(progress = AiProgress(), message = "AI 汉化已删除", failed = false)) }
+        "AI 汉化已删除"
+    }
+
+    private fun removeSelectedTranslation(id: String): String {
         val source = translationSources.read().selected
         require(source.id == id) { "当前汉化源已改变，请重新选择" }
         stopGame()
@@ -253,7 +273,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
         val message = if (source.isOfficial) "汉化文件已卸载，下次使用此来源时会重新下载"
             else "汉化源已删除，已切回都市零协会"
         publishSources(message)
-        message
+        return message
     }
 
     fun exportTranslation(id: String, destination: Uri) = perform("导出汉化包", allowPackageUpdate = true) {
@@ -356,6 +376,9 @@ internal class LaunchCoordinator private constructor(application: Application) {
     fun clearAiKey() = aiSettingsOperation("正在移除 Key") {
         aiSettings.clearKey(); publishSources(); "本机 API Key 已移除"
     }
+    fun saveAiPrompt(prompt: String) = aiSettingsOperation("正在保存提示词") {
+        aiSettings.savePrompt(prompt); publishSources(); "全局提示词已保存，仅影响之后的翻译请求"
+    }
 
     fun cancelAi() { aiCancelled.set(true); publish { it.copy(ai = it.ai.copy(message = "正在暂停，已完成的译文会保留")) } }
 
@@ -377,12 +400,16 @@ internal class LaunchCoordinator private constructor(application: Application) {
                     PreparedTranslation(extracted.outputDirectory, extracted.manifest)
                 } else translationSources.prepare(base)
             } else null
+            val reference = if (base.isOfficial && prepared != null) prepared else runCatching {
+                com.example.limbuszhcn.update.TranslationRepository(translationCache).verifiedForLaunch(null)
+            }.getOrNull()?.let { PreparedTranslation(it.outputDirectory, it.manifest) }
             val result = AiTranslationJob(translationCache, runtime.storage(), config,
                 AiTranslationClient(config, aiSettings.key()), aiCancelled::get) { progress ->
                 publish { it.copy(ai = it.ai.copy(progress = progress, message = progress.message)) }
-            }.run(base.baseId ?: base.id, prepared, base.id.takeIf { base.kind == "ai" }?.removePrefix("ai-"))
+            }.run(base.baseId ?: base.id, prepared, base.id.takeIf { base.kind == "ai" }?.removePrefix("ai-"), reference = reference)
             if (result.progress.completed + result.progress.reused > 0) translationSources.addGenerated(result.archive, base.baseId ?: base.id, result.identity,
-                if (config.missingOnly) "${base.name.take(48)} · AI 补全" else "AI 汉化")
+                if (config.missingOnly) "${base.name.take(48)} · AI 补全" else "AI 汉化",
+                if (config.missingOnly && base.isOfficial) prepared?.manifest?.requestedVersion?.toLongOrNull() else base.officialVersion)
             publish { it.copy(translation = null, resourcePreparation = null,
                 ai = it.ai.copy(running = false, message = result.progress.message, progress = result.progress)) }
             publishSources(if (result.progress.completed + result.progress.reused > 0) "AI 汉化已保存，可撤回上次生成" else "所选范围没有需要 AI 处理的文本")
@@ -404,6 +431,87 @@ internal class LaunchCoordinator private constructor(application: Application) {
             ai = it.ai.copy(progress = AiProgress(), failed = false, message = "已撤回上次生成，下次启动使用恢复的汉化")) }
         publishSources("已恢复上次生成前的汉化")
         "已撤回上次 AI 生成"
+    }
+
+    private fun offerAiUpdate(source: TranslationSource, metadata: String, launchAfter: Boolean, force: Boolean = false): Boolean {
+        val version = com.example.limbuszhcn.update.GitHubTranslationReleaseClient(RELEASE_URL).parseRelease(metadata).version
+        if (!AiUpstreamUpdate.shouldOffer(source, version, aiUpdatePreferences.getLong("offeredVersion", 0), force)) return false
+        val offer = AiUpstreamOffer(source.id, source.revision, version, source.officialVersion, metadata,
+            aiSettings.config(), launchAfter)
+        publish { it.copy(aiUpstreamOffer = offer) }
+        return true
+    }
+
+    fun chooseAiUpdate(choice: AiUpdateChoice?) {
+        if (state.busy || state.ai.settingsBusy) return
+        val offer = state.aiUpstreamOffer ?: return
+        state = state.copy(aiUpstreamOffer = null)
+        aiUpdatePreferences.edit().putLong("offeredVersion",
+            maxOf(offer.version, aiUpdatePreferences.getLong("offeredVersion", 0))).apply()
+        if (choice == null) return
+        val decision = AiUpstreamDecision(offer, choice)
+        if (offer.launchAfter) launch(update = decision)
+        else if (choice != AiUpdateChoice.Current) perform("更新汉化资源") {
+            stopGame()
+            val message = applyAiUpdate(decision)
+            val summary = prepareTranslation(installer({ offer.metadata }))
+            if (translationSources.read().selected.isOfficial) check(summary.version == offer.version.toString()) { "零协新版未激活，请重新检查" }
+            publish { it.copy(translation = if (summary.indexActivated) summary else null, resourcePreparation = summary.takeUnless { summary.indexActivated }) }
+            message
+        }
+    }
+
+    /** Download and validate first; no source is replaced until the chosen operation succeeds. */
+    private fun applyAiUpdate(decision: AiUpstreamDecision): String {
+        val offer = decision.offer
+        val source = translationSources.read().selected
+        AiUpstreamUpdate.requireCurrent(offer, source)
+        if (decision.choice == AiUpdateChoice.Current) return "继续使用当前汉化"
+        if (decision.choice == AiUpdateChoice.Supplement) {
+            require(aiSettings.hasKey()) { "请先在 AI 翻译中保存 API 设置" }
+            AiUpstreamUpdate.supplementConfig(offer.config)
+        }
+        stage("更新都市零协会汉化", 1)
+        val extracted = com.example.limbuszhcn.update.TranslationRepository(translationCache,
+            releaseMetadata = { offer.metadata }, onProgress = { stage(it, 1) }).checkLatest(RELEASE_URL, null)
+        check(extracted.manifest.requestedVersion == offer.version.toString()) { "汉化版本发生变化，请重新检查" }
+        val base = PreparedTranslation(extracted.outputDirectory, extracted.manifest)
+        if (decision.choice == AiUpdateChoice.Official) {
+            translationSources.select("zero")
+            publishSources("已更新都市零协会，旧 AI 包保留")
+            return "已更新都市零协会"
+        }
+        aiCancelled.set(false)
+        val supplement = decision.choice == AiUpdateChoice.Supplement
+        val config = if (supplement) AiUpstreamUpdate.supplementConfig(offer.config) else AiConfig()
+        publish { it.copy(aiPreparingLaunch = supplement,
+            ai = it.ai.copy(running = true, failed = false, progress = AiProgress(), message = "正在核对已有 AI 译文")) }
+        try {
+            stage("复用已有 AI 译文", 1)
+            val previous = translationSources.prepare(source)
+            val reusable = AiTranslationReuse.collect(translationCache, source, previous, runtime.storage(), aiCancelled::get)
+            val identity = AiTranslationJob.digest("upstream-v1|${source.id}|${source.revision}|${offer.version}|${config.endpoint}|${config.model}|${AiTranslationJob.digest(config.prompt)}").take(32)
+            val result = AiTranslationJob(translationCache, runtime.storage(), config,
+                AiTranslationClient(config, if (supplement) aiSettings.key() else ""), aiCancelled::get) { progress ->
+                publish { it.copy(ai = it.ai.copy(progress = progress, message = progress.message)) }
+            }.run("zero", base, identity, reusable, reuseOnly = !supplement)
+            if (aiCancelled.get()) throw java.util.concurrent.CancellationException("已取消本次启动")
+            if (result.progress.completed + result.progress.reused > 0)
+                translationSources.addGenerated(result.archive, "zero", identity, "都市零协会 · AI 补全", offer.version)
+            else translationSources.select("zero")
+            val message = "零协已更新 · 复用 ${result.progress.reused} 条 · 新译 ${result.progress.completed} 条 · 未覆盖 ${result.remaining} 条"
+            publish { it.copy(translation = null, resourcePreparation = null,
+                ai = it.ai.copy(progress = result.progress, message = message)) }
+            publishSources(message)
+            return message
+        } catch (error: Exception) {
+            val cancelled = error is java.util.concurrent.CancellationException
+            publish { it.copy(ai = it.ai.copy(failed = !cancelled,
+                message = if (cancelled) "已取消本次启动，已有汉化保留" else "更新未完成：${error.userMessage()}")) }
+            throw error
+        } finally {
+            publish { it.copy(aiPreparingLaunch = false, ai = it.ai.copy(running = false)) }
+        }
     }
 
     fun checkGameUpdate(force: Boolean = false) {
@@ -579,12 +687,12 @@ internal class LaunchCoordinator private constructor(application: Application) {
         publish { it.copy(canResumeGame = false) }
     }
 
-    fun launch(prepareResources: Boolean = false) {
+    fun launch(prepareResources: Boolean = false, update: AiUpstreamDecision? = null) {
         // A Play/DNS outage must not stall the existing translation/launch path.
         checkGameUpdate(force = true)
         perform("准备启动") {
             stage("返回游戏", 2)
-            if (runtime.resumeGameIfRunning()) {
+            if ((update == null || update.choice == AiUpdateChoice.Current) && runtime.resumeGameIfRunning()) {
                 publish { it.copy(canResumeGame = true) }
                 return@perform "已返回游戏"
             }
@@ -593,13 +701,30 @@ internal class LaunchCoordinator private constructor(application: Application) {
             val localCandidate = com.example.limbuszhcn.update.TranslationRepository(
                 app.filesDir.toPath().resolve("translation-cache")).hasLaunchCandidate()
             val selectedSource = translationSources.read().selected
-            val metadata = if (selectedSource.isOfficial) releaseCheck.start(if (localCandidate) 4_000 else 15_000) else null
+            if (update != null) AiUpstreamUpdate.requireCurrent(update.offer, selectedSource)
+            val metadata = if (update == null && (selectedSource.isOfficial || selectedSource.kind == "ai"))
+                releaseCheck.start(if (selectedSource.kind == "ai" || localCandidate) 4_000 else 15_000) else null
+            if (update == null && selectedSource.kind == "ai") {
+                val latest = runCatching { requireNotNull(metadata).await() }.getOrElse { error ->
+                    if (error is java.util.concurrent.CancellationException) throw error
+                    PersistentDiagnosticLog.warn(TAG, "AI upstream notice unavailable; verify selected local pack", error)
+                    null
+                }
+                val offered = latest != null && runCatching { offerAiUpdate(selectedSource, latest, launchAfter = true) }.getOrElse { error ->
+                    PersistentDiagnosticLog.warn(TAG, "Invalid AI upstream notice; verify selected local pack", error); false
+                }
+                if (offered)
+                    return@perform "发现零协更新，请选择本次使用的汉化"
+            }
             val approvedBuild = measureStartup("compatibility") { gameCompatibility.requireApproved() }
             measureStartup("game_sync") { prepareGame() }
             measureStartup("stop_previous_game") { stopGame() }
-            val patch = installer({ metadata?.await() ?: error("本地汉化不请求零协更新") }) { stage(it, 1) }
+            val updateMessage = update?.let(::applyAiUpdate)
+            val patch = installer({ update?.offer?.metadata ?: metadata?.await() ?: error("本地汉化不请求零协更新") }) { stage(it, 1) }
             stage("校验汉化文件", 1)
             val summary = prepareTranslation(patch)
+            if (update != null && update.choice != AiUpdateChoice.Current && translationSources.read().selected.isOfficial)
+                check(summary.version == update.offer.version.toString()) { "零协新版未激活，请重新检查" }
             val active = if (summary.indexActivated) summary else patch.activeInstallSummary()
             val mode = translationLaunchMode(active, prepareResources)
             publish { it.copy(translation = active, resourcePreparation = summary.takeIf { active == null }) }
@@ -619,11 +744,17 @@ internal class LaunchCoordinator private constructor(application: Application) {
             measureStartup("container_launch") { runtime.launchGame() }
             val canResume = runtime.hasRunningGame()
             publish { it.copy(canResumeGame = canResume) }
-            "${summary.description()}；游戏已打开"
+            "${updateMessage ?: summary.description()}；游戏已打开"
         }
     }
 
     fun updateTranslation() = perform("校验与更新汉化资源") {
+        val source = translationSources.read().selected
+        if (source.kind == "ai") {
+            if (offerAiUpdate(source, releaseCheck.start(15_000).await(), launchAfter = false, force = true))
+                return@perform "请选择更新后的汉化方式"
+            return@perform "零协暂无更新，可在 AI 翻译中继续补译"
+        }
         require(readGameStatus().first.gameImported) { "请先启动一次游戏以准备容器" }
         stopGame()
         val patch = installer()
