@@ -13,6 +13,25 @@ import org.junit.runner.RunWith
 /** Exercises Android ICU and org.json, with an in-memory API response and no network request. */
 @RunWith(AndroidJUnit4::class)
 class AiPlatformTest {
+    @Test fun globalPromptPersistsIndependentlyAndRestoresWithoutChangingCredentials() {
+        val context = object : ContextWrapper(InstrumentationRegistry.getInstrumentation().targetContext) {
+            override fun getSharedPreferences(name: String, mode: Int) = super.getSharedPreferences("prompt-probe-$name", mode)
+        }
+        val prefs = context.getSharedPreferences("ai-translation-private", 0)
+        prefs.edit().clear().commit()
+        try {
+            val store = AiSettingsStore(context)
+            store.savePrompt("保持角色语气与固定译名。")
+            assertFalse(store.hasKey())
+            assertEquals("保持角色语气与固定译名。", AiSettingsStore(context).config().prompt)
+            store.save(store.config().copy(model = "saved-model"), "non-secret-fixture")
+            store.savePrompt(AiTranslationPrompt.DEFAULT)
+            assertEquals(AiTranslationPrompt.DEFAULT, AiSettingsStore(context).config().prompt)
+            assertEquals("saved-model", store.config().model); assertEquals("non-secret-fixture", store.key())
+            assertTrue(runCatching { store.savePrompt(" ") }.isFailure)
+            assertEquals(AiTranslationPrompt.DEFAULT, store.config().prompt)
+        } finally { prefs.edit().clear().commit() }
+    }
     @Test fun testingNeverPersistsDraftSettingsOrCredentialsEvenWhenItFails() {
         val context = object : ContextWrapper(InstrumentationRegistry.getInstrumentation().targetContext) {
             override fun getSharedPreferences(name: String, mode: Int) = super.getSharedPreferences("platform-probe-$name", mode)

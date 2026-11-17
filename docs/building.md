@@ -78,17 +78,17 @@ c++ -std=c++17 scripts/native-integrity-tests.cpp -o /path/to/temp/native-integr
 
 ## 签名与发行文件
 
-在本地 `signing/keystore.properties` 配置 `storeFile`、`storePassword`、`keyAlias` 和 `keyPassword`，然后运行 `:app:assembleRelease :migration:assembleRelease`。主应用与迁移助手必须使用同一签名；旧版助手覆盖升级也必须沿用旧 BYBUS 签名。
+在本地 `signing/keystore.properties` 配置 `storeFile`、`storePassword`、`keyAlias` 和 `keyPassword`，然后运行 `:app:assembleRelease`。覆盖升级必须沿用 BYBUS 的原签名。
 
-只有发布新 APK 时才需要在 `app/build.gradle.kts` 设置版本；普通源码提交和文档维护不升版。迁移助手从同一配置读取版本。`docs/release-notes.md` 只填写本次更新内容，版本标题、下载地址和附件列表由脚本生成：
+只有发布新 APK 时才需要在 `app/build.gradle.kts` 设置版本；普通源码提交和文档维护不升版。`docs/release-notes.md` 只填写本次更新内容，版本标题、下载地址和附件列表由脚本生成：
 
 ```powershell
-python scripts/prepare-release.py --apk app/build/outputs/apk/release/app-release.apk --legacy-apk migration/build/outputs/apk/release/migration-release.apk --output dist/release --aapt "$env:ANDROID_HOME/build-tools/35.0.0/aapt.exe"
+python scripts/prepare-release.py --apk app/build/outputs/apk/release/app-release.apk --output dist/release --aapt "$env:ANDROID_HOME/build-tools/35.0.0/aapt.exe"
 ```
 
-脚本检查两个 APK 的版本、签名与安装器配置，输出独立版安装包、旧版迁移助手、两份更新描述、校验文件和可直接粘贴到 GitHub Release 的 `release-notes.md`。发行正文使用生成的说明文件，不能交换两个包名对应的更新入口。
+脚本检查 APK 的版本、签名与安装器配置，输出 `BYBUS-Android.apk`、`bybus-app-update.json`、`SHA256SUMS.txt` 三个发行文件和可直接粘贴到 GitHub Release 的 `release-notes.md`。带版本号的本地 APK 是同一文件的硬链接，不需要重复上传。
 
-脚本仅从当前已签名独立版 APK 生成通用内容复用描述，嵌入 `bybus-app-update.json`，不依赖旧 APK，也不再逐版本生成 `.delta`。`bybus-update.json` 为旧更新器提供轻量迁移助手。发布前检查签名与两条更新路径；跨包名的数据转移必须走迁移，不能把字节重建成功等同于覆盖安装。协议与文件约定见[应用更新与发布](app-updates.md)。
+脚本仅从当前已签名 APK 生成通用内容复用描述，嵌入 `bybus-app-update.json`，不依赖旧 APK，也不再逐版本生成 `.delta`。发布前检查签名与完整下载、增量下载两种路径。协议与文件约定见[应用更新与发布](app-updates.md)。
 
 更新器的局部回归：
 

@@ -13,7 +13,7 @@
 
 - 目标游戏包名: `com.ProjectMoon.LimbusCompany`
 - 汉化器独立包名: `io.github.gravere.bybus`；Java/Kotlin namespace 保留 `com.example.limbuszhcn`。
-- 旧包 `com.example.limbuszhcn` 只用于同签名的数据迁移助手。迁移边界见 `docs/package-migration.md`；不得自动卸载或清空旧应用，不复制容器安装注册表和绝对路径缓存。独立安装、更新清单与旧版升级入口必须一起验证。
+- 旧包 `com.example.limbuszhcn` 的同签名迁移助手不再随公开 Release 分发；保留已开始迁移的恢复代码。历史迁移边界见 `docs/package-migration.md`；不得自动卸载或清空旧应用，不复制容器安装注册表和绝对路径缓存。公开发行仅提供当前包名的完整 APK、更新清单与校验文件；普通资源 ZIP 导入导出保留。
 - 主路径: VirtualApp 容器模式。同步系统已安装的官方游戏 APK/splits 到容器（不限安装渠道），配对日文原文与零协译文生成宿主持久索引，从容器内启动游戏并接管显示文本；不覆盖游戏原始 JSON。用户选择保留系统安装包，大资源只在 BYBUS 使用；本轮不切换独立容器模式。多渠道查询、本地包校验安装和快照去重边界见 `docs/multichannel-game-updates.md`。
 - 禁止修改游戏 APK, 禁止 Frida 注入, 禁止 Shizuku 生产路径。
 - App 模块: `:app`; 容器模块: `:virtualapp` -> `third_party/virtualapp-upstream/lib`。
@@ -191,7 +191,7 @@
   使用 8 字节直接返回（保留 BTI 时为 12 字节），不得用普通 16/20 字节远跳覆盖短函数。
   安装结果不等于实际游戏语言已验证；没有真机观察时须明确标注。不得改写 PlayerPrefs
   中同一对象携带的 key、iv、账号或其他设置字段。
-- 首页按选中的汉化源准备资源，默认零协仍检查固定 GitHub Releases。自定义源与 AI 结果独立保存，启动、更新和修复不得切回零协。AI 请求仅由用户明确发起，不在启动、修复或游戏文字 hook 中联网；密钥使用 Android Keystore 保护，禁止导出或写入诊断。
+- 首页按选中的汉化源准备资源，默认零协仍检查固定 GitHub Releases。自定义源与 AI 结果独立保存，启动、更新和修复不得擅自切回零协。AI 来源启动检测到零协新版本时，每版提醒一次；只有用户明确选择更新、复用或补译才执行对应操作。付费 AI 请求仅由用户主动生成或确认“复用后补译一批”发起，不在修复或游戏文字 hook 中联网；密钥使用 Android Keystore 保护，禁止导出或写入诊断。
 - 汉化包已下载、日文资源已就绪、运行时索引已激活是三个独立状态。编译时若容器
   可读的 `jp/JP_*.json` 低于当前汉化 manifest 候选 JSON 的 90%,不得激活残缺索引、
   不得覆盖旧的可用索引。首次安装可按 `docs/first-run-android-compatibility.md` 独立准备

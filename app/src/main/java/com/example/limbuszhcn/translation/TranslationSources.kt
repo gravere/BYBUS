@@ -14,7 +14,7 @@ import kotlin.io.path.writeText
 
 internal data class TranslationSource(val id: String, val name: String, val kind: String = "local",
     val revision: String = "", val archive: String = "", val icon: String? = null, val baseId: String? = null,
-    val updatedAtMillis: Long = 0, val textFileCount: Int = 0) {
+    val updatedAtMillis: Long = 0, val textFileCount: Int = 0, val officialVersion: Long? = null) {
     val isOfficial get() = id == "zero"
     val label get() = when { isOfficial -> "自动更新"; kind == "ai" -> "AI 译文"; else -> "本地文件" }
 }
@@ -48,7 +48,8 @@ internal class TranslationSources(val cache: Path) {
             TranslationSource(id, cleanName(it.getString("name")), it.getString("kind"),
                 it.optString("revision"), it.optString("archive"),
                 it.optString("icon").takeIf(String::isNotBlank), it.optString("baseId").takeIf(String::isNotBlank),
-                it.optLong("updatedAtMillis").coerceAtLeast(0), it.optInt("textFileCount").coerceAtLeast(0))
+                it.optLong("updatedAtMillis").coerceAtLeast(0), it.optInt("textFileCount").coerceAtLeast(0),
+                it.optLong("officialVersion").takeIf { version -> version > 0 })
         } }
         require(sources.map { it.id }.distinct().size == sources.size && sources.none { it.isOfficial })
         val all = listOf(OFFICIAL.copy(icon = json.optString("officialIcon").takeIf(String::isNotBlank))) + sources
@@ -61,7 +62,8 @@ internal class TranslationSources(val cache: Path) {
                 require(old.getString("id") == id)
                 TranslationSource(id, cleanName(old.getString("name")), old.getString("kind"),
                     old.getString("revision"), old.getString("archive"), old.optString("icon").takeIf(String::isNotBlank),
-                    old.optString("baseId").takeIf(String::isNotBlank), old.optLong("updatedAtMillis"), old.optInt("textFileCount"))
+                    old.optString("baseId").takeIf(String::isNotBlank), old.optLong("updatedAtMillis"), old.optInt("textFileCount"),
+                    old.optLong("officialVersion").takeIf { version -> version > 0 })
             }
             AiUndoPoint(id, revision, previous, point.getString("previousSelectedId"))
         }.getOrNull() }
@@ -79,7 +81,7 @@ internal class TranslationSources(val cache: Path) {
                 put(JSONObject().put("id", s.id).put("name", s.name).put("kind", s.kind)
                     .put("revision", s.revision).put("archive", s.archive).put("icon", s.icon.orEmpty())
                     .put("baseId", s.baseId.orEmpty()).put("updatedAtMillis", s.updatedAtMillis)
-                    .put("textFileCount", s.textFileCount))
+                    .put("textFileCount", s.textFileCount).put("officialVersion", s.officialVersion))
             } })
         writeAtomic(registry, json.toString())
     }
@@ -87,6 +89,7 @@ internal class TranslationSources(val cache: Path) {
     private fun sourceJson(s: TranslationSource) = JSONObject().put("id", s.id).put("name", s.name).put("kind", s.kind)
         .put("revision", s.revision).put("archive", s.archive).put("icon", s.icon.orEmpty())
         .put("baseId", s.baseId.orEmpty()).put("updatedAtMillis", s.updatedAtMillis).put("textFileCount", s.textFileCount)
+        .put("officialVersion", s.officialVersion)
 
     fun select(id: String): SourceState = read().let { state ->
         require(state.sources.any { it.id == id }) { "汉化源不存在" }
@@ -118,7 +121,7 @@ internal class TranslationSources(val cache: Path) {
     }
 
     private fun importArchive(input: InputStream, name: String, replaceId: String? = null,
-                              generatedId: String? = null, baseId: String? = null): TranslationSource {
+                              generatedId: String? = null, baseId: String? = null, officialVersion: Long? = null): TranslationSource {
         require(generatedId == null || validId(generatedId))
         Files.createDirectories(archives)
         val staged = archives.resolve(".import.tmp")
@@ -137,7 +140,8 @@ internal class TranslationSources(val cache: Path) {
                     .ifBlank { "本地汉化" }.take(64)),
                 kind = if (generatedId != null) "ai" else "local", baseId = baseId,
                 revision = hash, archive = target.fileName.toString(), icon = previous?.icon,
-                updatedAtMillis = System.currentTimeMillis(), textFileCount = prepared.manifest.entries.size)
+                updatedAtMillis = System.currentTimeMillis(), textFileCount = prepared.manifest.entries.size,
+                officialVersion = officialVersion?.takeIf { it > 0 })
             val sources = if (previous == null) state.sources + source
                 else state.sources.map { if (it.id == source.id) source else it }
             val undo = if (generatedId != null) AiUndoPoint(source.id, source.revision, previous, state.selectedId)
@@ -154,11 +158,11 @@ internal class TranslationSources(val cache: Path) {
         return LocalTranslationArchive(cache).extract(archive, "local-${source.revision}")
     }
 
-    fun addGenerated(archive: Path, baseId: String, identity: String, name: String): TranslationSource {
+    @JvmOverloads fun addGenerated(archive: Path, baseId: String, identity: String, name: String, officialVersion: Long? = null): TranslationSource {
         val state = read()
         val id = "ai-$identity"
         val previous = state.sources.find { it.id == id }
-        return Files.newInputStream(archive).use { importArchive(it, name, previous?.id, id, baseId) }
+        return Files.newInputStream(archive).use { importArchive(it, name, previous?.id, id, baseId, officialVersion) }
     }
 
     fun undoGenerated(): SourceState {
@@ -210,6 +214,11 @@ internal class TranslationSources(val cache: Path) {
         save(next) // Detach before deleting disposable resources.
         Files.deleteIfExists(root.resolve("icons/$id.png"))
         val removed = state.sources.first { it.id == id }
+        if (removed.kind == "ai" && id.matches(Regex("ai-[a-f0-9]{32}"))) {
+            val jobs = cache.resolve("ai-jobs")
+            val job = jobs.resolve(id.removePrefix("ai-"))
+            if (Files.exists(job)) AtomicFiles.deleteOwnedTree(jobs, job)
+        }
         if (removed.archive.isNotEmpty() && remaining.none { it.archive == removed.archive } && next.undo?.previous?.archive != removed.archive &&
             removed.archive.matches(Regex("[a-f0-9]{64}\\.pack"))) Files.deleteIfExists(archives.resolve(removed.archive))
         return next

@@ -61,7 +61,7 @@ internal fun RuntimeStatusPane(state: LauncherUiState, onGameUpdates: () -> Unit
                 })
                 DetailRow("更新方式", when {
                     source.isOfficial -> "启动前自动检查"
-                    source.kind == "ai" -> "在 AI 翻译中继续生成"
+                    source.kind == "ai" -> "检查零协更新或继续补译"
                     else -> "导入新包替换"
                 })
             }
