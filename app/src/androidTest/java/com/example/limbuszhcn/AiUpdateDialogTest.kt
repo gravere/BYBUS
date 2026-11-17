@@ -30,9 +30,12 @@ class AiUpdateDialogTest {
 
     @Test fun supplementRequiresSavedKeyAndExplicitSelection() {
         val selected = mutableListOf<AiUpdateChoice?>()
-        compose.setContent { MaterialTheme { AiUpstreamDialog(offer, false, true, selected::add, {}) } }
-        compose.onNodeWithText("复用后补译一批").assertIsNotEnabled()
-        compose.onNodeWithText("仅使用零协译文").performClick()
+        var configured = false
+        compose.setContent { MaterialTheme { AiUpstreamDialog(offer, false, true, selected::add, { configured = true }) } }
+        compose.onNodeWithText("更新后继续补译").assertIsNotEnabled()
+        compose.onNodeWithText("设置").assertIsEnabled().performScrollTo().performClick()
+        compose.runOnIdle { assertTrue(configured); assertTrue(selected.isEmpty()) }
+        compose.onNodeWithText("只更新零协").performScrollTo().performClick()
         compose.onNodeWithText("更新后进入游戏").performClick()
         compose.runOnIdle { assertEquals(listOf(AiUpdateChoice.Official), selected) }
     }
@@ -40,8 +43,9 @@ class AiUpdateDialogTest {
     @Test fun explicitSupplementShowsLimitAndUsesDedicatedConfirmation() {
         var selected: AiUpdateChoice? = null
         compose.setContent { MaterialTheme { AiUpstreamDialog(offer, true, true, { selected = it }, {}) } }
-        compose.onNodeWithText("复用后补译一批").performClick()
-        compose.onNodeWithText("先复用已有译文，再补译最多 5 条未覆盖内容。使用已保存的 API 设置，新增请求会消耗额度。").assertExists()
+        compose.onNodeWithText("更新后继续补译").performScrollTo().performClick()
+        compose.onNodeWithText("保留可用 AI 译文，再补译最多 5 条。").assertExists()
+        compose.onNodeWithText("消耗 API 额度").assertExists()
         compose.onNodeWithText("补译后进入游戏").performClick()
         compose.runOnIdle { assertEquals(AiUpdateChoice.Supplement, selected) }
     }
