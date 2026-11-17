@@ -6,7 +6,6 @@ from release_notes import render_release_notes, update_summary
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--apk', required=True, type=Path)
-parser.add_argument('--legacy-apk', required=True, type=Path)
 parser.add_argument('--output', required=True, type=Path)
 parser.add_argument('--aapt', required=True)
 args = parser.parse_args()
@@ -49,14 +48,7 @@ apksigner = Path(args.aapt).with_name('apksigner.bat' if Path(args.aapt).suffix 
 verification = subprocess.check_output([str(apksigner), 'verify', '--print-certs', str(args.apk.resolve())], text=True, encoding='utf-8')
 signer = re.search(r'Signer #1 certificate SHA-256 digest: ([a-f0-9]{64})', verification)
 assert signer, 'APK signature not verified'
-legacy_badging = subprocess.check_output([args.aapt, 'dump', 'badging', str(args.legacy_apk.resolve())], text=True, encoding='utf-8')
-legacy_identity = re.search(r"package: name='([^']+)' versionCode='(\d+)' versionName='([^']+)'", legacy_badging)
-assert legacy_identity and legacy_identity[1] == 'com.example.limbuszhcn' and int(legacy_identity[2]) == code and legacy_identity[3] == version, 'Migration helper identity differs'
-legacy_verification = subprocess.check_output([str(apksigner), 'verify', '--print-certs', str(args.legacy_apk.resolve())], text=True, encoding='utf-8')
-assert re.search(r'Signer #1 certificate SHA-256 digest: ([a-f0-9]{64})', legacy_verification)[1] == signer[1], 'Migration helper signer differs'
-legacy_tree = subprocess.check_output([args.aapt, 'dump', 'xmltree', str(args.legacy_apk.resolve()), 'AndroidManifest.xml'], text=True, encoding='utf-8')
-assert 'LegacyMigrationProvider' in legacy_tree and 'com.example.limbuszhcn.permission.BYBUS_MIGRATION' in legacy_tree
-assert 'BinderProvider' not in legacy_tree and 'MigrationProbeActivity' not in manifest_tree
+assert 'MigrationProbeActivity' not in manifest_tree, 'Debug migration probe in release'
 args.output.mkdir(parents=True, exist_ok=True)
 apk = args.output/f'BYBUS-{version}-arm64-v8a.apk'
 if not apk.exists() or not apk.samefile(args.apk):
@@ -69,10 +61,11 @@ if not compat_apk.exists() or not compat_apk.samefile(apk):
     if compat_apk.exists(): compat_apk.unlink()
     try: compat_apk.hardlink_to(apk)
     except OSError: shutil.copyfile(apk, compat_apk)
-legacy_apk = args.output/'BYBUS.apk'
-# An earlier version of this output was a hardlink to the main APK. Unlink first.
-if legacy_apk.exists(): legacy_apk.unlink()
-shutil.copyfile(args.legacy_apk, legacy_apk)
+# Remove obsolete generated aliases from this output directory only.
+for name in ('BYBUS.apk', 'bybus-update.json'):
+    stale = args.output.resolve()/name
+    assert stale.parent == args.output.resolve()
+    if stale.is_file(): stale.unlink()
 def digest(path):
     with path.open('rb') as stream: return hashlib.file_digest(stream, 'sha256').hexdigest()
 sha = digest(apk)
@@ -85,11 +78,7 @@ manifest = dict(schemaVersion=1, packageName=identity[1], versionName=version, v
 metadata = json.dumps(manifest, ensure_ascii=False, indent=2)+'\n'
 assert len(metadata.encode('utf-8')) <= 32 * 1024, 'Metadata exceeds legacy updater limit'
 (args.output/'bybus-app-update.json').write_text(metadata, encoding='utf-8')
-legacy_manifest = dict(schemaVersion=1, packageName=legacy_identity[1], versionName=version, versionCode=code,
-    minSdk=26, apkName=legacy_apk.name, size=legacy_apk.stat().st_size, sha256=digest(legacy_apk), deltas=[],
-    notes='- 请保留旧版和数据，先完成这次更新。\n- 再从 GitHub 下载 BYBUS-Android.apk，在新版“设置与工具 → 数据迁移”中导入数据。\n- 确认新版可以正常使用后，再卸载旧版。')
-(args.output/'bybus-update.json').write_text(json.dumps(legacy_manifest, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
-files = [compat_apk, legacy_apk, args.output/'bybus-app-update.json', args.output/'bybus-update.json']
+files = [compat_apk, args.output/'bybus-app-update.json']
 (args.output/'SHA256SUMS.txt').write_text(''.join(digest(p)+'  '+p.name+'\n' for p in files), encoding='utf-8')
 print(json.dumps(dict(tag=f'{version}-build.{code}', name=f'BYBUS {version}', apkName=apk.name,
                      compatibilityApkName=compat_apk.name, sha256=sha, size=apk.stat().st_size, signer=signer[1],

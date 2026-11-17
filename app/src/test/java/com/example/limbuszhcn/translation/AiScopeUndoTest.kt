@@ -20,6 +20,59 @@ class AiScopeUndoTest {
         } }
     }
     private fun json(value: String) = """{"dataList":[{"id":1,"content":"$value"}]}"""
+    @Test fun restoringDefaultKeepsAiArchiveAndDeletingInactiveAiPreservesOtherSources() {
+        val cache = temp.root.toPath().resolve("cache"); val store = TranslationSources(cache)
+        val archive = pack("generated.zip", mapOf("MainUIText.json" to json("译文")))
+        val first = store.addGenerated(archive, "zero", "a".repeat(32), "第一份 AI")
+        val second = store.addGenerated(archive, "zero", "b".repeat(32), "第二份 AI")
+        val firstJob = cache.resolve("ai-jobs/" + "a".repeat(32))
+        val secondJob = cache.resolve("ai-jobs/" + "b".repeat(32))
+        listOf(firstJob, secondJob).forEach { Files.createDirectories(it); Files.write(it.resolve("generated.zip"), byteArrayOf(1)) }
+        store.select("zero")
+        assertEquals("zero", TranslationSources(cache).read().selectedId)
+        store.prepare(first); store.prepare(second)
+        assertTrue(Files.exists(firstJob))
+        store.remove(first.id); store.pruneUnused()
+        val remaining = TranslationSources(cache).read()
+        assertEquals("zero", remaining.selectedId)
+        assertEquals(listOf("zero", second.id), remaining.sources.map { it.id })
+        assertEquals(second.id, remaining.undo?.sourceId)
+        assertFalse(Files.exists(firstJob)); assertTrue(Files.exists(secondJob))
+        store.prepare(second)
+        store.select(second.id); store.remove(second.id); store.pruneUnused()
+        assertEquals("zero", store.read().selectedId); assertNull(store.read().undo)
+        assertFalse(Files.exists(secondJob))
+        assertFalse(Files.exists(cache.resolve("sources/archives/" + second.archive)))
+    }
+
+    @Test fun newerHumanTranslationTakesPrecedenceOverSavedAiWhenGeneratingFromUpdatedBase() {
+        val cache = temp.root.toPath().resolve("cache"); val root = temp.root.toPath().resolve("Localize")
+        Files.createDirectories(root.resolve("jp"))
+        Files.write(root.resolve("jp/JP_MainUIText.json"), json("開始する").toByteArray())
+        val store = TranslationSources(cache)
+        val old = pack("old.zip", mapOf("MainUIText.json" to """{"dataList":[{"id":2,"content":"其他译文"}]}"""))
+        val source = Files.newInputStream(old).use { store.import(it, "base.zip") }
+        val config = AiConfig(includeMissing = true, includeReview = false)
+        var calls = 0
+        val client = AiTranslationClient(config, "fixture", AiHttpTransport { _, _, body ->
+            calls++
+            val row = JSONArray(JSONObject(body).getJSONArray("messages").getJSONObject(1).getString("content")).getJSONObject(0)
+            val translated = JSONObject().put("translations", JSONArray().put(JSONObject().put("id", row.getString("id")).put("text", "AI 开始")))
+            JSONObject().put("choices", JSONArray().put(JSONObject().put("finish_reason", "stop").put("message", JSONObject().put("content", translated.toString())))).toString()
+        })
+        val job = AiTranslationJob(cache, ContainerWorkspaceStorage(root), config, client)
+        job.run("zero", store.prepare(source))
+        assertEquals(1, calls)
+        val updated = pack("updated.zip", mapOf("MainUIText.json" to json("正式开始")))
+        val newBase = Files.newInputStream(updated).use { store.import(it, "base.zip", source.id) }
+        val result = job.run("zero", store.prepare(newBase))
+        assertEquals(1, calls); assertEquals(0, result.progress.reused)
+        java.util.zip.ZipFile(result.archive.toFile()).use { zip ->
+            val rows = JSONObject(zip.getInputStream(zip.getEntry("jp/JP_MainUIText.json")).bufferedReader().readText()).getJSONArray("dataList")
+            assertEquals("正式开始", rows.getJSONObject(0).getString("content"))
+        }
+    }
+
     @Test fun firstGenerationCanBeUndoneAfterRestartWithoutRemovingOriginalPack() {
         val cache = temp.root.toPath().resolve("cache"); val store = TranslationSources(cache)
         val archive = pack("base.zip", mapOf("MainUIText.json" to json("原译文")))

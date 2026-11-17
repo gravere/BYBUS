@@ -163,7 +163,9 @@ internal fun LauncherScreen(
                     onBack = parentSheets.lastOrNull()?.let { parent -> { sheet = parent; parentSheets = parentSheets.dropLast(1) } },
                     footer = { active -> when (active) {
                         "app-update" -> AppUpdateControls(appUpdateState, state, onDownloadAppUpdate, onInstallAppUpdate, onCancelAppUpdate, layout.detailPadding.dp)
-                        "translation" -> TranslationUpdateControls(state, { confirmation = ConfirmedOperation.Translation }, layout.detailPadding.dp)
+                        "translation" -> TranslationUpdateControls(state, {
+                            if (state.sources.selected.kind == "ai") onUpdate() else confirmation = ConfirmedOperation.Translation
+                        }, layout.detailPadding.dp)
                         "project" -> if (!state.sources.selected.isOfficial) UpdateActionCard(null, Glyph.Translation,
                             busy = false, description = "选择都市零协会汉化", progressDescription = "",
                             horizontalPadding = layout.detailPadding.dp, action = "使用此汉化源",
@@ -210,6 +212,11 @@ internal fun LauncherScreen(
             }
         }
     }
+    state.aiUpstreamOffer?.let { offer ->
+        AiUpstreamDialog(offer, state.ai.hasKey, !state.busy && !state.ai.settingsBusy,
+            translationActions.chooseAiUpdate, { translationActions.chooseAiUpdate(null); requestedAiScope = null; open("ai-translation") })
+    }
+    if (state.aiPreparingLaunch) AiLaunchProgressDialog(state, translationActions.cancelAi)
     if (confirmZeroSource) TranslationSourceSwitchDialog(com.example.limbuszhcn.translation.TranslationSources.OFFICIAL,
         !state.busy, { confirmZeroSource = false }) {
         confirmZeroSource = false

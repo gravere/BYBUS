@@ -42,6 +42,9 @@ internal class AppUpdateController(private val app: Application) {
     private var task: Future<*>? = null
     private var noticeTask: Future<*>? = null
     private var checkingNotice = false
+    private val noticeSession = AppUpdateNoticeSession()
+    var openingGeneration by mutableStateOf(0L)
+        private set
     private var readyFile: File? = null
     private var closed = false
     var state by mutableStateOf(AppUpdateState(AppUpdatePackage.installedCode(app), knownVersionCode = notice.versionCode))
@@ -60,14 +63,20 @@ internal class AppUpdateController(private val app: Application) {
 
     fun installerIntent(file: File): android.content.Intent = installer.intent(file)
 
-    fun nextNoticeDelay(): Long = maxOf(notice.nextCheckDelay(System.currentTimeMillis()),
+    fun onAppOpened() {
+        noticeSession.opened()
+        openingGeneration++
+    }
+
+    fun nextNoticeDelay(): Long = maxOf(noticeSession.nextDelay(notice, System.currentTimeMillis()),
         checkPolicy.retryAtElapsed?.let { it - SystemClock.elapsedRealtime() } ?: 0,
         if (state.busy || checkingNotice || state.ready || installRequest != null) 60_000L else 0)
 
     fun checkForNotice() {
         if (closed || checkingNotice || state.busy || state.ready || installRequest != null ||
-            !notice.shouldCheck(System.currentTimeMillis())) return
+            !noticeSession.shouldCheck(notice, System.currentTimeMillis())) return
         if (checkPolicy.beforeCheck(force = true) == UpdateCheckDecision.Wait) return
+        noticeSession.attempted()
         saveNotice(notice.attempted(System.currentTimeMillis()))
         checkingNotice = true
         val id = generation.get()
@@ -107,6 +116,7 @@ internal class AppUpdateController(private val app: Application) {
         }
         readyFile = null
         installRequest = null
+        noticeSession.attempted()
         saveNotice(notice.attempted(System.currentTimeMillis()))
         val id = generation.incrementAndGet()
         state = state.copy(busy = true, checking = true, ready = false, progress = null, message = "正在检查版本", error = null, retryAtElapsed = null)

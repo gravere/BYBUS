@@ -15,7 +15,8 @@ internal class AiSettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences("ai-translation-private", Context.MODE_PRIVATE)
     fun config() = AiConfig(prefs.getString("endpoint", null) ?: AiConfig().endpoint,
         prefs.getString("model", null) ?: AiConfig().model, prefs.getBoolean("missingOnly", true), prefs.getInt("limit", 100),
-        prefs.getBoolean("includeMissing", true), prefs.getBoolean("includeReview", false))
+        prefs.getBoolean("includeMissing", true), prefs.getBoolean("includeReview", false),
+        prefs.getString("prompt", null) ?: AiTranslationPrompt.DEFAULT)
     fun hasKey() = !prefs.getString("credential", null).isNullOrEmpty()
     /** A connection test reads credentials but never commits configuration. */
     fun test(config: AiConfig, replacement: String, transport: AiHttpTransport = AiHttpTransport(AiTranslationClient::post)): AiResult {
@@ -31,7 +32,7 @@ internal class AiSettingsStore(context: Context) {
         }
         val edit = prefs.edit().putString("endpoint", c.endpoint).putString("model", c.model)
             .putBoolean("missingOnly", c.missingOnly).putInt("limit", c.limit)
-            .putBoolean("includeMissing", c.includeMissing).putBoolean("includeReview", c.includeReview)
+            .putBoolean("includeMissing", c.includeMissing).putBoolean("includeReview", c.includeReview).putString("prompt", c.prompt)
         if (replacement.isNotBlank()) {
             require(replacement.length <= 1024 && replacement.none(Char::isWhitespace)) { "API Key 格式无效" }
             val cipher = Cipher.getInstance("AES/GCM/NoPadding"); cipher.init(Cipher.ENCRYPT_MODE, encryptionKey())
@@ -41,6 +42,9 @@ internal class AiSettingsStore(context: Context) {
         check(edit.commit()) { "API 配置未保存，请重试" }
     }
     fun clearKey() { check(prefs.edit().remove("credential").commit()) }
+    fun savePrompt(value: String) {
+        check(prefs.edit().putString("prompt", AiTranslationPrompt.validate(value)).commit()) { "提示词未保存，请重试" }
+    }
     fun key(): String {
         val encoded = requireNotNull(prefs.getString("credential", null)) { "请先保存 API Key" }
         try {

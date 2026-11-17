@@ -593,6 +593,9 @@ def inspect_service_callback(release, verifier):
 
 def inspect_migration(release, verifier):
     """Exercise the production provider/decoder with synthetic data, then install upstream beside BYBUS."""
+    if not any(asset.get("name") == "BYBUS.apk" for asset in release["assets"]):
+        REPORT["legacy_migration"] = {"status": "skipped", "reason": "Legacy migration helper is not distributed"}
+        return
     legacy = "com.example.limbuszhcn"
     install_component_probe(release, verifier, "bybus-migration-probe.apk")
     relative = "virtual/data/user/0/com.ProjectMoon.LimbusCompany/files/bybus-migration-fixture.bin"
@@ -1456,7 +1459,7 @@ def main():
         time.sleep(3)
         inspect_account_registry(release, verifier)
         inspect_migration(release, verifier)
-        REPORT["result"] = "container repair regression completed; no account or purchase attempted"
+        REPORT["result"] = "account registry inspection completed; legacy migration status recorded separately; no account or purchase attempted"
         return
     adb("shell", "settings", "delete", "global", "policy_control")
     # Hide emulator system chrome before taking raw captures; never paint over app pixels.
