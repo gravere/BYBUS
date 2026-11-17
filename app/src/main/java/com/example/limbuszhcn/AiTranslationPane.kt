@@ -69,6 +69,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
         normalizedAiEndpoint(endpoint) == normalizedAiEndpoint(ai.config.endpoint)
     }.getOrDefault(false)
     val hasCredential = key.isNotBlank() || savedKeyAvailable
+    val coverageReady = state.coverage.canGenerate(config())
     LaunchedEffect(endpoint, key) { actions.clearModels(); showModels = false; search = "" }
     LaunchedEffect(ai.models.request, ai.models.loading) {
         if (!ai.models.loading && ai.models.values.isNotEmpty()) showModels = true
@@ -82,7 +83,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
             }
         }
         if (!pending || showConfiguration) {
-        CoverageSummary(state, onCoverage)
+        CoverageSummary(state, onCoverage, actions.inspectCoverage)
         DetailCard {
             Text("连接设置", style = MaterialTheme.typography.titleSmall)
             AiField("服务地址", endpoint, { if (it.length <= 2048) endpoint = it }, "https://api.openai.com/v1",
@@ -186,8 +187,15 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
         }
         }
         if (!pending) {
-            Button({ finishEditing(); confirm = true }, enabled = enabled && hasCredential,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("生成并使用") }
+            if (!state.coverage.current) {
+                FilledTonalButton({ finishEditing(); actions.inspectCoverage() }, enabled = enabled && !state.coverage.loading,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                    Text(if (state.coverage.loading) "正在检查汉化覆盖" else "先检查汉化覆盖")
+                }
+            } else Button({ finishEditing(); confirm = true }, enabled = enabled && hasCredential && coverageReady,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                Text(if (coverageReady) "生成并使用" else "所选范围已无需补译")
+            }
         }
         if (state.sources.undo != null) OutlinedButton({ finishEditing(); undo = true }, enabled = enabled,
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("撤回上次 AI 生成") }
@@ -218,8 +226,8 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
             enabled = ai.task?.phase != com.example.limbuszhcn.translation.AiTaskPhase.Applying) { Text("取消并删除") } },
         dismissButton = { TextButton({ cancelTask = false }) { Text("保留任务") } })
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("开始 AI 翻译？") },
-        text = { Text("将关闭游戏，处理${if (missing) scope.label else "全部"}文本，本批最多 $limit 条。文本会发送到你配置的 API，费用计入你的账户。原汉化包保留，生成后可撤回。") },
-        confirmButton = { TextButton({ confirm = false; val value = key; key = ""; reveal = false; actions.generateAi(config(), value) }, enabled = enabled) { Text("开始翻译") } },
+        text = { Text("所选${if (missing) scope.label else "全部"}共 ${state.coverage.eligible(config())} 条，本批最多 ${minOf(limit, state.coverage.eligible(config()))} 条。将关闭游戏，使用你配置的 API 翻译，费用计入你的账户。完成后自动检查剩余条目。原汉化包保留，可撤回。") },
+        confirmButton = { TextButton({ confirm = false; val value = key; key = ""; reveal = false; actions.generateAi(config(), value) }, enabled = enabled && coverageReady) { Text("开始翻译") } },
         dismissButton = { TextButton({ confirm = false }) { Text("取消") } })
     if (clear) AlertDialog(onDismissRequest = { clear = false }, title = { Text("移除 API Key？") },
         text = { Text("已生成的译文会保留。再次使用 API 时需要重新填写 Key。") },

@@ -71,7 +71,8 @@ internal class AiTaskStore(private val cache: Path) {
         val identity = identityOverride ?: source.id.takeIf { source.kind == "ai" }?.removePrefix("ai-")
             ?: AiTranslationJob.digest("v2|${source.baseId ?: source.id}|${config.endpoint}|${config.model}|${config.missingOnly}|${AiTranslationJob.digest(config.prompt)}").take(32)
         return AiTaskSnapshot(UUID.randomUUID().toString().replace("-", ""), config.validated(), source.baseId ?: source.id,
-            source.name, identity, if (config.missingOnly) "${source.name.take(48)} · AI 补全" else "AI 汉化",
+            source.name, identity, if (!config.missingOnly) "AI 汉化" else if (source.kind == "ai")
+                source.name.replace(Regex("( · AI 补全){2,}$"), " · AI 补全") else "${source.name.take(48)} · AI 补全",
             officialVersionOverride ?: if (config.missingOnly && source.isOfficial) base?.manifest?.requestedVersion?.toLongOrNull() else source.officialVersion,
             progress = AiProgress(message = "正在核对所选文本范围")).also {
                 write(it)
