@@ -14,7 +14,7 @@ def redact_checkin(text):
     return re.sub(r'(?i)((?:android[_ ]?id|security[_ ]?token)\s*[=:]\s*)[0-9a-fx-]+', r'\1[redacted]', text)
 
 
-def inspect(api, release, verifier, windows_only=False, settings_only=False, session_only=False):
+def inspect(api, release, verifier, windows_only=False, settings_only=False, session_only=False, provider_only=False):
     adb, out, report = api['adb'], api['OUT'], api['REPORT']
     package, namespace = api['PACKAGE'], api['NAMESPACE']
     # adbd can close the transport while restarting as root; verify the resulting UID.
@@ -51,6 +51,27 @@ def inspect(api, release, verifier, windows_only=False, settings_only=False, ses
         assert report['billing_capability']['device_registered'] is True
         report['checks'].append('first real Google check-in completed before billing capability; provider ID and success time both present (values not exported)')
         report['checks'].append('real billing: fresh defaults supported 0; old disabled error 3 -> automatic repair -> supported 0; same provider persisted')
+        if provider_only:
+            probe('settings')
+            time.sleep(2)
+            settings = api['capture']('provider-native-settings')
+            assert any(n.get('package') == 'com.google.android.gms' for n in settings.iter('node')), 'virtual settings did not appear'
+            probe('login')
+            deadline = time.monotonic() + 25
+            while time.monotonic() < deadline:
+                tree = api['hierarchy']('provider-login')
+                if any(n.get('resource-id') == 'com.google.android.gms:id/next_button'
+                       and n.get('enabled') == 'true' for n in tree.iter('node')): break
+                time.sleep(1)
+            else: raise AssertionError('real microG login controls did not appear')
+            api['capture']('provider-login')
+            logs = adb('logcat', '-d', '-v', 'threadtime', '-t', '3000', check=False)
+            assert 'Virtual provider standard route ready' in logs, 'production route was not exercised'
+            assert not re.search(r'Given calling package .* does not match caller', logs), 'provider identity rejected'
+            report['checks'].append('production virtual provider route: service capability, settings UI and real LoginActivity opened')
+            report['payment_runtime'] = 'configuration, service capability and login entry verified; no account, product query or purchase'
+            report['result'] = 'Provider routing inspection completed'
+            return
         if windows_only:
             if not settings_only: inspect_window_fixture(api)
             inspect_settings(api, probe)

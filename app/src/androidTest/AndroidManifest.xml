@@ -1,0 +1,13 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Disposable fixture data only. These providers never enter the production APK. -->
+        <provider android:name="com.example.limbuszhcn.ProviderProbe"
+            android:authorities="io.github.gravere.bybus.test.routing"
+            android:process=":providerProbe" android:exported="true" />
+        <provider android:name="com.example.limbuszhcn.ProviderProbe$Denied"
+            android:authorities="io.github.gravere.bybus.test.denied"
+            android:process=":providerProbe" android:exported="true"
+            android:readPermission="android.permission.MANAGE_USERS"
+            android:writePermission="android.permission.MANAGE_USERS" />
+    </application>
+</manifest>
