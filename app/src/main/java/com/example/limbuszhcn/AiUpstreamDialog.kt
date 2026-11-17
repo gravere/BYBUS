@@ -88,11 +88,12 @@ private fun AiUpdateOption(title: String, detail: String, selected: Boolean, ena
 }
 
 @Composable
-internal fun AiLaunchProgressDialog(state: LauncherUiState, onCancel: () -> Unit) {
-    AlertDialog(onDismissRequest = onCancel, title = { Text("正在准备 AI 汉化") },
+internal fun AiLaunchProgressDialog(state: LauncherUiState, onCancel: () -> Unit, onDetails: () -> Unit = {}) {
+    AlertDialog(onDismissRequest = onDetails, title = { Text("正在准备 AI 汉化") },
         text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             LinearProgressIndicator(Modifier.fillMaxWidth())
             Text(state.ai.message.orEmpty())
             Text("已复用 ${state.ai.progress.reused} 条 · 本次新译 ${state.ai.progress.completed} 条", style = MaterialTheme.typography.bodySmall)
-        } }, confirmButton = { TextButton(onCancel) { Text("取消本次启动") } })
+        } }, confirmButton = { TextButton(onDetails) { Text("查看任务") } },
+        dismissButton = { TextButton(onCancel, enabled = !state.ai.stopping) { Text("暂停并稍后启动") } })
 }

@@ -17,8 +17,6 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import com.example.limbuszhcn.ConfirmedOperation
 import com.example.limbuszhcn.OperationConfirmation
-import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.ViewModelProvider
 import com.example.limbuszhcn.MainActivity
 import com.example.limbuszhcn.container.*
 import com.example.limbuszhcn.gamefs.GameResourceTransfer
@@ -49,7 +47,7 @@ internal data class MigrationState(val busy: Boolean = false, val copied: Long =
     val operation: MigrationOperation = MigrationOperation.Inspect, val failed: Boolean = false,
     val progressFiles: Boolean = false, val canExport: Boolean = false, val notice: String? = null)
 
-internal class MigrationModel(application: Application) : AndroidViewModel(application) {
+internal class MigrationModel private constructor(application: Application) {
     private val context = application.applicationContext
     private val executor = Executors.newSingleThreadExecutor()
     private val handler = Handler(Looper.getMainLooper())
@@ -327,7 +325,11 @@ internal class MigrationModel(application: Application) : AndroidViewModel(appli
             Thread.sleep(100)
         }
     }
-    override fun onCleared() { runCatching { input?.close() }; executor.shutdownNow() }
+    companion object {
+        private var instance by mutableStateOf<MigrationModel?>(null)
+        fun get(application: Application): MigrationModel = instance ?: MigrationModel(application).also { instance = it }
+        fun currentState(): MigrationState? = instance?.state
+    }
 }
 
 open class MigrationActivity : ComponentActivity() {
@@ -337,7 +339,7 @@ open class MigrationActivity : ComponentActivity() {
         enableEdgeToEdge()
         if (Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = false
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        val model = ViewModelProvider(this)[MigrationModel::class.java]
+        val model = MigrationModel.get(application)
         setContent {
             LimbusZhCNTheme {
                 val state = model.state
@@ -360,7 +362,7 @@ open class MigrationActivity : ComponentActivity() {
                         confirmation = ConfirmedOperation.ImportResources
                     }
                 }
-                BackHandler { if (!state.busy && !state.pending) leaveMigration() }
+                BackHandler { leaveMigration() }
                 MigrationScreen(state = state, onBack = ::leaveMigration, onRefresh = model::refresh,
                     onMigrate = { confirmation = ConfirmedOperation.Migrate },
                     onSelectFile = { runCatching { picker.launch(arrayOf("application/zip", "application/octet-stream")) }.onFailure(model::pickerFailed) },

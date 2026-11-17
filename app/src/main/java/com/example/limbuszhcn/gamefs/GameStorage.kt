@@ -14,6 +14,18 @@ interface GameStorage {
     fun rootPath(): String
     /** Relative, bounded static Japanese resources only; never account or preference files. */
     fun japaneseResources(): List<String> = emptyList()
+    fun japaneseResourceMetadata(): Map<String, String>? = null
+    /** Freshness only; never authorizes a patch or replaces content validation. */
+    fun japaneseResourceStamp(): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        var total = 0L
+        japaneseResources().sorted().forEach { key ->
+            val bytes = read(rootPath().trimEnd('/') + "/$key") ?: error("游戏文本正在变化")
+            total += bytes.size; require(total <= 128L * 1024 * 1024)
+            digest.update(key.toByteArray(Charsets.UTF_8)); digest.update(0.toByte()); digest.update(bytes)
+        }
+        return digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+    }
     fun deleteResource(relativePath: String): Boolean = false
     fun resourceMigrationRoots(): Map<String, Path> = emptyMap()
     fun clearDownloadedResources(): ResourceClearResult = error("当前存储不支持清理游戏资源")
