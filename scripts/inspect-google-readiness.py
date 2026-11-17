@@ -55,7 +55,10 @@ def inspect(api, release, verifier, windows_only=False, settings_only=False, ses
             probe('settings')
             time.sleep(2)
             settings = api['capture']('provider-native-settings')
-            assert any(n.get('package') == 'com.google.android.gms' for n in settings.iter('node')), 'virtual settings did not appear'
+            # Accessibility nodes may correctly name the physical host; identify the actual
+            # pinned microG screen by its toolbar and settings, not its transport package.
+            assert any(n.get('content-desc') == 'microG Settings' for n in settings.iter('node')) \
+                and any(n.get('text') == 'Google Accounts' for n in settings.iter('node')), 'virtual settings did not appear'
             probe('login')
             deadline = time.monotonic() + 25
             while time.monotonic() < deadline:
