@@ -11,7 +11,13 @@ internal data class CoverageReport(val sourceName: String, val checkedAt: Long, 
     val covered: Int, val missing: Int, val review: Int, val aiEligible: Int, val unreadable: Int,
     val details: List<CoverageFile>, val excluded: Int = 0, val shared: Int = 0, val reviewEligible: Int = 0)
 internal data class CoverageState(val loading: Boolean = false, val report: CoverageReport? = null,
-    val error: String? = null, val fingerprint: String? = null, val stale: Boolean = false)
+    val error: String? = null, val fingerprint: String? = null, val stale: Boolean = false) {
+    val current get() = report != null && fingerprint != null && !loading && !stale
+    fun eligible(config: AiConfig): Int = report?.let {
+        if (!config.missingOnly) it.total else (if (config.includeMissing) it.aiEligible else 0) + (if (config.includeReview) it.reviewEligible else 0)
+    } ?: 0
+    fun canGenerate(config: AiConfig) = current && eligible(config) > 0
+}
 
 /** Local inspection only. Does not activate, rewrite or download game/translation resources. */
 internal object TranslationCoverage {

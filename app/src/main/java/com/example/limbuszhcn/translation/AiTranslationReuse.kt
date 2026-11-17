@@ -1,6 +1,7 @@
 package com.example.limbuszhcn.translation
 
 import com.example.limbuszhcn.container.TranslationJsonPairer
+import com.example.limbuszhcn.container.TranslationSnapshot
 import com.example.limbuszhcn.gamefs.GameStorage
 import org.json.JSONObject
 import java.nio.file.Files
@@ -45,7 +46,13 @@ internal object AiTranslationReuse {
             readBytes += raw.size; require(readBytes <= 128L * 1024 * 1024) { "游戏文本超出检查范围" }
             val original = String(raw, Charsets.UTF_8)
             val old = String(Files.readAllBytes(previous.directory.resolve(entry.cachePath)), Charsets.UTF_8)
-            val merged = TranslationJsonPairer.mergeWithCoverage("Localize/$key", original, old)
+            // Legacy generated files lacked a binding. Reuse requires BOTH the committed archive's
+            // exact non-display structure and a cached original-field fingerprint with the same value.
+            // This temporary binding alone is never exported or used to mark coverage.
+            val payload = TranslationSnapshot.decode(TranslationFields.parse(old)).document
+            val candidate = if (TranslationSnapshot.matchingStructure(TranslationFields.parse(original), payload) != null)
+                TranslationSnapshot.encode(original, payload) else old
+            val merged = TranslationJsonPairer.mergeWithCoverage("Localize/$key", original, candidate)
             for (leaf in TranslationFields.collect(TranslationFields.parse(original), merged.document, key, merged)) {
                 if (!leaf.canTranslate || !leaf.covered) continue
                 val candidate = saved[leaf.id]?.firstOrNull { masked ->

@@ -2,6 +2,7 @@ package com.example.limbuszhcn.translation
 
 import com.example.limbuszhcn.container.TranslationJsonPairer
 import com.example.limbuszhcn.container.TranslationTextPolicy
+import com.example.limbuszhcn.container.TranslationSnapshot
 import com.example.limbuszhcn.gamefs.GameStorage
 import com.example.limbuszhcn.storage.AtomicFiles
 import org.json.JSONArray
@@ -18,7 +19,7 @@ internal data class AiProgress(val completed: Int = 0, val limit: Int = 0, val r
     val scannedFiles: Int = 0, val totalFiles: Int = 0)
 internal data class AiJobResult(val archive: Path, val identity: String, val progress: AiProgress, val remaining: Int)
 
-/** Batch translation stays outside game processes. Per-resource caches survive cancellation. */
+/** Batch translation stays outside game processes. Validated responses survive pauses until explicit task cancellation. */
 internal class AiTranslationJob(private val cache: Path, private val storage: GameStorage,
     private val config: AiConfig, private val client: AiTranslationClient,
     private val cancelled: () -> Boolean = { false }, private val progress: (AiProgress) -> Unit = {}) {
@@ -115,6 +116,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
             val saved = if (Files.isRegularFile(savedFile) && Files.size(savedFile) <= 8 * 1024 * 1024)
                 runCatching { JSONObject(String(Files.readAllBytes(savedFile), Charsets.UTF_8)) }.getOrDefault(JSONObject()) else JSONObject()
             val pending = mutableListOf<TranslationField>()
+            val applied = hashSetOf<String>()
             var reusedChanged = false
             for (leaf in leaves) {
                 val savedId = if (leaf.covered) leaf.id + "-" + digest(leaf.translated.orEmpty()).take(16) else leaf.id
@@ -124,7 +126,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
                         AiTerminology.validate(it, terminology.forText(leaf.text, leaf.context))
                     } }.getOrNull()
                     if (validated != null) {
-                        leaf.apply(validated); reused++; saved.put(savedId, old); reusedChanged = true; continue
+                        leaf.apply(validated); applied += leaf.id; reused++; saved.put(savedId, old); reusedChanged = true; continue
                     }
                 }
                 pending += leaf
@@ -150,6 +152,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
                 for (leaf in batch) {
                     val value = result.translations.getValue(leaf.id)
                     leaf.apply(value)
+                    applied += leaf.id
                     // Store the protected form so reading cache applies the same validator.
                     val savedId = if (leaf.covered) leaf.id + "-" + digest(leaf.translated.orEmpty()).take(16) else leaf.id
                     saved.put(savedId, protectTranslated(leaf.text, value))
@@ -160,7 +163,14 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
             }
             remaining += pending.size - cursor
             val target = output.resolve(key); Files.createDirectories(target.parent)
-            Files.write(target, document.toString().toByteArray(Charsets.UTF_8))
+            val generated = TranslationSnapshot.encode(raw, document)
+            // Validate with the actual reader before publishing; a successful API response is not proof of loadability.
+            if (applied.isNotEmpty()) {
+                val verified = TranslationJsonPairer.mergeWithCoverage("Localize/$key", raw, generated)
+                val loaded = TranslationFields.collect(original, verified.document, key, verified).filter { it.covered }.map { it.id }.toSet()
+                check(loaded.containsAll(applied)) { "译文已保存到任务，但部分条目未通过加载检查；未替换当前汉化" }
+            }
+            Files.write(target, generated.toByteArray(Charsets.UTF_8))
         }
         checkCancelled()
         if (plan != null) remaining = plan.available - plan.total

@@ -3,6 +3,7 @@ package com.example.limbuszhcn.container
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
+import java.util.IdentityHashMap
 
 /** Pure pairing policy: no filesystem, Android lifecycle or activation side effects. */
 internal object TranslationJsonPairer {
@@ -12,23 +13,26 @@ internal object TranslationJsonPairer {
 
     fun pair(path: String, originalJson: String, translationJson: String): Result {
         val original = parse(originalJson)
-        val translation = parse(translationJson)
+        val decoded = TranslationSnapshot.decode(parse(translationJson))
+        val translation = decoded.document
         val records = mutableListOf<TranslationIndexRecord>()
         val sourceFields = countFields(original)
         if (sourceFields == 0) {
             require(isExplicitlyEmpty(original) && isExplicitlyEmpty(translation)) { "Unrecognized empty resource" }
         }
-        collect(original, translation, path, "$", records, 0)
+        collect(original, translation, path, "$", records, 0, snapshots = TranslationSnapshot.bind(originalJson, original, decoded))
         return Result(records, sourceFields, records.size)
     }
 
     /** Merge only the display leaves accepted by the exact same identity policy as the index. */
     fun merge(path: String, originalJson: String, translationJson: String): String? {
         val original = parse(originalJson)
-        val translation = parse(translationJson)
+        val decoded = TranslationSnapshot.decode(parse(translationJson))
+        val translation = decoded.document
         val records = mutableListOf<TranslationIndexRecord>()
         val edits = mutableListOf<() -> Unit>()
-        collect(original, translation, path, "$", records, 0, edits = edits)
+        collect(original, translation, path, "$", records, 0, edits = edits,
+            snapshots = TranslationSnapshot.bind(originalJson, original, decoded))
         edits.forEach { it() }
         return if (records.any { it.source != it.translation }) original.toString() else null
     }
@@ -42,14 +46,16 @@ internal object TranslationJsonPairer {
         val original = parse(originalJson)
         val matched = java.util.IdentityHashMap<Any, MutableSet<String>>()
         val edits = mutableListOf<() -> Unit>()
-        collect(original, parse(translationJson), path, "$", mutableListOf(), 0, edits = edits,
-            onMatched = { parent, field -> matched.getOrPut(parent) { mutableSetOf() }.add(field) })
+        val decoded = TranslationSnapshot.decode(parse(translationJson))
+        collect(original, decoded.document, path, "$", mutableListOf(), 0, edits = edits,
+            onMatched = { parent, field -> matched.getOrPut(parent) { mutableSetOf() }.add(field) },
+            snapshots = TranslationSnapshot.bind(originalJson, original, decoded))
         edits.forEach { it() }
         return CoveredMerge(original, matched)
     }
 
     fun releasedModelRecords(path: String, json: String): List<TranslationIndexRecord> {
-        val root = parse(json)
+        val root = TranslationSnapshot.decode(parse(json)).document
         val records = mutableListOf<TranslationIndexRecord>()
         // A release also contains manifests with no display fields. Those have
         // no model entries; the stricter source-pairing readiness rule stays in pair().
@@ -79,7 +85,7 @@ internal object TranslationJsonPairer {
                     TranslationTextPolicy.isUsableDisplayText(value)) texts += value
             }
         }
-        collectReleased(parse(json), 0)
+        collectReleased(TranslationSnapshot.decode(parse(json)).document, 0)
         return texts
     }
 
@@ -116,7 +122,8 @@ internal object TranslationJsonPairer {
                         displayArray: String? = null, arrayOwnerId: String? = null,
                         skillContext: String? = null, skillRelation: String? = null,
                         objectScope: String? = null, edits: MutableList<() -> Unit>? = null,
-                        onMatched: ((Any, String) -> Unit)? = null) {
+                        onMatched: ((Any, String) -> Unit)? = null,
+                        snapshots: IdentityHashMap<Any, Any>? = null) {
         require(depth <= 64) { "Resource nesting exceeds limit" }
         when {
             original is JSONObject && translated is JSONObject -> {
@@ -153,7 +160,7 @@ internal object TranslationJsonPairer {
                     if (field == "simpleDesc" && tableScope?.startsWith("@ego-gift:") == true && !tableScope.contains('/')) {
                         if (source is JSONArray && target is JSONArray) {
                             collectGiftAbilities(source, target, path, "$objectContext.$field",
-                                records, depth + 1, tableScope, edits, onMatched)
+                                records, depth + 1, tableScope, edits, onMatched, snapshots)
                         }
                         return@forEach
                     }
@@ -163,7 +170,7 @@ internal object TranslationJsonPairer {
                     if ((eventOptions || guideStories || rpgDialogue) && tableScope != null && !tableScope.contains('/')) {
                         if (source is JSONArray && target is JSONArray) {
                             collectTableChildren(source, target, path, "$objectContext.$field", records,
-                                depth + 1, tableScope, if (guideStories) "level" else if (rpgDialogue) "index" else null, edits, onMatched)
+                                depth + 1, tableScope, if (guideStories) "level" else if (rpgDialogue) "index" else null, edits, onMatched, snapshots)
                         }
                         return@forEach
                     }
@@ -176,7 +183,7 @@ internal object TranslationJsonPairer {
                     } else if (source is JSONObject || source is JSONArray) {
                         collect(source, target, path, "$objectContext.$field", records, depth + 1,
                             field.takeIf { it in TranslationTextPolicy.STRING_ARRAY_FIELDS }, stableId,
-                            skillRoot.takeIf { field.lowercase() in SKILL_CHILD_FIELDS }, field.lowercase(), edits = edits, onMatched = onMatched)
+                            skillRoot.takeIf { field.lowercase() in SKILL_CHILD_FIELDS }, field.lowercase(), edits = edits, onMatched = onMatched, snapshots = snapshots)
                     }
                 }
             }
@@ -207,7 +214,7 @@ internal object TranslationJsonPairer {
                 for (index in 0 until original.length()) {
                     val source = original.opt(index)
                     val key = (source as? JSONObject)?.let(::identity)
-                    val target = if (key != null) {
+                    val target = snapshots?.get(source) ?: if (key != null) {
                         val sourceGroup = sources[key].orEmpty()
                         val targetGroup = targets[key].orEmpty()
                         if (sourceGroup.size == 1 && targetGroup.size == 1) targetGroup.single()
@@ -231,7 +238,7 @@ internal object TranslationJsonPairer {
                         }
                     }?.takeIf { it.length <= 256 }
                     collect(source, target, path, "$context[$index]", records, depth + 1,
-                        skillContext = nestedSkill, edits = edits, onMatched = onMatched)
+                        skillContext = nestedSkill, edits = edits, onMatched = onMatched, snapshots = snapshots)
                 }
             }
         }
@@ -240,7 +247,7 @@ internal object TranslationJsonPairer {
     private fun collectGiftAbilities(original: JSONArray, translated: JSONArray, path: String,
                                      context: String, records: MutableList<TranslationIndexRecord>,
                                      depth: Int, parent: String, edits: MutableList<() -> Unit>?,
-                                     onMatched: ((Any, String) -> Unit)?) {
+                                     onMatched: ((Any, String) -> Unit)?, snapshots: IdentityHashMap<Any, Any>?) {
         fun groups(array: JSONArray) = (0 until array.length()).mapNotNull { index ->
             array.optJSONObject(index)?.let { row ->
                 row.opt("abilityID")?.toString()?.takeIf { it.isSkillNumber() }?.let { it to row }
@@ -254,7 +261,7 @@ internal object TranslationJsonPairer {
             val sourceGroup = sources.getValue(id)
             val targetGroup = targets[id].orEmpty()
             if (targetGroup.isEmpty()) continue
-            val target = if (sourceGroup.all { equivalentJson(it, source) } &&
+            val target = snapshots?.get(source) as? JSONObject ?: if (sourceGroup.all { equivalentJson(it, source) } &&
                 targetGroup.all { equivalentJson(it, targetGroup.first()) }) targetGroup.first()
             else {
                 // Repeated ability IDs can carry DIFFERENT effects. A unique set
@@ -267,7 +274,7 @@ internal object TranslationJsonPairer {
             // Ability IDs are metadata, not a license to pair changed structures.
             if (!equivalentJson(nonDisplayMetadata(source), nonDisplayMetadata(target))) continue
             collect(source, target, path, "$context[$index]", records, depth + 1,
-                objectScope = "$parent/ability:$id", edits = edits, onMatched = onMatched)
+                objectScope = "$parent/ability:$id", edits = edits, onMatched = onMatched, snapshots = snapshots)
         }
     }
 
@@ -289,7 +296,7 @@ internal object TranslationJsonPairer {
     private fun collectTableChildren(original: JSONArray, translated: JSONArray, path: String,
                                      context: String, records: MutableList<TranslationIndexRecord>,
                                      depth: Int, parent: String, identityField: String?, edits: MutableList<() -> Unit>?,
-                                     onMatched: ((Any, String) -> Unit)?) {
+                                     onMatched: ((Any, String) -> Unit)?, snapshots: IdentityHashMap<Any, Any>?) {
         if (identityField == null && original.length() != translated.length()) return
         fun identities(array: JSONArray) = (0 until array.length()).mapNotNull { index ->
             array.optJSONObject(index)?.let { row ->
@@ -301,7 +308,7 @@ internal object TranslationJsonPairer {
         for (index in 0 until original.length()) {
             val source = original.optJSONObject(index) ?: continue
             val identity = identityField?.let(source::opt)?.toString()
-            val target = if (identityField != null) {
+            val target = snapshots?.get(source) as? JSONObject ?: if (identityField != null) {
                 if (identity == null || sources[identity]?.size != 1) continue
                 targets[identity]?.singleOrNull() ?: continue
             } else translated.optJSONObject(index) ?: continue
@@ -311,7 +318,7 @@ internal object TranslationJsonPairer {
                 "index" -> "$parent/text:$identity"
                 else -> "$parent/option:$index"
             }
-            collect(source, target, path, "$context[$index]", records, depth + 1, objectScope = key, edits = edits, onMatched = onMatched)
+            collect(source, target, path, "$context[$index]", records, depth + 1, objectScope = key, edits = edits, onMatched = onMatched, snapshots = snapshots)
         }
     }
 
