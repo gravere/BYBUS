@@ -125,7 +125,7 @@ internal fun LaunchButton(action: LaunchAction, enabled: Boolean, step: Int,
             }
         })
         Button(onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onClick() },
-            enabled = enabled && !busy, interactionSource = interaction,
+            enabled = enabled, interactionSource = interaction,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 16.dp).widthIn(max = width).fillMaxWidth()
                 .heightIn(min = 56.dp)
                 .onSizeChanged { buttonSize = it }.semantics {

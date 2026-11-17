@@ -6,7 +6,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.widget.TextView
-import androidx.lifecycle.ViewModelProvider
 import com.example.limbuszhcn.container.AndroidContainerRuntimeFactory
 import com.example.limbuszhcn.container.ContainerWorkspaceStorage
 import com.example.limbuszhcn.gamefs.GameResourceTransfer
@@ -20,7 +19,7 @@ class ResourceImportProbeActivity : MigrationActivity() {
     override fun prepareTarget() = false
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val model = ViewModelProvider(this)[MigrationModel::class.java]
+        val model = MigrationModel.get(application)
         val root = File(cacheDir, "resource-probe").apply { mkdirs() }
         val assets = File(root, "assets").apply { mkdirs() }
         File(assets, "bybus-new-resource.bin").writeText("portable fixture")

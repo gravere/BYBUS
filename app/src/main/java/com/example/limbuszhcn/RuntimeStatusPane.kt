@@ -15,6 +15,10 @@ import com.example.limbuszhcn.ui.theme.LauncherColors as C
 @Composable
 internal fun RuntimeStatusPane(state: LauncherUiState, onGameUpdates: () -> Unit, onTranslation: () -> Unit, onRefresh: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        if (state.busy) DetailCard {
+            Text(state.stage, style = MaterialTheme.typography.titleSmall)
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
         DetailSection("游戏与汉化", contentPadding = PaddingValues(0.dp)) {
             Row(Modifier.fillMaxWidth()
                 .clickable(role = Role.Button, onClickLabel = "游戏更新与安装", onClick = onGameUpdates)

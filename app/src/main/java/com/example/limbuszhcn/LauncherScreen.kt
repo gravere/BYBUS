@@ -68,6 +68,8 @@ internal fun LauncherScreen(
     var requestedAiScope by remember { mutableStateOf<com.example.limbuszhcn.translation.AiScope?>(null) }
     var handledUpdatesRequest by rememberSaveable { mutableLongStateOf(0L) }
     var handledPreparationRequest by rememberSaveable { mutableLongStateOf(0L) }
+    var hideAiLaunchProgress by remember { mutableStateOf(false) }
+    LaunchedEffect(state.aiPreparingLaunch) { if (!state.aiPreparingLaunch) hideAiLaunchProgress = false }
     LaunchedEffect(state.resourcePreparationRequest) {
         if (state.resourcePreparationRequest > 0 && state.resourcePreparationRequest != handledPreparationRequest) {
             handledPreparationRequest = state.resourcePreparationRequest
@@ -90,9 +92,16 @@ internal fun LauncherScreen(
     }
     fun openChild(page: String) { sheet?.let { parentSheets = parentSheets + it }; sheet = page }
     fun close() { parentSheets = emptyList(); sheet = null }
+    fun openTask() {
+        val destination = state.taskDestination()
+        if (destination == "migration") onMigration() else {
+            requestedAiScope = null
+            open(destination)
+        }
+    }
     fun openCoverage() {
-        if (state.coverage.report == null && !state.coverage.loading) translationActions.inspectCoverage()
-        openChild("coverage")
+        if (state.coverage.report != null) openChild("coverage")
+        else if (!state.coverage.loading) translationActions.inspectCoverage()
     }
 
     Surface(Modifier.fillMaxSize(), color = C.Background) {
@@ -130,7 +139,7 @@ internal fun LauncherScreen(
                                 verticalAlignment = Alignment.CenterVertically) {
                                 InstallationCard(state, Modifier.weight(1f).fillMaxHeight()) { open("status") }
                                 LaunchActions(state, onLaunch, onRefresh, resumed && sheet == null,
-                                    onDetails = { open(if (state.failed) "error" else "status") },
+                                    onDetails = { if (state.busy || state.ai.hasPendingTask) openTask() else open(if (state.failed) "error" else "status") },
                                     modifier = Modifier.width(layout.actionWidth.dp))
                                 HomeProjectCard(state, projectState, homeProjectSourceId, onHomeProjectSource,
                                     onProject = { open("project") }, onSources = { open("translation") },
@@ -146,7 +155,7 @@ internal fun LauncherScreen(
                             horizontalAlignment = Alignment.CenterHorizontally) {
                             InstallationCard(state) { open("status") }
                             LaunchActions(state, onLaunch, onRefresh, resumed && sheet == null,
-                                onDetails = { open(if (state.failed) "error" else "status") },
+                                onDetails = { if (state.busy || state.ai.hasPendingTask) openTask() else open(if (state.failed) "error" else "status") },
                                 modifier = Modifier.widthIn(max = layout.actionWidth.dp).fillMaxWidth())
                             HomeProjectCard(state, projectState, homeProjectSourceId, onHomeProjectSource,
                                 onProject = { open("project") }, onSources = { open("translation") },
@@ -216,7 +225,10 @@ internal fun LauncherScreen(
         AiUpstreamDialog(offer, state.ai.hasKey, !state.busy && !state.ai.settingsBusy,
             translationActions.chooseAiUpdate, { translationActions.chooseAiUpdate(null); requestedAiScope = null; open("ai-translation") })
     }
-    if (state.aiPreparingLaunch) AiLaunchProgressDialog(state, translationActions.cancelAi)
+    if (state.aiPreparingLaunch && !hideAiLaunchProgress) AiLaunchProgressDialog(state, translationActions.pauseAi) {
+        hideAiLaunchProgress = true
+        openTask()
+    }
     if (confirmZeroSource) TranslationSourceSwitchDialog(com.example.limbuszhcn.translation.TranslationSources.OFFICIAL,
         !state.busy, { confirmZeroSource = false }) {
         confirmZeroSource = false
@@ -304,10 +316,13 @@ internal fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefre
         else -> LaunchAction.Launch
     }
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        LaunchButton(action, enabled = state.container != null || state.failed,
+        LaunchButton(action, enabled = state.busy || state.container != null || state.failed,
             step = state.launchStep, animated = animated, feedback = feedback,
             status = if (state.busy) state.stage else feedback.orEmpty(),
-            onClick = { when { state.canResumeGame -> onLaunch(); needsDetection -> onRefresh(); canLaunch -> onLaunch(); else -> onDetails() } })
+            onClick = { when { state.busy -> onDetails(); state.canResumeGame -> onLaunch(); needsDetection -> onRefresh(); canLaunch -> onLaunch(); else -> onDetails() } })
+        if (!state.busy && state.ai.hasPendingTask) TextButton(onClick = onDetails) {
+            Text("翻译已暂停 · 查看任务", style = MaterialTheme.typography.bodySmall)
+        }
         if (state.failed && !state.busy) {
             TextButton(onClick = onDetails, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)) {
                 LauncherGlyph(Glyph.Info, C.Error, Modifier.size(16.dp))

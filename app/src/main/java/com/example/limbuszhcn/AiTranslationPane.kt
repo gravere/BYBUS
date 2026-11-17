@@ -48,6 +48,8 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
     var key by remember { mutableStateOf("") }
     var reveal by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf(false) }
+    var cancelTask by remember { mutableStateOf(false) }
+    var showConfiguration by remember { mutableStateOf(false) }
     var clear by remember { mutableStateOf(false) }
     var undo by remember { mutableStateOf(false) }
     var prompt by remember(ai.config.prompt) { mutableStateOf(ai.config.prompt) }
@@ -62,6 +64,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
     fun finishEditing() { focus.clearFocus(); keyboard?.hide() }
     fun config() = AiConfig(endpoint.trim(), model.trim(), missing, limit, scope.missing, scope.review, prompt)
     val enabled = !state.busy && !ai.settingsBusy && !ai.running
+    val pending = ai.hasPendingTask || ai.running
     val savedKeyAvailable = ai.hasKey && runCatching {
         normalizedAiEndpoint(endpoint) == normalizedAiEndpoint(ai.config.endpoint)
     }.getOrDefault(false)
@@ -72,6 +75,13 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
     }
     DisposableEffect(Unit) { onDispose { actions.clearModels() } }
     Column(Modifier.imePadding(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        if (pending) {
+            AiTaskCard(state, actions.pauseAi, actions.resumeAi) { cancelTask = true }
+            TextButton({ showConfiguration = !showConfiguration }, modifier = Modifier.fillMaxWidth()) {
+                Text(if (showConfiguration) "收起翻译设置" else "查看翻译设置")
+            }
+        }
+        if (!pending || showConfiguration) {
         CoverageSummary(state, onCoverage)
         DetailCard {
             Text("连接设置", style = MaterialTheme.typography.titleSmall)
@@ -134,7 +144,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
                 TextButton({ finishEditing(); reveal = false; actions.saveAi(config(), key, true) },
                     enabled = enabled && hasCredential, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text(if (ai.settingsBusy) "处理中" else "测试翻译") }
             }
-            ai.message?.takeUnless { ai.running }?.let {
+            ai.message?.takeUnless { pending }?.let {
                 Text(it, color = if (ai.failed) C.Error else C.Accent, style = MaterialTheme.typography.bodySmall)
             }
         }
@@ -161,7 +171,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
                 }
             }
         }
-        DetailCard {
+        if (!pending) DetailCard {
             Text("翻译方式", style = MaterialTheme.typography.titleSmall)
             SourceTabs(listOf(true, false), missing, { if (it) "补充当前汉化" else "独立翻译" }, "翻译方式", { if (enabled) missing = it })
             if (missing) {
@@ -174,13 +184,8 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
             Text("按已下载的游戏文本分批处理。测试和翻译会使用你的 API 额度，已完成的译文会保留。",
                 color = C.Muted, style = MaterialTheme.typography.bodySmall)
         }
-        if (ai.running) {
-            DetailCard {
-                LinearProgressIndicator(progress = { (ai.progress.completed.toFloat() / limit).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
-                Text(ai.message.orEmpty(), style = MaterialTheme.typography.bodyMedium)
-                TextButton(actions.cancelAi, modifier = Modifier.fillMaxWidth()) { Text("暂停翻译") }
-            }
-        } else {
+        }
+        if (!pending) {
             Button({ finishEditing(); confirm = true }, enabled = enabled && hasCredential,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("生成并使用") }
         }
@@ -207,6 +212,11 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
             }
         }
     }
+    if (cancelTask) AlertDialog(onDismissRequest = { cancelTask = false }, title = { Text("取消翻译任务？") },
+        text = { Text("删除本次任务及尚未发布的译文，之后不能继续。此前生成的汉化包会保留，已产生的 API 费用不会返还。") },
+        confirmButton = { TextButton({ cancelTask = false; actions.cancelAi() },
+            enabled = ai.task?.phase != com.example.limbuszhcn.translation.AiTaskPhase.Applying) { Text("取消并删除") } },
+        dismissButton = { TextButton({ cancelTask = false }) { Text("保留任务") } })
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("开始 AI 翻译？") },
         text = { Text("将关闭游戏，处理${if (missing) scope.label else "全部"}文本，本批最多 $limit 条。文本会发送到你配置的 API，费用计入你的账户。原汉化包保留，生成后可撤回。") },
         confirmButton = { TextButton({ confirm = false; val value = key; key = ""; reveal = false; actions.generateAi(config(), value) }, enabled = enabled) { Text("开始翻译") } },
@@ -231,6 +241,42 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
         text = { Text("删除“${source.name}”及其生成缓存，不能撤回。${if (source.id == state.sources.selectedId) "将关闭游戏并切回都市零协会。" else "当前使用的汉化不变。"}游戏数据、账号、其他汉化源与 API 设置会保留。") },
         confirmButton = { TextButton({ deleteAi = null; actions.removeAi(source.id) }, enabled = enabled) { Text("删除") } },
         dismissButton = { TextButton({ deleteAi = null }) { Text("取消") } }) }
+}
+
+@Composable
+internal fun AiTaskCard(state: LauncherUiState, onPause: () -> Unit, onResume: () -> Unit, onCancel: () -> Unit) {
+    val ai = state.ai
+    val task = ai.task
+    val progress = ai.progress
+    val saving = task?.phase == com.example.limbuszhcn.translation.AiTaskPhase.Applying
+    DetailCard {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            IconTile(Glyph.Ai)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(if (saving) "正在保存汉化" else if (ai.running) "正在翻译" else "翻译已暂停", style = MaterialTheme.typography.titleMedium)
+                task?.let { Text("${it.scopeLabel} · ${it.sourceName}", color = C.Muted, style = MaterialTheme.typography.bodySmall) }
+            }
+        }
+        if (task?.plan != null) {
+            val total = task.plan.total
+            val done = (progress.completed + progress.reused).coerceAtMost(total)
+            Text("已完成 $done / $total 条", style = MaterialTheme.typography.titleSmall)
+            LinearProgressIndicator(progress = { if (total == 0) 1f else done.toFloat() / total },
+                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "翻译任务进度" })
+            if (task.plan.available > total) Text("所选范围共 ${task.plan.available} 条，本批处理 $total 条", color = C.Muted, style = MaterialTheme.typography.bodySmall)
+        } else {
+            if (ai.running) LinearProgressIndicator(Modifier.fillMaxWidth())
+            Text(if (progress.totalFiles > 0) "核对文件 ${progress.scannedFiles}/${progress.totalFiles}，尚未开始新一批翻译"
+                else "正在核对所选范围，翻译条数将在核对后显示", style = MaterialTheme.typography.bodyMedium)
+        }
+        ai.message?.let { Text(it, color = if (ai.failed) C.Error else C.Muted, style = MaterialTheme.typography.bodySmall) }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (ai.running) FilledTonalButton(onPause, enabled = !ai.stopping && !saving, modifier = Modifier.weight(1f)) { Text("暂停") }
+            else Button(onResume, enabled = !state.busy && !ai.settingsBusy && ai.hasKey && task != null && !ai.recoveryIssue, modifier = Modifier.weight(1f)) { Text("继续翻译") }
+            OutlinedButton(onCancel, enabled = !saving && (ai.running || !state.busy), modifier = Modifier.weight(1f)) { Text("取消任务") }
+        }
+        if (!ai.running) Text("已保存进度，关闭应用后也可继续。继续只处理本批剩余内容。", color = C.Muted, style = MaterialTheme.typography.bodySmall)
+    }
 }
 
 @Composable

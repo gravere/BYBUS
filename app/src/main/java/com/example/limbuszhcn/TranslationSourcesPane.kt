@@ -29,6 +29,7 @@ internal data class TranslationActions(
     val export: (TranslationSource) -> Unit = {},
     val saveAi: (AiConfig, String, Boolean) -> Unit = { _, _, _ -> },
     val generateAi: (AiConfig, String) -> Unit = { _, _ -> }, val cancelAi: () -> Unit = {}, val clearKey: () -> Unit = {},
+    val pauseAi: () -> Unit = {}, val resumeAi: () -> Unit = {},
     val loadModels: (String, String) -> Unit = { _, _ -> }, val clearModels: () -> Unit = {},
     val inspectCoverage: () -> Unit = {}, val undoAi: () -> Unit = {}, val removeAi: (String) -> Unit = {},
     val chooseAiUpdate: (com.example.limbuszhcn.translation.AiUpdateChoice?) -> Unit = {},
@@ -62,6 +63,10 @@ internal fun TranslationSourcesPane(state: LauncherUiState, actions: Translation
     var resetIcon by remember(selected.id) { mutableStateOf(false) }
     var name by remember(selected.id) { mutableStateOf(selected.name) }
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        if (state.busy && state.taskPage == "translation") DetailCard {
+            Text(state.stage, style = MaterialTheme.typography.titleSmall)
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             TranslationSourceIcon(selected)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -97,7 +102,7 @@ internal fun TranslationSourcesPane(state: LauncherUiState, actions: Translation
         DetailActionSection("添加") {
             SheetAction(Glyph.Import, "导入汉化包", !state.busy, onClick = { actions.import(null) })
             DetailActionDivider()
-            SheetAction(Glyph.Ai, "AI 翻译", !state.busy, navigation = true, onClick = onAi)
+            SheetAction(Glyph.Ai, "AI 翻译", navigation = true, onClick = onAi)
         }
         DetailActionSection("管理当前汉化源") {
             SheetAction(Glyph.Image, "更换图标", !state.busy, onClick = { actions.icon(selected.id) })
@@ -113,7 +118,7 @@ internal fun TranslationSourcesPane(state: LauncherUiState, actions: Translation
             }
             if (selected.kind == "ai") {
                 DetailActionDivider()
-                SheetAction(Glyph.Ai, "继续 AI 翻译", !state.busy, navigation = true, onClick = onAi)
+                SheetAction(Glyph.Ai, "继续 AI 翻译", navigation = true, onClick = onAi)
             }
             DetailActionDivider()
             SheetAction(Glyph.Export, "导出汉化包", !state.busy && (!selected.isOfficial || state.sources.officialDownloaded),

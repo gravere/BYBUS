@@ -11,7 +11,7 @@ internal data class CoverageReport(val sourceName: String, val checkedAt: Long, 
     val covered: Int, val missing: Int, val review: Int, val aiEligible: Int, val unreadable: Int,
     val details: List<CoverageFile>, val excluded: Int = 0, val shared: Int = 0, val reviewEligible: Int = 0)
 internal data class CoverageState(val loading: Boolean = false, val report: CoverageReport? = null,
-    val error: String? = null)
+    val error: String? = null, val fingerprint: String? = null, val stale: Boolean = false)
 
 /** Local inspection only. Does not activate, rewrite or download game/translation resources. */
 internal object TranslationCoverage {
@@ -38,8 +38,8 @@ internal object TranslationCoverage {
             excluded += all.count { it.excludedReason != null }
             val fields = all.filter { it.excludedReason == null }
             val fromShared = fields.filter { !it.covered && it.text in shared }
-            val uncovered = fields.filter { !it.covered && it.text !in shared }
-            val uncertain = fields.filter { it.needsReview } + fromShared.filter { TranslationFields.hasResidualLanguage(shared.getValue(it.text)) }
+            val uncovered = fields.filter { AiTextSelection.missing(it, shared) }
+            val uncertain = fields.filter { AiTextSelection.review(it, shared) }
             total += fields.size; covered += fields.size - uncovered.size; missing += uncovered.size
             sharedCount += fromShared.size
             review += uncertain.size; eligible += uncovered.count { it.canTranslate }; reviewEligible += uncertain.count { it.canTranslate }
