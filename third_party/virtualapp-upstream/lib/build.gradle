@@ -105,6 +105,7 @@ gradle.taskGraph.afterTask { task ->
 }
 
 dependencies {
+    compileOnly project(':platform-stubs')
     implementation 'org.tukaani:xz:1.10'
     implementation fileTree(include: ['*.jar'], dir: 'libs')
     implementation 'androidx.core:core:1.15.0'

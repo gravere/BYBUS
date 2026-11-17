@@ -151,6 +151,13 @@ public final class AppInstrumentation extends InstrumentationDelegate implements
         InvocationStubManager.getInstance().checkEnv(AppInstrumentation.class);
     }
 
+    @Override
+    public Application newApplication(ClassLoader cl, String className, Context context)
+            throws InstantiationException, IllegalAccessException, ClassNotFoundException {
+        return super.newApplication(cl, className,
+                com.lody.virtual.client.hook.providers.ProviderRouting.wrap(context));
+    }
+
     /**
      * 在目标 Activity 执行 {@code onCreate()} 前恢复虚拟应用上下文，并应用必要的系统兼容修复。
      *
@@ -379,7 +386,8 @@ public final class AppInstrumentation extends InstrumentationDelegate implements
                 .equals(activityClassName);
         boolean isGoogleIdentityActivity = GMS_PACKAGE.equals(currentPackage)
                 && (MICROG_ASSISTED_SIGN_IN_ACTIVITY.equals(activityClassName)
-                || MICROG_AUTH_SIGN_IN_ACTIVITY.equals(activityClassName));
+                || MICROG_AUTH_SIGN_IN_ACTIVITY.equals(activityClassName)
+                || MICROG_LOGIN_ACTIVITY.equals(activityClassName));
         if (sOplusActivityManagerFallbackAttempted
                 || Build.VERSION.SDK_INT < ANDROID_16_API_LEVEL
                 || (!isLimbusProcess && !isPendingIntentBridge && !isGoogleIdentityActivity)) {

@@ -34,7 +34,7 @@ def adb(*args, **kwargs):
 
 
 def request(url, maximum, asset=False):
-    headers = {"User-Agent": "BYBUS-Runtime-Inspection"}
+    headers = {"User-Agent": "BYBUS-Runtime-Inspection", "Cache-Control": "no-cache"}
     if url.startswith("https://api.github.com/repos/gravere/BYBUS/"):
         token = os.environ.get("GITHUB_TOKEN")
         if token:
@@ -1357,6 +1357,9 @@ def main():
     data = request(apk_asset["url"], 200 * 1024 * 1024, asset=True)
     digest = hashlib.sha256(data).hexdigest()
     if len(data) != apk_asset["size"] or digest != matches[0].lower():
+        REPORT['asset_download_mismatch'] = dict(asset_id=apk_asset['id'],
+            expected_size=apk_asset['size'], received_size=len(data),
+            expected_sha256=matches[0].lower(), received_sha256=digest)
         raise RuntimeError("Release APK size/hash mismatch")
     REPORT.update(release=release["tag_name"], sha256=digest, draft_candidate=release["draft"])
     apk.write_bytes(data)
@@ -1386,13 +1389,14 @@ def main():
     if "Success" not in installed:
         raise RuntimeError("APK installation did not succeed: " + installed[-1000:])
     REPORT["checks"].append("published APK signature/hash and installation")
-    if os.environ.get("RUNTIME_MODE") in ("google-readiness", "google-window", "google-settings", "session-resume"):
+    if os.environ.get("RUNTIME_MODE") in ("google-readiness", "google-window", "google-settings", "session-resume", "provider-login"):
         import importlib.util
         spec = importlib.util.spec_from_file_location("google_readiness", "scripts/inspect-google-readiness.py")
         inspection = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(inspection)
         inspection.inspect(globals(), release, verifier, windows_only=os.environ.get("RUNTIME_MODE") != "google-readiness",
                            settings_only=os.environ.get("RUNTIME_MODE") == "google-settings",
+                           provider_only=os.environ.get("RUNTIME_MODE") == "provider-login",
                            session_only=os.environ.get("RUNTIME_MODE") == "session-resume")
         return
     if os.environ.get("RUNTIME_MODE") == "package-jni":

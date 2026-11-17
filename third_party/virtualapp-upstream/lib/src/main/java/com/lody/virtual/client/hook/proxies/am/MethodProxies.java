@@ -2416,21 +2416,22 @@ class MethodProxies {
                     return null;
                 }
                 if (BuildCompat.isOreo()) {
-                    IInterface provider = ContentProviderHolderOreo.provider.get(holder);
-                    if (provider != null || com.lody.virtual.helper.compat.MicrogBillingIdentityPolicy
-                            .isGoogleSettingsProvider(info.packageName, info.name, info.authority)
-                            || com.lody.virtual.helper.compat.MicrogBillingIdentityPolicy
-                            .isGoogleGservicesProvider(info.packageName, info.name, info.authority)) {
-                        // Android 16 may return a placeholder with no Binder yet. The target
-                        // virtual provider is resolved independently from its owning process.
-                        provider = VActivityManager.get().acquireProviderClient(userId, info, getVUid(), android.os.Process.myPid(), getAppPkg());
+                    boolean transferred = false;
+                    try {
+                        // Placeholder holders are not a failed virtual provider. Resolve the Binder
+                        // from its registered owner for every enabled virtual provider, not one OEM.
+                        IInterface provider = VActivityManager.get().acquireProviderClient(userId, info,
+                                getVUid(), android.os.Process.myPid(), getAppPkg());
+                        if (provider == null) {
+                            VLog.e("VActivityManager", "acquireProviderClient fail: " + name);
+                            return null;
+                        }
+                        ContentProviderHolderOreo.provider.set(holder, provider);
+                        ContentProviderHolderOreo.info.set(holder, info);
+                        transferred = true;
+                    } finally {
+                        if (!transferred) releaseUnusedHolder(who, holder, (Boolean) args[args.length - 1]);
                     }
-                    if (provider == null) {
-                        VLog.e("VActivityManager", "acquireProviderClient fail: " + name);
-                        return null;
-                    }
-                    ContentProviderHolderOreo.provider.set(holder, provider);
-                    ContentProviderHolderOreo.info.set(holder, info);
                 } else {
                     IInterface provider = IActivityManager.ContentProviderHolder.provider.get(holder);
                     if (provider != null) {
@@ -2474,6 +2475,19 @@ class MethodProxies {
                 return 2;
             }
             return 1;
+        }
+
+        private static void releaseUnusedHolder(Object service, Object holder, boolean stable) {
+            try {
+                if (ContentProviderHolderOreo.noReleaseNeeded.get(holder)) return;
+                Object connection = ContentProviderHolderOreo.TYPE.getField("connection").get(holder);
+                if (connection instanceof IBinder) {
+                    IActivityManager.TYPE.getMethod("removeContentProvider", IBinder.class, boolean.class)
+                            .invoke(service, connection, stable);
+                }
+            } catch (ReflectiveOperationException error) {
+                Log.w("LimbusVA", "Unable to release an unused provider connection", error);
+            }
         }
 
         @Override

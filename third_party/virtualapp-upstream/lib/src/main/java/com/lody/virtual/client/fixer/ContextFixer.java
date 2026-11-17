@@ -49,6 +49,7 @@ public class ContextFixer {
      * @param context Context
      */
     public static void fixContext(Context context) {
+        Context component = context;
         try {
             context.getPackageName();
         } catch (Throwable e) {
@@ -108,5 +109,6 @@ public class ContextFixer {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2 && ContentResolverJBMR2.mPackageName != null) {
             ContentResolverJBMR2.mPackageName.set(context.getContentResolver(), hostPkg);
         }
+        com.lody.virtual.client.hook.providers.ProviderRouting.install(component);
     }
 }

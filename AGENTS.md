@@ -18,6 +18,7 @@
 - 禁止修改游戏 APK, 禁止 Frida 注入, 禁止 Shizuku 生产路径。
 - App 模块: `:app`; 容器模块: `:virtualapp` -> `third_party/virtualapp-upstream/lib`。
 - UI 不直接访问真实 `Android/data`; 安装、卸载、复原必须走 `GameStorage`。
+- Provider 获取按 `docs/provider-routing.md` 区分访客业务身份与宿主系统调用身份；虚拟 Provider 复用标准容器路由与 Android 引用计数，不为不同品牌复制配置服务或抹除真实权限错误。
 - JSON 补丁只能结构化修改明确的显示文本字段。基础字段为
   `content/dialog/dlg/teller/name/nameWithTitle/desc/description/title/summary/flavor/place`;
   `story/relatedChapterText/openConditionNumber` 等新增显示字段也须加入共享的
