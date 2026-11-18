@@ -6,13 +6,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import com.example.limbuszhcn.translation.AiScope
+import com.example.limbuszhcn.translation.*
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -60,12 +60,10 @@ internal fun CoverageSummary(state: LauncherUiState, onOpen: () -> Unit, onCheck
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun TranslationCoveragePane(state: LauncherUiState, onCheck: () -> Unit, onTranslate: (AiScope) -> Unit = {}) {
+internal fun TranslationCoveragePane(state: LauncherUiState, onCheck: () -> Unit,
+    readEntries: CoveragePageReader, onTranslate: (AiScope) -> Unit = {}) {
     val coverage = state.coverage; val report = coverage.report
-    var expanded by remember(report?.checkedAt) { mutableStateOf<String?>(null) }
-    var page by remember(report?.checkedAt, expanded) { mutableIntStateOf(0) }
-    var scope by remember { mutableStateOf(AiScope.Missing) }
-    LaunchedEffect(report?.checkedAt) { if (report != null && report.aiEligible == 0 && report.reviewEligible > 0) scope = AiScope.Review }
+    var kind by rememberSaveable(report?.checkedAt, report?.entryIndex) { mutableStateOf<CoverageKind?>(null) }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         DetailCard {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -82,77 +80,30 @@ internal fun TranslationCoveragePane(state: LauncherUiState, onCheck: () -> Unit
             if (report != null) {
                 Text(report.sourceName, style = MaterialTheme.typography.bodyMedium)
                 Row(Modifier.fillMaxWidth()) {
-                    Box(Modifier.weight(1f)) { CoverageMetric("已覆盖", report.covered) }
+                    Box(Modifier.weight(1f)) { CoverageMetric("已覆盖", report.covered - report.review) }
                     Box(Modifier.weight(1f)) { CoverageMetric("未覆盖", report.missing) }
                     Box(Modifier.weight(1f)) { CoverageMetric("待核对", report.review) }
                 }
                 if (report.unreadable > 0) Text("${report.unreadable} 个文件未能读取，未计入结果。", color = C.Error, style = MaterialTheme.typography.bodySmall)
-                Text("未覆盖：没有可用译文。待核对：译文仍含日文或韩文。", style = MaterialTheme.typography.bodySmall)
-                val unavailable = report.missing - report.aiEligible + report.review - report.reviewEligible
-                if (unavailable > 0) Text("其中 $unavailable 条因长度或格式限制暂不能自动翻译，不会提交给 AI。", style = MaterialTheme.typography.bodySmall)
+                if (report.aiEligible + report.reviewEligible > 0) {
+                    val initialScope = if (report.aiEligible > 0) AiScope.Missing else AiScope.Review
+                    TextButton({ onTranslate(initialScope) }, enabled = coverage.current && !state.busy && !state.ai.hasPendingTask) {
+                        Text("设置 AI 翻译", style = MaterialTheme.typography.labelMedium)
+                        LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(14.dp))
+                    }
+                }
             }
         }
         if (report != null) {
-            if (report.aiEligible + report.reviewEligible > 0) DetailCard {
-                Text("选择补译范围", style = MaterialTheme.typography.titleSmall)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AiScope.entries.forEach { item ->
-                        val count = (if (item.missing) report.aiEligible else 0) + (if (item.review) report.reviewEligible else 0)
-                        FilterChip(scope == item, { scope = item }, enabled = coverage.current && !state.busy && count > 0,
-                            label = { Text("${item.label} $count") })
-                    }
-                }
-                val count = (if (scope.missing) report.aiEligible else 0) + (if (scope.review) report.reviewEligible else 0)
-                FilledTonalButton({ onTranslate(scope) }, enabled = count > 0 && coverage.current && !state.busy && !state.ai.hasPendingTask,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("设置 AI 翻译") }
-            }
-            if (report.details.isEmpty()) DetailCard {
+            if (report.missing + report.review > 0) {
+                CoverageEntryBrowser(report, kind, { kind = it }, readEntries)
+            } else DetailCard {
                 Text(when {
                     report.files == 0 && report.unreadable > 0 -> "本次没有读到游戏文本，暂时无法判断汉化覆盖情况。"
-                    report.unreadable > 0 -> "已读文件未发现缺失，仍有文件未能检查。"
+                    report.unreadable > 0 -> "已读文件未发现问题，仍有文件未能检查。"
                     report.total == 0 -> "已读文件中没有可检查的文本。"
-                    else -> "本次本地检查没有发现未覆盖文本。"
+                    else -> "所有已检查条目均已覆盖。"
                 }, style = MaterialTheme.typography.bodyMedium)
-            }
-            if (report.details.isNotEmpty()) DetailCard {
-                report.details.groupBy { it.category }.entries.forEachIndexed { groupIndex, (category, files) ->
-                    val isOpen = expanded == category
-                    if (groupIndex > 0) HorizontalDivider(color = C.Line)
-                    Row(Modifier.fillMaxWidth().clickable(role = Role.Button) { expanded = if (isOpen) null else category }
-                        .heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(category, style = MaterialTheme.typography.titleSmall)
-                            Text("未覆盖 ${files.sumOf { it.missing }} · 待核对 ${files.sumOf { it.review }}", color = C.Muted, style = MaterialTheme.typography.bodySmall)
-                        }
-                        LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(18.dp).rotate(if (isOpen) 270f else 90f))
-                    }
-                    if (isOpen) {
-                        // Bounded pages avoid huge clipped layers and thousands of laid-out texts.
-                        files.drop(page * 3).take(3).forEach { file ->
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                                Text(file.resource.removePrefix("jp/").replace("_", "_\u200b").replace("/", "/\u200b"),
-                                    modifier = Modifier.fillMaxWidth(), style = MaterialTheme.typography.labelMedium)
-                                Text("未覆盖 ${file.missing} · 待核对 ${file.review}", style = MaterialTheme.typography.bodySmall, color = C.Muted)
-                                file.examples.forEach { sample ->
-                                    HorizontalDivider(color = C.Line)
-                                    Text(sample.reason, style = MaterialTheme.typography.labelMedium)
-                                    Text("原文示例", style = MaterialTheme.typography.labelSmall, color = C.Muted)
-                                    Text(sample.text, modifier = Modifier.fillMaxWidth(), style = MaterialTheme.typography.bodyMedium)
-                                    sample.translation?.let {
-                                        Text("现有译文", style = MaterialTheme.typography.labelSmall, color = C.Muted)
-                                        Text(it, modifier = Modifier.fillMaxWidth(), style = MaterialTheme.typography.bodyMedium)
-                                    }
-                                }
-                            }
-                        }
-                        if (files.size > 3) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween) {
-                            TextButton({ page-- }, enabled = page > 0) { Text("上一组", style = MaterialTheme.typography.labelMedium) }
-                            Text("${page + 1} / ${(files.size + 2) / 3}", style = MaterialTheme.typography.labelMedium)
-                            TextButton({ page++ }, enabled = (page + 1) * 3 < files.size) { Text("下一组", style = MaterialTheme.typography.labelMedium) }
-                        }
-                    }
-                }
             }
         }
     }

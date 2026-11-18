@@ -362,14 +362,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
                 }
                 val verified = coverageStore.verified(checkId, pair.third)
                 ticket = verified
-                val report = scanCoverage(storage, pair.first, pair.second).also { report ->
-                    PersistentDiagnosticLog.info(TAG, "Coverage files=${report.files} total=${report.total} covered=${report.covered} " +
-                        "missing=${report.missing} review=${report.review} shared=${report.shared} excluded=${report.excluded} unreadable=${report.unreadable}")
-                }
-                check(coverageRequest.get() == request && coverageInputs(translationSources.read().selected, storage).fingerprint == pair.third.fingerprint) {
-                    "检查期间资源发生变化，请重新检查"
-                }
-                coverageStore.save(pair.third, report, verified)
+                saveCoverage(storage, pair.first, pair.second, pair.third, verified) { coverageRequest.get() == request }
             }
             if (result.isFailure && coverageRequest.get() != request) ticket?.let {
                 coverageStore.abandon(it)
@@ -394,11 +387,21 @@ internal class LaunchCoordinator private constructor(application: Application) {
         verifyContents: Boolean = false, verified: PreparedTranslation? = null) =
         coverageStore.inputs(source, storage, verifyContents, independentInput(), verified?.manifest?.archiveSha256)
 
-    private fun scanCoverage(storage: com.example.limbuszhcn.gamefs.GameStorage, source: TranslationSource, base: PreparedTranslation): CoverageReport {
+    fun coverageEntries(ref: CoverageIndexRef, filter: CoverageFilter, page: Int, cancel: android.os.CancellationSignal) =
+        coverageStore.entries(ref, filter, page, cancel)
+
+    private fun saveCoverage(storage: com.example.limbuszhcn.gamefs.GameStorage, source: TranslationSource, base: PreparedTranslation,
+        input: CoverageInputs, ticket: CoverageCheck, stillSelected: () -> Boolean = { true }) = coverageStore.indexedCheck(input, ticket) { add ->
         val prior = independentInput()
         val proof = prior?.let { AiTranslationReuse.collect(translationCache, it,
             if (it.id == source.id) base else translationSources.prepare(it), storage).keys }.orEmpty()
-        return TranslationCoverage.scan(storage, base, source.name, proof)
+        val report = TranslationCoverage.scan(storage, base, source.name, proof, add)
+        check(stillSelected() && coverageInputs(translationSources.read().selected, storage).fingerprint == input.fingerprint) {
+            "检查期间资源发生变化，请重新检查"
+        }
+        PersistentDiagnosticLog.info(TAG, "Coverage files=${report.files} total=${report.total} covered=${report.covered} " +
+            "missing=${report.missing} review=${report.review} shared=${report.shared} excluded=${report.excluded} unreadable=${report.unreadable}")
+        report
     }
 
     private fun restoreCoverage(sources: SourceState): CoverageState = try {
@@ -608,9 +611,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
             } else translationSources.prepare(source)
             val input = coverageInputs(source, storage, verifyContents = true, verified = base)
             val verified = coverageStore.verified(checkId, input)
-            val report = scanCoverage(storage, source, base)
-            check(coverageInputs(translationSources.read().selected, storage).fingerprint == input.fingerprint) { "游戏文本仍在变化，请下载完成后重新检查" }
-            coverageStore.save(input, report, verified)
+            saveCoverage(storage, source, base, input, verified)
         }
         publish { current -> result.fold(
             { saved -> current.copy(coverage = CoverageState(report = saved.report, fingerprint = saved.fingerprint)) },

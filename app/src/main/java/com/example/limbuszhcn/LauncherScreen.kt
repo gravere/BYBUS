@@ -181,7 +181,7 @@ internal fun LauncherScreen(
                             actionEnabled = !state.busy, onAction = { confirmZeroSource = true })
                     } }) { active ->
                     if (active == "coverage") {
-                        TranslationCoveragePane(state, translationActions.inspectCoverage) { scope ->
+                        TranslationCoveragePane(state, translationActions.inspectCoverage, translationActions.coverageEntries) { scope ->
                             requestedAiScope = scope; openChild("ai-translation")
                         }
                     } else if (active == "repair") {
