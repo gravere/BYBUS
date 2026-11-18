@@ -76,6 +76,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
             }
         }
         require(plan == null || resources.containsAll(plan.selected.keys)) { "本次任务的游戏原文已变化，请取消任务后重新检查范围" }
+        if (plan != null && plan.total > 0) requireNotNull(snapshot).writableOutput(TranslationSources(cache))
         // Validate every selected resource before any paid request, including a changed file later in the list.
         plan?.hashes?.forEach { (key, hash) ->
             checkCancelled()
@@ -114,8 +115,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
                     return@filter false
                 }
                 // Retain provenance for an unchanged AI base in case a paused job must save a separate copy.
-                if (!upstream && !reuseOnly && snapshot?.binding?.selected?.startsWith("ai-") == true && c.missingOnly && leaf.covered &&
-                    !(c.includeReview && AiTextSelection.review(leaf, shared))) {
+                if (!upstream && !reuseOnly && snapshot?.binding?.selected?.startsWith("ai-") == true && c.missingOnly && leaf.covered) {
                     reuse[leaf.id]?.let { masked -> if (runCatching { ProtectedTranslation(leaf.text).restore(masked) }.getOrNull() == leaf.translated)
                         carriedInFile[leaf.id] = masked }
                 }

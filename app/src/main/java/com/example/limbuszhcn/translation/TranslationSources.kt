@@ -21,9 +21,13 @@ internal data class TranslationSource(val id: String, val name: String, val kind
 }
 
 internal data class SourceState(val sources: List<TranslationSource> = listOf(TranslationSources.OFFICIAL),
-    val selectedId: String = "zero", val message: String? = null, val officialDownloaded: Boolean = false,
-    val undo: AiUndoPoint? = null) {
+    val selectedId: String = "zero", val message: String? = null,
+    val undo: AiUndoPoint? = null, val officialDownloadTimes: Map<Long, Long> = emptyMap()) {
+    val officialDownloaded get() = officialDownloadTimes.isNotEmpty()
     val selected get() = sources.firstOrNull { it.id == selectedId } ?: TranslationSources.OFFICIAL
+    fun requireSlot(replacing: TranslationSource?) {
+        require(replacing != null || sources.size < 32) { "已保留 31 个自定义汉化源，请先移除一个再继续" }
+    }
     /** Returning to the original source must not restart its independent AI pack at batch one. */
     fun independentInput(config: AiConfig): TranslationSource? {
         val active = selected
@@ -47,8 +51,8 @@ internal class TranslationSources(val cache: Path) {
     private val archives = root.resolve("archives")
 
     fun read(): SourceState {
-        val downloaded = com.example.limbuszhcn.update.TranslationRepository(cache).hasLaunchCandidate()
-        if (!Files.exists(registry)) return SourceState(officialDownloaded = downloaded)
+        val times = com.example.limbuszhcn.update.TranslationRepository(cache).downloadTimes()
+        if (!Files.exists(registry)) return SourceState(officialDownloadTimes = times)
         require(Files.size(registry) <= 256 * 1024) { "汉化源列表过大" }
         val json = JSONObject(registry.readText())
         val rows = json.getJSONArray("sources")
@@ -77,7 +81,7 @@ internal class TranslationSources(val cache: Path) {
             }
             AiUndoPoint(id, revision, previous, point.getString("previousSelectedId"))
         }.getOrNull() }
-        return SourceState(all, selected, officialDownloaded = downloaded, undo = undo)
+        return SourceState(all, selected, undo = undo, officialDownloadTimes = times)
     }
 
     private fun save(state: SourceState) {
@@ -131,6 +135,9 @@ internal class TranslationSources(val cache: Path) {
                               generatedId: String? = null, baseId: String? = null, officialVersion: Long? = null,
                               activate: Boolean = true, independent: Boolean = false): TranslationSource {
         require(generatedId == null || validId(generatedId))
+        val state = read()
+        val previous = replaceId?.let { id -> requireNotNull(state.sources.find { it.id == id && !it.isOfficial }) }
+        state.requireSlot(previous)
         Files.createDirectories(archives)
         val staged = archives.resolve(".import.tmp")
         try {
@@ -139,9 +146,6 @@ internal class TranslationSources(val cache: Path) {
             val target = archives.resolve("$hash.pack")
             val prepared = LocalTranslationArchive(cache).extract(staged, "local-$hash")
             require(prepared.manifest.entries.isNotEmpty()) { "没有可用的汉化文本" }
-            val state = read()
-            val previous = replaceId?.let { id -> requireNotNull(state.sources.find { it.id == id && !it.isOfficial }) }
-            require(previous != null || state.sources.size < 32) { "最多保留 31 个自定义汉化源" }
             AtomicFiles.move(staged, target, true)
             val source = TranslationSource(generatedId ?: previous?.id ?: "local-${UUID.randomUUID()}",
                 previous?.name ?: cleanName((if (generatedId != null) name else name.substringBeforeLast('.'))
@@ -155,6 +159,7 @@ internal class TranslationSources(val cache: Path) {
             val undo = if (generatedId != null) AiUndoPoint(source.id, source.revision, previous, state.selectedId)
                 else state.undo?.takeUnless { it.sourceId == source.id }
             save(state.copy(sources = sources, selectedId = if (activate) source.id else state.selectedId, undo = undo))
+            if (generatedId == null && previous?.kind == "ai") deleteAiCache(previous.id)
             return source
         } finally { Files.deleteIfExists(staged) }
     }
@@ -187,7 +192,10 @@ internal class TranslationSources(val cache: Path) {
             ?: current.baseId?.takeIf { id -> sources.any { it.id == id } } ?: "zero"
         val next = state.copy(sources = sources, selectedId = selected, undo = null)
         save(next)
-        if (restored == null) Files.deleteIfExists(root.resolve("icons/${point.sourceId}.png"))
+        if (restored == null) {
+            Files.deleteIfExists(root.resolve("icons/${point.sourceId}.png"))
+            deleteAiCache(point.sourceId)
+        }
         return next
     }
 
@@ -224,14 +232,17 @@ internal class TranslationSources(val cache: Path) {
         save(next) // Detach before deleting disposable resources.
         Files.deleteIfExists(root.resolve("icons/$id.png"))
         val removed = state.sources.first { it.id == id }
-        if (removed.kind == "ai" && id.matches(Regex("ai-[a-f0-9]{32}"))) {
-            val jobs = cache.resolve("ai-jobs")
-            val job = jobs.resolve(id.removePrefix("ai-"))
-            if (Files.exists(job)) AtomicFiles.deleteOwnedTree(jobs, job)
-        }
+        deleteAiCache(id)
         if (removed.archive.isNotEmpty() && remaining.none { it.archive == removed.archive } && next.undo?.previous?.archive != removed.archive &&
             removed.archive.matches(Regex("[a-f0-9]{64}\\.pack"))) Files.deleteIfExists(archives.resolve(removed.archive))
         return next
+    }
+
+    private fun deleteAiCache(id: String) {
+        if (!id.matches(Regex("ai-[a-f0-9]{32}"))) return
+        val jobs = cache.resolve("ai-jobs")
+        val job = jobs.resolve(id.removePrefix("ai-"))
+        if (Files.exists(job)) AtomicFiles.deleteOwnedTree(jobs, job)
     }
 
     companion object {

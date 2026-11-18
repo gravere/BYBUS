@@ -21,6 +21,9 @@ import com.example.limbuszhcn.translation.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 internal data class TranslationActions(
     val select: (String) -> Unit = {}, val import: (String?) -> Unit = {},
@@ -35,6 +38,27 @@ internal data class TranslationActions(
     val chooseAiUpdate: (com.example.limbuszhcn.translation.AiUpdateChoice?) -> Unit = {},
     val savePrompt: (String) -> Unit = {}
 )
+
+private val packageDateFormat = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm")
+
+internal fun LauncherUiState.packageTimeLabel(source: TranslationSource): String? {
+    val action: String
+    val time: Long
+    if (source.isOfficial) {
+        val activeVersion = if (sources.selected.isOfficial)
+            (translation ?: resourcePreparation)?.version?.toLongOrNull() else null
+        val recorded = sources.officialDownloadTimes
+        time = (if (activeVersion == null) recorded.values.maxOrNull() else recorded[activeVersion]) ?: return null
+        action = if (activeVersion == null) "最近下载" else "下载于"
+    } else {
+        time = source.updatedAtMillis
+        action = if (source.kind == "ai") "生成于" else "添加于"
+        if (time <= 0) return if (source.kind == "ai") "生成时间未记录" else "添加时间未记录"
+    }
+    if (time <= 0) return null
+    val localTime = Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault())
+    return "$action ${packageDateFormat.format(localTime)}"
+}
 
 @Composable
 internal fun TranslationSourceIcon(source: TranslationSource, modifier: Modifier = Modifier) {
@@ -88,7 +112,7 @@ internal fun TranslationSourcesPane(state: LauncherUiState, actions: Translation
                     TranslationSourceIcon(source)
                     Column(Modifier.weight(1f)) {
                         Text(source.name, style = MaterialTheme.typography.titleSmall)
-                        Text(source.label, color = C.Muted, style = MaterialTheme.typography.bodySmall)
+                        Text(state.packageTimeLabel(source) ?: source.label, color = C.Muted, style = MaterialTheme.typography.bodySmall)
                     }
                     androidx.compose.animation.Crossfade(selected.id == source.id, modifier = Modifier.size(20.dp),
                         animationSpec = androidx.compose.animation.core.tween(140), label = "source selection") { checked ->

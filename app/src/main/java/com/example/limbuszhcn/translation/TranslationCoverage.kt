@@ -12,16 +12,29 @@ internal data class CoverageReport(val sourceName: String, val checkedAt: Long, 
     val details: List<CoverageFile>, val excluded: Int = 0, val shared: Int = 0, val reviewEligible: Int = 0,
     val independentEligible: Int = 0)
 internal data class CoverageState(val loading: Boolean = false, val report: CoverageReport? = null,
-    val error: String? = null, val fingerprint: String? = null, val stale: Boolean = false) {
+    val error: String? = null, val fingerprint: String? = null, val stale: Boolean = false, val independentReady: Boolean = true) {
     val current get() = report != null && fingerprint != null && error == null && !loading && !stale
     fun eligible(config: AiConfig): Int = report?.let {
         if (!config.missingOnly) it.independentEligible else (if (config.includeMissing) it.aiEligible else 0) + (if (config.includeReview) it.reviewEligible else 0)
     } ?: 0
-    fun canGenerate(config: AiConfig) = current && eligible(config) > 0
+    fun canGenerate(config: AiConfig) = current && (config.missingOnly || independentReady) && eligible(config) > 0
 }
 
 /** Local inspection only. Does not activate, rewrite or download game/translation resources. */
 internal object TranslationCoverage {
+    fun independentRemaining(storage: GameStorage, committed: Set<String>): Int {
+        val originals = TranslationInspection(storage, null)
+        var bytes = 0L
+        var remaining = 0
+        for (key in originals.resources) {
+            val resource = originals.readable(key) ?: continue
+            bytes += resource.bytes
+            require(bytes <= 128L * 1024 * 1024) { "本地文本过多，本次检查已停止" }
+            remaining += resource.fields.count { it.canTranslate && it.id !in committed }
+        }
+        return remaining
+    }
+
     fun scan(storage: GameStorage, base: PreparedTranslation, sourceName: String, committedAi: Set<String> = emptySet()): CoverageReport {
         val inspection = TranslationInspection(storage, base)
         val resources = inspection.resources

@@ -15,28 +15,42 @@ import java.time.format.DateTimeFormatter
 import com.example.limbuszhcn.translation.AiScope
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun CoverageSummary(state: LauncherUiState, onOpen: () -> Unit, onCheck: () -> Unit = onOpen) {
-    val coverage = state.coverage; val report = coverage.report
-    val hasDetails = report != null && report.missing + report.review + report.unreadable > 0
+internal fun CoverageSummary(state: LauncherUiState, onOpen: () -> Unit, onCheck: () -> Unit) {
+    val coverage = state.coverage
+    val report = coverage.report
+    val resultLabel = if (coverage.stale || coverage.error != null || coverage.loading) "上次结果" else "查看结果"
     DetailCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("汉化覆盖", style = MaterialTheme.typography.titleSmall)
+            val openResult = if (report == null) Modifier else Modifier.clickable(
+                role = Role.Button, onClickLabel = resultLabel, onClick = onOpen)
+            Column(Modifier.weight(1f).then(openResult).heightIn(min = 48.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("汉化覆盖", modifier = Modifier.align(Alignment.CenterVertically), style = MaterialTheme.typography.titleSmall)
+                    if (report != null) Row(Modifier.align(Alignment.CenterVertically), verticalAlignment = Alignment.CenterVertically) {
+                        Text(resultLabel, style = MaterialTheme.typography.labelMedium, color = C.Accent)
+                        LauncherGlyph(Glyph.Chevron, C.Accent, Modifier.size(12.dp))
+                    }
+                }
                 Text(when {
                     coverage.loading -> "正在对照本地文本"
                     coverage.error != null -> "本次检查未完成"
-                    coverage.stale && report != null -> "上次报告需要重新检查"
-                    report != null && !hasDetails -> "${report.total} 条本地文本已覆盖"
+                    coverage.stale && report != null -> "当前汉化需要重新检查"
+                    report != null && report.unreadable > 0 -> "${report.unreadable} 个文件未能检查"
+                    report != null && report.total == 0 -> "已读文件中没有可检查的文本"
+                    report != null && report.missing == 0 && report.review == 0 -> "${report.total} 条本地文本已覆盖"
                     report != null -> "${report.missing} 条未覆盖 · ${report.review} 条待核对"
                     else -> "还未检查本地游戏文本"
                 }, color = C.Muted, style = MaterialTheme.typography.bodySmall)
             }
-            if (coverage.stale && report != null && hasDetails && !coverage.loading)
-                TextButton(onOpen) { Text("上次结果") }
-            TextButton(if (coverage.stale || !hasDetails) onCheck else onOpen,
-                enabled = !coverage.loading && (hasDetails && !coverage.stale || !state.busy)) {
-                Text(if (coverage.loading) "检查中" else if (coverage.stale || report != null && !hasDetails) "重新检查" else if (report != null) "查看结果" else "检查")
+            if (report != null) {
+                ActionIconButton(Glyph.Refresh, "重新检查", onCheck, enabled = !state.busy, busy = coverage.loading)
+            } else {
+                TextButton(onCheck, enabled = !coverage.loading && !state.busy) {
+                    Text(if (coverage.loading) "检查中" else "检查", style = MaterialTheme.typography.labelMedium)
+                }
             }
         }
         if (coverage.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -61,13 +75,7 @@ internal fun TranslationCoveragePane(state: LauncherUiState, onCheck: () -> Unit
                         .format(Instant.ofEpochMilli(report.checkedAt)) + if (coverage.stale) " · 待重新检查" else " · 已保存",
                         style = MaterialTheme.typography.labelSmall, color = C.Muted)
                 }
-                FilledTonalButton(onCheck, enabled = !coverage.loading && !state.busy,
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)) {
-                    if (coverage.loading) LauncherSpinner(Modifier.size(18.dp))
-                    else LauncherGlyph(Glyph.Refresh, C.Accent, Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(if (coverage.loading) "检查中" else "重新检查")
-                }
+                ActionIconButton(Glyph.Refresh, "重新检查", onCheck, enabled = !state.busy, busy = coverage.loading)
             }
             coverage.error?.let { Text(it, color = C.Error, style = MaterialTheme.typography.bodyMedium) }
             if (coverage.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -98,7 +106,14 @@ internal fun TranslationCoveragePane(state: LauncherUiState, onCheck: () -> Unit
                 FilledTonalButton({ onTranslate(scope) }, enabled = count > 0 && coverage.current && !state.busy && !state.ai.hasPendingTask,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("设置 AI 翻译") }
             }
-            if (report.details.isEmpty()) DetailCard { Text(if (report.unreadable == 0) "本次本地检查没有发现未覆盖文本。" else "已读文件未发现缺失，仍有文件未能检查。") }
+            if (report.details.isEmpty()) DetailCard {
+                Text(when {
+                    report.files == 0 && report.unreadable > 0 -> "本次没有读到游戏文本，暂时无法判断汉化覆盖情况。"
+                    report.unreadable > 0 -> "已读文件未发现缺失，仍有文件未能检查。"
+                    report.total == 0 -> "已读文件中没有可检查的文本。"
+                    else -> "本次本地检查没有发现未覆盖文本。"
+                }, style = MaterialTheme.typography.bodyMedium)
+            }
             if (report.details.isNotEmpty()) DetailCard {
                 report.details.groupBy { it.category }.entries.forEachIndexed { groupIndex, (category, files) ->
                     val isOpen = expanded == category
@@ -132,9 +147,9 @@ internal fun TranslationCoveragePane(state: LauncherUiState, onCheck: () -> Unit
                         }
                         if (files.size > 3) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween) {
-                            TextButton({ page-- }, enabled = page > 0) { Text("上一组") }
+                            TextButton({ page-- }, enabled = page > 0) { Text("上一组", style = MaterialTheme.typography.labelMedium) }
                             Text("${page + 1} / ${(files.size + 2) / 3}", style = MaterialTheme.typography.labelMedium)
-                            TextButton({ page++ }, enabled = (page + 1) * 3 < files.size) { Text("下一组") }
+                            TextButton({ page++ }, enabled = (page + 1) * 3 < files.size) { Text("下一组", style = MaterialTheme.typography.labelMedium) }
                         }
                     }
                 }

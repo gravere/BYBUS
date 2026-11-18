@@ -151,18 +151,67 @@ class AiBatchLifecycleTest {
         assertNull(jobs.recover(state)); assertEquals(state.undo, store.read().undo)
     }
 
+    @Test fun aPartialReviewKeepsPreviouslyTranslatedEntriesReusableWhenSavedSeparately() {
+        originals("最初です", "次です", "最後です")
+        start(independent); finish(execute { "旧译です" })
+        val old = store.read().selected
+        start(AiConfig(limit = 1, includeMissing = false, includeReview = true))
+        jobs.recover(store.read())
+        Files.newInputStream(archive("我的新文件")).use { store.import(it, "新文件.zip", old.id) }
+        sent.clear()
+        assertEquals(AiPublication.SeparateCopy, finish(execute { "已核对" }))
+        assertEquals(listOf("最初です"), sent)
+        val copy = store.read().sources.single { it.kind == "ai" }
+        assertEquals(listOf("已核对", "旧译です", "旧译です"), visible(copy))
+        assertEquals(3, proof(copy).size)
+    }
+
+    @Test fun sourceLimitBlocksNewRequestsButAllowsResumeAndUpdatingAnExistingPack() {
+        originals("一つ目です", "二つ目です")
+        val filler = archive("本地译文")
+        fun addLocal() = Files.newInputStream(filler).use { store.import(it, "本地.zip") }
+        val locals = List(31) { addLocal() }
+        store.select("zero")
+        start(independent.copy(limit = 1))
+        val blocked = assertThrows(IllegalArgumentException::class.java) { execute { error("unexpected request") } }
+        assertTrue(blocked.message.orEmpty().contains("31"))
+        assertTrue(sent.isEmpty())
+        store.remove(locals.first().id)
+        finish(execute { "第一条" })
+        val saved = store.read().selected
+        assertEquals(32, store.read().sources.size)
+        sent.clear(); start(independent.copy(limit = 1)); finish(execute { "第二条" })
+        assertEquals(saved.id, store.read().selectedId)
+        assertEquals(listOf("二つ目です"), sent)
+        start(AiConfig(), pack("正式一", "正式二"))
+        assertEquals(AiPublication.Official, finish(execute { error("unexpected request") }))
+    }
+
     @Test fun newerOfficialBaseWhilePausedKeepsTheOfficialSelectionAndTheResultIsSavedSeparately() {
         originals("確認します")
-        fun installManifest(version: String, translation: String) {
-            val source = pack(translation)
-            val dir = Files.createDirectories(cache.resolve("patch-cache/$version"))
-            Files.write(dir.resolve("manifest.json"), source.manifest.copy(requestedVersion = version).toJson().toByteArray())
-        }
-        installManifest("101", "旧正式"); start(independent)
-        jobs.recover(store.read()); installManifest("102", "新正式")
+        cachedOfficialFixture(cache, "101", rows(listOf("旧正式"))); start(independent)
+        jobs.recover(store.read()); cachedOfficialFixture(cache, "102", rows(listOf("新正式")))
         assertEquals(AiPublication.SeparateCopy, finish(execute { "独立结果" }))
         assertEquals("zero", store.read().selectedId)
         assertEquals(listOf("独立结果"), visible(store.read().sources.single { it.kind == "ai" }))
+    }
+
+    @Test fun undoDeletesOnlyTheDiscardedPackCacheAndKeepsThePreviousRevisionReusable() {
+        originals("一つ目です", "二つ目です")
+        start(independent.copy(limit = 1)); finish(execute { "第一条" })
+        val previous = store.read().selected
+        val job = cache.resolve("ai-jobs/" + previous.id.removePrefix("ai-"))
+        start(independent.copy(limit = 1)); finish(execute { "第二条" })
+        store.undoGenerated()
+        assertTrue(Files.isDirectory(job)); assertEquals(1, proof().size)
+        store.remove(previous.id)
+        assertFalse(Files.exists(job))
+        start(independent); finish(execute { "新译文" })
+        val fresh = store.read().selected
+        val freshJob = cache.resolve("ai-jobs/" + fresh.id.removePrefix("ai-"))
+        assertTrue(Files.isDirectory(freshJob))
+        store.undoGenerated()
+        assertFalse(Files.exists(freshJob)); assertEquals("zero", store.read().selectedId)
     }
 
     @Test fun aDamagedGlossaryFileDoesNotBlockOtherTextAndOversizeFieldsNeverBecomePayable() {

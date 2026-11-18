@@ -6,6 +6,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.unit.dp
 import com.example.limbuszhcn.selfupdate.AppUpdateState
 import com.example.limbuszhcn.tracking.ProjectTrackingState
 import com.example.limbuszhcn.translation.*
@@ -111,6 +112,47 @@ class TaskNavigationUiTest {
         compose.onNodeWithText("上次检查结果").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("设置 AI 翻译").assertIsNotEnabled()
         capture("coverage-stale")
+    }
+
+    @Test fun savedCoverageAndRefreshHaveSeparateTouchTargetsEvenWhenTheReportIsComplete() {
+        val previous = CoverageReport("都市零协会", 1789000000000L, 12, 100, 99, 1, 0, 1, 0, emptyList())
+        var state by mutableStateOf(LauncherUiState(coverage = CoverageState(report = previous, stale = true)))
+        var scans = 0
+        val actions = TranslationActions(inspectCoverage = {
+            scans++; state = state.copy(coverage = state.coverage.copy(loading = true))
+        })
+        compose.setContent { Screen(state, actions) }
+        compose.onNodeWithContentDescription("设置与工具").performClick()
+        compose.onNodeWithText("汉化源与更新").performScrollTo().performClick()
+        val history = compose.onNodeWithText("上次结果")
+        history.performScrollTo().assertIsDisplayed()
+        capture("coverage-summary-history")
+        val refresh = compose.onNodeWithContentDescription("重新检查")
+        history.assertHeightIsAtLeast(48.dp)
+        refresh.assertWidthIsAtLeast(48.dp).assertHeightIsAtLeast(48.dp)
+        assertTrue(history.getUnclippedBoundsInRoot().right <= refresh.getUnclippedBoundsInRoot().left)
+        compose.runOnIdle { state = state.copy(coverage = state.coverage.copy(report = previous.copy(covered = 100, missing = 0, aiEligible = 0))) }
+        history.performClick()
+        compose.onNodeWithText("上次检查结果").assertIsDisplayed()
+        capture("coverage-history-detail")
+        compose.runOnIdle { assertEquals(0, scans) }
+        compose.onNodeWithContentDescription("返回上一页").performClick()
+        refresh.performScrollTo().performClick()
+        refresh.assertIsNotEnabled()
+        history.assertIsEnabled().performClick()
+        compose.onNodeWithText("上次检查结果").assertExists()
+        compose.runOnIdle { assertEquals(1, scans) }
+        compose.runOnIdle { state = state.copy(coverage = CoverageState(report = previous.copy(files = 0, total = 0,
+            covered = 0, missing = 0, aiEligible = 0, unreadable = 3), fingerprint = "current")) }
+        compose.onNodeWithText("本次没有读到游戏文本，暂时无法判断汉化覆盖情况。").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("返回上一页").performClick()
+        compose.onNodeWithText("3 个文件未能检查").performScrollTo().assertIsDisplayed()
+        val imported = TranslationSource("local-1111111111111111", "本地汉化", updatedAtMillis = 1789000000000L)
+        val generated = TranslationSource("ai-" + "2".repeat(32), "我的补译", "ai", updatedAtMillis = 1789100000000L)
+        compose.runOnIdle { state = state.copy(sources = SourceState(listOf(TranslationSources.OFFICIAL, imported, generated))) }
+        compose.onNodeWithText(state.packageTimeLabel(imported)!!).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(state.packageTimeLabel(generated)!!).performScrollTo().assertIsDisplayed()
+        capture("source-times")
     }
 
     @Test fun newTranslationRequiresCoverageAndCannotUseAStaleConfirmation() {
