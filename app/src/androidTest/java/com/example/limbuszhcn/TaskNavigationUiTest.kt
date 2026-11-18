@@ -11,6 +11,8 @@ import com.example.limbuszhcn.selfupdate.AppUpdateState
 import com.example.limbuszhcn.tracking.ProjectTrackingState
 import com.example.limbuszhcn.translation.*
 import com.example.limbuszhcn.ui.theme.LimbusZhCNTheme
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -167,7 +169,15 @@ class TaskNavigationUiTest {
             listOf(CoverageFile("a",script,6,1,emptyList()), CoverageFile("b",battle,2,1,emptyList())), reviewEligible = 2,
             entryIndex = CoverageIndexRef("a".repeat(64), java.util.UUID.randomUUID().toString()))
         var scans = 0
-        val actions = TranslationActions(inspectCoverage = { scans++ }, coverageEntries = { _, filter, page, _ -> rows.filteredPage(filter, page) })
+        val reviewStarted = CountDownLatch(1)
+        val allowReview = CountDownLatch(1)
+        val actions = TranslationActions(inspectCoverage = { scans++ }, coverageEntries = { _, filter, page, _ ->
+            if (filter.kind == CoverageKind.Review && reviewStarted.count != 0L) {
+                reviewStarted.countDown()
+                check(allowReview.await(8, TimeUnit.SECONDS))
+            }
+            rows.filteredPage(filter, page)
+        })
         compose.setContent { Screen(LauncherUiState(coverage = CoverageState(report = report, fingerprint = "saved")), actions) }
         compose.onNodeWithContentDescription("设置与工具").performClick()
         compose.onNodeWithText("汉化源与更新").performScrollTo().performClick()
@@ -175,11 +185,25 @@ class TaskNavigationUiTest {
         fun waitForText(text: String) {
             compose.waitUntil(5500) { compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty() }
         }
-        waitForText("符合条件 · 10 条")
+        waitForText("10 条")
+        compose.onNodeWithContentDescription("搜索条目").assertDoesNotExist()
+        val all = compose.onNodeWithContentDescription("查看全部状态")
+        val missing = compose.onNodeWithContentDescription("只看未覆盖")
+        val review = compose.onNodeWithContentDescription("只看待核对")
+        all.performScrollTo().assertIsSelected()
+        listOf(all, missing, review).forEach { it.assertHeightIsAtLeast(48.dp).assertWidthIsAtLeast(48.dp) }
+        capture("coverage-controls")
         compose.onNodeWithText("下一页").performScrollTo().performClick()
         waitForText("#7")
-        compose.onNodeWithContentDescription("只看待核对").performScrollTo().performClick()
-        waitForText("符合条件 · 2 条")
+        review.performScrollTo().performClick()
+        try {
+            compose.waitUntil(5000) { reviewStarted.count == 0L }
+            compose.onNodeWithText("#7").assertIsNotEnabled()
+        } finally {
+            allowReview.countDown()
+        }
+        waitForText("2 条")
+        review.assertIsSelected()
         compose.onNodeWithText("#1").assertDoesNotExist()
         compose.onNodeWithText("#7").performScrollTo().performClick()
         compose.onNodeWithText("现有译文").performScrollTo().assertIsDisplayed()
@@ -187,17 +211,24 @@ class TaskNavigationUiTest {
         capture("coverage-review-rows")
         compose.onNodeWithContentDescription("筛选内容类别").performScrollTo().performClick()
         compose.onNode(hasText(battle) and hasAnyAncestor(isPopup())).performClick()
-        waitForText("符合条件 · 1 条")
+        waitForText("1 条")
         compose.onNodeWithText("#9").assertExists()
         compose.onNodeWithText("#7").assertDoesNotExist()
-        compose.onNodeWithContentDescription("查看全部状态").performScrollTo().performClick()
+        all.performScrollTo().performClick()
+        compose.onNodeWithContentDescription("打开条目搜索").performScrollTo().performClick()
         compose.onNodeWithContentDescription("搜索条目").performScrollTo().performTextInput("#9")
-        waitForText("符合条件 · 1 条")
+        waitForText("1 条")
         compose.onNode(hasText("#9") and hasText("游戏 ID R9")).assertExists()
-        compose.onNodeWithContentDescription("只看未覆盖").performScrollTo().performClick()
+        missing.performScrollTo().performClick()
         waitForText("没有符合条件的条目")
         compose.onNodeWithContentDescription("清除搜索").performScrollTo().performClick()
-        waitForText("符合条件 · 2 条")
+        waitForText("2 条")
+        compose.onNodeWithContentDescription("搜索条目").performScrollTo().performTextInput("#9")
+        waitForText("没有符合条件的条目")
+        compose.onNodeWithContentDescription("关闭条目搜索").performScrollTo().performClick()
+        waitForText("2 条")
+        compose.onNodeWithContentDescription("搜索条目").assertDoesNotExist()
+        missing.assertIsSelected()
         compose.runOnIdle { assertEquals(0, scans) }
     }
 
