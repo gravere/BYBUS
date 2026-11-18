@@ -114,7 +114,8 @@ class CoverageStoreTest {
         fun input(source: TranslationSource, game: String = "game", prior: TranslationSource? = null) =
             CoverageInputs(source, source.revision, game, prior)
         fun report(name: String, at: Long) = CoverageReport(name, at, 1, 9, 7, 2, 0, 2, 0, emptyList(), independentEligible = 9)
-        val first = report(a.name, 10); val second = report(b.name, 20)
+        val first = report(a.name, 10).copy(entryIndex = CoverageIndexRef(input(a).pack, java.util.UUID.randomUUID().toString()))
+        val second = report(b.name, 20).copy(entryIndex = CoverageIndexRef(input(b).pack, java.util.UUID.randomUUID().toString()))
         store.save(input(a), first, store.beginCheck(a))
         assertNull(store.read(input(b)))
         store.save(input(b), second, store.beginCheck(b))
@@ -130,6 +131,7 @@ class CoverageStoreTest {
         assertFalse(restarted.read(input(duplicate))!!.needsCheck)
         val replaced = a.copy(revision = "new")
         assertTrue(restarted.read(input(replaced))!!.needsCheck)
+        assertEquals(first.entryIndex, restarted.read(input(replaced))!!.report.entryIndex)
         val initial = restarted.beginCheck(a)
         val revisionCheck = restarted.verified(initial, input(replaced))
         assertFalse(restarted.read(input(a))!!.needsCheck)

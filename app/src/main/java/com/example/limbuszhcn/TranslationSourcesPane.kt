@@ -36,7 +36,8 @@ internal data class TranslationActions(
     val loadModels: (String, String) -> Unit = { _, _ -> }, val clearModels: () -> Unit = {},
     val inspectCoverage: () -> Unit = {}, val undoAi: () -> Unit = {}, val removeAi: (String) -> Unit = {},
     val chooseAiUpdate: (com.example.limbuszhcn.translation.AiUpdateChoice?) -> Unit = {},
-    val savePrompt: (String) -> Unit = {}
+    val savePrompt: (String) -> Unit = {},
+    val coverageEntries: CoveragePageReader = { _, _, _, _ -> error("无法读取明细") }
 )
 
 private val packageDateFormat = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm")

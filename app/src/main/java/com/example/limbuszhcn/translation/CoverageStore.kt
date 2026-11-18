@@ -30,6 +30,7 @@ internal class CoverageStore(private val cache: Path) {
     private val legacy = root.resolve("result.json")
     private fun owner(id: String) = root.resolve("sources").resolve(AiTranslationJob.digest(id))
     private fun directory(pack: String) = root.resolve("packages").resolve(pack)
+    private val writingIndexes = mutableSetOf<Path>()
     private fun marker(id: String, pack: String) = owner(id).resolve("checks").resolve(pack)
     private fun pointer(id: String) = owner(id).resolve("last")
     private fun shortText(path: Path, limit: Long = 128): String? =
@@ -131,11 +132,40 @@ internal class CoverageStore(private val cache: Path) {
         return AiTranslationJob.digest(hashes.entries.joinToString("\n") { "${it.key}|${it.value}" })
     }
 
+    fun indexedCheck(input: CoverageInputs, ticket: CoverageCheck, scan: ((CoverageEntry) -> Unit) -> CoverageReport): SavedCoverage {
+        val ref = CoverageIndexRef(input.pack, ticket.token)
+        val file = ref.file(cache)
+        synchronized(this) { check(writingIndexes.add(file)) }
+        try {
+            val report = CoverageEntryIndex.write(file, scan)
+            return save(input, report.copy(entryIndex = ref), ticket)
+        } finally {
+            synchronized(this) {
+                writingIndexes.remove(file)
+                runCatching { pruneIndexes(file.parent) }
+            }
+        }
+    }
+
+    /** Retain the published index and concurrent writers. Interrupted generations can be reclaimed on the next check. */
+    private fun pruneIndexes(folder: Path) {
+        val current = document(folder.resolve("result.json"))?.optString("entryIndex")
+        Files.newDirectoryStream(folder, "entries-*.db*").use { paths -> for (path in paths) {
+            val name = path.fileName.toString()
+            val match = INDEX_FILE.matchEntire(name) ?: continue
+            val base = folder.resolve("entries-" + match.groupValues[1] + ".db")
+            if (match.groupValues[1] != current && base !in writingIndexes) Files.deleteIfExists(path)
+        } }
+    }
+
+    fun entries(ref: CoverageIndexRef, filter: CoverageFilter, page: Int, cancel: android.os.CancellationSignal? = null) =
+        CoverageEntryIndex.read(ref.file(cache), filter, page, cancel)
+
     @Synchronized fun save(input: CoverageInputs, r: CoverageReport, ticket: CoverageCheck): SavedCoverage {
         val pending = marker(input.sourceId, input.pack)
         check(ticket.sourceId == input.sourceId && ticket.pack == input.pack && shortText(pending) == ticket.token) { "已有新的覆盖检查，请查看最新结果" }
         val json = JSONObject().put("schema", 2).put("fingerprint", input.fingerprint)
-            .put("content", input.content).put("independentKey", input.independentKey)
+            .put("content", input.content).put("independentKey", input.independentKey).put("entryIndex", r.entryIndex?.generation)
             .put("sourceName", r.sourceName).put("checkedAt", r.checkedAt).put("files", r.files).put("total", r.total)
             .put("covered", r.covered).put("missing", r.missing).put("review", r.review).put("aiEligible", r.aiEligible)
             .put("unreadable", r.unreadable).put("excluded", r.excluded).put("shared", r.shared).put("reviewEligible", r.reviewEligible)
@@ -180,12 +210,15 @@ internal class CoverageStore(private val cache: Path) {
             }
         }
         val currentPack = json != null
+        var storedPack = input.pack
         if (json == null) {
             val last = shortText(pointer(input.sourceId))?.takeIf { it.matches(Regex("[a-f0-9]{64}")) } ?: return null
             json = document(directory(last).resolve("result.json")) ?: return null
+            storedPack = last
         }
         require(json.getInt("schema") == 2)
-        val report = decode(json).copy(sourceName = input.name)
+        val index = if (json.isNull("entryIndex")) null else CoverageIndexRef(storedPack, json.getString("entryIndex"))
+        val report = decode(json).copy(sourceName = input.name, entryIndex = index)
         if (!currentPack || json.getString("content") != input.content)
             return SavedCoverage(json.getString("fingerprint"), report, needsCheck = true)
         remember(input)
@@ -216,5 +249,9 @@ internal class CoverageStore(private val cache: Path) {
             j.getInt("files"), j.getInt("total"), j.getInt("covered"), j.getInt("missing"), j.getInt("review"),
             j.getInt("aiEligible"), j.getInt("unreadable"), details, j.getInt("excluded"), j.getInt("shared"), j.getInt("reviewEligible"),
             j.optInt("independentEligible"))
+    }
+
+    private companion object {
+        val INDEX_FILE = Regex("entries-([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\\.db(?:-journal|-wal|-shm)?")
     }
 }
