@@ -56,6 +56,7 @@ internal fun RuntimeStatusPane(state: LauncherUiState, onGameUpdates: () -> Unit
                 val source = state.sources.selected
                 val prepared = state.translation ?: state.resourcePreparation
                 DetailRow("汉化来源", source.name)
+                state.packageTimeLabel(source)?.let { DetailRow("文件时间", it) }
                 DetailRow("资源状态", when {
                     prepared?.liveResourcesReady == true -> "已准备，随游戏资源加载"
                     prepared?.indexActivated == true -> "已准备，下次启动使用"

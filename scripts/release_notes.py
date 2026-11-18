@@ -16,8 +16,10 @@ def section(source: str, title: str) -> str:
 
 
 def update_summary(source: str) -> str:
-    return '\n'.join(line for line in section(source, '更新内容').splitlines()
-                     if line.startswith('- '))
+    lines = [line.strip() for line in section(source, '更新内容').splitlines() if line.strip()]
+    if any(not line.startswith('- ') or not line[2:].strip() for line in lines):
+        raise ValueError('Write each user-facing change as a bullet')
+    return '\n'.join(lines)
 
 
 def render_release_notes(manifest: dict, source: str) -> str:
@@ -34,14 +36,4 @@ def render_release_notes(manifest: dict, source: str) -> str:
         expected = f'BYBUS-update-{previous}-to-{code}.delta'
         if delta['name'] != expected:
             raise ValueError('Delta filename does not match APK versions')
-    return f'''# BYBUS {version}
-
-[下载完整安装包]({url})
-
-## 更新内容
-
-{section(source, '更新内容')}
-
-首次安装或手动更新，只需下载上方 `BYBUS-Android.apk`。已安装 BYBUS，也可在“设置与工具 → 应用更新”中更新。
-
-'''.rstrip() + '\n'
+    return f"{update_summary(source)}\n\n[下载完整安装包（首次安装或手动更新）]({url})\n"

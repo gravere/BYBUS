@@ -3,6 +3,10 @@ package com.example.limbuszhcn.translation
 import com.example.limbuszhcn.container.ContainerPatchInstaller
 import com.example.limbuszhcn.container.ContainerWorkspaceStorage
 import com.example.limbuszhcn.container.LiveTranslationStore
+import com.example.limbuszhcn.LauncherUiState
+import com.example.limbuszhcn.gamefs.GameStorage
+import com.example.limbuszhcn.gamefs.PatchInstallSummary
+import com.example.limbuszhcn.packageTimeLabel
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -24,6 +28,83 @@ class TranslationSourcesTest {
         } }
     }.toByteArray()
     private fun text(value: String) = """{"dataList":[{"id":1,"content":"$value"}]}"""
+
+    @Test fun switchingBetweenCheckedPackagesRestoresCountsAndTimestampsWithoutReadingGameTextAgain() {
+        val localize = temp.root.toPath().resolve("Localize")
+        val jp = Files.createDirectories(localize.resolve("jp"))
+        jp.resolve("JP_MainUIText.json").writeText(text("準備ができました"))
+        val game = ContainerWorkspaceStorage(localize)
+        var reads = 0
+        val observed = object : GameStorage by game {
+            override fun read(path: String): ByteArray? {
+                reads++
+                return game.read(path)
+            }
+        }
+        val registry = TranslationSources(cache)
+        val store = CoverageStore(cache)
+        fun checkImported(name: String, resource: String): Pair<TranslationSource, CoverageReport> {
+            val pack = registry.import(zip(resource to text("准备好了")).inputStream(), name)
+            val input = store.inputs(pack, observed, verifyContents = true)
+            val report = TranslationCoverage.scan(observed, registry.prepare(pack), pack.name)
+            store.save(input, report, store.beginCheck(input))
+            return pack to report
+        }
+        val (a, resultA) = checkImported("甲.zip", "MainUIText.json")
+        val (b, resultB) = checkImported("乙.zip", "BattlePass.json")
+        assertEquals(0, resultA.missing)
+        assertEquals(1, resultB.missing)
+        val readsAtLastCheck = reads
+        listOf(a to resultA, b to resultB, a to resultA).forEach { (pack, expected) ->
+            val selected = TranslationSources(cache).select(pack.id).selected
+            val restarted = CoverageStore(cache)
+            val saved = requireNotNull(restarted.read(restarted.inputs(selected, observed)) { error("Unexpected recount") })
+            assertFalse(saved.needsCheck)
+            assertEquals(expected, saved.report)
+        }
+        assertEquals(readsAtLastCheck, reads)
+        jp.resolve("JP_MainUIText.json").writeText(text("新しい文章が追加されました"))
+        val updated = requireNotNull(store.read(store.inputs(a, observed)))
+        assertTrue(updated.needsCheck)
+        assertEquals(resultA, updated.report)
+    }
+
+    @Test fun packageTimeDescribesTheCurrentFileAcrossImportsMetadataEditsAndDownloads() {
+        val sources = TranslationSources(cache)
+        val bytes = zip("MainUIText.json" to text("中文"))
+        val local = sources.import(ByteArrayInputStream(bytes), "本地.zip")
+        val file = cache.resolve("sources/sources.json")
+        val oldTime = 1700000000000L
+        val registry = org.json.JSONObject(file.readText())
+        registry.getJSONArray("sources").getJSONObject(0).put("updatedAtMillis", oldTime)
+        file.writeText(registry.toString())
+        sources.rename(local.id, "新名字"); sources.setIcon(local.id, byteArrayOf(1)); sources.select("zero")
+        val state = LauncherUiState(sources = sources.read())
+        val old = state.sources.sources.single { it.id == local.id }
+        fun date(time: Long) = java.time.Instant.ofEpochMilli(time).atZone(java.time.ZoneId.systemDefault())
+            .format(java.time.format.DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm"))
+        assertEquals("添加于 " + date(oldTime), state.packageTimeLabel(old))
+        val replaced = sources.import(ByteArrayInputStream(bytes), "替换.zip", local.id)
+        assertTrue(replaced.updatedAtMillis > oldTime)
+        val input = Files.createTempFile(temp.root.toPath(), "ai", ".zip").also { Files.write(it, bytes) }
+        val ai = sources.addGenerated(input, local.id, "d".repeat(32), "自定义名字")
+        assertEquals("生成于 " + date(ai.updatedAtMillis), state.packageTimeLabel(sources.read().selected))
+        assertEquals("添加时间未记录", state.packageTimeLabel(old.copy(updatedAtMillis = 0)))
+        assertEquals("生成时间未记录", state.packageTimeLabel(ai.copy(updatedAtMillis = 0)))
+        val downloads = Files.createDirectories(cache.resolve("downloads"))
+        fun saved(name: String, time: Long, bytes: ByteArray = byteArrayOf(1)) {
+            Files.setLastModifiedTime(Files.write(downloads.resolve(name), bytes), java.nio.file.attribute.FileTime.fromMillis(time))
+        }
+        val newer = oldTime + 86400000L
+        saved("LimbusLocalize_101.7z", oldTime); saved("LimbusLocalize_102.7z", newer)
+        saved("LimbusLocalize_103.7z.tmp", newer + 1000); saved("LimbusLocalize_104.7z", newer + 2000, byteArrayOf())
+        val downloaded = state.copy(sources = sources.select("zero"))
+        val official = downloaded.sources.selected
+        assertEquals("最近下载 " + date(newer), downloaded.packageTimeLabel(official))
+        assertEquals("下载于 " + date(oldTime), downloaded.copy(translation = PatchInstallSummary("101", 0)).packageTimeLabel(official))
+        assertNull(downloaded.copy(translation = PatchInstallSummary("103", 0)).packageTimeLabel(official))
+        assertNull(LauncherUiState().packageTimeLabel(official))
+    }
 
     @Test fun importRepairsDerivedFilesAndReplacementKeepsIdentityNameAndIcon() {
         val sources = TranslationSources(cache)

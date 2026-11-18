@@ -194,7 +194,11 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
                 }
             } else Button({ finishEditing(); confirm = true }, enabled = enabled && hasCredential && coverageReady,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-                Text(if (coverageReady) "生成并使用" else "所选范围已无需补译")
+                Text(when {
+                    coverageReady -> "生成并使用"
+                    !missing && !state.coverage.independentReady -> "暂时无法读取独立翻译进度"
+                    else -> "所选范围已无需补译"
+                })
             }
         }
         if (state.sources.undo != null) OutlinedButton({ finishEditing(); undo = true }, enabled = enabled,
@@ -211,6 +215,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
                     TranslationSourceIcon(source, Modifier.size(32.dp))
                     Column(Modifier.weight(1f)) {
                         Text(source.name, style = MaterialTheme.typography.bodyMedium)
+                        state.packageTimeLabel(source)?.let { Text(it, color = C.Muted, style = MaterialTheme.typography.bodySmall) }
                         if (source.id == state.sources.selectedId) Text("当前使用", color = C.Accent,
                             style = MaterialTheme.typography.labelSmall)
                     }
