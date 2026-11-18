@@ -1,5 +1,4 @@
 #include "LimbusTranslationRuntime.h"
-#include "LimbusCodeIntegrityCompat.h"
 #include "LimbusUiLabels.h"
 #include "LimbusTextProvenance.h"
 #if !defined(__EXCEPTIONS) && !defined(__cpp_exceptions)
@@ -9,7 +8,7 @@
 #include "LimbusFlowTextProof.h"
 #include "LimbusManagedState.h"
 #include "LimbusFontMaterials.h"
-#include "LimbusLanguageGetterPatch.h"
+#include "LimbusMethodFlags.h"
 #include "LimbusRuntimeSymbols.h"
 #include "LimbusResourceBridge.h"
 #include "RuntimePage.h"
@@ -1431,7 +1430,7 @@ void replacement_localization_load(void *instance, int32_t language, const void 
         append_native_metadata("font-state.log", status);
     }
     g_original_localization_load[Slot](instance, language, method);
-    if (g_live_resources && language == 2) prepare_loaded_localization(instance);
+    if (g_live_resources) prepare_loaded_localization(instance);
 }
 acquisition0_fn g_original_gift_text_data = nullptr;
 void *replacement_gift_text_data(void *instance, const void *method) {
@@ -1772,7 +1771,8 @@ void *translate_resource_json(const std::string &key, void *original) {
     if (!g_live_resources || !g_resource_bridge_method || g_inside_resource_read || !original ||
         key.empty() || key.size() > 1024 || !g_string_length || !g_string_chars) return original;
     const auto file = key.substr(key.rfind('/') == std::string::npos ? 0 : key.rfind('/') + 1);
-    if (file.compare(0, 3, "JP_") != 0) return original;
+    if (file.compare(0, 3, "JP_") != 0 && file.compare(0, 3, "EN_") != 0 &&
+            file.compare(0, 3, "KR_") != 0) return original;
     const int32_t length = g_string_length(original);
     if (length <= 0 || length > 16 * 1024 * 1024) return original;
     const uint16_t *chars = g_string_chars(original);
@@ -3436,85 +3436,6 @@ bool locate_runtime_symbol(const void *symbol, limbus_runtime::ModuleOwner &owne
     return true;
 }
 
-struct LanguageCodeWindow {
-    runtime_page::Span pages = {};
-    int protection = 0;
-};
-
-// Never read an instruction or mprotect beyond a proven readable/executable mapping.
-bool inspect_language_code(void *pointer, size_t width, LanguageCodeWindow &window) {
-    window = {};
-    if (!runtime_page::span(reinterpret_cast<uintptr_t>(pointer), width,
-                            runtime_page::size(), window.pages)) return false;
-    FILE *maps = fopen("/proc/self/maps", "r");
-    if (!maps) return false;
-    char line[PATH_MAX + 160];
-    bool found = false;
-    while (fgets(line, sizeof(line), maps)) {
-        unsigned long begin = 0, end = 0;
-        char permissions[5] = {};
-        if (sscanf(line, "%lx-%lx %4s", &begin, &end, permissions) != 3 ||
-            window.pages.start < begin || window.pages.start >= end ||
-            window.pages.length > end - window.pages.start) continue;
-        if (permissions[0] == 'r' && permissions[2] == 'x') {
-            window.protection = PROT_READ | PROT_EXEC;
-            if (permissions[1] == 'w') window.protection |= PROT_WRITE;
-            found = true;
-        }
-        break;
-    }
-    fclose(maps);
-    return found;
-}
-
-bool install_language_getter(const char *name, void *pointer, uintptr_t next_method) {
-#if defined(__aarch64__)
-    const uintptr_t address = reinterpret_cast<uintptr_t>(pointer);
-    LanguageCodeWindow window;
-    if (!address || (address & 3u) || next_method <= address ||
-        !inspect_language_code(pointer, sizeof(uint32_t), window)) {
-        LT_LOGW("Skip language getter %s: unknown entry or mapping", name);
-        return false;
-    }
-    uint32_t first_word = 0;
-    memcpy(&first_word, pointer, sizeof(first_word));
-    const auto plan = limbus_language::plan_language_getter_patch(address, next_method, first_word);
-    if (plan.strategy != limbus_language::Strategy::kDirect ||
-        !inspect_language_code(pointer, plan.width, window)) {
-        LT_LOGW("Skip language getter %s: insufficient proven code space", name);
-        return false;
-    }
-    LimbusOwnedCodePatch owned(pointer, plan.width);
-    if (!owned.is_recording()) {
-        LT_LOGW("Skip language getter %s: integrity ledger unavailable", name);
-        return false;
-    }
-    unsigned char before[sizeof(plan.words)];
-    memcpy(before, pointer, plan.width);
-    void *page = reinterpret_cast<void *>(window.pages.start);
-    if (mprotect(page, window.pages.length, window.protection | PROT_WRITE) != 0) {
-        LT_LOGW("Skip language getter %s: mprotect errno=%d", name, errno);
-        return false;
-    }
-    const bool applied = limbus_language::apply_direct_plan(pointer, plan) &&
-                         memcmp(pointer, plan.words, plan.width) == 0;
-    if (!applied) memcpy(pointer, before, plan.width);
-    __builtin___clear_cache(static_cast<char *>(pointer), static_cast<char *>(pointer) + plan.width);
-    const bool restored = mprotect(page, window.pages.length, window.protection) == 0;
-    if (!restored) LT_LOGW("Language getter %s permission restore failed errno=%d", name, errno);
-    char event[192];
-    snprintf(event, sizeof(event), "getter=%s installed=%d width=%zu permissions_restored=%d",
-             name, applied, plan.width, restored);
-    append_native_metadata("font-state.log", event);
-    LT_LOGI("%s", event);
-    // Bytes are already live even if restoring page permissions failed. Do not install
-    // a second hook or claim to have observed a game call by invoking a null instance.
-    return applied;
-#else
-    return false;
-#endif
-}
-
 bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_domain) {
     typedef void *(*domain_get_fn)();
     typedef const void **(*domain_get_assemblies_fn)(const void *, size_t *);
@@ -4313,7 +4234,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         g_font_face_info = font_face_method;
         g_face_point_size_info = face_point_method;
         g_font_atlas_padding_info = font_padding_method;
-        hook_limbus_owned_function(tmp_pointer, reinterpret_cast<void *>(replacement_tmp_set_text),
+        MSHookFunction(tmp_pointer, reinterpret_cast<void *>(replacement_tmp_set_text),
                        reinterpret_cast<void **>(&g_original_tmp_set_text));
         auto has_inline_hook_space = [&](void *klass, void *pointer) {
             if (klass == nullptr || pointer == nullptr) return false;
@@ -4340,7 +4261,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             void *replacement = target.abi == 0 ? kTableRefHooks[slot] :
                     target.abi == 1 ? kTableIntHooks[slot] : kTableListHooks[slot];
             hook.owners.insert(target.owner);
-            hook_limbus_owned_function(pointer, replacement, &hook.original);
+            MSHookFunction(pointer, replacement, &hook.original);
             if (!hook.original) { hook.owners.clear(); continue; }
             table_addresses.emplace(pointer, std::make_pair(target.abi, slot));
             ++table_counts[target.abi];
@@ -4366,7 +4287,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 const void *entry = verified_entry(klass, name, params, returns, false);
                 void *pointer = nullptr;
                 if (entry) memcpy(&pointer, entry, sizeof(pointer));
-                if (has_inline_hook_space(klass, pointer)) hook_limbus_owned_function(pointer, replacement, original);
+                if (has_inline_hook_space(klass, pointer)) MSHookFunction(pointer, replacement, original);
             };
             tmp_set_font_fn font_trampoline = nullptr;
             hook_verified(tmp_text_class, "set_font", "TMPro.TMP_FontAsset", "System.Void",
@@ -4406,7 +4327,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                     if (prior->second.first == parameters) *original = prior->second.second;
                     return;
                 }
-                hook_limbus_owned_function(pointer, replacement, original);
+                MSHookFunction(pointer, replacement, original);
                 if (*original) rich_installed.emplace(pointer, std::make_pair(std::string(parameters), *original));
             };
             hook_rich("GetAppliedAllRichText", "System.String,System.Boolean",
@@ -4429,7 +4350,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 void *pointer = nullptr;
                 memcpy(&pointer, writer, sizeof(pointer));
                 if (has_inline_hook_space(material_writer_class, pointer))
-                    hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement_material_write),
+                    MSHookFunction(pointer, reinterpret_cast<void *>(replacement_material_write),
                             reinterpret_cast<void **>(&g_original_material_write));
             }
             char shared_hooks[128];
@@ -4456,7 +4377,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 auto alias = installed.find(pointer);
                 if (alias != installed.end()) g_original_ruby_format[slot] = alias->second;
                 else {
-                    hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacements[slot]),
+                    MSHookFunction(pointer, reinterpret_cast<void *>(replacements[slot]),
                             reinterpret_cast<void **>(&g_original_ruby_format[slot]));
                     if (g_original_ruby_format[slot]) installed.emplace(pointer, g_original_ruby_format[slot]);
                 }
@@ -4480,7 +4401,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 void *pointer = nullptr;
                 memcpy(&pointer, entry, sizeof(pointer));
                 if (valid && has_inline_hook_space(klass, pointer))
-                    hook_limbus_owned_function(pointer, replacement, original);
+                    MSHookFunction(pointer, replacement, original);
             };
             hook_resource(localize_resource_class, "LoadLocalizeFileSync", "System.String",
                     reinterpret_cast<void *>(replacement_localize_resource), reinterpret_cast<void **>(&g_original_localize_resource));
@@ -4512,7 +4433,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             void *pointer = nullptr;
             memcpy(&pointer, announcer_set, sizeof(pointer));
             if (valid && g_announcer_description_field && has_inline_hook_space(announcer_ui_class, pointer))
-                hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement_announcer_set_description),
+                MSHookFunction(pointer, reinterpret_cast<void *>(replacement_announcer_set_description),
                                            reinterpret_cast<void **>(&g_original_announcer_set_description));
         }
         append_native_metadata("font-state.log", g_original_announcer_set_description ?
@@ -4559,7 +4480,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                     if (alias->second.first == abi) *original = alias->second.second;
                     return;
                 }
-                hook_limbus_owned_function(pointer, replacement, original);
+                MSHookFunction(pointer, replacement, original);
                 if (*original) flow_installed.emplace(pointer, std::make_pair(abi, *original));
             }
         };
@@ -4659,7 +4580,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             void *pointer = nullptr;
             memcpy(&pointer, rpg_format, sizeof(pointer));
             if (returns_string && has_inline_hook_space(rpg_format_class, pointer)) {
-                hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement_rpg_format),
+                MSHookFunction(pointer, reinterpret_cast<void *>(replacement_rpg_format),
                                            reinterpret_cast<void **>(&g_original_rpg_format));
             }
         }
@@ -4667,7 +4588,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         void *story_ctor_pointer = nullptr;
         if (story_ctor != nullptr) memcpy(&story_ctor_pointer, story_ctor, sizeof(story_ctor_pointer));
         if (has_inline_hook_space(story_dialog_class, story_ctor_pointer)) {
-            hook_limbus_owned_function(story_ctor_pointer,
+            MSHookFunction(story_ctor_pointer,
                     reinterpret_cast<void *>(replacement_story_dialog_ctor),
                     reinterpret_cast<void **>(&g_original_story_dialog_ctor));
         }
@@ -4682,7 +4603,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         }
         if (g_tmp_get_text_info != nullptr &&
             has_inline_hook_space(tmp_text_class, parse_input_pointer)) {
-            hook_limbus_owned_function(parse_input_pointer,
+            MSHookFunction(parse_input_pointer,
                     reinterpret_cast<void *>(replacement_tmp_parse_input),
                     reinterpret_cast<void **>(&g_original_tmp_parse_input));
         }
@@ -4696,7 +4617,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         }
         if (set_shared_material_pointer != nullptr &&
             has_inline_hook_space(tmp_text_class, set_shared_material_pointer)) {
-            hook_limbus_owned_function(set_shared_material_pointer,
+            MSHookFunction(set_shared_material_pointer,
                            reinterpret_cast<void *>(replacement_tmp_set_shared_material),
                            reinterpret_cast<void **>(&g_original_tmp_set_shared_material));
         } else if (set_shared_material_pointer != nullptr) {
@@ -4711,7 +4632,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         if (set_material_pointer != nullptr &&
             set_material_pointer != set_shared_material_pointer &&
             has_inline_hook_space(tmp_text_class, set_material_pointer)) {
-            hook_limbus_owned_function(set_material_pointer,
+            MSHookFunction(set_material_pointer,
                            reinterpret_cast<void *>(replacement_tmp_set_material),
                            reinterpret_cast<void **>(&g_original_tmp_set_material));
         } else if (set_material_pointer != nullptr &&
@@ -4724,7 +4645,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 set_material_pointer,
                 reinterpret_cast<void *>(g_original_tmp_set_material));
         if (ui_pointer != nullptr && has_inline_hook_space(ui_text_class, ui_pointer)) {
-            hook_limbus_owned_function(ui_pointer, reinterpret_cast<void *>(replacement_ui_set_text),
+            MSHookFunction(ui_pointer, reinterpret_cast<void *>(replacement_ui_set_text),
                            reinterpret_cast<void **>(&g_original_ui_set_text));
         } else if (ui_pointer != nullptr) {
             LT_LOGW("Skip unsafe adjacent UI.Text.set_text pointer=%p", ui_pointer);
@@ -4732,24 +4653,17 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         void *set_text_one_pointer = nullptr;
         if (tmp_set_text_one_method != nullptr) {
             memcpy(&set_text_one_pointer, tmp_set_text_one_method, sizeof(void *));
-            hook_limbus_owned_function(set_text_one_pointer,
+            MSHookFunction(set_text_one_pointer,
                            reinterpret_cast<void *>(replacement_tmp_set_text_one),
                            reinterpret_cast<void **>(&g_original_tmp_set_text_one));
         }
         void *set_text_string_pointer = nullptr;
         if (tmp_set_text_string_method != nullptr) {
             memcpy(&set_text_string_pointer, tmp_set_text_string_method, sizeof(void *));
-            hook_limbus_owned_function(set_text_string_pointer,
+            MSHookFunction(set_text_string_pointer,
                            reinterpret_cast<void *>(replacement_tmp_set_text_string),
                            reinterpret_cast<void **>(&g_original_tmp_set_text_string));
         }
-        auto next_managed_method = [&](void *pointer) -> uintptr_t {
-            const auto address = reinterpret_cast<uintptr_t>(pointer);
-            const auto position = std::lower_bound(managed_method_addresses.begin(),
-                                                   managed_method_addresses.end(), address);
-            return position != managed_method_addresses.end() && *position == address &&
-                    position + 1 != managed_method_addresses.end() ? *(position + 1) : 0;
-        };
         auto language_getter_valid = [&](const void *method, void *owner, const char *name) {
             if (!method || !owner || !method_get_name || !method_get_param_count ||
                 !method_get_flags || !method_get_return_type || !method_get_class ||
@@ -4760,7 +4674,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             const char *actual_name = method_get_name(method);
             if (!actual_name || strcmp(actual_name, name) || method_get_class(method) != owner ||
                 method_get_param_count(method) != 0 || method_is_generic(method) ||
-                !limbus_language::is_instance_method(method, method_get_flags)) return false;
+                !limbus_method::is_instance_method(method, method_get_flags)) return false;
             const void *return_type = method_get_return_type(method);
             void *enum_class = return_type ? class_from_type(return_type) : nullptr;
             if (!enum_class || !class_is_enum(enum_class)) return false;
@@ -4787,12 +4701,8 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 get_language_method, get_language_class, "GetLanguage");
         const bool global_language_valid = language_getter_valid(
                 get_global_language_method, get_global_language_class, "get_Lang");
-        const bool option_language_installed = option_language_valid && install_language_getter(
-                "LocalGameOptionData.GetLanguage", get_language_pointer, next_managed_method(get_language_pointer));
-        const bool global_language_installed = global_language_valid && install_language_getter(
-                "GlobalGameManager.get_Lang", get_global_language_pointer, next_managed_method(get_global_language_pointer));
-        // All four components use the same verified Int32 JP language contract.
-        if (global_language_installed) {
+        // Read the original language contract for font bindings. The game's getters stay intact.
+        if (global_language_valid) {
             for (size_t slot = 0; slot < 4; ++slot) {
                 void *klass = language_font_classes[slot];
                 auto &binding = g_language_font_bindings[slot];
@@ -4863,7 +4773,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 void *pointer = nullptr;
                 memcpy(&pointer, scenario, sizeof(pointer));
                 if (correct_type && has_inline_hook_space(story_data_class, pointer)) {
-                    hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement_story_scenario),
+                    MSHookFunction(pointer, reinterpret_cast<void *>(replacement_story_scenario),
                             reinterpret_cast<void **>(&g_original_story_scenario));
                     if (g_original_story_scenario) acquisition_pointers.insert(pointer);
                 }
@@ -4882,7 +4792,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 void *pointer = nullptr;
                 memcpy(&pointer, entry, sizeof(pointer));
                 if (!correct_type || acquisition_pointers.count(pointer) || !has_inline_hook_space(klass, pointer)) return;
-                hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement), reinterpret_cast<void **>(original));
+                MSHookFunction(pointer, reinterpret_cast<void *>(replacement), reinterpret_cast<void **>(original));
                 if (*original) acquisition_pointers.insert(pointer);
             };
             hook_collection_getter(g_action_event_text_class, "GetOptions", "TextData_DungeonEvents_Options", false,
@@ -4907,7 +4817,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 void *pointer = nullptr;
                 memcpy(&pointer, rpg_data, sizeof(pointer));
                 if (correct_type && !acquisition_pointers.count(pointer) && has_inline_hook_space(g_rpg_dialogue_class, pointer)) {
-                    hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement_rpg_dialogue_data),
+                    MSHookFunction(pointer, reinterpret_cast<void *>(replacement_rpg_dialogue_data),
                             reinterpret_cast<void **>(&g_original_rpg_dialogue_data));
                     if (g_original_rpg_dialogue_data) acquisition_pointers.insert(pointer);
                 }
@@ -4925,7 +4835,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 void *pointer = nullptr;
                 memcpy(&pointer, skill_level, sizeof(pointer));
                 if (correct_type && has_inline_hook_space(g_skill_text_class, pointer)) {
-                    hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement_skill_level),
+                    MSHookFunction(pointer, reinterpret_cast<void *>(replacement_skill_level),
                             reinterpret_cast<void **>(&g_original_skill_level));
                     if (g_original_skill_level) acquisition_pointers.insert(pointer);
                 }
@@ -4942,7 +4852,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 void *pointer = nullptr;
                 memcpy(&pointer, entry, sizeof(pointer));
                 if (!returns_void || acquisition_pointers.count(pointer) || !has_inline_hook_space(klass, pointer)) return;
-                hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement), reinterpret_cast<void **>(original));
+                MSHookFunction(pointer, reinterpret_cast<void *>(replacement), reinterpret_cast<void **>(original));
                 if (*original) acquisition_pointers.insert(pointer);
             };
             hook_ui_loader(ui_loader_class, replacement_ui_loader, &g_original_ui_loader);
@@ -4964,7 +4874,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 void *pointer = nullptr;
                 memcpy(&pointer, implicit_method, sizeof(pointer));
                 if (returns_string && has_inline_hook_space(ui_text_data_class, pointer)) {
-                    hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement_ui_text_implicit),
+                    MSHookFunction(pointer, reinterpret_cast<void *>(replacement_ui_text_implicit),
                             reinterpret_cast<void **>(&g_original_ui_text_implicit));
                     if (g_original_ui_text_implicit) acquisition_pointers.insert(pointer);
                 }
@@ -5021,17 +4931,17 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                     }
                     size_t slot = acquisition_counts[parameter_count];
                     if (parameter_count == 0) {
-                        hook_limbus_owned_function(pointer,
+                        MSHookFunction(pointer,
                                 reinterpret_cast<void *>(kAcquisition0Replacements[slot]),
                                 reinterpret_cast<void **>(&g_acquisition0[slot]));
                         if (g_acquisition0[slot] == nullptr) continue;
                     } else if (parameter_count == 1) {
-                        hook_limbus_owned_function(pointer,
+                        MSHookFunction(pointer,
                                 reinterpret_cast<void *>(kAcquisition1Replacements[slot]),
                                 reinterpret_cast<void **>(&g_acquisition1[slot]));
                         if (g_acquisition1[slot] == nullptr) continue;
                     } else {
-                        hook_limbus_owned_function(pointer,
+                        MSHookFunction(pointer,
                                 reinterpret_cast<void *>(kAcquisition2Replacements[slot]),
                                 reinterpret_cast<void **>(&g_acquisition2[slot]));
                         if (g_acquisition2[slot] == nullptr) continue;
@@ -5050,12 +4960,8 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 set_text_string_pointer, reinterpret_cast<void *>(g_original_tmp_set_text_string));
         LT_LOGI("UI.Text translation hook setter=%p/%p",
                 ui_pointer, reinterpret_cast<void *>(g_original_ui_set_text));
-        LT_LOGI("Japanese language patches option=%d global=%d metadata_valid=%d/%d",
-                option_language_installed, global_language_installed,
-                option_language_valid, global_language_valid);
-        char language_status[128];
-        snprintf(language_status, sizeof(language_status), "language_option=%d language_global=%d metadata_valid=%d/%d",
-                 option_language_installed, global_language_installed,
+        char language_status[96];
+        snprintf(language_status, sizeof(language_status), "language_metadata_valid=%d/%d",
                  option_language_valid, global_language_valid);
         append_native_metadata("font-state.log", language_status);
         LT_LOGI("Text acquisition hooks installed argc0=%zu argc1=%zu argc2=%zu ready=%d",
@@ -5116,7 +5022,7 @@ bool install_global_dlsym_lifecycle_hook() {
     pthread_mutex_unlock(&g_lock);
     void *target = dlsym(RTLD_DEFAULT, "dlsym");
     if (target == nullptr) return false;
-    hook_limbus_owned_function(target, reinterpret_cast<void *>(replacement_unity_dlsym),
+    MSHookFunction(target, reinterpret_cast<void *>(replacement_unity_dlsym),
                    reinterpret_cast<void **>(&g_original_unity_dlsym));
     if (g_original_unity_dlsym == nullptr) {
         LT_LOGW("Unable to hook dlsym lifecycle target=%p", target);
@@ -5135,16 +5041,6 @@ bool install_global_dlsym_lifecycle_hook() {
 }
 
 }  // namespace
-
-void record_limbus_integrity_diagnostic(bool protection, bool accepted) {
-    char event[100];
-    snprintf(event, sizeof(event), "scope=%s owned_changes_only=%d", protection ? "protection" : "il2cpp", accepted);
-    append_native_metadata("integrity-state.log", event);
-}
-
-void record_limbus_integrity_detail(const char *detail) {
-    append_native_metadata("integrity-state.log", detail);
-}
 
 void configure_limbus_translation_runtime(const char *active_index_pointer, bool live_resources) {
     if (active_index_pointer == nullptr || active_index_pointer[0] != '/') {

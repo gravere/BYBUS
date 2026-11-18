@@ -263,23 +263,6 @@ public class NativeEngine {
         sFlag = true;
     }
 
-    public static void scanLimbusNativeSyscalls(String nativeLibraryDir) {
-        try {
-            nativeScanLimbusNativeSyscalls(nativeLibraryDir);
-        } catch (Throwable e) {
-            VLog.e(TAG, VLog.getStackTraceString(e));
-        }
-    }
-
-    public static int maintainLimbusAppSealingPatches() {
-        try {
-            return nativeMaintainLimbusAppSealingPatches();
-        } catch (Throwable e) {
-            VLog.e(TAG, VLog.getStackTraceString(e));
-            return -1;
-        }
-    }
-
     public static void configureLimbusTranslationRuntime(String activeIndexPointer) {
         try {
             nativeConfigureLimbusTranslationRuntime(activeIndexPointer, VirtualCore.getConfig().prepareLimbusTranslationResources());
@@ -570,9 +553,7 @@ public class NativeEngine {
 
     private static native void nativeHookLimbusFindClass();
 
-    private static native void nativeScanLimbusNativeSyscalls(String nativeLibraryDir);
 
-    private static native int nativeMaintainLimbusAppSealingPatches();
 
     private static native void nativeConfigureLimbusTranslationRuntime(String activeIndexPointer, boolean liveResources);
 

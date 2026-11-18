@@ -170,7 +170,6 @@ public final class VClient extends IVClient.Stub {
     private int mTargetSdkVersion;
     private ConditionVariable mBindingApplicationLock;
     private boolean mEnvironmentPrepared = false;
-    private volatile boolean mHideHostPackageForLimbus = false;
     private static final ThreadLocal<Boolean> sApplyingLimbusPlayCoreLocalTesting = new ThreadLocal<>();
     private static final HashSet<String> sLoggedLimbusPlayCoreDirs = new HashSet<>();
     private static final String LIMBUS_PLAYCORE_LOCAL_TESTING_PROP = "debug.limbus.playcore.local_testing";
@@ -185,7 +184,6 @@ public final class VClient extends IVClient.Stub {
             "com.google.android.gms.microg.settings";
     private static final AtomicBoolean sLimbusTranslationRedirectGateStarted = new AtomicBoolean(false);
     private static final AtomicBoolean sLimbusFrameworkCredentialServiceDisabled = new AtomicBoolean(false);
-    private ServiceConnection mLimbusAppSealingIpServiceConnection;
     private int systemPid;
 
     public InstalledAppInfo getAppInfo() {
@@ -224,10 +222,6 @@ public final class VClient extends IVClient.Stub {
 
     public Object getCurrentLoadedApk() {
         return mBoundApplication != null ? mBoundApplication.info : null;
-    }
-
-    public boolean shouldHideHostPackageForLimbus() {
-        return mHideHostPackageForLimbus;
     }
 
     public int getCurrentTargetSdkVersion() {
@@ -622,9 +616,6 @@ public final class VClient extends IVClient.Stub {
         if (ActivityThread.AppBindData.providers != null) {
             ActivityThread.AppBindData.providers.set(boundApp, data.providers);
         }
-        if (LoadedApk.mSecurityViolation != null) {
-            LoadedApk.mSecurityViolation.set(mBoundApplication.info, false);
-        }
         if (VMRuntime.getRuntime != null && VMRuntime.setTargetSdkVersion != null) {
             VMRuntime.setTargetSdkVersion.call(VMRuntime.getRuntime.call(), data.appInfo.targetSdkVersion);
         }
@@ -683,8 +674,6 @@ public final class VClient extends IVClient.Stub {
             applyLimbusVisibleLoadedApkDirs(data.info, packageName);
             applyLimbusThreadContextClassLoader(data.info, "bindApplication");
         }
-        boolean limbusAppSealing = shouldBypassLimbusAppSealingApplication(data.appInfo, loadedApkInfo);
-        mHideHostPackageForLimbus = limbusAppSealing;
         Application existingApplication = LoadedApk.mApplication.get(data.info);
         Log.i("LimbusVA", "VClient.bindApplication appInfo package=" + data.appInfo.packageName
                 + " className=" + data.appInfo.className
@@ -712,68 +701,14 @@ public final class VClient extends IVClient.Stub {
                 + " process=" + processName + " info=" + data.info);
 
         try {
-            if (limbusAppSealing) {
-                logLimbusAppSealingEnvironment(context, data.appInfo, loadedApkInfo);
-                if (isLimbusAppSealingNativeLibMissing(data.appInfo)) {
-                    Log.w("LimbusVA", "VClient.bindApplication bypass AppSealing Application because native libs are missing");
-                    data.appInfo.className = Application.class.getName();
-                    if (loadedApkInfo != null) {
-                        loadedApkInfo.className = Application.class.getName();
-                    }
-                } else {
-                    Log.i("LimbusVA", "VClient.bindApplication allow AppSealing Application to load sealed dex");
-                }
-            }
             if(LoadedApk.mApplication != null) {
                 LoadedApk.mApplication.set(data.info, null);
             }
-            AtomicBoolean limbusScannerRunning = null;
-            Thread limbusScanner = null;
-            /*
-             * AppSealing 加载后会很快使用不经过 Java 层的结束进程路径。后台线程需要在
-             * Application 初始化期间持续寻找刚加载完成的代码，并尽早接管这些固定位置。
-             * Android 16 的失效回溯地址已由原生信号保护单独处理，因此这里不能停用扫描。
-             */
-            if (limbusAppSealing) {
-                limbusScannerRunning = new AtomicBoolean(true);
-                AtomicBoolean scannerRunning = limbusScannerRunning;
-                String nativeLibraryDir = data.appInfo.nativeLibraryDir;
-                limbusScanner = new Thread(() -> {
-                    long deadline = System.currentTimeMillis() + 4000L;
-                    int scans = 0;
-                    while (scannerRunning.get() && System.currentTimeMillis() < deadline) {
-                        NativeEngine.scanLimbusNativeSyscalls(nativeLibraryDir);
-                        scans++;
-                        try {
-                            Thread.sleep(10L);
-                        } catch (InterruptedException ignored) {
-                            Thread.currentThread().interrupt();
-                            break;
-                        }
-                    }
-                    Log.i("LimbusVA", "VClient.bindApplication AppSealing syscall scanner stopped scans=" + scans);
-                }, "limbus-appsealing-syscall-scan");
-                limbusScanner.setDaemon(true);
-                limbusScanner.start();
-            }
-            try {
-                mInitialApplication = LoadedApk.makeApplication.callWithException(data.info, false, null);
-                if (mInitialApplication == null) {
-                    throw new IllegalStateException("Application creation returned no instance");
-                }
-            } finally {
-                if (limbusScannerRunning != null) {
-                    limbusScannerRunning.set(false);
-                }
-                if (limbusScanner != null) {
-                    limbusScanner.interrupt();
-                }
+            mInitialApplication = LoadedApk.makeApplication.callWithException(data.info, false, null);
+            if (mInitialApplication == null) {
+                throw new IllegalStateException("Application creation returned no instance");
             }
             Log.i("LimbusVA", "VClient.bindApplication makeApplication success app=" + mInitialApplication);
-            if (limbusAppSealing) {
-                NativeEngine.scanLimbusNativeSyscalls(data.appInfo.nativeLibraryDir);
-                startLimbusAppSealingPatchMaintainer();
-            }
         } catch (Throwable e) {
             Log.e("LimbusVA", "VClient.bindApplication makeApplication failed", e);
             throw new RuntimeException("Unable to makeApplication", e);
@@ -818,11 +753,6 @@ public final class VClient extends IVClient.Stub {
             Log.i("LimbusVA", "VClient.bindApplication before callApplicationOnCreate app=" + mInitialApplication);
             mInstrumentation.callApplicationOnCreate(mInitialApplication);
             Log.i("LimbusVA", "VClient.bindApplication after callApplicationOnCreate app=" + mInitialApplication);
-            if (limbusAppSealing
-                    && packageName.equals(processName)
-                    && isLimbusAppSealingIpServiceExperimentEnabled()) {
-                bindLimbusAppSealingIpService(mInitialApplication);
-            }
             InvocationStubManager.getInstance().checkEnv(HCallbackStub.class);
             Log.i("LimbusVA", "VClient.bindApplication after HCallback check");
             Application createdApp = ActivityThread.mInitialApplication.get(mainThread);
@@ -1169,7 +1099,7 @@ public final class VClient extends IVClient.Stub {
                 Os.setenv("V_LIMBUS_PROCESS_NAME", guestProcess, true);
                 Log.i("LimbusVA", "Native guest process identity=" + guestProcess);
                 Os.setenv("V_LIMBUS_NATIVE_PROFILE", "", true);
-                Os.setenv("V_LIMBUS_NATIVE_LAYOUT", "", true);
+
                 // The cached ApplicationPackageManager can share the hooked mPM. Read the
                 // captured original Binder so signatures and source paths are genuinely installed.
                 android.content.pm.PackageInfo outsidePackage = readRealLimbusPackage();
@@ -1177,12 +1107,10 @@ public final class VClient extends IVClient.Stub {
                 com.lody.virtual.helper.compat.LimbusNativeProfile.Match nativeMatch =
                         com.lody.virtual.helper.compat.LimbusNativeProfile.inspect(
                         VirtualCore.get().getContext(), outsidePackage, outsideInfo);
-                // Publish a complete layout before enabling its family; never reuse a previous build.
-                Os.setenv("V_LIMBUS_NATIVE_LAYOUT", nativeMatch.layout, true);
+
                 Os.setenv("V_LIMBUS_NATIVE_PROFILE", nativeMatch.id, true);
                 Log.i("LimbusVA", "Native compatibility profile=" + (nativeMatch.id.isEmpty()
-                        ? "unverified; fixed-location operations disabled" : nativeMatch.id)
-                        + " layout=" + nativeMatch.layout);
+                        ? "unverified" : nativeMatch.id));
                 if (!nativeMatch.approved()) throw new IllegalStateException("Installed Limbus native structure was not approved");
                 if (!TextUtils.isEmpty(outsideInfo.nativeLibraryDir)) {
                     Os.setenv("V_LIMBUS_REAL_LIB_DIR", outsideInfo.nativeLibraryDir, true);
@@ -1392,17 +1320,6 @@ public final class VClient extends IVClient.Stub {
 
     }
 
-    private static boolean shouldBypassLimbusAppSealingApplication(ApplicationInfo appInfo, ApplicationInfo loadedApkInfo) {
-        if (appInfo == null || !LIMBUS_PACKAGE_NAME.equals(appInfo.packageName)) {
-            return false;
-        }
-        String className = appInfo.className;
-        if (className == null && loadedApkInfo != null) {
-            className = loadedApkInfo.className;
-        }
-        return "com.inka.appsealing.AppSealingApplication".equals(className);
-    }
-
     /**
      * 在《边狱公司》的虚拟进程中关闭 Android 14 及以上的框架 CredentialManager。
      *
@@ -1443,82 +1360,6 @@ public final class VClient extends IVClient.Stub {
             // 失败时恢复状态，允许应用绑定流程中的后续调用再次尝试，而不是永久吞掉故障。
             sLimbusFrameworkCredentialServiceDisabled.set(false);
             Log.e("LimbusVA", "Unable to disable framework CredentialManager for Limbus", error);
-        }
-    }
-
-    private static void startLimbusAppSealingPatchMaintainer() {
-        Thread maintainer = new Thread(() -> {
-            long deadline = System.currentTimeMillis() + 30_000L;
-            int checks = 0;
-            int restores = 0;
-            int result = 0;
-            while (System.currentTimeMillis() < deadline) {
-                result = NativeEngine.maintainLimbusAppSealingPatches();
-                checks++;
-                if (result == 2) {
-                    restores++;
-                } else if (result < 0) {
-                    break;
-                }
-                try {
-                    Thread.sleep(2L);
-                } catch (InterruptedException ignored) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-            }
-            Log.i("LimbusVA", "AppSealing precise patch maintainer stopped checks="
-                    + checks + " restores=" + restores + " result=" + result);
-        }, "limbus-appsealing-patch-maintainer");
-        maintainer.setDaemon(true);
-        maintainer.start();
-    }
-
-    private static boolean isLimbusAppSealingNativeLibMissing(ApplicationInfo appInfo) {
-        return appInfo == null
-                || appInfo.nativeLibraryDir == null
-                || !new File(appInfo.nativeLibraryDir, "libcovault-appsec.so").isFile();
-    }
-
-    private static boolean isLimbusAppSealingIpServiceExperimentEnabled() {
-        try {
-            Class<?> systemProperties = Class.forName("android.os.SystemProperties");
-            Object value = systemProperties
-                    .getMethod("getBoolean", String.class, boolean.class)
-                    .invoke(null, LIMBUS_APPSEALING_IP_SERVICE_PROP, false);
-            return Boolean.TRUE.equals(value);
-        } catch (Throwable error) {
-            Log.w("LimbusVA", "Unable to read " + LIMBUS_APPSEALING_IP_SERVICE_PROP, error);
-            return false;
-        }
-    }
-
-    private void bindLimbusAppSealingIpService(Context context) {
-        if (context == null || mLimbusAppSealingIpServiceConnection != null) {
-            return;
-        }
-        Intent intent = new Intent();
-        intent.setClassName("com.ProjectMoon.LimbusCompany", "com.inka.appsealing.AppSealingIPService");
-        mLimbusAppSealingIpServiceConnection = new ServiceConnection() {
-            @Override
-            public void onServiceConnected(ComponentName name, IBinder service) {
-                Log.i("LimbusVA", "AppSealingIPService connected name=" + name + " binder=" + service);
-            }
-
-            @Override
-            public void onServiceDisconnected(ComponentName name) {
-                Log.i("LimbusVA", "AppSealingIPService disconnected name=" + name);
-            }
-        };
-        try {
-            boolean bound = context.bindService(intent, mLimbusAppSealingIpServiceConnection, Context.BIND_AUTO_CREATE);
-            Log.i("LimbusVA", "Bind AppSealingIPService requested bound=" + bound + " intent=" + intent);
-            if (!bound) {
-                mLimbusAppSealingIpServiceConnection = null;
-            }
-        } catch (Throwable error) {
-            mLimbusAppSealingIpServiceConnection = null;
-            Log.w("LimbusVA", "Unable to bind AppSealingIPService", error);
         }
     }
 
@@ -1601,15 +1442,12 @@ public final class VClient extends IVClient.Stub {
             }
             linkPlayCoreLocalTestingApk(outsideInfo.sourceDir, new File(localTestingDir, "UnityStreamingAssetsPack-master.apk"));
             if (outsideInfo.splitSourceDirs != null) {
-                for (String splitSourceDir : outsideInfo.splitSourceDirs) {
-                    String splitName = new File(splitSourceDir).getName();
-                    if (!splitName.startsWith("split_") || !splitName.endsWith(".apk")) {
-                        continue;
-                    }
-                    String packName = splitName.substring("split_".length(), splitName.length() - ".apk".length());
-                    if (packName.startsWith("config.")) {
-                        continue;
-                    }
+                String[] names = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ? outsideInfo.splitNames : null;
+                for (int i = 0; i < outsideInfo.splitSourceDirs.length; i++) {
+                    String splitSourceDir = outsideInfo.splitSourceDirs[i];
+                    String packName = com.lody.virtual.helper.compat.AssetPackNames.nameAt(
+                            names, outsideInfo.splitSourceDirs, i);
+                    if (packName == null) continue;
                     linkPlayCoreLocalTestingApk(splitSourceDir, new File(localTestingDir, packName + "-master.apk"));
                 }
             }
@@ -2029,42 +1867,6 @@ public final class VClient extends IVClient.Stub {
         if (info == null || info.applicationInfo == null)
             throw new IllegalStateException("Real installed Limbus package unavailable");
         return info;
-    }
-
-    private static void logLimbusAppSealingEnvironment(Context context, ApplicationInfo appInfo, ApplicationInfo loadedApkInfo) {
-        if (context == null || appInfo == null) {
-            return;
-        }
-        Log.i("LimbusVA", "AppSealing env appInfo sourceDir=" + appInfo.sourceDir
-                + " publicSourceDir=" + appInfo.publicSourceDir
-                + " splitSourceDirs=" + Arrays.toString(appInfo.splitSourceDirs)
-                + " nativeLibraryDir=" + appInfo.nativeLibraryDir
-                + " dataDir=" + appInfo.dataDir
-                + " className=" + appInfo.className);
-        if (loadedApkInfo != null) {
-            Log.i("LimbusVA", "AppSealing env loadedApkInfo sourceDir=" + loadedApkInfo.sourceDir
-                    + " publicSourceDir=" + loadedApkInfo.publicSourceDir
-                    + " splitSourceDirs=" + Arrays.toString(loadedApkInfo.splitSourceDirs)
-                    + " nativeLibraryDir=" + loadedApkInfo.nativeLibraryDir
-                    + " dataDir=" + loadedApkInfo.dataDir
-                    + " className=" + loadedApkInfo.className);
-        }
-        try {
-            PackageManager pm = context.getPackageManager();
-            String installer = pm.getInstallerPackageName(appInfo.packageName);
-            PackageInfo packageInfo = pm.getPackageInfo(appInfo.packageName, PackageManager.GET_SIGNATURES);
-            int signatureCount = packageInfo.signatures == null ? 0 : packageInfo.signatures.length;
-            Log.i("LimbusVA", "AppSealing env packageManager installer=" + installer
-                    + " versionCode=" + packageInfo.versionCode
-                    + " signatures=" + signatureCount
-                    + " applicationInfo.sourceDir=" + packageInfo.applicationInfo.sourceDir
-                    + " applicationInfo.splitSourceDirs=" + Arrays.toString(packageInfo.applicationInfo.splitSourceDirs));
-        } catch (Throwable error) {
-            Log.w("LimbusVA", "AppSealing env packageManager probe failed", error);
-        }
-        Log.i("LimbusVA", "AppSealing env files sourceExists=" + new File(appInfo.sourceDir).exists()
-                + " nativeLibExists=" + (appInfo.nativeLibraryDir != null && new File(appInfo.nativeLibraryDir).exists())
-                + " dataDirExists=" + (appInfo.dataDir != null && new File(appInfo.dataDir).exists()));
     }
 
     private Context createPackageContext(ApplicationInfo appInfo) {

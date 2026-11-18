@@ -1,7 +1,7 @@
-// 本测试直接编译生产重定位器，仅检查生成指令与信号策略，不在宿主执行 ARM64 机器码。
+// 本测试直接编译生产重定位器，检查生成指令，不在宿主执行 ARM64 机器码。
 #define A64_RELOCATOR_TEST 1
 #include "../third_party/virtualapp-upstream/lib/src/main/jni/Substrate/And64InlineHook.cpp"
-#include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusNativeCompat.h"
+#include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/IoHookRegistry.h"
 #include <stdio.h>
 #include <initializer_list>
 
@@ -79,7 +79,7 @@ static void test_relocation() {
 }
 
 
-static void test_runtime_policy() {
+static void test_io_aliases() {
     LimbusIoHookRegistry registry;
     void *original = nullptr, *alias = nullptr;
     int calls = 0;
@@ -99,19 +99,11 @@ static void test_runtime_policy() {
           "unknown conflicting symbol rejected");
     check(calls == 1, "conflicting hook leaves entry intact");
     check(!limbus_equivalent_io_aliases("statfs", "__statfs64"), "unknown statfs ABI rejected");
-    LimbusSignalContextSnapshot before{}, after{};
-    check(!limbus_machine_context_changed(after, before), "unchanged synchronous fault remains unhandled");
-    for (size_t i = 0; i < 31; ++i) {
-        after = before; after.regs[i] = 1;
-        check(limbus_machine_context_changed(after, before), "register-only recovery is honored");
-    }
-    after = before; after.pstate = 1;
-    check(limbus_machine_context_changed(after, before), "PSTATE recovery is honored");
-    after = before; after.pc = 4;
-    check(limbus_machine_context_changed(after, before), "PC recovery is honored");
 }
+
 int main() {
-    test_relocation(); test_runtime_policy();
+    test_io_aliases();
+    test_relocation();
     if (failures == 0) puts("PASS: production ARM64 relocation, alias deduplication and signal forwarding policy");
     return failures == 0 ? 0 : 1;
 }

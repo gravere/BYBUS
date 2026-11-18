@@ -30,7 +30,6 @@
 #include <netdb.h>
 
 #include "IORelocator.h"
-#include "MapsRedirector.h"
 #include "SandboxFs.h"
 #include "canonicalize_md.h"
 #include "Symbol.h"
@@ -48,7 +47,6 @@ int g_api_level;
 bool execve_process = false;
 bool g_limbus_container_process_known = false;
 bool g_limbus_container_process = false;
-static thread_local bool g_proc_redirect_active = false;
 
 #include "utils/zString.h"
 #include "utils/utils.h"
@@ -92,66 +90,6 @@ bool is_limbus_container_process() {
     return is_limbus_container;
 }
 
-static int block_limbus_signal_int() {
-    errno = ESRCH;
-    return -1;
-}
-
-static long block_limbus_signal_long() {
-    errno = ESRCH;
-    return -1;
-}
-
-static bool should_block_limbus_terminating_signal(int sig) {
-    if (!is_limbus_container_process()) {
-        return false;
-    }
-    switch (sig) {
-        case SIGKILL:
-        case SIGTERM:
-        case SIGABRT:
-        case SIGQUIT:
-        case SIGTRAP:
-        case SIGUSR1:
-        case SIGUSR2:
-            return true;
-        default:
-            return false;
-    }
-}
-
-static int reverse_readlink_result(char *buf, size_t bufsiz, int ret) {
-    if (ret <= 0 || buf == nullptr || bufsiz == 0) {
-        return ret;
-    }
-    char link_temp[PATH_MAX];
-    size_t copy_len = static_cast<size_t>(ret);
-    if (copy_len >= sizeof(link_temp)) {
-        copy_len = sizeof(link_temp) - 1;
-    }
-    memcpy(link_temp, buf, copy_len);
-    link_temp[copy_len] = '\0';
-
-    char reversed_temp[PATH_MAX];
-    const char *reversed = reverse_relocate_path(link_temp, reversed_temp, sizeof(reversed_temp));
-    if (reversed == nullptr || strcmp(reversed, link_temp) == 0) {
-        return ret;
-    }
-    size_t reversed_len = strlen(reversed);
-    if (reversed_len > bufsiz) {
-        reversed_len = bufsiz;
-    }
-    memcpy(buf, reversed, reversed_len);
-    if (strstr(link_temp, "io.github.gravere.bybus") != nullptr
-            || strstr(link_temp, "/virtual/") != nullptr) {
-        ALOGI("Limbus readlink reverse %s -> %.*s",
-              link_temp,
-              static_cast<int>(reversed_len),
-              buf);
-    }
-    return static_cast<int>(reversed_len);
-}
-
 void init_limbus_container_process_flag() {
     char *process_name = get_process_name();
     g_limbus_container_process = process_name
@@ -162,28 +100,6 @@ void init_limbus_container_process_flag() {
           g_limbus_container_process ? 1 : 0,
           process_name != nullptr ? process_name : "(null)");
     free(process_name);
-}
-
-static int redirect_proc_file_guarded(const char *pathname, int flags, int mode) {
-    if (g_proc_redirect_active) {
-        return 0;
-    }
-    g_proc_redirect_active = true;
-    int fake_fd = redirect_proc_file(pathname, flags, mode);
-    g_proc_redirect_active = false;
-    return fake_fd;
-}
-
-void ignore_limbus_sigalrm_if_needed() {
-    if (!is_limbus_container_process()) {
-        return;
-    }
-    struct sigaction action;
-    memset(&action, 0, sizeof(action));
-    action.sa_handler = SIG_IGN;
-    sigemptyset(&action.sa_mask);
-    int ret = sigaction(SIGALRM, &action, nullptr);
-    ALOGE("sigaction >>> install Limbus container SIGALRM ignore ret : %d errno : %d", ret, errno);
 }
 
 void IOUniformer::init_env_before_all() {
@@ -331,271 +247,7 @@ HOOK_DEF(int, fstatat64, int dirfd, const char *pathname, struct stat *buf, int 
 }
 
 // int kill(pid_t pid, int sig);
-HOOK_DEF(int, kill, pid_t pid, int sig) {
-    pid_t self = getpid();
-    ALOGE("kill >>> pid : %d, sig : %d, self : %d", pid, sig, self);
-    if (should_block_limbus_terminating_signal(sig)) {
-        ALOGE("kill >>> blocked Limbus container signal : %d target : %d", sig, pid);
-        return block_limbus_signal_int();
-    }
-    if (pid == self && sig == SIGALRM) {
-        char *process_name = get_process_name();
-        bool is_limbus_container = process_name && strstr(process_name, "limbuszhcn") != nullptr;
-        ALOGE("kill >>> self SIGALRM process : %s, blocked : %d",
-              process_name ? process_name : "<null>", is_limbus_container ? 1 : 0);
-        free(process_name);
-        if (is_limbus_container) {
-            return 0;
-        }
-    }
-    return syscall(__NR_kill, pid, sig);
-}
-
-// unsigned int alarm(unsigned int seconds);
-HOOK_DEF(unsigned int, alarm, unsigned int seconds) {
-    if (seconds > 0 && is_limbus_container_process()) {
-        ALOGE("alarm >>> blocked Limbus container alarm seconds : %u", seconds);
-        return 0;
-    }
-    return orig_alarm(seconds);
-}
-
-// int setitimer(int which, const struct itimerval *new_value, struct itimerval *old_value);
-HOOK_DEF(int, setitimer, int which, const struct itimerval *new_value, struct itimerval *old_value) {
-    if (which == ITIMER_REAL && new_value && is_limbus_container_process()) {
-        ALOGE("setitimer >>> blocked Limbus container ITIMER_REAL sec : %ld usec : %ld interval_sec : %ld interval_usec : %ld",
-              static_cast<long>(new_value->it_value.tv_sec),
-              static_cast<long>(new_value->it_value.tv_usec),
-              static_cast<long>(new_value->it_interval.tv_sec),
-              static_cast<long>(new_value->it_interval.tv_usec));
-        if (old_value) {
-            memset(old_value, 0, sizeof(*old_value));
-        }
-        return 0;
-    }
-    return orig_setitimer(which, new_value, old_value);
-}
-
-// int raise(int sig);
-HOOK_DEF(int, raise, int sig) {
-    if (should_block_limbus_terminating_signal(sig)) {
-        ALOGE("raise >>> blocked Limbus container signal : %d", sig);
-        return block_limbus_signal_int();
-    }
-    if (sig == SIGALRM && is_limbus_container_process()) {
-        ALOGE("raise >>> blocked Limbus container SIGALRM");
-        return 0;
-    }
-    return orig_raise(sig);
-}
-
-// int tkill(pid_t tid, int sig);
-HOOK_DEF(int, tkill, pid_t tid, int sig) {
-    ALOGE("tkill >>> tid : %d, sig : %d", tid, sig);
-    if (should_block_limbus_terminating_signal(sig)) {
-        ALOGE("tkill >>> blocked Limbus container signal : %d tid : %d", sig, tid);
-        return block_limbus_signal_int();
-    }
-    if (sig == SIGALRM && is_limbus_container_process()) {
-        ALOGE("tkill >>> blocked Limbus container SIGALRM");
-        return 0;
-    }
-    return orig_tkill(tid, sig);
-}
-
-// int tgkill(pid_t tgid, pid_t tid, int sig);
-HOOK_DEF(int, tgkill, pid_t tgid, pid_t tid, int sig) {
-    pid_t self = getpid();
-    ALOGE("tgkill >>> tgid : %d, tid : %d, sig : %d, self : %d", tgid, tid, sig, self);
-    if (should_block_limbus_terminating_signal(sig)) {
-        ALOGE("tgkill >>> blocked Limbus container signal : %d tid : %d", sig, tid);
-        return block_limbus_signal_int();
-    }
-    if (tgid == self && sig == SIGALRM && is_limbus_container_process()) {
-        ALOGE("tgkill >>> blocked Limbus container self SIGALRM");
-        return 0;
-    }
-    return orig_tgkill(tgid, tid, sig);
-}
-
-// int pthread_kill(pthread_t thread, int sig);
-HOOK_DEF(int, pthread_kill, pthread_t thread, int sig) {
-    ALOGE("pthread_kill >>> sig : %d", sig);
-    if (should_block_limbus_terminating_signal(sig)) {
-        ALOGE("pthread_kill >>> blocked Limbus container signal : %d", sig);
-        return block_limbus_signal_int();
-    }
-    if (sig == SIGALRM && is_limbus_container_process()) {
-        ALOGE("pthread_kill >>> blocked Limbus container SIGALRM");
-        return 0;
-    }
-    return orig_pthread_kill(thread, sig);
-}
-
-// void exit(int status);
-HOOK_DEF(void, exit, int status) {
-    if (is_limbus_container_process()) {
-        ALOGE("exit >>> blocked Limbus container status : %d", status);
-        return;
-    }
-    orig_exit(status);
-}
-
-// void _exit(int status);
-HOOK_DEF(void, _exit, int status) {
-    if (is_limbus_container_process()) {
-        ALOGE("_exit >>> blocked Limbus container status : %d", status);
-        return;
-    }
-    orig__exit(status);
-}
-
-// void abort(void);
-HOOK_DEF(void, abort) {
-    if (is_limbus_container_process()) {
-        ALOGE("abort >>> blocked Limbus container");
-        return;
-    }
-    orig_abort();
-}
-
-// int sigaction(int signum, const struct sigaction *act, struct sigaction *oldact);
-HOOK_DEF(int, sigaction, int signum, const struct sigaction *act, struct sigaction *oldact) {
-    if (signum == SIGALRM && is_limbus_container_process()) {
-        ALOGE("sigaction >>> keep Limbus container SIGALRM ignored");
-        struct sigaction ignored;
-        memset(&ignored, 0, sizeof(ignored));
-        ignored.sa_handler = SIG_IGN;
-        sigemptyset(&ignored.sa_mask);
-        return orig_sigaction(signum, &ignored, oldact);
-    }
-    return orig_sigaction(signum, act, oldact);
-}
-
-// long syscall(long number, ...);
-HOOK_DEF(long, syscall, long number, ...) {
-    va_list args;
-    va_start(args, number);
-    long a1 = va_arg(args, long);
-    long a2 = va_arg(args, long);
-    long a3 = va_arg(args, long);
-    long a4 = va_arg(args, long);
-    long a5 = va_arg(args, long);
-    long a6 = va_arg(args, long);
-    va_end(args);
-
-    if (is_limbus_container_process()) {
-#ifdef __NR_openat
-        if (number == __NR_openat && a2 != 0) {
-            char temp[PATH_MAX];
-            const char *relocated_path = relocate_path(reinterpret_cast<const char *>(a2), temp, sizeof(temp));
-            if (relocated_path != NULL) {
-                int fake_fd = redirect_proc_file_guarded(relocated_path, static_cast<int>(a3), static_cast<int>(a4));
-                if (fake_fd != 0) {
-                    ALOGI("syscall >>> faked proc openat : %s", relocated_path);
-                    return fake_fd;
-                }
-            }
-        }
-#endif
-#ifdef __NR_readlinkat
-        if (number == __NR_readlinkat && a2 != 0 && a3 != 0 && a4 > 0) {
-            char temp[PATH_MAX];
-            const char *relocated_path = relocate_path(reinterpret_cast<const char *>(a2), temp, sizeof(temp));
-            if (relocated_path != NULL) {
-                long ret = orig_syscall(number, a1, reinterpret_cast<long>(relocated_path), a3, a4, a5, a6);
-                return reverse_readlink_result(reinterpret_cast<char *>(a3), static_cast<size_t>(a4), static_cast<int>(ret));
-            }
-        }
-#endif
-        if (number == __NR_kill && a1 == getpid() && a2 == SIGALRM) {
-            ALOGE("syscall >>> blocked Limbus container kill self SIGALRM");
-            return 0;
-        }
-        if (number == __NR_kill && should_block_limbus_terminating_signal(static_cast<int>(a2))) {
-            ALOGE("syscall >>> blocked Limbus container kill signal : %ld target : %ld", a2, a1);
-            return block_limbus_signal_long();
-        }
-#ifdef __NR_tkill
-        if (number == __NR_tkill && should_block_limbus_terminating_signal(static_cast<int>(a2))) {
-            ALOGE("syscall >>> blocked Limbus container tkill signal : %ld tid : %ld", a2, a1);
-            return block_limbus_signal_long();
-        }
-        if (number == __NR_tkill && a2 == SIGALRM) {
-            ALOGE("syscall >>> blocked Limbus container tkill SIGALRM tid : %ld", a1);
-            return 0;
-        }
-#endif
-#ifdef __NR_tgkill
-        if (number == __NR_tgkill && should_block_limbus_terminating_signal(static_cast<int>(a3))) {
-            ALOGE("syscall >>> blocked Limbus container tgkill signal : %ld tid : %ld", a3, a2);
-            return block_limbus_signal_long();
-        }
-        if (number == __NR_tgkill && a1 == getpid() && a3 == SIGALRM) {
-            ALOGE("syscall >>> blocked Limbus container tgkill self SIGALRM tid : %ld", a2);
-            return 0;
-        }
-#endif
-#ifdef __NR_rt_sigqueueinfo
-        if (number == __NR_rt_sigqueueinfo && should_block_limbus_terminating_signal(static_cast<int>(a2))) {
-            ALOGE("syscall >>> blocked Limbus container rt_sigqueueinfo signal : %ld pid : %ld", a2, a1);
-            return block_limbus_signal_long();
-        }
-#endif
-#ifdef __NR_rt_tgsigqueueinfo
-        if (number == __NR_rt_tgsigqueueinfo && should_block_limbus_terminating_signal(static_cast<int>(a3))) {
-            ALOGE("syscall >>> blocked Limbus container rt_tgsigqueueinfo signal : %ld tid : %ld", a3, a2);
-            return block_limbus_signal_long();
-        }
-#endif
-#ifdef __NR_pidfd_send_signal
-        if (number == __NR_pidfd_send_signal && should_block_limbus_terminating_signal(static_cast<int>(a2))) {
-            ALOGE("syscall >>> blocked Limbus container pidfd_send_signal signal : %ld fd : %ld", a2, a1);
-            return block_limbus_signal_long();
-        }
-#endif
-#ifdef __NR_exit
-        if (number == __NR_exit) {
-            ALOGE("syscall >>> blocked Limbus container exit status : %ld", a1);
-            return 0;
-        }
-#endif
-#ifdef __NR_exit_group
-        if (number == __NR_exit_group) {
-            ALOGE("syscall >>> blocked Limbus container exit_group status : %ld", a1);
-            return 0;
-        }
-#endif
-#ifdef __NR_setitimer
-        if (number == __NR_setitimer && a1 == ITIMER_REAL && a2 != 0) {
-            ALOGE("syscall >>> blocked Limbus container setitimer ITIMER_REAL");
-            return 0;
-        }
-#endif
-#ifdef __NR_rt_sigaction
-        if (number == __NR_rt_sigaction && a1 == SIGALRM) {
-            ALOGE("syscall >>> blocked Limbus container rt_sigaction SIGALRM");
-            return 0;
-        }
-#endif
-    }
-    return orig_syscall(number, a1, a2, a3, a4, a5, a6);
-}
-
-static int fake_limbus_proc_file(const char *pathname, int flags, int mode) {
-    char temp[PATH_MAX];
-    const char *relocated_path = relocate_path(pathname, temp, sizeof(temp));
-    if (relocated_path == NULL) {
-        return 0;
-    }
-    return redirect_proc_file_guarded(relocated_path, flags, mode);
-}
-
 HOOK_DEF(int, open, const char *pathname, int flags, int mode) {
-    int fake_fd = fake_limbus_proc_file(pathname, flags, mode);
-    if (fake_fd != 0) {
-        return fake_fd;
-    }
     char temp[PATH_MAX];
     const char *relocated_path = relocate_path(pathname, temp, sizeof(temp));
     if (relocated_path != NULL) {
@@ -606,10 +258,6 @@ HOOK_DEF(int, open, const char *pathname, int flags, int mode) {
 }
 
 HOOK_DEF(int, open64, const char *pathname, int flags, int mode) {
-    int fake_fd = fake_limbus_proc_file(pathname, flags, mode);
-    if (fake_fd != 0) {
-        return fake_fd;
-    }
     char temp[PATH_MAX];
     const char *relocated_path = relocate_path(pathname, temp, sizeof(temp));
     if (relocated_path != NULL) {
@@ -620,10 +268,6 @@ HOOK_DEF(int, open64, const char *pathname, int flags, int mode) {
 }
 
 HOOK_DEF(int, __open_2, const char *pathname, int flags) {
-    int fake_fd = fake_limbus_proc_file(pathname, flags, 0);
-    if (fake_fd != 0) {
-        return fake_fd;
-    }
     char temp[PATH_MAX];
     const char *relocated_path = relocate_path(pathname, temp, sizeof(temp));
     if (relocated_path != NULL) {
@@ -640,18 +284,10 @@ HOOK_DEF(int, openat64, int fd, const char *pathname, int flags, int mode) {
         errno = EACCES;
         return -1;
     }
-    int fake_fd = redirect_proc_file_guarded(relocated_path, flags, mode);
-    if (fake_fd != 0) {
-        return fake_fd;
-    }
     return syscall(__NR_openat, fd, relocated_path, flags, mode);
 }
 
 HOOK_DEF(FILE *, fopen, const char *pathname, const char *mode) {
-    int fake_fd = fake_limbus_proc_file(pathname, O_RDONLY | O_CLOEXEC, 0);
-    if (fake_fd > 0) {
-        return fdopen(fake_fd, mode);
-    }
     char temp[PATH_MAX];
     const char *relocated_path = relocate_path(pathname, temp, sizeof(temp));
     if (relocated_path != NULL) {
@@ -662,10 +298,6 @@ HOOK_DEF(FILE *, fopen, const char *pathname, const char *mode) {
 }
 
 HOOK_DEF(FILE *, fopen64, const char *pathname, const char *mode) {
-    int fake_fd = fake_limbus_proc_file(pathname, O_RDONLY | O_CLOEXEC, 0);
-    if (fake_fd > 0) {
-        return fdopen(fake_fd, mode);
-    }
     char temp[PATH_MAX];
     const char *relocated_path = relocate_path(pathname, temp, sizeof(temp));
     if (relocated_path != NULL) {
@@ -691,10 +323,6 @@ HOOK_DEF(int, __open, const char *pathname, int flags, int mode) {
     char temp[PATH_MAX];
     const char *relocated_path = relocate_path(pathname, temp, sizeof(temp));
     if (relocated_path && !((flags & O_WRONLY || flags & O_RDWR) && isReadOnly(relocated_path))) {
-        int fake_fd = redirect_proc_file_guarded(relocated_path, flags, mode);
-        if (fake_fd != 0) {
-            return fake_fd;
-        }
         return syscall(__NR_open, relocated_path, flags, mode);
     }
     errno = EACCES;
@@ -1121,13 +749,7 @@ HOOK_DEF(ssize_t, readlinkat, int dirfd, const char *pathname, char *buf, size_t
          * 保持 readlinkat 的 ssize_t 返回约定，确保 64 位调用方收到符号扩展后的 -1，
          * 避免把失败值误判成超大长度。32 位实现也沿用相同声明以保持源码一致。
          */
-        ssize_t ret = static_cast<ssize_t>(
-                syscall(__NR_readlinkat, dirfd, relocated_path, buf, bufsiz));
-        if (ret < 0) {
-            return ret;
-        }
-        return static_cast<ssize_t>(
-                reverse_readlink_result(buf, bufsiz, static_cast<int>(ret)));
+        return static_cast<ssize_t>(syscall(__NR_readlinkat, dirfd, relocated_path, buf, bufsiz));
     }
     errno = EACCES;
     return -1;
@@ -1190,10 +812,6 @@ HOOK_DEF(int, __openat, int fd, const char *pathname, int flags, int mode) {
     char temp[PATH_MAX];
     const char *relocated_path = relocate_path(pathname, temp, sizeof(temp));
     if (__predict_true(relocated_path)) {
-        int fake_fd = redirect_proc_file_guarded(relocated_path, flags, mode);
-        if (fake_fd != 0) {
-            return fake_fd;
-        }
         if ((flags & O_ACCMODE) == O_WRONLY) {
             flags &= ~O_ACCMODE;
             flags |= O_RDWR;
@@ -2431,9 +2049,6 @@ __END_DECLS
 void onSoLoaded(const char *name, void *handle) {
 }
 
-void scanLimbusNativeSyscalls(const char *nativeLibraryDir) {
-}
-
 bool relocate_linker(const char* LINKER_PATH) {
     intptr_t linker_addr, dlopen_off, symbol;
     if ((linker_addr = get_addr(LINKER_PATH)) == 0) {
@@ -2517,7 +2132,6 @@ void startIOHook(int api_level) {
 
     if (handle) {
         init_limbus_container_process_flag();
-        ignore_limbus_sigalrm_if_needed();
         HOOK_SYMBOL(handle, faccessat);
         HOOK_SYMBOL(handle, __openat);
         HOOK_SYMBOL(handle, fchmodat);
@@ -2537,18 +2151,6 @@ void startIOHook(int api_level) {
         HOOK_SYMBOL(handle, __getcwd);
         HOOK_SYMBOL(handle, chdir);
         HOOK_SYMBOL(handle, execve);
-        HOOK_SYMBOL(handle, kill);
-        HOOK_SYMBOL(handle, alarm);
-        HOOK_SYMBOL(handle, setitimer);
-        HOOK_SYMBOL(handle, raise);
-        HOOK_SYMBOL(handle, tkill);
-        HOOK_SYMBOL(handle, tgkill);
-        HOOK_SYMBOL(handle, pthread_kill);
-        HOOK_SYMBOL(handle, exit);
-        HOOK_SYMBOL(handle, _exit);
-        HOOK_SYMBOL(handle, abort);
-        HOOK_SYMBOL(handle, sigaction);
-        HOOK_SYMBOL(handle, syscall);
         HOOK_SYMBOL(handle, open);
         HOOK_SYMBOL(handle, open64);
         HOOK_SYMBOL(handle, __open_2);

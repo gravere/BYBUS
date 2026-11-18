@@ -174,15 +174,27 @@ internal class LiveResourceTranslator(private val cache: Path, snapshot: LiveTra
     }
 
     private fun resolve(resource: String): LiveTranslationStore.Entry? {
-        // TextAsset names carry no directory; accept only a unique manifest basename.
-        if ('/' !in resource) return uniqueNames[resource.removeSuffix(".json")]
-        val relative = when {
-            resource.startsWith("jp/") -> resource
-            resource.startsWith("Localize/jp/") -> resource.removePrefix("Localize/")
-            resource.contains("/Localize/jp/") -> "jp/" + resource.substringAfter("/Localize/jp/")
+        val basename = resource.substringAfterLast('/').removeSuffix(".json")
+        val locale = when (basename.substringBefore('_')) {
+            "EN" -> "en"
+            "KR" -> "kr"
+            "JP" -> "jp"
             else -> return null
         }
-        return entries[if (relative.endsWith(".json")) relative else "$relative.json"]
+        val table = basename.substringAfter('_', "")
+        if (table.isEmpty()) return null
+        // The release index uses JP keys. Read the actual language's table and join by record ID.
+        val releasedName = "JP_$table"
+        if ('/' !in resource) return uniqueNames[releasedName]
+        val relative = when {
+            resource.startsWith("Localize/") -> resource.removePrefix("Localize/")
+            "/Localize/" in resource -> resource.substringAfterLast("/Localize/")
+            else -> resource
+        }
+        if (!relative.startsWith("$locale/")) return null
+        val subdirectory = relative.removePrefix("$locale/").substringBeforeLast('/', "")
+        val directory = if (subdirectory.isEmpty()) "jp/" else "jp/$subdirectory/"
+        return entries["$directory$releasedName.json"]
     }
 
     private fun digest(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).toLowerHex()
