@@ -1,6 +1,7 @@
 package com.example.limbuszhcn.translation
 
 import com.example.limbuszhcn.storage.AtomicFiles
+import com.example.limbuszhcn.gamefs.GameStorage
 import com.example.limbuszhcn.update.PatchManifest
 import com.example.limbuszhcn.update.sha256
 import org.json.JSONArray
@@ -10,13 +11,19 @@ import java.nio.file.Path
 import java.util.UUID
 
 internal enum class AiTaskPhase { Running, Paused, Applying }
+internal data class AiTaskBinding(val selected: String, val revision: String, val targetRevision: String?, val selectedKind: String = "") {
+    fun unchanged(state: SourceState, target: String, activeRevision: String) =
+        state.selectedId == selected && activeRevision == revision && (selectedKind.isEmpty() || selectedKind == state.selected.kind) &&
+            state.sources.find { it.id == target }.let { it?.revision == targetRevision && (it == null || it.kind == "ai") }
+}
 internal data class AiTaskPlan(val selected: Map<String, Set<String>>, val hashes: Map<String, String>, val available: Int) {
     val total get() = selected.values.sumOf { it.size }
 }
 internal data class AiTaskSnapshot(val id: String, val config: AiConfig, val baseId: String,
     val sourceName: String, val outputIdentity: String, val outputName: String, val officialVersion: Long?,
     val phase: AiTaskPhase = AiTaskPhase.Running, val progress: AiProgress = AiProgress(),
-    val plan: AiTaskPlan? = null, val error: String? = null, val resultHash: String? = null) {
+    val plan: AiTaskPlan? = null, val error: String? = null, val resultHash: String? = null,
+    val binding: AiTaskBinding? = null, val upstream: Boolean = false, val resultTarget: String? = null) {
     val scopeLabel get() = if (!config.missingOnly) "全部文本" else when {
         config.includeMissing && config.includeReview -> "未覆盖与待核对"
         config.includeReview -> "待核对"
@@ -56,27 +63,65 @@ internal class AiTaskStore(private val cache: Path) {
             AiTaskPhase.valueOf(j.getString("phase")), AiProgress(p.getInt("completed"), p.getInt("limit"),
                 p.getInt("reused"), p.getLong("inputTokens"), p.getLong("outputTokens"), p.getString("message"),
                 p.optInt("scannedFiles"), p.optInt("totalFiles")),
-            plan, j.optString("error").takeIf { it.isNotBlank() }, j.optString("resultHash").takeIf { it.isNotBlank() }).also {
+            plan, j.optString("error").takeIf { it.isNotBlank() }, j.optString("resultHash").takeIf { it.isNotBlank() },
+            j.optJSONObject("binding")?.let { b -> AiTaskBinding(b.getString("selected"), b.getString("revision"),
+                b.optString("targetRevision").takeIf(String::isNotEmpty), b.optString("selectedKind")) }, j.optBoolean("upstream"),
+            j.optString("resultTarget").takeIf(String::isNotEmpty)).also {
             require(it.id.matches(ID) && it.outputIdentity.matches(ID))
         }
     }
 
+    fun createForSelection(config: AiConfig, sources: TranslationSources, base: PreparedTranslation?, reference: PreparedTranslation?,
+        independentInput: TranslationSource?, storage: GameStorage, cancelled: () -> Boolean = { false }): AiTaskSnapshot {
+        val source = sources.read().selected
+        val previous = if (config.missingOnly) source.takeIf { it.kind == "ai" } else independentInput
+        val prior = previous?.let { from ->
+            val pack = if (from.id == source.id && base != null) base else sources.prepare(from)
+            AiTranslationReuse.collect(cache, from, pack, storage, cancelled)
+        }.orEmpty()
+        val target = previous?.takeIf { !config.missingOnly && (it.independent || it.id != source.id) }?.id?.removePrefix("ai-")
+        return create(config, source, base, reference, identityOverride = target, committed = prior)
+    }
+
+    /** Build 109 froze a premerged archive for an upstream job. Upgrade it only when the stored
+     * identity proves the active AI revision; otherwise publication will preserve the current selection. */
+    fun forResume(sources: TranslationSources, storage: GameStorage, cancelled: () -> Boolean = { false }): AiTaskSnapshot {
+        val task = requireNotNull(read())
+        if (task.binding != null) return task
+        val state = sources.read(); val selected = state.selected; val version = task.officialVersion
+        val targetRevision = state.sources.find { it.id == "ai-${task.outputIdentity}" }?.revision
+        val upstream = selected.kind == "ai" && version != null && task.config.missingOnly &&
+            AiUpstreamUpdate.identity(selected, version, task.config) == task.outputIdentity && prepared("reference") != null
+        val sameInput = !selected.isOfficial && (selected.id == "ai-${task.outputIdentity}" || selected.id == task.baseId) &&
+            selected.revision == prepared("base")?.manifest?.archiveSha256
+        if ((!upstream && !sameInput) || targetRevision != null && selected.id != "ai-${task.outputIdentity}") return task
+        if (selected.kind == "ai") writeCommitted(AiTranslationReuse.collect(cache, selected, sources.prepare(selected), storage, cancelled))
+        return write(task.copy(binding = AiTaskBinding(selected.id, selected.revision, targetRevision, selected.kind), upstream = upstream))
+    }
+
     fun create(config: AiConfig, source: TranslationSource, base: PreparedTranslation?, reference: PreparedTranslation?,
-        identityOverride: String? = null, officialVersionOverride: Long? = null): AiTaskSnapshot {
+        identityOverride: String? = null, officialVersionOverride: Long? = null,
+        committed: Map<String, String> = emptyMap(), upstream: Boolean = false): AiTaskSnapshot {
         check(!exists()) { "请先继续或取消已有翻译任务" }
         if (Files.exists(root)) AtomicFiles.deleteOwnedTree(cache, root)
         Files.createDirectories(root)
         snapshot("base", base)
         if (reference != null && (base == null || reference.manifest.archiveSha256 != base.manifest.archiveSha256)) snapshot("reference", reference)
-        val identity = identityOverride ?: source.id.takeIf { source.kind == "ai" }?.removePrefix("ai-")
-            ?: AiTranslationJob.digest("v2|${source.baseId ?: source.id}|${config.endpoint}|${config.model}|${config.missingOnly}|${AiTranslationJob.digest(config.prompt)}").take(32)
+        val preferred = identityOverride ?: source.id.takeIf { source.kind == "ai" && (config.missingOnly || source.independent) }?.removePrefix("ai-")
+            ?: identityFor(source.baseId ?: source.id, config)
+        val state = TranslationSources(cache).read()
+        val identity = TranslationSources.availableAiIdentity(preferred, state)
+        val binding = AiTaskBinding(state.selectedId, CoverageStore(cache).sourceRevision(state.selected),
+            state.sources.find { it.id == "ai-$identity" }?.revision, state.selected.kind)
+        writeCommitted(committed)
         return AiTaskSnapshot(UUID.randomUUID().toString().replace("-", ""), config.validated(), source.baseId ?: source.id,
             source.name, identity, if (!config.missingOnly) "AI 汉化" else if (source.kind == "ai")
                 source.name.replace(Regex("( · AI 补全){2,}$"), " · AI 补全") else "${source.name.take(48)} · AI 补全",
             officialVersionOverride ?: if (config.missingOnly && source.isOfficial) base?.manifest?.requestedVersion?.toLongOrNull() else source.officialVersion,
-            progress = AiProgress(message = "正在核对所选文本范围")).also {
+            progress = AiProgress(message = "正在核对所选文本范围"), binding = binding, upstream = upstream).also {
                 write(it)
-                adoptLegacyCache(identity)
+                // Previously reviewed text is not a response to a newly requested recheck.
+                if (!config.includeReview && !upstream) adoptLegacyCache(identity)
             }
     }
 
@@ -85,6 +130,8 @@ internal class AiTaskStore(private val cache: Path) {
         val j = JSONObject().put("schema", 1).put("id", task.id).put("baseId", task.baseId)
             .put("sourceName", task.sourceName).put("outputIdentity", task.outputIdentity).put("outputName", task.outputName)
             .put("officialVersion", task.officialVersion).put("phase", task.phase.name).put("error", task.error)
+            .put("binding", task.binding?.let { JSONObject().put("selected", it.selected).put("revision", it.revision).put("targetRevision", it.targetRevision).put("selectedKind", it.selectedKind) })
+            .put("upstream", task.upstream).put("resultTarget", task.resultTarget)
             .put("resultHash", task.resultHash).put("config", JSONObject().put("endpoint", c.endpoint).put("model", c.model)
                 .put("missingOnly", c.missingOnly).put("limit", c.limit).put("includeMissing", c.includeMissing)
                 .put("includeReview", c.includeReview).put("prompt", c.prompt))
@@ -103,7 +150,8 @@ internal class AiTaskStore(private val cache: Path) {
     fun recover(sources: SourceState): AiTaskSnapshot? {
         if (Files.exists(root.resolve("discard"))) { discard(); return null }
         val task = read() ?: return null
-        if (task.resultHash != null && sources.sources.any { it.id == "ai-${task.outputIdentity}" && it.revision == task.resultHash }) {
+        if (task.resultHash != null && (sources.sources.any { it.id == (task.resultTarget ?: "ai-${task.outputIdentity}") && it.revision == task.resultHash } ||
+                task.resultTarget == "zero" && sources.selectedId == "zero")) {
             discard(); return null
         }
         return write(task.copy(phase = AiTaskPhase.Paused, progress = task.progress.copy(message = "任务已保存，可继续或取消")))
@@ -122,6 +170,13 @@ internal class AiTaskStore(private val cache: Path) {
         return PreparedTranslation(directory, manifest)
     }
 
+    /** Legacy upstream tasks stored a premerged base plus a separate official reference. */
+    fun inputs(task: AiTaskSnapshot): Pair<PreparedTranslation?, PreparedTranslation?> {
+        val reference = prepared("reference")
+        val base = if (task.upstream && reference != null) reference else prepared("base")
+        return base to (reference ?: base)
+    }
+
     private fun snapshot(name: String, source: PreparedTranslation?) {
         if (source == null) return
         val target = root.resolve(name); Files.createDirectories(target)
@@ -137,11 +192,11 @@ internal class AiTaskStore(private val cache: Path) {
     }
 
     /** Only committed, validated caches become eligible for reuse by a later translation pack. */
-    fun retainCommittedCache(identity: String) {
-        require(identity.matches(ID))
+    fun retainCommittedCache(identity: String, destination: String = identity) {
+        require(identity.matches(ID) && destination.matches(ID))
         val from = work.resolve("ai-jobs/$identity/cache")
         if (!Files.isDirectory(from)) return
-        val to = cache.resolve("ai-jobs/$identity/cache"); Files.createDirectories(to)
+        val to = cache.resolve("ai-jobs/$destination/cache"); Files.createDirectories(to)
         Files.list(from).use { files -> files.forEach { file ->
             require(file.fileName.toString().matches(Regex("[a-f0-9]{64}\\.json")) && Files.size(file) <= 8 * 1024 * 1024)
             val target = to.resolve(file.fileName)
@@ -151,6 +206,34 @@ internal class AiTaskStore(private val cache: Path) {
             fresh.keys().forEach { old.put(it, fresh.get(it)) }
             TranslationSources.writeAtomic(target, old.toString())
         } }
+    }
+
+    // Keep proof from the original source inside the transaction; replacing that source while paused
+    // must not lose already accepted translations or make the next batch pay for them again.
+    private fun writeCommitted(values: Map<String, String>) {
+        if (values.isEmpty()) return
+        val file = root.resolve("committed.jsonl")
+        Files.newBufferedWriter(file, Charsets.UTF_8).use { out ->
+            var bytes = 0L
+            for ((id, text) in values) {
+                require(id.matches(HASH) && text.length in 1..24000)
+                val line = JSONArray().put(id).put(text).toString()
+                bytes += line.toByteArray(Charsets.UTF_8).size + 1
+                require(bytes <= 128L * 1024 * 1024) { "已保存的 AI 译文超过本地处理上限" }
+                out.append(line).append('\n')
+            }
+        }
+    }
+
+    fun committed(): Map<String, String> {
+        val file = root.resolve("committed.jsonl")
+        if (!Files.exists(file)) return emptyMap()
+        require(Files.size(file) <= 128L * 1024 * 1024)
+        return buildMap { Files.newBufferedReader(file, Charsets.UTF_8).useLines { lines -> lines.forEach { line ->
+            val row = JSONArray(line); val id = row.getString(0); val value = row.getString(1)
+            require(id.matches(HASH) && value.length in 1..24000)
+            put(id, value)
+        } } }
     }
 
     /** Old versions kept response caches without a task record. Adopt them once, still validating each selected field in the runner. */
@@ -176,6 +259,8 @@ internal class AiTaskStore(private val cache: Path) {
     fun requestDiscard() { TranslationSources.writeAtomic(root.resolve("discard"), "cancelled") }
 
     companion object {
+        fun identityFor(base: String, config: AiConfig) =
+            AiTranslationJob.digest("v2|$base|${config.endpoint}|${config.model}|${config.missingOnly}|${AiTranslationJob.digest(config.prompt)}").take(32)
         private val ID = Regex("[a-f0-9]{32}")
         private val HASH = Regex("[a-f0-9]{64}")
         private fun validateRelative(path: String) {

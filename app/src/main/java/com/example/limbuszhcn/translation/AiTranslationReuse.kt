@@ -36,6 +36,7 @@ internal object AiTranslationReuse {
                 }
             }
         } }
+        if (saved.isEmpty()) return emptyMap()
         val entries = previous.manifest.entries.associateBy { AiTranslationJob.resourceKey(it.targetPath) }
         val reusable = mutableMapOf<String, String>()
         var readBytes = 0L
@@ -49,11 +50,15 @@ internal object AiTranslationReuse {
             // Legacy generated files lacked a binding. Reuse requires BOTH the committed archive's
             // exact non-display structure and a cached original-field fingerprint with the same value.
             // This temporary binding alone is never exported or used to mark coverage.
-            val payload = TranslationSnapshot.decode(TranslationFields.parse(old)).document
-            val candidate = if (TranslationSnapshot.matchingStructure(TranslationFields.parse(original), payload) != null)
-                TranslationSnapshot.encode(original, payload) else old
-            val merged = TranslationJsonPairer.mergeWithCoverage("Localize/$key", original, candidate)
-            for (leaf in TranslationFields.collect(TranslationFields.parse(original), merged.document, key, merged)) {
+            val leaves = readableResource {
+                val payload = TranslationSnapshot.decode(TranslationFields.parse(old)).document
+                val jp = TranslationFields.parse(original)
+                val candidate = if (TranslationSnapshot.matchingStructure(jp, payload) != null)
+                    TranslationSnapshot.encode(original, payload) else old
+                val merged = TranslationJsonPairer.mergeWithCoverage("Localize/$key", original, candidate)
+                TranslationFields.collect(jp, merged.document, key, merged)
+            } ?: continue
+            for (leaf in leaves) {
                 if (!leaf.canTranslate || !leaf.covered) continue
                 val candidate = saved[leaf.id]?.firstOrNull { masked ->
                     runCatching { ProtectedTranslation(leaf.text).restore(masked) == leaf.translated }.getOrDefault(false)

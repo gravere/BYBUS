@@ -44,7 +44,8 @@ internal class AiTerminology(private val values: Map<String, String>, private va
                 val filename = key.substringAfterLast('/')
                 val character = filename.startsWith("JP_Characters") || filename.startsWith("JP_ScenarioModelCodes")
                 if (!character && listOf("JP_BattleKeywords", "JP_Bufs", "JP_Egos", "JP_EgoGifts", "JP_Personalities", "JP_Personality", "JP_Items").none(filename::startsWith)) continue
-                val resource = inspection.read(key); bytes += resource.raw.length * 2L
+                val resource = inspection.readable(key) ?: continue
+                bytes += resource.raw.length * 2L
                 require(bytes <= 64L * 1024 * 1024) { "术语文本超出检查范围" }
                 resource.fields.filter { it.covered && it.canTranslate && !it.needsReview &&
                     (it.context.substringBefore(" | ").endsWith("/name") || it.context.substringBefore(" | ").endsWith("/nameWithTitle")) }.forEach { field ->

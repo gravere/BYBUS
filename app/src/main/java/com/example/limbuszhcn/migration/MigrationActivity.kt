@@ -45,7 +45,9 @@ internal data class MigrationState(val busy: Boolean = false, val copied: Long =
     val done: Boolean = false, val message: String = "正在读取旧版数据…", val ready: Boolean = false,
     val pending: Boolean = false, val hasLegacy: Boolean = false,
     val operation: MigrationOperation = MigrationOperation.Inspect, val failed: Boolean = false,
-    val progressFiles: Boolean = false, val canExport: Boolean = false, val notice: String? = null)
+    val progressFiles: Boolean = false, val canExport: Boolean = false, val notice: String? = null) {
+    fun shouldInspectOnEntry(restoring: Boolean) = done && !busy && !restoring
+}
 
 internal class MigrationModel private constructor(application: Application) {
     private val context = application.applicationContext
@@ -68,7 +70,7 @@ internal class MigrationModel private constructor(application: Application) {
     init { inspect() }
     private fun publish(value: MigrationState) { handler.post { state = value } }
     private fun inspect() {
-        state = state.copy(busy = true, failed = false, operation = MigrationOperation.Inspect,
+        state = state.copy(busy = true, done = false, failed = false, operation = MigrationOperation.Inspect,
             message = "正在检查可迁移的数据…", copied = 0, total = 0, progressFiles = false, notice = null)
         executor.execute {
             runCatching {
@@ -238,6 +240,7 @@ internal class MigrationModel private constructor(application: Application) {
                         // Restart only our container processes so account services reload the committed files.
                         stopOwnedContainerProcesses()
                         TranslationRedirectGate(context).close()
+                        invalidateResourceIndex()
                         check(MigrationAccess.preferences(context).edit().putBoolean("complete", true).putBoolean("pending", false).commit())
                         // The local commit is authoritative. A remote UI acknowledgement must not
                         // turn a completed import into a failed one or require copying it again.
@@ -262,10 +265,14 @@ internal class MigrationModel private constructor(application: Application) {
     }
 
     private fun clearResourcePending() {
+        invalidateResourceIndex()
         check(MigrationAccess.preferences(context).edit().remove("resource_pending").putBoolean("pending", false).commit()) {
             "无法保存导入状态，请释放空间后重新检测"
         }
     }
+
+    private fun invalidateResourceIndex() =
+        com.example.limbuszhcn.translation.CoverageStore(context.filesDir.toPath().resolve("translation-cache")).resourcesReplaced()
 
     fun importResources(uri: Uri, prepareTarget: Boolean) {
         if (state.busy || state.pending) return
@@ -340,6 +347,7 @@ open class MigrationActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = false
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val model = MigrationModel.get(application)
+        if (model.state.shouldInspectOnEntry(restoring = savedInstanceState != null)) model.refresh()
         setContent {
             LimbusZhCNTheme {
                 val state = model.state

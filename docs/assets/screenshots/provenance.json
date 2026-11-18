@@ -1,11 +1,11 @@
 {
-  "release": "v1.0.62-build.109",
-  "apk_sha256": "837a88925ede8f05c544bd66255d11fb5feca9d3214446207473e0a352e65a63",
+  "release": "v1.0.63-build.110",
+  "apk_sha256": "5530e4f88f4a112418e2c90b66c7a35b64d9fe294c9a445a21aa10edad57800d",
   "profile": "Android 15, owned headless emulator, gesture navigation, 1080x2400 at 420 dpi",
   "capture": "Original PNG screencaps from signed release; status icons hidden with Android statusbar command; no image editing; no simulated task or coverage state in these README captures",
   "files": {
-    "home.png": "3a9a769343849fc569d0cb4b8e77885f9d567d54e3a9dc276026d0a4ba4d91e6",
-    "sources.png": "e4d4e04c99bd710f3a3263c56825c9123d770710872d1524139fdb23d029818a",
-    "settings.png": "7bea5da16298da251ed3a98e8d33190a50dd8c2619e7f830fd1e7df40a4b1cb2"
+    "home.png": "148210d7cf7a87dd8e3bdab4f87ec3efdcfe2a81237c2edbe623f6067926b55a",
+    "settings.png": "f6bc64534b2c6e5378d25e49294323e6b348857ae607110a2cc7b2c21abaf026",
+    "sources.png": "76aca98c8974d31ff11ded91f4b6a9a70198a75cbfa7aeb3cdb178616a9a79cc"
   }
 }
