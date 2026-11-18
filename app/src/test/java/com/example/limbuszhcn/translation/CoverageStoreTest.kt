@@ -10,6 +10,33 @@ import java.nio.file.attribute.FileTime
 
 class CoverageStoreTest {
     @get:Rule val temp = TemporaryFolder()
+    @Test fun explicitCheckReadsBytesWhenFileIdentityLengthAndTimeStayUnchanged() {
+        val cache = temp.root.toPath().resolve("cache")
+        val jp = Files.createDirectories(temp.root.toPath().resolve("Localize/jp"))
+        val file = jp.resolve("JP_Test.json")
+        val source = TranslationSources.OFFICIAL; val storage = ContainerWorkspaceStorage(jp.parent)
+        val store = CoverageStore(cache)
+        Files.write(file, "始めます".toByteArray()); val time = Files.getLastModifiedTime(file)
+        val old = store.fingerprint(source, storage)
+        Files.write(file, "止めます".toByteArray()); Files.setLastModifiedTime(file, time)
+        val fresh = store.fingerprint(source, storage, verifyContents = true)
+        assertNotEquals(old, fresh); assertEquals(fresh, store.fingerprint(source, storage))
+        Files.write(file, "始めます".toByteArray()); Files.setLastModifiedTime(file, time)
+        store.resourcesReplaced(); assertEquals(old, store.fingerprint(source, storage))
+    }
+
+    @Test fun anInterruptedOrFailedCheckRetainsHistoryButCannotReopenThePaymentGateAfterRestart() {
+        val cache = temp.root.toPath().resolve("cache")
+        val saved = SavedCoverage("old", CoverageReport("零协", 1, 1, 1, 0, 1, 0, 1, 0, emptyList(), independentEligible = 1))
+        val store = CoverageStore(cache); store.save(saved)
+        val interrupted = store.beginCheck()
+        val previous = CoverageStore(cache).read()!!
+        assertTrue(previous.needsCheck); assertEquals(saved.report, previous.report)
+        assertFalse(CoverageState(report = previous.report, fingerprint = previous.fingerprint, stale = previous.needsCheck).canGenerate(AiConfig()))
+        val retry = store.beginCheck()
+        assertThrows(IllegalStateException::class.java) { store.save(saved, interrupted) }
+        store.save(saved, retry); assertFalse(CoverageStore(cache).read()!!.needsCheck)
+    }
     @Test fun resultAndExamplesSurviveRestartAndOnlyRelevantInputsChangeFingerprint() {
         val cache = temp.root.toPath().resolve("cache")
         val root = temp.root.toPath().resolve("Localize"); Files.createDirectories(root.resolve("jp"))

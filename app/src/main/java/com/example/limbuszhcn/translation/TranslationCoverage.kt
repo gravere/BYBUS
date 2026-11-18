@@ -9,40 +9,38 @@ internal data class CoverageFile(val resource: String, val category: String, val
     val examples: List<CoverageSample>)
 internal data class CoverageReport(val sourceName: String, val checkedAt: Long, val files: Int, val total: Int,
     val covered: Int, val missing: Int, val review: Int, val aiEligible: Int, val unreadable: Int,
-    val details: List<CoverageFile>, val excluded: Int = 0, val shared: Int = 0, val reviewEligible: Int = 0)
+    val details: List<CoverageFile>, val excluded: Int = 0, val shared: Int = 0, val reviewEligible: Int = 0,
+    val independentEligible: Int = 0)
 internal data class CoverageState(val loading: Boolean = false, val report: CoverageReport? = null,
     val error: String? = null, val fingerprint: String? = null, val stale: Boolean = false) {
-    val current get() = report != null && fingerprint != null && !loading && !stale
+    val current get() = report != null && fingerprint != null && error == null && !loading && !stale
     fun eligible(config: AiConfig): Int = report?.let {
-        if (!config.missingOnly) it.total else (if (config.includeMissing) it.aiEligible else 0) + (if (config.includeReview) it.reviewEligible else 0)
+        if (!config.missingOnly) it.independentEligible else (if (config.includeMissing) it.aiEligible else 0) + (if (config.includeReview) it.reviewEligible else 0)
     } ?: 0
     fun canGenerate(config: AiConfig) = current && eligible(config) > 0
 }
 
 /** Local inspection only. Does not activate, rewrite or download game/translation resources. */
 internal object TranslationCoverage {
-    fun scan(storage: GameStorage, base: PreparedTranslation, sourceName: String): CoverageReport {
+    fun scan(storage: GameStorage, base: PreparedTranslation, sourceName: String, committedAi: Set<String> = emptySet()): CoverageReport {
         val inspection = TranslationInspection(storage, base)
         val resources = inspection.resources
         require(resources.isNotEmpty()) { "还没有本地游戏文本。请先从 BYBUS 进入游戏完成资源下载，再回来检查。" }
         val shared = inspection.sharedTranslations()
         var total = 0; var covered = 0; var missing = 0; var review = 0; var eligible = 0
         var excluded = 0; var sharedCount = 0; var reviewEligible = 0
-        var unreadable = 0; var bytesRead = 0L
+        var unreadable = 0; var independent = 0; var bytesRead = 0L
         val details = mutableListOf<CoverageFile>()
         for (key in resources) {
             if (Thread.currentThread().isInterrupted) throw CancellationException()
-            val result = runCatching {
-                inspection.read(key).also { bytesRead += it.raw.toByteArray(Charsets.UTF_8).size }.fields
-            }
+            val resource = inspection.readable(key)
+            if (resource == null) { unreadable++; continue }
+            bytesRead += resource.bytes
             require(bytesRead <= 128L * 1024 * 1024) { "本地文本过多，本次检查已停止" }
-            if (result.isFailure) {
-                if (Thread.currentThread().isInterrupted) throw CancellationException()
-                unreadable++; continue
-            }
-            val all = result.getOrThrow()
+            val all = resource.fields
             excluded += all.count { it.excludedReason != null }
             val fields = all.filter { it.excludedReason == null }
+            independent += fields.count { it.canTranslate && it.id !in committedAi }
             val fromShared = fields.filter { !it.covered && it.text in shared }
             val uncovered = fields.filter { AiTextSelection.missing(it, shared) }
             val uncertain = fields.filter { AiTextSelection.review(it, shared) }
@@ -56,7 +54,7 @@ internal object TranslationCoverage {
                         preview(it.translated ?: shared[it.text].orEmpty()), "译文中仍含日韩文，需核对是否为保留名称") })
         }
         return CoverageReport(sourceName, System.currentTimeMillis(), resources.size - unreadable, total,
-            covered, missing, review, eligible, unreadable, details, excluded, sharedCount, reviewEligible)
+            covered, missing, review, eligible, unreadable, details, excluded, sharedCount, reviewEligible, independent)
     }
     private fun preview(text: String) = if (text.length > 320) text.take(320) + "…" else text
     internal fun category(path: String): String {

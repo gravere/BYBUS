@@ -4,12 +4,15 @@ import com.example.limbuszhcn.container.TranslationIndexCompiler
 import com.example.limbuszhcn.container.TranslationJsonPairer
 import com.example.limbuszhcn.gamefs.GameStorage
 import java.nio.file.Files
+import java.io.IOException
+import java.util.concurrent.CancellationException
+import org.json.JSONException
 
 /** Bounded per-file reads; public-text fallback uses the production compiler, not guessed IDs. */
 internal class TranslationInspection(private val storage: GameStorage, private val base: PreparedTranslation?, private val cancelled: () -> Boolean = { false }) {
     val resources = storage.japaneseResources().sorted()
     val entries = base?.manifest?.entries?.associateBy { AiTranslationJob.resourceKey(it.targetPath) }.orEmpty()
-    data class Resource(val raw: String, val document: Any, val fields: List<TranslationField>)
+    data class Resource(val raw: String, val original: Any, val document: Any, val fields: List<TranslationField>, val bytes: Int)
     fun read(key: String): Resource {
         checkCancelled()
         val bytes = requireNotNull(storage.read(storage.rootPath().trimEnd('/') + "/$key"))
@@ -22,14 +25,15 @@ internal class TranslationInspection(private val storage: GameStorage, private v
             TranslationJsonPairer.mergeWithCoverage("Localize/$key", raw, String(Files.readAllBytes(file), Charsets.UTF_8))
         }
         val document = baseline?.document ?: TranslationFields.parse(raw)
-        return Resource(raw, document, TranslationFields.collect(original, document, key, baseline))
+        return Resource(raw, original, document, TranslationFields.collect(original, document, key, baseline), bytes.size)
     }
+    fun readable(key: String): Resource? = readableResource { read(key) }
     fun sharedTranslations(): Map<String, String> {
         val prepared = base ?: return emptyMap()
         val wanted = hashSetOf<String>(); var bytes = 0L
         resources.forEach { key ->
             checkCancelled()
-            runCatching { read(key) }.getOrNull()?.let { r ->
+            readable(key)?.let { r ->
                 bytes += r.raw.length * 2L
                 r.fields.filter { !it.covered && it.excludedReason == null }.forEach { wanted += it.text }
             }
@@ -39,7 +43,7 @@ internal class TranslationInspection(private val storage: GameStorage, private v
         val compiler = TranslationIndexCompiler()
         resources.filter { it in entries }.forEach { key ->
             checkCancelled()
-            runCatching {
+            readableResource {
                 val bytes = requireNotNull(storage.read(storage.rootPath().trimEnd('/') + "/$key"))
                 require(bytes.size <= 8 * 1024 * 1024)
                 val raw = bytes.toString(Charsets.UTF_8)
@@ -55,3 +59,11 @@ internal class TranslationInspection(private val storage: GameStorage, private v
         if (cancelled() || Thread.currentThread().isInterrupted) throw java.util.concurrent.CancellationException()
     }
 }
+
+/** Skip only individual unreadable documents. Cancellation and process-wide failures must propagate. */
+internal inline fun <T> readableResource(read: () -> T): T? = try { read() }
+catch (e: CancellationException) { throw e }
+catch (_: IOException) { null }
+catch (_: JSONException) { null }
+catch (_: IllegalArgumentException) { null }
+catch (_: IllegalStateException) { null }

@@ -14,7 +14,8 @@ import kotlin.io.path.writeText
 
 internal data class TranslationSource(val id: String, val name: String, val kind: String = "local",
     val revision: String = "", val archive: String = "", val icon: String? = null, val baseId: String? = null,
-    val updatedAtMillis: Long = 0, val textFileCount: Int = 0, val officialVersion: Long? = null) {
+    val updatedAtMillis: Long = 0, val textFileCount: Int = 0, val officialVersion: Long? = null,
+    val independent: Boolean = false) {
     val isOfficial get() = id == "zero"
     val label get() = when { isOfficial -> "自动更新"; kind == "ai" -> "AI 译文"; else -> "本地文件" }
 }
@@ -23,6 +24,15 @@ internal data class SourceState(val sources: List<TranslationSource> = listOf(Tr
     val selectedId: String = "zero", val message: String? = null, val officialDownloaded: Boolean = false,
     val undo: AiUndoPoint? = null) {
     val selected get() = sources.firstOrNull { it.id == selectedId } ?: TranslationSources.OFFICIAL
+    /** Returning to the original source must not restart its independent AI pack at batch one. */
+    fun independentInput(config: AiConfig): TranslationSource? {
+        val active = selected
+        if (active.kind == "ai" && active.independent) return active
+        val base = active.baseId ?: active.id
+        val legacy = "ai-" + AiTaskStore.identityFor(base, config.copy(missingOnly = false))
+        return sources.filter { it.kind == "ai" && it.baseId == base && (it.independent || it.id == legacy) }
+            .maxByOrNull { it.updatedAtMillis } ?: active.takeIf { it.kind == "ai" }
+    }
 }
 
 internal data class AiUndoPoint(val sourceId: String, val generatedRevision: String,
@@ -49,7 +59,7 @@ internal class TranslationSources(val cache: Path) {
                 it.optString("revision"), it.optString("archive"),
                 it.optString("icon").takeIf(String::isNotBlank), it.optString("baseId").takeIf(String::isNotBlank),
                 it.optLong("updatedAtMillis").coerceAtLeast(0), it.optInt("textFileCount").coerceAtLeast(0),
-                it.optLong("officialVersion").takeIf { version -> version > 0 })
+                it.optLong("officialVersion").takeIf { version -> version > 0 }, it.optBoolean("independent"))
         } }
         require(sources.map { it.id }.distinct().size == sources.size && sources.none { it.isOfficial })
         val all = listOf(OFFICIAL.copy(icon = json.optString("officialIcon").takeIf(String::isNotBlank))) + sources
@@ -63,7 +73,7 @@ internal class TranslationSources(val cache: Path) {
                 TranslationSource(id, cleanName(old.getString("name")), old.getString("kind"),
                     old.getString("revision"), old.getString("archive"), old.optString("icon").takeIf(String::isNotBlank),
                     old.optString("baseId").takeIf(String::isNotBlank), old.optLong("updatedAtMillis"), old.optInt("textFileCount"),
-                    old.optLong("officialVersion").takeIf { version -> version > 0 })
+                    old.optLong("officialVersion").takeIf { version -> version > 0 }, old.optBoolean("independent"))
             }
             AiUndoPoint(id, revision, previous, point.getString("previousSelectedId"))
         }.getOrNull() }
@@ -78,10 +88,7 @@ internal class TranslationSources(val cache: Path) {
                 .put("generatedRevision", point.generatedRevision).put("previousSelectedId", point.previousSelectedId)
                 .put("previous", point.previous?.let(::sourceJson)) })
             .put("sources", JSONArray().apply { state.sources.filterNot { it.isOfficial }.forEach { s ->
-                put(JSONObject().put("id", s.id).put("name", s.name).put("kind", s.kind)
-                    .put("revision", s.revision).put("archive", s.archive).put("icon", s.icon.orEmpty())
-                    .put("baseId", s.baseId.orEmpty()).put("updatedAtMillis", s.updatedAtMillis)
-                    .put("textFileCount", s.textFileCount).put("officialVersion", s.officialVersion))
+                put(sourceJson(s))
             } })
         writeAtomic(registry, json.toString())
     }
@@ -89,7 +96,7 @@ internal class TranslationSources(val cache: Path) {
     private fun sourceJson(s: TranslationSource) = JSONObject().put("id", s.id).put("name", s.name).put("kind", s.kind)
         .put("revision", s.revision).put("archive", s.archive).put("icon", s.icon.orEmpty())
         .put("baseId", s.baseId.orEmpty()).put("updatedAtMillis", s.updatedAtMillis).put("textFileCount", s.textFileCount)
-        .put("officialVersion", s.officialVersion)
+        .put("officialVersion", s.officialVersion).put("independent", s.independent)
 
     fun select(id: String): SourceState = read().let { state ->
         require(state.sources.any { it.id == id }) { "汉化源不存在" }
@@ -121,7 +128,8 @@ internal class TranslationSources(val cache: Path) {
     }
 
     private fun importArchive(input: InputStream, name: String, replaceId: String? = null,
-                              generatedId: String? = null, baseId: String? = null, officialVersion: Long? = null): TranslationSource {
+                              generatedId: String? = null, baseId: String? = null, officialVersion: Long? = null,
+                              activate: Boolean = true, independent: Boolean = false): TranslationSource {
         require(generatedId == null || validId(generatedId))
         Files.createDirectories(archives)
         val staged = archives.resolve(".import.tmp")
@@ -141,12 +149,12 @@ internal class TranslationSources(val cache: Path) {
                 kind = if (generatedId != null) "ai" else "local", baseId = baseId,
                 revision = hash, archive = target.fileName.toString(), icon = previous?.icon,
                 updatedAtMillis = System.currentTimeMillis(), textFileCount = prepared.manifest.entries.size,
-                officialVersion = officialVersion?.takeIf { it > 0 })
+                officialVersion = officialVersion?.takeIf { it > 0 }, independent = independent)
             val sources = if (previous == null) state.sources + source
                 else state.sources.map { if (it.id == source.id) source else it }
             val undo = if (generatedId != null) AiUndoPoint(source.id, source.revision, previous, state.selectedId)
                 else state.undo?.takeUnless { it.sourceId == source.id }
-            save(state.copy(sources = sources, selectedId = source.id, undo = undo))
+            save(state.copy(sources = sources, selectedId = if (activate) source.id else state.selectedId, undo = undo))
             return source
         } finally { Files.deleteIfExists(staged) }
     }
@@ -158,11 +166,13 @@ internal class TranslationSources(val cache: Path) {
         return LocalTranslationArchive(cache).extract(archive, "local-${source.revision}")
     }
 
-    @JvmOverloads fun addGenerated(archive: Path, baseId: String, identity: String, name: String, officialVersion: Long? = null): TranslationSource {
+    @JvmOverloads fun addGenerated(archive: Path, baseId: String, identity: String, name: String, officialVersion: Long? = null,
+        activate: Boolean = true, independent: Boolean = false): TranslationSource {
         val state = read()
         val id = "ai-$identity"
         val previous = state.sources.find { it.id == id }
-        return Files.newInputStream(archive).use { importArchive(it, name, previous?.id, id, baseId, officialVersion) }
+        require(previous == null || previous.kind == "ai") { "目标已替换为本地汉化文件，已保留原文件" }
+        return Files.newInputStream(archive).use { importArchive(it, name, previous?.id, id, baseId, officialVersion, activate, independent) }
     }
 
     fun undoGenerated(): SourceState {
@@ -226,6 +236,8 @@ internal class TranslationSources(val cache: Path) {
 
     companion object {
         val OFFICIAL = TranslationSource("zero", "都市零协会", "official")
+        fun availableAiIdentity(preferred: String, state: SourceState): String =
+            if (state.sources.any { it.id == "ai-$preferred" && it.kind != "ai" }) UUID.randomUUID().toString().replace("-", "") else preferred
         fun validId(id: String) = id.matches(Regex("(?:local|ai)-[a-f0-9-]{16,80}"))
         fun cleanName(name: String) = name.trim().also {
             require(it.length in 1..64 && it.none { c -> c.code < 32 }) { "名称需为 1–64 个字符" }
