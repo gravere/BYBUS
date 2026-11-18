@@ -14,9 +14,6 @@ import com.example.limbuszhcn.tracking.ProjectTrackingState
 import com.example.limbuszhcn.translation.SourceState
 import com.example.limbuszhcn.translation.TranslationSource
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 internal data class HomeProjectDisplay(val source: TranslationSource, val pinned: Boolean) {
     companion object {
@@ -55,10 +52,9 @@ internal fun HomeProjectCard(state: LauncherUiState, tracking: ProjectTrackingSt
             Spacer(Modifier.height(6.dp))
             Text(if (source.textFileCount > 0) "已保存 ${source.textFileCount} 个文本文件" else "已保存到本地",
                 style = MaterialTheme.typography.titleLarge)
-            if (source.updatedAtMillis > 0) {
+            state.packageTimeLabel(source)?.let { date ->
                 Spacer(Modifier.height(6.dp))
-                Text("更新于 " + DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm").withZone(ZoneId.systemDefault())
-                    .format(Instant.ofEpochMilli(source.updatedAtMillis)), color = C.Muted, style = MaterialTheme.typography.bodySmall)
+                Text(date, color = C.Muted, style = MaterialTheme.typography.bodySmall)
             }
             HorizontalDivider(Modifier.padding(vertical = 12.dp), color = C.Line)
             Row(verticalAlignment = Alignment.CenterVertically) {

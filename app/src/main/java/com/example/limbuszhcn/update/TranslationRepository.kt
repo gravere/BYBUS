@@ -22,13 +22,34 @@ internal class TranslationRepository(
     fun hasLaunchCandidate(): Boolean = runCatching {
         val downloads = root.resolve("downloads")
         if (!Files.isDirectory(downloads)) return false
-        Files.list(downloads).use { paths -> paths.anyMatch {
-            it.fileName.toString().matches(Regex("LimbusLocalize_[0-9]{1,18}\\.7z")) &&
-                Files.isRegularFile(it) && Files.size(it) > 0
-        } }
+        Files.list(downloads).use { paths -> paths.anyMatch { downloadedVersion(it) != null } }
     }.getOrDefault(false)
 
-    fun verifiedCached(version: String): ExtractionResult {
+    /** Local save times by release. Reading or revalidating an archive leaves its time unchanged. */
+    fun downloadTimes(): Map<Long, Long> {
+        val downloads = root.resolve("downloads")
+        if (!Files.isDirectory(downloads)) return emptyMap()
+        return try {
+            Files.newDirectoryStream(downloads).use { paths ->
+                buildMap {
+                    for (path in paths) {
+                        val version = downloadedVersion(path) ?: continue
+                        val time = try { Files.getLastModifiedTime(path).toMillis() }
+                            catch (_: java.io.IOException) { 0L }
+                        put(version, time)
+                    }
+                }
+            }
+        } catch (_: java.io.IOException) { emptyMap() }
+    }
+
+    private fun downloadedVersion(file: Path): Long? {
+        val version = ARCHIVE_NAME.matchEntire(file.fileName.toString())?.groupValues?.get(1)?.toLongOrNull() ?: return null
+        return try { version.takeIf { it > 0 && Files.isRegularFile(file, java.nio.file.LinkOption.NOFOLLOW_LINKS) && Files.size(file) > 0 } }
+        catch (_: java.io.IOException) { null }
+    }
+
+    fun cachedManifest(version: String): PatchManifest {
         require(version.matches(Regex("[0-9]+"))) { "Invalid cached release version" }
         val patches = root.resolve("patch-cache").toRealPath()
         val manifestPath = patches.resolve("$version/manifest.json").toRealPath()
@@ -37,22 +58,30 @@ internal class TranslationRepository(
         }
         val manifest = PatchManifest.fromJson(manifestPath.readText())
         require(manifest.requestedVersion == version) { "Cached release version mismatch" }
+        return manifest
+    }
+
+    fun verifiedCached(version: String): ExtractionResult {
+        val manifest = cachedManifest(version)
         return TranslationArchiveExtractor(fileDigest = fileDigest).extract(ExtractionRequest(
             root.resolve("downloads/LimbusLocalize_$version.7z"), root.resolve("patch-cache"),
             version, manifest.archiveSha256))
     }
 
-    /** A downloaded release is recoverable even before its first runtime index exists. */
-    fun verifiedForLaunch(preferredVersion: String?): ExtractionResult {
+    fun cachedVersions(): List<String> {
         val patches = root.resolve("patch-cache")
-        val versions = if (!Files.isDirectory(patches)) emptyList() else Files.list(patches).use { paths ->
+        return if (!Files.isDirectory(patches)) emptyList() else Files.list(patches).use { paths ->
             paths.filter { Files.isDirectory(it, java.nio.file.LinkOption.NOFOLLOW_LINKS) }
                 .map { it.fileName.toString() }
                 .filter { it.matches(Regex("[0-9]{1,18}")) && it.toLong() > 0 }
                 .sorted { a, b -> b.toLong().compareTo(a.toLong()) }.iterator().asSequence().toList()
         }
+    }
+
+    /** A downloaded release is recoverable even before its first runtime index exists. */
+    fun verifiedForLaunch(preferredVersion: String?): ExtractionResult {
         var lastError: Exception? = null
-        for (version in (listOfNotNull(preferredVersion) + versions).distinct()) {
+        for (version in (listOfNotNull(preferredVersion) + cachedVersions()).distinct()) {
             try { return verifiedCached(version) }
             catch (error: Exception) {
                 if (Thread.currentThread().isInterrupted || error is java.util.concurrent.CancellationException) throw error
@@ -61,6 +90,8 @@ internal class TranslationRepository(
         }
         throw IllegalStateException("没有通过完整校验的本地汉化包，请联网后重试", lastError)
     }
+
+    private companion object { val ARCHIVE_NAME = Regex("LimbusLocalize_([0-9]{1,18})\\.7z") }
 
     /** Called under the operation lock, after activation or a complete cache preparation. */
     fun prune(retainedVersions: Set<String>) {

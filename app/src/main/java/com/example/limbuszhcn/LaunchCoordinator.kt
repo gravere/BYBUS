@@ -120,8 +120,9 @@ internal class LaunchCoordinator private constructor(application: Application) {
 
     init {
         worker.execute {
-            runCatching { coverageStore.read() }.getOrNull()?.let { saved ->
-                publish { it.copy(coverage = CoverageState(report = saved.report, fingerprint = saved.fingerprint, stale = true)) }
+            runCatching { translationSources.read() }.getOrNull()?.let { sources ->
+                val saved = restoreCoverage(sources)
+                publish { it.copy(sources = sources, coverage = saved) }
             }
             runCatching { aiTaskStore.recover(translationSources.read()) }
                 .onSuccess { task -> if (task != null) publish { it.copy(ai = it.ai.copy(task = task,
@@ -184,11 +185,11 @@ internal class LaunchCoordinator private constructor(application: Application) {
     private fun publishSources(message: String? = null) {
         val sources = translationSources.read().copy(message = message)
         val config = aiSettings.config(); val keyPresent = aiSettings.hasKey()
+        if (sources.selected.id != state.sources.selected.id || sources.selected.revision != state.sources.selected.revision)
+            coverageRequest.incrementAndGet()
         publish {
-            val changed = sources.selected.id != it.sources.selected.id || sources.selected.revision != it.sources.selected.revision ||
-                sources.officialDownloaded != it.sources.officialDownloaded
-            if (changed) coverageRequest.incrementAndGet()
-            it.copy(sources = sources, coverage = if (changed) it.coverage.copy(loading = false, stale = it.coverage.report != null) else it.coverage,
+            val changed = sources.selected.id != it.sources.selected.id || sources.selected.revision != it.sources.selected.revision
+            it.copy(sources = sources, coverage = if (changed) CoverageState() else it.coverage,
                 ai = it.ai.copy(config = config, hasKey = keyPresent))
         }
     }
@@ -213,6 +214,10 @@ internal class LaunchCoordinator private constructor(application: Application) {
         }
         runCatching { translationSources.pruneUnused() }.onFailure {
             PersistentDiagnosticLog.warn(TAG, "Unable to clean obsolete custom translations", it)
+        }
+        if (source.isOfficial) {
+            val times = com.example.limbuszhcn.update.TranslationRepository(translationCache).downloadTimes()
+            publish { it.copy(sources = it.sources.copy(officialDownloadTimes = times)) }
         }
         return result
     }
@@ -340,9 +345,11 @@ internal class LaunchCoordinator private constructor(application: Application) {
         val request = coverageRequest.incrementAndGet()
         state = state.copy(coverage = state.coverage.copy(loading = true, error = null))
         coverageWorker.execute {
+            var ticket: CoverageCheck? = null
             val result = runCatching {
                 check(coverageRequest.get() == request) { "已有新的覆盖检查" }
-                val checkId = coverageStore.beginCheck()
+                val checkId = coverageStore.beginCheck(translationSources.read().selected)
+                ticket = checkId
                 val storage = runtime.storage()
                 require(storage.japaneseResources().isNotEmpty()) { "还没有本地游戏文本。请先从 BYBUS 进入游戏完成资源下载，再回来检查。" }
                 val pair = com.example.limbuszhcn.storage.OperationLock.run(app.filesDir.toPath()) {
@@ -351,22 +358,28 @@ internal class LaunchCoordinator private constructor(application: Application) {
                         val extracted = com.example.limbuszhcn.update.TranslationRepository(translationCache).verifiedForLaunch(null)
                         PreparedTranslation(extracted.outputDirectory, extracted.manifest)
                     } else translationSources.prepare(source)
-                    Triple(source, base, coverageFingerprint(source, storage, verifyContents = true))
+                    Triple(source, base, coverageInputs(source, storage, verifyContents = true, verified = base))
                 }
+                val verified = coverageStore.verified(checkId, pair.third)
+                ticket = verified
                 val report = scanCoverage(storage, pair.first, pair.second).also { report ->
                     PersistentDiagnosticLog.info(TAG, "Coverage files=${report.files} total=${report.total} covered=${report.covered} " +
                         "missing=${report.missing} review=${report.review} shared=${report.shared} excluded=${report.excluded} unreadable=${report.unreadable}")
                 }
-                check(coverageRequest.get() == request && coverageFingerprint(translationSources.read().selected, storage) == pair.third) {
+                check(coverageRequest.get() == request && coverageInputs(translationSources.read().selected, storage).fingerprint == pair.third.fingerprint) {
                     "检查期间资源发生变化，请重新检查"
                 }
-                SavedCoverage(pair.third, report).also { coverageStore.save(it, checkId) }
+                coverageStore.save(pair.third, report, verified)
+            }
+            if (result.isFailure && coverageRequest.get() != request) ticket?.let {
+                coverageStore.abandon(it)
+                if (state.sources.selectedId == it.sourceId) refreshCoverageFreshness()
             }
             publish {
                 if (coverageRequest.get() != request) it else it.copy(coverage = it.coverage.copy(loading = false,
                     report = result.getOrNull()?.report ?: it.coverage.report,
                     fingerprint = result.getOrNull()?.fingerprint ?: it.coverage.fingerprint,
-                    stale = result.isFailure,
+                    stale = result.isFailure, independentReady = result.getOrNull()?.independentReady ?: it.coverage.independentReady,
                     error = result.exceptionOrNull()?.let { error ->
                         if (error is IllegalArgumentException || error is IllegalStateException) error.message
                         else "本地文本读取失败，请在资源下载完成后重新检查"
@@ -377,8 +390,9 @@ internal class LaunchCoordinator private constructor(application: Application) {
 
     private fun independentInput() = translationSources.read().independentInput(aiSettings.config())
 
-    private fun coverageFingerprint(source: TranslationSource, storage: com.example.limbuszhcn.gamefs.GameStorage, verifyContents: Boolean = false) =
-        coverageStore.fingerprint(source, storage, verifyContents, independentInput())
+    private fun coverageInputs(source: TranslationSource, storage: com.example.limbuszhcn.gamefs.GameStorage,
+        verifyContents: Boolean = false, verified: PreparedTranslation? = null) =
+        coverageStore.inputs(source, storage, verifyContents, independentInput(), verified?.manifest?.archiveSha256)
 
     private fun scanCoverage(storage: com.example.limbuszhcn.gamefs.GameStorage, source: TranslationSource, base: PreparedTranslation): CoverageReport {
         val prior = independentInput()
@@ -387,12 +401,44 @@ internal class LaunchCoordinator private constructor(application: Application) {
         return TranslationCoverage.scan(storage, base, source.name, proof)
     }
 
+    private fun restoreCoverage(sources: SourceState): CoverageState = try {
+        val source = sources.selected
+        if (!coverageStore.hasHistory(source)) CoverageState() else {
+            val storage by lazy { runtime.storage() }
+            val prior = sources.independentInput(aiSettings.config())
+            val input = runCatching { coverageStore.inputs(source, storage, independentInput = prior) }.getOrElse {
+                CoverageInputs(source, coverageStore.sourceRevision(source), "unavailable", prior)
+            }
+            val saved = coverageStore.read(input) {
+                try {
+                    val committed = prior?.let { AiTranslationReuse.collect(translationCache, it, translationSources.prepare(it), storage).keys }.orEmpty()
+                    TranslationCoverage.independentRemaining(storage, committed)
+                } catch (cancel: java.util.concurrent.CancellationException) {
+                    throw cancel
+                } catch (error: Exception) {
+                    PersistentDiagnosticLog.warn(TAG, "Could not restore independent translation count", error)
+                    -1
+                }
+            }
+            if (saved == null) CoverageState() else CoverageState(report = saved.report, fingerprint = saved.fingerprint,
+                stale = saved.needsCheck, independentReady = saved.independentReady)
+        }
+    } catch (cancel: java.util.concurrent.CancellationException) {
+        throw cancel
+    } catch (error: Exception) {
+        PersistentDiagnosticLog.warn(TAG, "Could not restore selected package coverage", error)
+        CoverageState(error = "上次结果暂时无法读取，可重新检查")
+    }
+
     private fun refreshCoverageFreshness() {
-        val saved = runCatching { coverageStore.read() }.getOrNull() ?: return
-        val current = runCatching { coverageFingerprint(translationSources.read().selected, runtime.storage()) }.getOrNull()
+        val request = coverageRequest.get()
+        val sources = runCatching { translationSources.read() }.getOrNull() ?: return
+        val restored = restoreCoverage(sources)
         publish {
-            if (it.coverage.loading || it.coverage.report?.checkedAt != saved.report.checkedAt) it
-            else it.copy(coverage = it.coverage.copy(stale = saved.needsCheck || it.coverage.error != null || current != saved.fingerprint))
+            if (coverageRequest.get() != request || it.coverage.loading || it.sources.selectedId != sources.selectedId ||
+                it.sources.selected.revision != sources.selected.revision) it
+            else it.copy(coverage = if (it.coverage.error != null && (restored.stale || restored.report == null))
+                restored.copy(error = it.coverage.error) else restored)
         }
     }
 
@@ -459,23 +505,20 @@ internal class LaunchCoordinator private constructor(application: Application) {
         perform("生成 AI 汉化", preserveFailure = true, page = "ai-translation") {
             runAiTask {
                 check(!aiTaskStore.exists()) { "请先继续或取消已有翻译任务" }
-                val recorded = coverageStore.read()
-                check(recorded != null && !recorded.needsCheck && recorded.fingerprint == checkedFingerprint &&
-                    coverageFingerprint(translationSources.read().selected, runtime.storage(), verifyContents = true) == checkedFingerprint) {
-                    "汉化或游戏文本已变化，请重新检查后再翻译"
-                }
                 val source = translationSources.read().selected
                 val independent = if (config.missingOnly) null else independentInput()
+                val repository = com.example.limbuszhcn.update.TranslationRepository(translationCache)
+                val reference = (if (source.isOfficial) repository.verifiedForLaunch(null)
+                    else runCatching { repository.verifiedForLaunch(null) }.getOrNull())
+                    ?.let { PreparedTranslation(it.outputDirectory, it.manifest) }
+                val prepared = if (!config.missingOnly) null else if (source.isOfficial) reference else translationSources.prepare(source)
+                val input = coverageInputs(source, runtime.storage(), verifyContents = true, verified = reference)
+                val recorded = coverageStore.read(input)
+                check(recorded != null && !recorded.needsCheck && recorded.fingerprint == checkedFingerprint &&
+                    input.fingerprint == checkedFingerprint && (config.missingOnly || recorded.independentReady)) {
+                    "汉化或游戏文本已变化，请重新检查后再翻译"
+                }
                 aiSettings.save(config, key); publishSources(); stopGame()
-                // Freeze the local package the coverage report examined; do not silently change the scope by downloading a newer base.
-                val prepared = if (!config.missingOnly) null else if (source.isOfficial) {
-                    val repository = com.example.limbuszhcn.update.TranslationRepository(translationCache, github::releaseForLaunch)
-                    val extracted = runCatching { repository.verifiedForLaunch(null) }.getOrElse { repository.checkLatest(RELEASE_URL, null) }
-                    PreparedTranslation(extracted.outputDirectory, extracted.manifest)
-                } else translationSources.prepare(source)
-                val reference = if (source.isOfficial && prepared != null) prepared else runCatching {
-                    com.example.limbuszhcn.update.TranslationRepository(translationCache).verifiedForLaunch(null)
-                }.getOrNull()?.let { PreparedTranslation(it.outputDirectory, it.manifest) }
                 aiTaskStore.createForSelection(config, translationSources, prepared, reference, independent, runtime.storage(), aiCancelled::get)
             }.message
         }
@@ -522,7 +565,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
                 AiPublication.Generated -> if (task.upstream) "已使用新版零协，沿用 ${result.carried} 条 AI 译文" else "AI 汉化已保存"
             }
             publishSources(status)
-            val report = refreshCoverageAfterTranslation()
+            val report = refreshCoverageAfterTranslation(published == AiPublication.Generated || published == AiPublication.Official)
             val message = if (published == AiPublication.SeparateCopy) status else report?.let {
                 "$status · 未覆盖 ${it.missing} · 待核对 ${it.review}"
             } ?: "$status；覆盖检查未完成，可稍后重查"
@@ -547,21 +590,27 @@ internal class LaunchCoordinator private constructor(application: Application) {
         }
     }
 
-    private fun refreshCoverageAfterTranslation(): CoverageReport? {
+    private fun refreshCoverageAfterTranslation(activePackChanged: Boolean): CoverageReport? {
         coverageRequest.incrementAndGet()
+        val previous = restoreCoverage(translationSources.read())
+        if (!activePackChanged || previous.current) {
+            publish { it.copy(coverage = previous) }
+            return previous.report.takeIf { previous.current }
+        }
         publish { it.copy(coverage = it.coverage.copy(loading = true, stale = true, error = null), stage = "正在核对翻译结果") }
         val result = runCatching {
-            val checkId = coverageStore.beginCheck()
             val source = translationSources.read().selected
+            val checkId = coverageStore.beginCheck(source)
             val storage = runtime.storage()
-            val fingerprint = coverageFingerprint(source, storage, verifyContents = true)
             val base = if (source.isOfficial) {
                 val extracted = com.example.limbuszhcn.update.TranslationRepository(translationCache).verifiedForLaunch(null)
                 PreparedTranslation(extracted.outputDirectory, extracted.manifest)
             } else translationSources.prepare(source)
+            val input = coverageInputs(source, storage, verifyContents = true, verified = base)
+            val verified = coverageStore.verified(checkId, input)
             val report = scanCoverage(storage, source, base)
-            check(coverageFingerprint(translationSources.read().selected, storage) == fingerprint) { "游戏文本仍在变化，请下载完成后重新检查" }
-            SavedCoverage(fingerprint, report).also { coverageStore.save(it, checkId) }
+            check(coverageInputs(translationSources.read().selected, storage).fingerprint == input.fingerprint) { "游戏文本仍在变化，请下载完成后重新检查" }
+            coverageStore.save(input, report, verified)
         }
         publish { current -> result.fold(
             { saved -> current.copy(coverage = CoverageState(report = saved.report, fingerprint = saved.fingerprint)) },
