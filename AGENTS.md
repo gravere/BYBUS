@@ -73,37 +73,12 @@
 - 容器内 microG Services/FakeStore 与 Limbus 一样不得进入旧式 ART `jmethodID` 内存改写 VM hook；它们所需的 IO 重定向、Binder 身份和 Activity result 兼容均由独立层完成。Firebase Apple/验证码浏览器回调只允许由宿主精确接管 `genericidp://firebase.auth/` 与 `recaptcha://firebase.auth/`,再显式转发到容器内 Limbus 对应 Activity；不得把其它 URI 或浏览器 extras 带入容器。
 - Limbus 原生 DNS 与 socket 连接必须绕过 VirtualApp 域名/IP 策略。允许有限日志诊断, 不得修改测试机 VPN、代理或路由。
 
-## Native / AppSealing 约束
+## 原生容器与游戏完整性
 
-- 2026-10-05 用户要求同结构后续版本自动适配。按 `docs/automatic-native-compatibility.md`
-  在官方签名、ELF 加载边界及已验证代码族指纹成立时解析当前节位置；允许使用已验证
-  游戏校验器提供的预期 CRC，但完整重算及 owned-patch 边界不变。不得仅去掉版本门禁，
-  不得从当前已修改内存学习可信 CRC，未知保护结构仍拒绝。471 的专属例外不扩展。
-
-- Limbus native 终止路径只做容器进程内轻量拦截; `SIGPWR` / `SIGXCPU` 必须放行。
-- `SIGSEGV` 仅可忽略 `si_code <= 0` 的用户主动投递; 同步内存错误必须交回原 handler。下游返回后核对 PC/SP/PSTATE 和全部通用寄存器，不能仅凭 PC/SP 不变误杀已修正寄存器的处理结果；完整上下文仍未改变时恢复默认处理并终止，不得返回原指令形成信号/日志死循环。
-- ARM64 libc 同地址符号只安装一次 IO hook；只有确切等价的 ABI 别名可共享原跳板，未知冲突拒绝覆盖。指令搬运须按 ISA 位宽扩展有符号偏移，保留 4/16 KiB 页保护边界和原函数发布顺序。
-- libc hook 必须保持公开 API 返回值语义。例如 `getcwd()` 成功时返回调用方 buffer 指针, 不能暴露 raw syscall 长度。
-- native 路径伪装必须覆盖 `readlinkat` / `syscall(__NR_readlinkat)` 和 `/proc/self/fd` 反向路径。
-- AppSealing 50040 已确认由 `/proc/self/maps` 审计路径触发; `/sys/module`、`/proc/modules` 走 direct syscall, libc 文件 API 伪装不能覆盖。
-- 只允许按反汇编或运行时 backtrace 确认的版本偏移跳过 50040/50048 上报调用; 不得泛化屏蔽 maps 解析、错误策略表或未知 syscall。
-- v471 / SDK 36 的 `30010` 仅可处理已实测的 `libil2cpp.so` 调用点 `+0x70128`：
-  必须逐字节覆盖两个完整代码段，按原算法重算校验值；仅将本进程登记的汉化/容器
-  补丁替换回修改前字节，并核对当前字节仍等于登记的修改后字节。重算结果必须匹配
-  本版本原始校验值（库在加载时解密，不能直接和磁盘加密字节比较）。其他调用点、模块、版本或
-  未登记变化继续执行原上报；不得简单 NOP `30010` 或改写错误策略表。
-  校验必须位于该失败分支的 JNI 释放之前：`+0x700ec` 调用 `+0xac878` 会
-  DetachCurrentThread，释放后再从上报入口恢复执行会留下失效的 JNIEnv。
-  仅在 caller=`+0x700f0`、栈记录与当前线程 JNIEnv 同时匹配且完整 CRC 校验成功时，
-  从该调用点直接进入已验证的成功清理 `+0x70464`；其他释放调用执行原函数。
-- 同版 `30009` 实测 caller=`+0x70ba8`，校验保护库自身的 179 个代码范围。
-  兼容判断同样必须前移至 `+0x70b68` 的 JNI 释放之前；必须限定相同模块、描述表、
-  原始 CRC，并对全部范围重算字节 CRC，仅恢复已登记的静态兼容补丁原字节。
-  不得把 `30010` 的整段 IL2CPP 校验结果用于放行 `30009`，未知差异执行原路径。
-- AppSealing 50048 的 `SIGILL` 兜底只允许在 `ILL_ILLOPC`、PC=`base+0x4e564`、
-  LR=`base+0x4e550` 同时匹配时跳到 `base+0x4e998`;其余 `SIGILL` 必须转发原 handler。
-  该包装器须独立通过原始 `sigaction` 维护,不得扩展已被 inline hook 的 `sigaction` 函数体,
-  否则会改变前导指令布局并导致 Android 12 在 `__fix_instructions` 崩溃。
+- 游戏声明的 Application、保护组件、校验结果、告警和终止行为均由游戏与 Android 处理。容器不得覆盖拒绝结果、替换保护组件、伪造进程视图或阻止进程退出。
+- 资源重定向限于用户授权的游戏存储及汉化文件。游戏通过系统接口读取进程信息时须收到系统的真实结果。
+- 游戏自行弹出安全提示时，只记录本次启动的错误码及类型，并继续转发原提示。已记录的拒绝须优先于较早的字体或文本加载成功状态。
+- 原生文件接口遵守系统的参数、结果和页大小。翻译入口与校验代码保持独立，界面或启动成功不能代替对拒绝路径的验证。
 
 ## 当前调试状态
 

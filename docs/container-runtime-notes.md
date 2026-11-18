@@ -2,6 +2,8 @@
 
 本文从 AGENTS.md 拆出,记录 VirtualApp 接入状态、设备实测结论和 Limbus 专项兼容细节。AGENTS.md 只保留架构边界和当前关键判断。
 
+当前启动流程保留游戏声明的 Application，原样交付游戏的完整性判断和终止信号。BYBUS 接收游戏已发出的告警，按本次启动记录错误码和类型，再将原提示交给游戏显示。汉化或字体已经加载，也不能据此把被游戏拒绝的启动记为成功。
+
 ## ARM 转译中的 JNI 边界
 
 Android 17 x86_64 的独立模拟环境已捕获：直接把 ARM `new_limbus_FindClass` 指针

@@ -95,17 +95,14 @@ source-string index. Compilation must recursively include nested skill/coin tabl
 and story display fields rather than accepting only top-level `dataList` strings.
 TMP setter hooks are only the final UI fallback; the string acquisition and
 parameter-formatting paths must be covered for full character, skill and story
-translation. `GlobalGameManager.Lang` is forced to the confirmed enum value
-`JP=2` after the IL2CPP initialization boundary, with
-`LocalSave.LocalGameOptionData.GetLanguage()` retained as a compatibility hook.
+translation. The compiled source-text index uses Japanese. Live display-table
+translation reads the language selected by the game and matches the same released
+record in its Japanese, English or Korean resource table.
 Schema 7 keeps the compiler and native display-field policies aligned and adds the
 verified `story`, `relatedChapterText`, and `openConditionNumber` fields found in
 the current public package. Entries containing replacement characters or illegal
-control bytes are skipped instead of displaying damaged text. Validation requires
-an actual getter-hit log; hook installation alone does not
-prove the game selected Japanese. A user stuck before the settings screen does
-not need to edit the saved English value (`EN=1`) first. PlayerPrefs itself is
-left unchanged.
+control bytes are skipped instead of displaying damaged text. In-game language
+verification requires a visible translated screen. The game owns its saved preferences.
 
 The launcher must not treat a downloaded translation archive as an active
 translation. On a new install, official Japanese resources appear only after the

@@ -25,10 +25,8 @@ LOCAL_SRC_FILES := Jni/VAJni.cpp \
 				   Foundation/syscall/BinarySyscallFinder.cpp \
 				   Foundation/fake_dlfcn.cpp \
 				   Foundation/canonicalize_md.c \
-				   Foundation/MapsRedirector.cpp \
                    Foundation/RuntimePage.cpp \
 				   Foundation/LimbusTranslationRuntime.cpp \
-                   Foundation/LimbusCodeIntegrityCompat.cpp \
 				   Foundation/IORelocator.cpp \
 				   Foundation/VMHook.cpp \
 				   Foundation/Symbol.cpp \
@@ -67,10 +65,8 @@ LOCAL_SRC_FILES := Jni/VAJni.cpp \
 				   Foundation/syscall/BinarySyscallFinder.cpp \
 				   Foundation/fake_dlfcn.cpp \
 				   Foundation/canonicalize_md.c \
-				   Foundation/MapsRedirector.cpp \
                    Foundation/RuntimePage.cpp \
 				   Foundation/LimbusTranslationRuntime.cpp \
-                   Foundation/LimbusCodeIntegrityCompat.cpp \
 				   Foundation/IORelocator64.cpp \
 				   Foundation/VMHook.cpp \
 				   Foundation/Symbol.cpp \
@@ -108,10 +104,8 @@ LOCAL_SRC_FILES := Jni/VAJni.cpp \
 				   Foundation/syscall/BinarySyscallFinder.cpp \
 				   Foundation/fake_dlfcn.cpp \
 				   Foundation/canonicalize_md.c \
-				   Foundation/MapsRedirector.cpp \
                    Foundation/RuntimePage.cpp \
 				   Foundation/LimbusTranslationRuntime.cpp \
-                   Foundation/LimbusCodeIntegrityCompat.cpp \
 				   Foundation/IORelocator.cpp \
 				   Foundation/VMHook.cpp \
 				   Foundation/Symbol.cpp \

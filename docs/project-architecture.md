@@ -378,15 +378,11 @@ signed outer APK assets. Debug-only path/URL overrides remain available for
 development, but are not part of the user workflow. The embedded Apache-2.0
 license and component provenance are shipped alongside the APK assets.
 
-This mode supports Japanese only. Immediately after the original `il2cpp_init`
-returns, the runtime resolves `GlobalGameManager.get_Lang()` and forces its
-runtime return value to `JP=2`; `LocalSave.LocalGameOptionData.GetLanguage()` is
-retained only as a compatibility hook. Device validation must show an actual
-language-getter hit because a successful hook-install log alone does not prove
-that the game selected Japanese. The PlayerPrefs XML is not rewritten, so its
-encryption key, IV and other user settings remain untouched. Japanese layout/font
-materials stay active; the dynamic Chinese TMP fallback remains available for
-missing glyphs.
+The compiled source-text index uses Japanese originals. The live resource reader also
+accepts the corresponding English and Korean tables. It resolves the table and
+record before merging display fields from the same verified translation snapshot.
+The game reads its own language preference. Release verification requires an
+actual translated game screen in addition to loader diagnostics.
 
 Each compiled version is immutable:
 

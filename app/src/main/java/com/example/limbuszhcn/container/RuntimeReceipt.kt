@@ -133,7 +133,8 @@ internal class RuntimeReceipt(private val indexRoot: Path) {
             "hooks_failed" -> "加载失败"
             else -> "尚未收到确认"
         }
-        val issue = currentSafetyAlert()?.let { "游戏安全提示：${safeCodes(it).ifEmpty { "未提供编号" }}" }
+        val alert = currentSafetyAlert()
+        val issue = alert?.let(::safetyMessage)
             ?: when {
                 state == "hooks_failed" -> "汉化功能未能加载，可尝试修复或导出诊断。"
                 state == "no_index" -> "汉化文件未就绪，请使用修复功能。"
@@ -141,6 +142,7 @@ internal class RuntimeReceipt(private val indexRoot: Path) {
                 else -> null
             }
         return RuntimeLaunchStatus(time, when {
+            alert != null -> "游戏发出了安全提示"
             issue != null -> "启动时出现问题"
             state == "hooks_installed" && font == "已加载" -> "汉化与字体已加载"
             state != null -> "已收到游戏响应"
@@ -148,10 +150,15 @@ internal class RuntimeReceipt(private val indexRoot: Path) {
         }, translation, font, issue)
     }
 
+    private fun safetyMessage(alert: Properties): String {
+        val codes = safeCodes(alert)
+        val label = if (codes.isEmpty()) "游戏安全提示（未提供编号）" else "游戏安全提示（$codes）"
+        return "$label。错误信息已保存在本次运行记录中。"
+    }
+
     fun description(): String = runCatching {
         currentSafetyAlert()?.let { alert ->
-            val code = safeCodes(alert).ifEmpty { "未提供编号" }
-            return "上次启动：游戏安全提示（$code），可导出诊断包查看"
+            return safetyMessage(alert)
         }
         val request = indexRoot.resolve("launch.request").readText().trim()
         val receipt = AtomicFiles.readProperties(indexRoot.resolve("runtime-state.properties"))
@@ -172,7 +179,7 @@ internal class RuntimeReceipt(private val indexRoot: Path) {
         val profile = receipt.getProperty("nativeProfile", "")
         when {
             profile.isBlank() -> "$detail；当前游戏构建的底层兼容性未验证"
-            profile == com.lody.virtual.helper.compat.LimbusNativeStructure.FAMILY -> "$detail；已按当前安装包自动适配"
+            profile == com.lody.virtual.helper.compat.LimbusNativeProfile.LOADABLE -> "$detail，官方安装包已核对"
             else -> detail
         }
     }.getOrDefault("尚未收到游戏运行时确认；当前游戏构建的底层兼容性未验证")
