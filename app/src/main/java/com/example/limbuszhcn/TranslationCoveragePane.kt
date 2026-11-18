@@ -25,13 +25,15 @@ internal fun CoverageSummary(state: LauncherUiState, onOpen: () -> Unit, onCheck
                 Text("汉化覆盖", style = MaterialTheme.typography.titleSmall)
                 Text(when {
                     coverage.loading -> "正在对照本地文本"
-                    coverage.stale && report != null -> "译文已变更 · 需要重新检查"
+                    coverage.error != null -> "本次检查未完成"
+                    coverage.stale && report != null -> "上次报告需要重新检查"
                     report != null && !hasDetails -> "${report.total} 条本地文本已覆盖"
                     report != null -> "${report.missing} 条未覆盖 · ${report.review} 条待核对"
-                    coverage.error != null -> "本次检查未完成"
                     else -> "还未检查本地游戏文本"
                 }, color = C.Muted, style = MaterialTheme.typography.bodySmall)
             }
+            if (coverage.stale && report != null && hasDetails && !coverage.loading)
+                TextButton(onOpen) { Text("上次结果") }
             TextButton(if (coverage.stale || !hasDetails) onCheck else onOpen,
                 enabled = !coverage.loading && (hasDetails && !coverage.stale || !state.busy)) {
                 Text(if (coverage.loading) "检查中" else if (coverage.stale || report != null && !hasDetails) "重新检查" else if (report != null) "查看结果" else "检查")
@@ -56,7 +58,7 @@ internal fun TranslationCoveragePane(state: LauncherUiState, onCheck: () -> Unit
                 Column(Modifier.weight(1f)) {
                     Text(if (coverage.stale) "上次检查结果" else "检查结果", style = MaterialTheme.typography.titleMedium)
                     if (report != null) Text(DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.systemDefault())
-                        .format(Instant.ofEpochMilli(report.checkedAt)) + if (coverage.stale) " · 译文已变更" else " · 已保存",
+                        .format(Instant.ofEpochMilli(report.checkedAt)) + if (coverage.stale) " · 待重新检查" else " · 已保存",
                         style = MaterialTheme.typography.labelSmall, color = C.Muted)
                 }
                 FilledTonalButton(onCheck, enabled = !coverage.loading && !state.busy,
@@ -88,12 +90,12 @@ internal fun TranslationCoveragePane(state: LauncherUiState, onCheck: () -> Unit
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     AiScope.entries.forEach { item ->
                         val count = (if (item.missing) report.aiEligible else 0) + (if (item.review) report.reviewEligible else 0)
-                        FilterChip(scope == item, { scope = item }, enabled = !coverage.stale && !coverage.loading && !state.busy && count > 0,
+                        FilterChip(scope == item, { scope = item }, enabled = coverage.current && !state.busy && count > 0,
                             label = { Text("${item.label} $count") })
                     }
                 }
                 val count = (if (scope.missing) report.aiEligible else 0) + (if (scope.review) report.reviewEligible else 0)
-                FilledTonalButton({ onTranslate(scope) }, enabled = count > 0 && !coverage.stale && !coverage.loading && !state.busy && !state.ai.hasPendingTask,
+                FilledTonalButton({ onTranslate(scope) }, enabled = count > 0 && coverage.current && !state.busy && !state.ai.hasPendingTask,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("设置 AI 翻译") }
             }
             if (report.details.isEmpty()) DetailCard { Text(if (report.unreadable == 0) "本次本地检查没有发现未覆盖文本。" else "已读文件未发现缺失，仍有文件未能检查。") }

@@ -226,7 +226,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
             enabled = ai.task?.phase != com.example.limbuszhcn.translation.AiTaskPhase.Applying) { Text("取消并删除") } },
         dismissButton = { TextButton({ cancelTask = false }) { Text("保留任务") } })
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("开始 AI 翻译？") },
-        text = { Text("所选${if (missing) scope.label else "全部"}共 ${state.coverage.eligible(config())} 条，本批最多 ${minOf(limit, state.coverage.eligible(config()))} 条。将关闭游戏，使用你配置的 API 翻译，费用计入你的账户。完成后自动检查剩余条目。原汉化包保留，可撤回。") },
+        text = { Text("${if (missing) scope.label else "尚未完成的可译文本"}共 ${state.coverage.eligible(config())} 条，本批最多 ${minOf(limit, state.coverage.eligible(config()))} 条。将关闭游戏，使用你的 API 翻译并计费。已完成的译文保留。") },
         confirmButton = { TextButton({ confirm = false; val value = key; key = ""; reveal = false; actions.generateAi(config(), value) }, enabled = enabled && coverageReady) { Text("开始翻译") } },
         dismissButton = { TextButton({ confirm = false }) { Text("取消") } })
     if (clear) AlertDialog(onDismissRequest = { clear = false }, title = { Text("移除 API Key？") },
