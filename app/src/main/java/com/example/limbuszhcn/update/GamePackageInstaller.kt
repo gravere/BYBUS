@@ -100,8 +100,8 @@ internal class GamePackageInstaller(private val context: Context) {
                 if (Build.VERSION.SDK_INT >= 28) signingInfo = archiveInfo.signingInfo
                 else signatures = archiveInfo.signatures
             }
-            require(LimbusNativeProfile.findApproved(context, info, app).endsWith("-full")) {
-                "此安装包的底层结构未通过自动兼容检查，需要更新 BYBUS。已安装的游戏和资源未改变。"
+            require(LimbusNativeProfile.inspect(context, info, app).approved()) {
+                "游戏安装包的签名或启动组件未通过检查，请选择完整的官方安装包。"
             }
             require(identity == installedIdentity()) { "校验期间游戏已更新，请重新选择安装包" }
             return PreparedGameUpdate(listOf(base.path) + records.filter { it != base }.map { it.path },

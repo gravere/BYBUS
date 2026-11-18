@@ -83,6 +83,9 @@ def security_evidence(logs):
             if match:
                 codes.update(code for code in match[1].split(",") if re.fullmatch(r"\d{5}", code))
         codes.update(re.findall(r"AppSealingKillProcess\[(\d{5})\]", line))
+        tagged = re.search(r"\bAppSealing\s*:\s*[! ]*Kill\s+Process[ .]*\[(\d{5})\]", line)
+        if tagged:
+            codes.add(tagged[1])
     return sorted(codes)
 
 

@@ -64,20 +64,13 @@ import java.util.List;
 class MethodProxies {
     private static final String LIMBUS_PACKAGE = "com.ProjectMoon.LimbusCompany";
 
-    private static boolean shouldHidePackageFromCurrentApp(String packageName) {
-        return LIMBUS_PACKAGE.equals(MethodProxy.getAppPkg())
-                && VClient.get().shouldHideHostPackageForLimbus()
-                && MethodProxy.getHostPkg().equals(packageName);
-    }
-
     private static boolean isVisiblePackageForCurrentApp(ApplicationInfo info) {
         return info != null
-                && !shouldHidePackageFromCurrentApp(info.packageName)
                 && (shouldUseHostGooglePackageInfo(info.packageName) || MethodProxy.isVisiblePackage(info));
     }
 
     private static boolean isVisiblePackageForCurrentApp(String packageName) {
-        return !shouldHidePackageFromCurrentApp(packageName) && MethodProxy.isVisiblePackage(packageName);
+        return MethodProxy.isVisiblePackage(packageName);
     }
 
     private static final ThreadLocal<Boolean> sResolvingHostGooglePackage = new ThreadLocal<>();
@@ -463,7 +456,7 @@ class MethodProxies {
             if (LIMBUS_PACKAGE.equals(MethodProxy.getAppPkg()) && LIMBUS_PACKAGE.equals(pkgName)) {
                 return VirtualCore.get().myUid();
             }
-            if (pkgName.equals(getHostPkg()) && !shouldHidePackageFromCurrentApp(pkgName)) {
+            if (pkgName.equals(getHostPkg())) {
                 return method.invoke(who, args);
             }
             if (isAppPkg(pkgName)) {
@@ -499,8 +492,7 @@ class MethodProxies {
         @Override
         public Object call(Object who, Method method, Object... args) throws Throwable {
             ComponentName componentName = (ComponentName) args[0];
-            if (getHostPkg().equals(componentName.getPackageName())
-                    && !shouldHidePackageFromCurrentApp(componentName.getPackageName())) {
+            if (getHostPkg().equals(componentName.getPackageName())) {
                 return method.invoke(who, args);
             }
             int userId = VUserHandle.myUserId();
@@ -990,10 +982,6 @@ class MethodProxies {
             String pkg = queriedPackage(args[0]);
             int flags = readPackageFlags(args[1]);
             int userId = VUserHandle.myUserId();
-            if (shouldHidePackageFromCurrentApp(pkg)) {
-                Log.i("LimbusVA", "Hide host package from Limbus getPackageInfo: " + pkg);
-                return null;
-            }
             if ((flags & MATCH_ANY_USER) != 0) {
                 flags &=~ MATCH_ANY_USER;
                 args[1] = writePackageFlags(args[1], flags);
@@ -1465,10 +1453,6 @@ class MethodProxies {
                 return method.invoke(who, args);
             }
 
-            if (shouldHidePackageFromCurrentApp(pkg)) {
-                Log.i("LimbusVA", "Hide host package from Limbus getApplicationInfo: " + pkg);
-                return null;
-            }
             if (getHostPkg().equals(pkg)) {
                 return method.invoke(who, args);
             }
@@ -1512,8 +1496,7 @@ class MethodProxies {
         public Object call(Object who, Method method, Object... args) throws Throwable {
             ComponentName componentName = (ComponentName) args[0];
             int flags = readPackageFlags(args[1]);
-            if (getHostPkg().equals(componentName.getPackageName())
-                    && !shouldHidePackageFromCurrentApp(componentName.getPackageName())) {
+            if (getHostPkg().equals(componentName.getPackageName())) {
                 return method.invoke(who, args);
             }
             int userId = VUserHandle.myUserId();
@@ -1584,9 +1567,6 @@ class MethodProxies {
                 ApplicationInfo info = it.next();
                 if (VirtualCore.get().isAppInstalled(info.packageName) || !isVisiblePackageForCurrentApp(info.packageName)) {
                     it.remove();
-                    if (info != null && shouldHidePackageFromCurrentApp(info.packageName)) {
-                        Log.i("LimbusVA", "Hide host package from Limbus getInstalledApplications: " + info.packageName);
-                    }
                     continue;
                 }
                 ComponentFixer.fixOutsideApplicationInfo(info);
@@ -1628,9 +1608,6 @@ class MethodProxies {
                 PackageInfo info = it.next();
                 if (VirtualCore.get().isAppInstalled(info.packageName) || !isVisiblePackageForCurrentApp(info.packageName)) {
                     it.remove();
-                    if (info != null && shouldHidePackageFromCurrentApp(info.packageName)) {
-                        Log.i("LimbusVA", "Hide host package from Limbus getInstalledPackages: " + info.packageName);
-                    }
                     continue;
                 }
                 ComponentFixer.fixOutsideApplicationInfo(info.applicationInfo);
@@ -1703,8 +1680,7 @@ class MethodProxies {
         @Override
         public Object call(Object who, Method method, Object... args) throws Throwable {
             ComponentName componentName = (ComponentName) args[0];
-            if (getHostPkg().equals(componentName.getPackageName())
-                    && !shouldHidePackageFromCurrentApp(componentName.getPackageName())) {
+            if (getHostPkg().equals(componentName.getPackageName())) {
                 return method.invoke(who, args);
             }
             int flags = readPackageFlags(args[1]);

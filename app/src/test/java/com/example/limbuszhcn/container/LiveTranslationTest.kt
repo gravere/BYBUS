@@ -99,6 +99,25 @@ class LiveTranslationTest {
         assertNull(runtime.translate("JP_Unknown", source))
     }
 
+    @Test fun gameLanguageDoesNotChangeTheIdentityOfATranslatedTable() {
+        val runtime = prepare(listOf("menu/JP_UI.json")).open()!!
+        for ((key, first, second) in listOf(
+            Triple("en/menu/EN_UI.json", "Next", "Start"),
+            Triple("assets/Localize/kr/menu/KR_UI.json", "다음", "시작"),
+            Triple("JP_UI", "次の文", "開始")
+        )) {
+            val original = source.replace("次の文", first).replace("開始", second)
+            val items = JSONObject(requireNotNull(runtime.translate(key, original))).getJSONArray("dataList")
+            assertEquals("下一句", items.getJSONObject(0).getString("content"))
+            assertEquals("v2", items.getJSONObject(0).getString("voicefile"))
+            assertEquals(17, items.getJSONObject(1).getInt("cost"))
+            assertEquals("开始", items.getJSONObject(1).getString("content"))
+        }
+        assertNull(runtime.translate("en/menu/KR_UI.json", source))
+        assertNull(runtime.translate("en/battle/EN_UI.json", source))
+        assertNull(runtime.translate("de/menu/DE_UI.json", source))
+    }
+
     @Test fun duplicateIdsAndUnmatchedLeavesRetainTheOriginal() {
         assertTrue(TranslationJsonPairer.releasedTexts("""{"files":["UI.json"]}""").isEmpty())
         val original = """{"dataList":[{"id":1,"content":"甲"},{"id":1,"content":"乙"},{"id":3,"content":"未翻訳"}]}"""

@@ -3,6 +3,7 @@ from pathlib import Path
 import argparse, hashlib, json, re, shutil, subprocess
 from apk_reuse import describe
 from release_notes import render_release_notes, update_summary
+from runtime_boundary import verify_guest_runtime
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--apk', required=True, type=Path)
@@ -49,6 +50,7 @@ verification = subprocess.check_output([str(apksigner), 'verify', '--print-certs
 signer = re.search(r'Signer #1 certificate SHA-256 digest: ([a-f0-9]{64})', verification)
 assert signer, 'APK signature not verified'
 assert 'MigrationProbeActivity' not in manifest_tree, 'Debug migration probe in release'
+verify_guest_runtime(args.apk)
 args.output.mkdir(parents=True, exist_ok=True)
 apk = args.output/f'BYBUS-{version}-arm64-v8a.apk'
 if not apk.exists() or not apk.samefile(args.apk):
