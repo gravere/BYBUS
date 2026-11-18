@@ -100,6 +100,9 @@ internal class LauncherViewModel(application: Application) : AndroidViewModel(ap
     fun loadAiModels(endpoint: String, key: String) = coordinator.loadAiModels(endpoint, key)
     fun clearAiModels() = coordinator.clearAiModels()
     fun inspectCoverage() = coordinator.inspectCoverage()
+    fun coverageEntries(ref: com.example.limbuszhcn.translation.CoverageIndexRef,
+        filter: com.example.limbuszhcn.translation.CoverageFilter, page: Int, cancel: android.os.CancellationSignal) =
+        coordinator.coverageEntries(ref, filter, page, cancel)
     fun undoAi() = coordinator.undoAi()
     fun clearAiKey() = coordinator.clearAiKey()
     fun checkGameUpdate() = coordinator.checkGameUpdate(force = true)

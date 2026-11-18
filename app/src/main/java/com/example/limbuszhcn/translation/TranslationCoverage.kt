@@ -10,7 +10,7 @@ internal data class CoverageFile(val resource: String, val category: String, val
 internal data class CoverageReport(val sourceName: String, val checkedAt: Long, val files: Int, val total: Int,
     val covered: Int, val missing: Int, val review: Int, val aiEligible: Int, val unreadable: Int,
     val details: List<CoverageFile>, val excluded: Int = 0, val shared: Int = 0, val reviewEligible: Int = 0,
-    val independentEligible: Int = 0)
+    val independentEligible: Int = 0, val entryIndex: CoverageIndexRef? = null)
 internal data class CoverageState(val loading: Boolean = false, val report: CoverageReport? = null,
     val error: String? = null, val fingerprint: String? = null, val stale: Boolean = false, val independentReady: Boolean = true) {
     val current get() = report != null && fingerprint != null && error == null && !loading && !stale
@@ -35,7 +35,8 @@ internal object TranslationCoverage {
         return remaining
     }
 
-    fun scan(storage: GameStorage, base: PreparedTranslation, sourceName: String, committedAi: Set<String> = emptySet()): CoverageReport {
+    fun scan(storage: GameStorage, base: PreparedTranslation, sourceName: String, committedAi: Set<String> = emptySet(),
+        onEntry: ((CoverageEntry) -> Unit)? = null): CoverageReport {
         val inspection = TranslationInspection(storage, base)
         val resources = inspection.resources
         require(resources.isNotEmpty()) { "还没有本地游戏文本。请先从 BYBUS 进入游戏完成资源下载，再回来检查。" }
@@ -52,19 +53,35 @@ internal object TranslationCoverage {
             require(bytesRead <= 128L * 1024 * 1024) { "本地文本过多，本次检查已停止" }
             val all = resource.fields
             excluded += all.count { it.excludedReason != null }
-            val fields = all.filter { it.excludedReason == null }
-            independent += fields.count { it.canTranslate && it.id !in committedAi }
-            val fromShared = fields.filter { !it.covered && it.text in shared }
-            val uncovered = fields.filter { AiTextSelection.missing(it, shared) }
-            val uncertain = fields.filter { AiTextSelection.review(it, shared) }
-            total += fields.size; covered += fields.size - uncovered.size; missing += uncovered.size
-            sharedCount += fromShared.size
-            review += uncertain.size; eligible += uncovered.count { it.canTranslate }; reviewEligible += uncertain.count { it.canTranslate }
+            val category = category(key)
             val reason = if (key in inspection.entries) "同文件未找到可用配对" else "汉化包没有同名文件"
-            if (uncovered.isNotEmpty() || uncertain.isNotEmpty()) details += CoverageFile(key, category(key),
-                uncovered.size, uncertain.size, uncovered.take(2).map { CoverageSample(preview(it.text), false, reason = reason) } +
-                    uncertain.take(2).map { CoverageSample(preview(it.text), true,
-                        preview(it.translated ?: shared[it.text].orEmpty()), "译文中仍含日韩文，需核对是否为保留名称") })
+            val examples = mutableListOf<CoverageSample>()
+            var fileMissing = 0; var fileReview = 0
+            for (field in all) {
+                if (field.excludedReason != null) continue
+                total++
+                if (field.canTranslate && field.id !in committedAi) independent++
+                if (!field.covered && field.text in shared) sharedCount++
+                val kind = if (AiTextSelection.missing(field, shared)) {
+                    missing++; fileMissing++
+                    if (field.canTranslate) eligible++
+                    CoverageKind.Missing
+                } else {
+                    covered++
+                    if (!AiTextSelection.review(field, shared)) continue
+                    review++; fileReview++
+                    if (field.canTranslate) reviewEligible++
+                    CoverageKind.Review
+                }
+                val translated = field.translated ?: shared[field.text]
+                if (onEntry != null) {
+                    onEntry(CoverageEntry(missing + review, kind, category, key, field.text, translated, field.recordId, field.pointer))
+                } else if (if (kind == CoverageKind.Review) fileReview <= 2 else fileMissing <= 2) {
+                    examples += CoverageSample(preview(field.text), kind == CoverageKind.Review,
+                        translated?.let(::preview), if (kind == CoverageKind.Missing) reason else "译文中仍含日文或韩文")
+                }
+            }
+            if (fileMissing + fileReview > 0) details += CoverageFile(key, category, fileMissing, fileReview, examples)
         }
         return CoverageReport(sourceName, System.currentTimeMillis(), resources.size - unreadable, total,
             covered, missing, review, eligible, unreadable, details, excluded, sharedCount, reviewEligible, independent)

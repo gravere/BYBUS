@@ -44,4 +44,23 @@ class TranslationCoverageTest {
         assertEquals("战斗与技能", TranslationCoverage.category("jp/JP_Skills.json"))
         assertEquals("剧情与对话", TranslationCoverage.category("jp/StoryData/JP_10.json"))
     }
+
+    @Test fun everyIssueGetsOneNumberAndItsActualLocationEvenAfterFiltering() {
+        val root = temp.root.toPath().resolve("Localize")
+        Files.createDirectories(root.resolve("jp"))
+        val original = """{"dataList":[{"id":77,"name":"確認する","nested":{"desc":"続けます"}},
+            {"id":77,"name":"同じ記録"},{"key":"stage-A","successDesc":["台詞一","台詞二"]},{"desc":"番号なし"}]}"""
+        Files.write(root.resolve("jp/JP_MainUIText.json"), original.toByteArray())
+        val base = source("""{"dataList":[{"key":"unused","name":"其他内容"}]}""")
+        val entries = mutableListOf<CoverageEntry>()
+        val report = TranslationCoverage.scan(ContainerWorkspaceStorage(root), base, "本地包", onEntry = entries::add)
+        assertEquals(6, report.missing); assertEquals(0, report.review)
+        assertEquals((1..6).toList(), entries.map { it.number })
+        assertEquals(listOf("77","77","77","stage-A","stage-A",null), entries.map { it.recordId })
+        assertEquals(6, entries.map { it.pointer }.distinct().size)
+        assertEquals("/dataList/3/desc", entries.last().pointer)
+        assertEquals(listOf(4,5), entries.filteredPage(CoverageFilter(text = "stage-A"), 0).rows.map { it.number })
+        assertEquals(6, entries.filteredPage(CoverageFilter(text = "#6"), 0).rows.single().number)
+        assertTrue(report.details.single().examples.isEmpty())
+    }
 }

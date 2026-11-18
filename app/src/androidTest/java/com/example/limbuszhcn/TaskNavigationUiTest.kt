@@ -105,7 +105,8 @@ class TaskNavigationUiTest {
         compose.onNodeWithText("查看结果").performClick()
         compose.onNodeWithText("检查结果").assertIsDisplayed()
         capture("coverage-result")
-        compose.onNodeWithText("剧情与对话").performScrollTo().performClick()
+        compose.waitUntil(5500) { compose.onAllNodesWithText("样例 1").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("样例 1").performScrollTo().performClick()
         compose.onNodeWithText("没有可用译文").performScrollTo().assertIsDisplayed()
         capture("coverage-expanded")
         compose.runOnIdle { state = state.copy(coverage = state.coverage.copy(stale = true)) }
@@ -153,6 +154,51 @@ class TaskNavigationUiTest {
         compose.onNodeWithText(state.packageTimeLabel(imported)!!).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText(state.packageTimeLabel(generated)!!).performScrollTo().assertIsDisplayed()
         capture("source-times")
+    }
+
+    @Test fun coverageBrowserSeparatesStatusesAndKeepsEntryNumbersThroughFiltersAndPages() {
+        val script = "剧情与对话"; val battle = "战斗与技能"
+        val rows = (1..10).map { n ->
+            val kind = if (n == 7 || n == 9) CoverageKind.Review else CoverageKind.Missing
+            CoverageEntry(n, kind, if (n <= 7) script else battle, if (n <= 7) "jp/StoryData/JP_A.json" else "jp/JP_Skills.json",
+                "台詞 $n", if (kind == CoverageKind.Review) "仍含原文 $n です" else null, "R$n", "/dataList/${n-1}/content")
+        }
+        val report = CoverageReport("本地汉化", 1800000000000L, 2, 12, 4, 8, 2, 8, 0,
+            listOf(CoverageFile("a",script,6,1,emptyList()), CoverageFile("b",battle,2,1,emptyList())), reviewEligible = 2,
+            entryIndex = CoverageIndexRef("a".repeat(64), java.util.UUID.randomUUID().toString()))
+        var scans = 0
+        val actions = TranslationActions(inspectCoverage = { scans++ }, coverageEntries = { _, filter, page, _ -> rows.filteredPage(filter, page) })
+        compose.setContent { Screen(LauncherUiState(coverage = CoverageState(report = report, fingerprint = "saved")), actions) }
+        compose.onNodeWithContentDescription("设置与工具").performClick()
+        compose.onNodeWithText("汉化源与更新").performScrollTo().performClick()
+        compose.onNodeWithText("查看结果").performClick()
+        fun waitForText(text: String) {
+            compose.waitUntil(5500) { compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty() }
+        }
+        waitForText("符合条件 · 10 条")
+        compose.onNodeWithText("下一页").performScrollTo().performClick()
+        waitForText("#7")
+        compose.onNodeWithContentDescription("只看待核对").performScrollTo().performClick()
+        waitForText("符合条件 · 2 条")
+        compose.onNodeWithText("#1").assertDoesNotExist()
+        compose.onNodeWithText("#7").performScrollTo().performClick()
+        compose.onNodeWithText("现有译文").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("jp/StoryData/JP_A.json\n/dataList/6/content").assertExists()
+        capture("coverage-review-rows")
+        compose.onNodeWithContentDescription("筛选内容类别").performScrollTo().performClick()
+        compose.onNode(hasText(battle) and hasAnyAncestor(isPopup())).performClick()
+        waitForText("符合条件 · 1 条")
+        compose.onNodeWithText("#9").assertExists()
+        compose.onNodeWithText("#7").assertDoesNotExist()
+        compose.onNodeWithContentDescription("查看全部状态").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("搜索条目").performScrollTo().performTextInput("#9")
+        waitForText("符合条件 · 1 条")
+        compose.onNode(hasText("#9") and hasText("游戏 ID R9")).assertExists()
+        compose.onNodeWithContentDescription("只看未覆盖").performScrollTo().performClick()
+        waitForText("没有符合条件的条目")
+        compose.onNodeWithContentDescription("清除搜索").performScrollTo().performClick()
+        waitForText("符合条件 · 2 条")
+        compose.runOnIdle { assertEquals(0, scans) }
     }
 
     @Test fun newTranslationRequiresCoverageAndCannotUseAStaleConfirmation() {

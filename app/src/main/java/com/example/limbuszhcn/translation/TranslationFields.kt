@@ -8,7 +8,7 @@ import org.json.JSONObject
 /** One definition of display leaves for both the coverage report and AI supplement jobs. */
 internal data class TranslationField(val id: String, val text: String, val context: String,
     val covered: Boolean, val translated: String?, val clear: () -> Unit, val apply: (String) -> Unit,
-    val excludedReason: String? = null) {
+    val excludedReason: String? = null, val pointer: String = "", val recordId: String? = null) {
     val canTranslate get() = excludedReason == null && text.length <= 6000 && !text.contains(Regex("⟦P[0-9]+⟧"))
     val needsReview get() = covered && excludedReason == null && TranslationFields.hasResidualLanguage(translated.orEmpty())
 }
@@ -23,13 +23,16 @@ internal object TranslationFields {
         baseline: TranslationJsonPairer.CoveredMerge?): List<TranslationField> {
         val result = mutableListOf<TranslationField>()
         fun leaf(path: String, before: String, translated: String, covered: Boolean,
-            clear: () -> Unit, apply: (String) -> Unit, excluded: String?, speaker: String? = null) {
+            clear: () -> Unit, apply: (String) -> Unit, excluded: String?, speaker: String?, recordId: String?) {
             if (before.isBlank() || !TranslationTextPolicy.isUsableDisplayText(before) || !before.any(Char::isLetter)) return
             result += TranslationField(AiTranslationJob.digest("$resource|$path|$before"), before,
-                "$resource $path" + speaker?.let { " | speaker=$it" }.orEmpty(), covered, translated.takeIf { covered }, clear, apply, excluded)
+                "$resource $path" + speaker?.let { " | speaker=$it" }.orEmpty(), covered, translated.takeIf { covered },
+                clear, apply, excluded, path, recordId)
         }
-        fun visit(source: Any, destination: Any, pointer: String, depth: Int, displayArray: Boolean = false, excluded: String? = null, speaker: String? = null) {
+        fun visit(source: Any, destination: Any, pointer: String, depth: Int, displayArray: Boolean = false,
+            excluded: String? = null, speaker: String? = null, inheritedId: String? = null) {
             require(depth <= 64) { "文本结构过深，无法检查" }
+            val recordId = if (source is JSONObject) recordId(source) ?: inheritedId else inheritedId
             when {
                 source is JSONObject && destination is JSONObject -> source.keys().asSequence().toList().sorted().forEach { field ->
                     val before = source.get(field); val after = destination.opt(field)
@@ -44,9 +47,9 @@ internal object TranslationFields {
                         "明确的制作说明" else null
                     if (before is String && after is String && TranslationTextPolicy.isDisplayField(field)) {
                         leaf(path, before, after, baseline?.contains(destination, field) == true,
-                            { destination.remove(field); Unit }, { destination.put(field, it) }, reason, who)
+                            { destination.remove(field); Unit }, { destination.put(field, it) }, reason, who, recordId)
                     } else if ((before is JSONObject || before is JSONArray) && after != null)
-                        visit(before, after, path, depth + 1, field in TranslationTextPolicy.STRING_ARRAY_FIELDS, reason, who)
+                        visit(before, after, path, depth + 1, field in TranslationTextPolicy.STRING_ARRAY_FIELDS, reason, who, recordId)
                 }
                 source is JSONArray && destination is JSONArray -> {
                     require(source.length() == destination.length()) { "游戏文本结构发生变化，请重新检查" }
@@ -54,8 +57,9 @@ internal object TranslationFields {
                         val before = source.get(i); val after = destination.get(i)
                         if (displayArray && before is String && after is String)
                             leaf("$pointer/$i", before, after, baseline?.contains(destination, i.toString()) == true,
-                                { destination.put(i, ""); Unit }, { destination.put(i, it) }, excluded, speaker)
-                        else if (before is JSONObject || before is JSONArray) visit(before, after, "$pointer/$i", depth + 1, excluded = excluded, speaker = speaker)
+                                { destination.put(i, ""); Unit }, { destination.put(i, it) }, excluded, speaker, recordId)
+                        else if (before is JSONObject || before is JSONArray) visit(before, after, "$pointer/$i", depth + 1,
+                            excluded = excluded, speaker = speaker, inheritedId = recordId)
                     }
                 }
             }
@@ -63,6 +67,11 @@ internal object TranslationFields {
         visit(original, target, "", 0)
         return result
     }
+
+    private fun recordId(row: JSONObject): String? = recordKeys.firstNotNullOfOrNull { key ->
+        row.opt(key)?.takeIf { it is String || it is Number }?.toString()?.takeIf { it.isNotBlank() }
+    }
+    private val recordKeys = listOf("id", "key", "originalId")
 
     private fun unusedMarker(text: String) = listOf("[未使用]", "[미사용]", "[Unused]", "[UNUSED]",
         "사용 안하는 텍스트", "사용하지않는스킬(번역x)").any { text.trimStart().startsWith(it) }
