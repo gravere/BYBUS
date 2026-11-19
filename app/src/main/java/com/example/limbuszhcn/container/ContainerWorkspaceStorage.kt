@@ -1,6 +1,8 @@
 package com.example.limbuszhcn.container
 
 import com.example.limbuszhcn.gamefs.GameStorage
+import com.example.limbuszhcn.gamefs.GameTextLanguage
+import com.example.limbuszhcn.gamefs.GameTextLanguageState
 import com.example.limbuszhcn.storage.AtomicFiles
 import com.example.limbuszhcn.update.sha256
 import java.util.UUID
@@ -18,23 +20,27 @@ import kotlin.io.path.isRegularFile
 import kotlin.io.path.name
 import kotlin.io.path.outputStream
 
-class ContainerWorkspaceStorage(
+class ContainerWorkspaceStorage @JvmOverloads constructor(
     private val localizeRoot: Path,
-    private val migrationRoots: Map<String, Path> = mapOf("assets" to localizeRoot.parent.parent)
+    private val migrationRoots: Map<String, Path> = mapOf("assets" to localizeRoot.parent.parent),
+    private val language: () -> GameTextLanguageState? = { GameTextLanguageState(GameTextLanguage.Japanese, "jp") }
 ) : GameStorage {
+    override fun textLanguage() = language()
     override fun resourceMigrationRoots(): Map<String, Path> = migrationRoots
-    override fun japaneseResourceMetadata(): Map<String, String> = japaneseResources().associateWith { key ->
+    override fun japaneseResourceMetadata() = textResourceMetadata(GameTextLanguage.Japanese)
+    override fun textResourceMetadata(language: GameTextLanguage): Map<String, String> = textResources(language).associateWith { key ->
             val attrs = Files.readAttributes(localizeRoot.resolve(key), java.nio.file.attribute.BasicFileAttributes::class.java,
                 java.nio.file.LinkOption.NOFOLLOW_LINKS)
             "${attrs.size()}|${attrs.lastModifiedTime()}|${attrs.fileKey()}"
     }
-    override fun japaneseResources(): List<String> {
-        val jp = localizeRoot.resolve("jp")
+    override fun japaneseResources() = textResources(GameTextLanguage.Japanese)
+    override fun textResources(language: GameTextLanguage): List<String> {
+        val jp = localizeRoot.resolve(language.code)
         if (!Files.isDirectory(jp, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return emptyList()
         val base = localizeRoot.toRealPath()
         return Files.walk(jp, 32).use { paths ->
             val files = paths.filter { Files.isRegularFile(it, java.nio.file.LinkOption.NOFOLLOW_LINKS) &&
-                it.fileName.toString().startsWith("JP_") && it.fileName.toString().endsWith(".json") }
+                it.fileName.toString().startsWith(language.code.uppercase(java.util.Locale.ROOT) + "_") && it.fileName.toString().endsWith(".json") }
                 .limit(5001).iterator().asSequence().toList()
             require(files.size <= 5000) { "游戏文本文件数量超出限制" }
             files.map { path ->
@@ -68,6 +74,24 @@ class ContainerWorkspaceStorage(
         return if (target.isRegularFile()) {
             Files.readAllBytes(target)
         } else {
+            null
+        }
+    }
+
+    override fun readAtMost(path: String, limit: Int): ByteArray? {
+        val target = resolveAbsolute(path)
+        if (!Files.isRegularFile(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return null
+        return try {
+            val file = target.toRealPath()
+            if (!file.startsWith(localizeRoot.toRealPath())) return null
+            val size = Files.size(file)
+            if (size !in 1L..limit.toLong()) return null
+            java.io.DataInputStream(Files.newInputStream(file)).use { stream ->
+                val bytes = ByteArray(size.toInt())
+                stream.readFully(bytes)
+                bytes.takeIf { stream.read() == -1 }
+            }
+        } catch (_: IOException) {
             null
         }
     }

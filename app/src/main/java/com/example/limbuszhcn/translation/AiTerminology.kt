@@ -24,7 +24,8 @@ internal class AiTerminology(private val values: Map<String, String>, private va
             }
             if (found.size >= 64) break
         }
-        val mechanical = listOf("JP_Skills", "JP_Passives", "JP_BattleKeywords", "JP_Bufs", "JP_EgoGifts", "JP_Egos").any { context.contains(it) }
+        val table = com.example.limbuszhcn.container.sourceTableName(context.substringBefore(' '))
+        val mechanical = listOf("Skills", "Passives", "BattleKeywords", "Bufs", "EGOgift", "Egos").any { table.startsWith(it) }
         return AiTerms(found, if (mechanical) found.keys else found.keys.intersect(names))
     }
 
@@ -41,9 +42,9 @@ internal class AiTerminology(private val values: Map<String, String>, private va
             val terms = linkedMapOf<String, String>(); val names = mutableSetOf<String>(); val conflicts = mutableSetOf<String>()
             var bytes = 0L
             for (key in inspection.resources) {
-                val filename = key.substringAfterLast('/')
-                val character = filename.startsWith("JP_Characters") || filename.startsWith("JP_ScenarioModelCodes")
-                if (!character && listOf("JP_BattleKeywords", "JP_Bufs", "JP_Egos", "JP_EgoGifts", "JP_Personalities", "JP_Personality", "JP_Items").none(filename::startsWith)) continue
+                val filename = com.example.limbuszhcn.container.sourceTableName(key)
+                val character = filename.startsWith("Characters") || filename.startsWith("ScenarioModelCodes")
+                if (!character && listOf("BattleKeywords", "Bufs", "Egos", "EGOgift", "Personalities", "Personality", "Items").none(filename::startsWith)) continue
                 val resource = inspection.readable(key) ?: continue
                 bytes += resource.raw.length * 2L
                 require(bytes <= 64L * 1024 * 1024) { "术语文本超出检查范围" }

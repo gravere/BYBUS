@@ -40,8 +40,8 @@ internal object TranslationFields {
                     val path = "$pointer/${field.replace("~", "~0").replace("/", "~1")}"
                     val reason = excluded ?: if (source.keys().asSequence().any { key ->
                         TranslationTextPolicy.isDisplayField(key) && (source.opt(key) as? String)?.let(::unusedMarker) == true
-                    }) "明确标为未使用的条目" else if (field == "desc" && resource.substringAfterLast('/').startsWith("JP_BattleSpeechBubbleDlg"))
-                        "字幕内部备注" else if (resource.startsWith("jp/StoryData/") && source.optInt("id", 0) == -1 &&
+                    }) "明确标为未使用的条目" else if (field == "desc" && com.example.limbuszhcn.container.sourceTableName(resource).startsWith("BattleSpeechBubbleDlg"))
+                        "字幕内部备注" else if (resource.substringBeforeLast('/').endsWith("/StoryData") && source.optInt("id", 0) == -1 &&
                         source.optString("model").startsWith("//")) "剧情制作备注"
                     else if (before is String && (before.contains("name 만 번역해주세요") || before == "subDesc가 뭘까?"))
                         "明确的制作说明" else null

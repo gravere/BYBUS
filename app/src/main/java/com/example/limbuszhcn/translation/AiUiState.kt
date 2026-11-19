@@ -3,7 +3,8 @@ package com.example.limbuszhcn.translation
 internal data class AiUiState(val config: AiConfig = AiConfig(), val hasKey: Boolean = false,
     val running: Boolean = false, val settingsBusy: Boolean = false, val failed: Boolean = false, val message: String? = null,
     val progress: AiProgress = AiProgress(), val models: AiModelsState = AiModelsState(),
-    val task: AiTaskSnapshot? = null, val stopping: Boolean = false, val recoveryIssue: Boolean = false) {
+    val task: AiTaskSnapshot? = null, val stopping: Boolean = false, val recoveryIssue: Boolean = false,
+    val keys: List<AiKeyChoice> = emptyList(), val activeKeyId: String? = null, val savedKeyRevision: Long = 0) {
     val hasPendingTask get() = task != null || recoveryIssue
 }
 

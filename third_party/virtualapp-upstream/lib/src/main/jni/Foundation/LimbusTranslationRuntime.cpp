@@ -1,4 +1,5 @@
 #include "LimbusTranslationRuntime.h"
+#include "LimbusCodeIntegrityCompat.h"
 #include "LimbusUiLabels.h"
 #include "LimbusTextProvenance.h"
 #if !defined(__EXCEPTIONS) && !defined(__cpp_exceptions)
@@ -8,6 +9,7 @@
 #include "LimbusFlowTextProof.h"
 #include "LimbusManagedState.h"
 #include "LimbusFontMaterials.h"
+#include "LimbusFontScale.h"
 #include "LimbusMethodFlags.h"
 #include "LimbusRuntimeSymbols.h"
 #include "LimbusResourceBridge.h"
@@ -53,6 +55,28 @@ pthread_mutex_t g_font_state_lock = PTHREAD_MUTEX_INITIALIZER;
 char g_active_pointer[PATH_MAX] = {};
 bool g_live_resources = false;
 jmethodID g_resource_bridge_method = nullptr;
+jmethodID g_language_observer_method = nullptr;
+std::unordered_map<int32_t, const char *> g_language_codes;
+std::atomic<int32_t> g_observed_language{INT32_MIN};
+std::atomic<int32_t> g_font_language{INT32_MIN};
+thread_local void *g_language_font_update_target = nullptr;
+
+void observe_localization_language(int32_t language) {
+    const auto code = g_language_codes.find(language);
+    if (!g_language_observer_method || code == g_language_codes.end() ||
+        g_observed_language.load() == language) return;
+    LimbusResourceJniScope jni;
+    if (!jni.valid()) return;
+    jstring value = jni.env->NewStringUTF(code->second);
+    if (value) jni.env->CallStaticVoidMethod(nativeEngineClass, g_language_observer_method, value);
+    const bool failed = jni.env->ExceptionCheck();
+    if (failed) jni.env->ExceptionClear();
+    if (value) jni.env->DeleteLocalRef(value);
+    if (value && !failed) {
+        g_observed_language.store(language);
+        LT_LOGI("Observed game text language=%s", code->second);
+    }
+}
 std::atomic<uint64_t> g_live_resource_hits{0};
 std::atomic<uint64_t> g_live_resource_errors{0};
 thread_local bool g_inside_resource_read = false;
@@ -351,6 +375,7 @@ const void *g_tmp_runtime_type = nullptr;
 const void *g_content_fitter_runtime_type = nullptr;
 const void *g_content_fitter_vertical_info = nullptr;
 const void *g_material_get_float_info = nullptr;
+const void *g_material_set_float_info = nullptr;
 const void *g_material_get_texture_info = nullptr;
 const void *g_material_compute_crc_info = nullptr;
 const void *g_material_keyword_info = nullptr;
@@ -560,26 +585,19 @@ bool translate_embedded_terms(const std::string &source, std::string *output) {
             }
         }
         if (best != nullptr) {
-            bool ascii_word = true;
-            for (size_t index = offset; index < best_end; ++index) {
-                unsigned char byte = static_cast<unsigned char>(source[index]);
-                if (!(byte >= '0' && byte <= '9') &&
-                    !(byte >= 'A' && byte <= 'Z') &&
-                    !(byte >= 'a' && byte <= 'z') && byte != '_') {
-                    ascii_word = false;
-                    break;
-                }
-            }
             auto is_ascii_word_byte = [](unsigned char byte) {
                 return (byte >= '0' && byte <= '9') ||
                        (byte >= 'A' && byte <= 'Z') ||
                        (byte >= 'a' && byte <= 'z') || byte == '_';
             };
-            if (ascii_word &&
-                ((offset > 0 && is_ascii_word_byte(
+            // A verified name can contain spaces ("Rupture Count"). Check its
+            // outer word boundaries independently, including mixed-script names.
+            if ((is_ascii_word_byte(static_cast<unsigned char>(source[offset])) &&
+                  offset > 0 && is_ascii_word_byte(
                         static_cast<unsigned char>(source[offset - 1]))) ||
-                 (best_end < source.size() && is_ascii_word_byte(
-                        static_cast<unsigned char>(source[best_end]))))) {
+                (is_ascii_word_byte(static_cast<unsigned char>(source[best_end - 1])) &&
+                  best_end < source.size() && is_ascii_word_byte(
+                        static_cast<unsigned char>(source[best_end])))) {
                 best = nullptr;
             }
         }
@@ -1423,6 +1441,9 @@ typedef void (*localization_load_fn)(void *, int32_t, const void *);
 localization_load_fn g_original_localization_load[2] = {};
 template<size_t Slot>
 void replacement_localization_load(void *instance, int32_t language, const void *method) {
+    // Font owners can run inside LoadLocal/LoadRemote, before the host receipt
+    // is saved. Use the verified call argument, independently of JNI storage.
+    g_font_language.store(g_language_codes.count(language) ? language : INT32_MIN);
     if (g_live_resources) {
         const bool ready = ensure_tmp_font();
         char status[64];
@@ -1430,6 +1451,7 @@ void replacement_localization_load(void *instance, int32_t language, const void 
         append_native_metadata("font-state.log", status);
     }
     g_original_localization_load[Slot](instance, language, method);
+    observe_localization_language(language);
     if (g_live_resources) prepare_loaded_localization(instance);
 }
 acquisition0_fn g_original_gift_text_data = nullptr;
@@ -2405,6 +2427,72 @@ bool material_crc(void *material, uint32_t *value) {
     return true;
 }
 
+limbus_managed::Registry<limbus_font_scale::Basis> g_material_scales(g_gc, 16384);
+typedef void (*shader_ratios_fn)(void *, const void *);
+shader_ratios_fn g_original_shader_ratios = nullptr;
+const void *g_shader_ratios_info = nullptr;
+
+void replacement_shader_ratios(void *material, const void *method) {
+    g_original_shader_ratios(material, method);
+    if (!material || !g_material_set_float_info) return;
+    limbus_font_scale::Basis basis;
+    pthread_mutex_lock(&g_font_state_lock);
+    if (const auto saved = g_material_scales.find(material, component_id(material))) basis = *saved;
+    pthread_mutex_unlock(&g_font_state_lock);
+    if (!basis.valid()) return;
+    const float gradient = read_material_number(material, "_GradientScale");
+    if (!std::isfinite(gradient) || gradient <= 1) return;
+    limbus_font_scale::Style style;
+    style.face = read_material_number(material, "_FaceDilate");
+    style.outline = read_material_number(material, "_OutlineWidth");
+    style.softness = read_material_number(material, "_OutlineSoftness");
+    style.glow_offset = read_material_number(material, "_GlowOffset");
+    style.glow_outer = read_material_number(material, "_GlowOuter");
+    style.shadow_x = read_material_number(material, "_UnderlayOffsetX");
+    style.shadow_y = read_material_number(material, "_UnderlayOffsetY");
+    style.shadow_dilate = read_material_number(material, "_UnderlayDilate");
+    style.shadow_softness = read_material_number(material, "_UnderlaySoftness");
+    style.ratios_off = material_keyword(material, "RATIOS_OFF") == 1;
+    const auto ratios = limbus_font_scale::calculate(basis, style, gradient);
+    if (!std::isfinite(ratios.a) || !std::isfinite(ratios.b) || !std::isfinite(ratios.c)) return;
+    const char *names[] = {"_ScaleRatioA", "_ScaleRatioB", "_ScaleRatioC"};
+    float values[] = {ratios.a, ratios.b, ratios.c};
+    for (size_t i = 0; i < 3; ++i) {
+        auto name = limbus_managed::retain(g_gc, new_managed_string(names[i]));
+        if (!name) return;
+        void *args[] = {name->get(), &values[i]}, *exception = nullptr;
+        g_runtime_invoke(g_material_set_float_info, material, args, &exception);
+        if (exception) return;
+    }
+}
+
+void bind_tmp_material_scale(void *material, void *source, const TmpComponentState &state) {
+    if (!material || !source || !state.font || !g_original_shader_ratios) return;
+    const auto id = component_id(material);
+    if (!id) return;
+    limbus_font_scale::Basis basis;
+    pthread_mutex_lock(&g_font_state_lock);
+    if (auto saved = g_material_scales.find(material, id)) basis = *saved;
+    pthread_mutex_unlock(&g_font_state_lock);
+    if (!basis.valid()) {
+        void *original = invoke_object_getter(g_tmp_font_get_material_info, state.font);
+        void *source_atlas = material_main_texture(source);
+        // For a game-owned Chinese-atlas clone the saved original preset is the
+        // source of units. Unknown foreign inline fonts are never guessed.
+        if (!original || !source_atlas || source_atlas != material_main_texture(original)) return;
+        basis = {font_point_size(state.font), read_material_number(source, "_GradientScale"),
+                 read_material_number(source, "_WeightNormal"), read_material_number(source, "_WeightBold"),
+                 font_point_size(g_tmp_font_asset)};
+        if (!basis.valid()) return;
+        pthread_mutex_lock(&g_font_state_lock);
+        g_material_scales.collect(8);
+        const bool saved = g_material_scales.put(material, id, basis);
+        pthread_mutex_unlock(&g_font_state_lock);
+        if (!saved) return;
+    }
+    replacement_shader_ratios(material, g_shader_ratios_info);
+}
+
 void release_tmp_material(void *material) {
     if (!g_runtime_invoke || !g_release_fallback_material_info) return;
     void *args[] = {material}, *exception = nullptr;
@@ -2415,7 +2503,7 @@ void release_tmp_material(void *material) {
 
 void *translated_tmp_material(void *instance, void *requested_material) {
     TmpComponentState state;
-    if (instance == nullptr || g_tmp_get_font == nullptr ||
+    if (instance == nullptr || instance == g_language_font_update_target || g_tmp_get_font == nullptr ||
         g_tmp_get_font(instance, g_tmp_get_font_info) != g_tmp_font_asset) {
         return requested_material;
     }
@@ -2463,6 +2551,7 @@ void *translated_tmp_material(void *instance, void *requested_material) {
         // again renders a snapshot while the game animates the original, and
         // the next getter can create another needless copy. Keep its identity
         // and leave the original-font restoration preset intact.
+        bind_tmp_material_scale(requested_material, state.shared_material, state);
         assign_lease({});
         return requested_material;
     }
@@ -2488,6 +2577,7 @@ void *translated_tmp_material(void *instance, void *requested_material) {
     // own cached conversion instead of returning our previous material blindly.
     void *converted = g_runtime_invoke(g_get_fallback_material_info, nullptr, args, &exception);
     if (exception != nullptr || converted == nullptr) { assign_lease({}); return font_material; }
+    bind_tmp_material_scale(converted, requested_material, state);
     auto lease = g_converted_font_materials.acquire(converted, retain_tmp_material, release_tmp_material,
             std::move(material_root), restores_source);
     if (!lease) { assign_lease({}); return font_material; }
@@ -2550,7 +2640,8 @@ void replacement_material_write(void *instance, const void *method) {
     g_original_material_write(instance, method);
     if (!instance || !g_tmp_font_asset || !g_tmp_get_font || !g_material_writer_get_text_info) return;
     void *text = invoke_object_getter(g_material_writer_get_text_info, instance);
-    if (text && g_tmp_get_font(text, g_tmp_get_font_info) == g_tmp_font_asset)
+    if (text && text != g_language_font_update_target &&
+        g_tmp_get_font(text, g_tmp_get_font_info) == g_tmp_font_asset)
         refresh_tmp_component_material(text, true);
 }
 
@@ -2562,6 +2653,87 @@ void replacement_tmp_set_shared_material(void *instance, void *material, const v
 void replacement_tmp_set_material(void *instance, void *material, const void *method) {
     g_original_tmp_set_material(
             instance, translated_tmp_material(instance, material), method);
+}
+
+// Inline TMP styles bypass both material setters. Keep conversion local to
+// this component's parser; never replace a globally cached game material.
+thread_local void *g_inline_material_target = nullptr;
+limbus_managed::Registry<std::vector<limbus_font_materials::Lease>> g_inline_materials(g_gc, 16384);
+typedef bool (*tmp_validate_tag_fn)(void *, void *, int32_t, int32_t *, const void *);
+typedef int32_t (*tmp_add_material_fn)(void *, void *, void **, void *, const void *);
+tmp_validate_tag_fn g_original_tmp_validate_tag = nullptr;
+tmp_add_material_fn g_original_tmp_add_material = nullptr;
+const void *g_tmp_current_font_field = nullptr;
+const void *g_tmp_current_material_field = nullptr;
+
+void clear_inline_tmp_materials(void *instance) {
+    std::vector<limbus_font_materials::Lease> previous;
+    pthread_mutex_lock(&g_font_state_lock);
+    g_inline_materials.take(instance, component_id(instance), &previous);
+    g_inline_materials.collect(8);
+    pthread_mutex_unlock(&g_font_state_lock);
+    // Release outside the registry lock. TMP defers destruction to render cleanup.
+}
+
+void *inline_tmp_material(void *instance, void *material) {
+    TmpComponentState state;
+    if (!instance || !material || !g_tmp_font_asset ||
+        !find_tmp_component_state(instance, &state) || !g_get_fallback_material_info) return material;
+    void *font_material = invoke_object_getter(g_tmp_font_get_material_info, g_tmp_font_asset);
+    if (!font_material || material == font_material) return material;
+    void *source_atlas = material_main_texture(material), *target_atlas = material_main_texture(font_material);
+    if (!source_atlas || !target_atlas || source_atlas == target_atlas) return material;
+    const int32_t id = component_id(instance);
+    if (!id) return material;
+    pthread_mutex_lock(&g_font_state_lock);
+    const auto saved = g_inline_materials.find(instance, id);
+    const bool full = saved && saved->size() >= 64 && std::none_of(saved->begin(), saved->end(),
+            [&](const limbus_font_materials::Lease &lease) { return lease->source() == material; });
+    pthread_mutex_unlock(&g_font_state_lock);
+    if (full) return material;
+    auto root = limbus_managed::retain(g_gc, material);
+    if (!root) return material;
+    void *args[] = {material, font_material}, *exception = nullptr;
+    void *converted = g_runtime_invoke(g_get_fallback_material_info, nullptr, args, &exception);
+    if (exception || !converted) return material;
+    bind_tmp_material_scale(converted, material, state);
+    auto lease = g_converted_font_materials.acquire(converted, retain_tmp_material, release_tmp_material,
+            std::move(root), true);
+    if (!lease) return material;
+    pthread_mutex_lock(&g_font_state_lock);
+    auto leases = g_inline_materials.find(instance, id);
+    bool retained = true;
+    if (!leases) retained = g_inline_materials.put(instance, id, {lease});
+    else if (std::none_of(leases->begin(), leases->end(),
+            [&](const limbus_font_materials::Lease &value) { return value->get() == converted; })) leases->push_back(lease);
+    pthread_mutex_unlock(&g_font_state_lock);
+    return retained ? converted : material;
+}
+
+int32_t replacement_tmp_add_material(void *material, void *font, void **references, void *lookup, const void *method) {
+    void *converted = font && font == g_tmp_font_asset && g_inline_material_target ?
+            inline_tmp_material(g_inline_material_target, material) : material;
+    return g_original_tmp_add_material(converted, font, references, lookup, method);
+}
+
+bool replacement_tmp_validate_tag(void *instance, void *text, int32_t start, int32_t *end, const void *method) {
+    struct Scope {
+        void *previous;
+        explicit Scope(void *target) : previous(g_inline_material_target) { g_inline_material_target = target; }
+        ~Scope() { g_inline_material_target = previous; }
+    } scope(instance);
+    const bool valid = g_original_tmp_validate_tag(instance, text, start, end, method);
+    if (valid && instance && g_field_get_value && g_field_set_value &&
+        g_tmp_current_font_field && g_tmp_current_material_field) {
+        void *font = nullptr, *material = nullptr;
+        g_field_get_value(instance, g_tmp_current_font_field, &font);
+        g_field_get_value(instance, g_tmp_current_material_field, &material);
+        if (font && font == g_tmp_font_asset) {
+            void *converted = inline_tmp_material(instance, material);
+            if (converted != material) g_field_set_value(instance, g_tmp_current_material_field, &converted);
+        }
+    }
+    return valid;
 }
 
 void restore_tmp_component_state(void *instance) {
@@ -2788,7 +2960,8 @@ struct LanguageFontBinding {
     std::unordered_set<int32_t> categories;
     void *original = nullptr;
 };
-LanguageFontBinding g_language_font_bindings[4];
+constexpr size_t kLanguageFontBindingCount = 6;
+LanguageFontBinding g_language_font_bindings[kLanguageFontBindingCount];
 
 bool is_language_font_target(void *target) {
     if (!g_live_resources) return false;
@@ -2800,16 +2973,18 @@ bool is_language_font_target(void *target) {
     return owned;
 }
 
-void *bind_language_font_target(void *owner, size_t slot, int32_t language = 2) {
+void *bind_language_font_target(void *owner, size_t slot, int32_t language = INT32_MIN) {
+    if (slot >= kLanguageFontBindingCount) return nullptr;
     auto &binding = g_language_font_bindings[slot];
     if (!g_live_resources || !owner || !binding.target || !g_field_get_value) return nullptr;
     void *target = nullptr;
     g_field_get_value(owner, binding.target, &target);
     if (!target) return nullptr;
     if (binding.language) g_field_get_value(owner, binding.language, &language);
+    else if (language == INT32_MIN) language = g_font_language.load();
     bool use_category = binding.category != nullptr;
     if (binding.use_category) g_field_get_value(owner, binding.use_category, &use_category);
-    bool owned = language == 2;
+    bool owned = g_language_codes.count(language) != 0;
     if (use_category) {
         int32_t category = -1;
         g_field_get_value(owner, binding.category, &category);
@@ -2838,15 +3013,35 @@ void refresh_language_font_target(void *target) {
     if (text) prepare_tmp_text(target, text, false);
 }
 
+template<class Update>
+void update_language_font_owner(void *owner, size_t slot, int32_t language, Update update) {
+    void *target = nullptr;
+    const auto &binding = g_language_font_bindings[slot];
+    if (owner && binding.target && g_field_get_value) g_field_get_value(owner, binding.target, &target);
+    {
+        // The original writes font, material and selection state separately.
+        // Capture only the final state, not a half-updated preset. Nested calls
+        // restore the previous target; unrelated TMP components stay active.
+        struct Scope {
+            void *previous;
+            explicit Scope(void *value) : previous(g_language_font_update_target) { g_language_font_update_target = value; }
+            ~Scope() { g_language_font_update_target = previous; }
+        } scope(target);
+        update();
+    }
+    if (auto owned = bind_language_font_target(owner, slot, language)) refresh_language_font_target(owned);
+    else if (target) restore_tmp_component_state(target);
+}
+
 void replacement_language_font(void *owner, int32_t language, const void *method) {
-    bind_language_font_target(owner, 0, language);
-    reinterpret_cast<void (*)(void *, int32_t, const void *)>(g_language_font_bindings[0].original)(owner, language, method);
-    refresh_language_font_target(bind_language_font_target(owner, 0, language));
+    update_language_font_owner(owner, 0, language, [&] {
+        reinterpret_cast<void (*)(void *, int32_t, const void *)>(g_language_font_bindings[0].original)(owner, language, method);
+    });
 }
 template<size_t Slot> void replacement_language_font_state(void *owner, const void *method) {
-    bind_language_font_target(owner, Slot);
-    reinterpret_cast<void (*)(void *, const void *)>(g_language_font_bindings[Slot].original)(owner, method);
-    refresh_language_font_target(bind_language_font_target(owner, Slot));
+    update_language_font_owner(owner, Slot, INT32_MIN, [&] {
+        reinterpret_cast<void (*)(void *, const void *)>(g_language_font_bindings[Slot].original)(owner, method);
+    });
 }
 
 void *prepare_tmp_text(void *instance, void *managed_text, bool restore_untranslated = true) {
@@ -2885,6 +3080,7 @@ void *prepare_tmp_text(void *instance, void *managed_text, bool restore_untransl
                 return managed_text;
             }
             replacement = apply_tmp_component_layout_markup(instance, replacement);
+            if (instance == g_language_font_update_target) return replacement;
             bool translated = is_language_font_target(instance) || choice_proof || is_translated_managed_string(replacement);
             std::vector<void *> font_targets;
             if (!translated) translated = is_translated_tmp_fragment(instance, replacement, &font_targets);
@@ -2939,7 +3135,8 @@ void replacement_tmp_set_font(void *instance, void *requested, const void *metho
     // recursion. A game assignment alone can rebuild the mesh without parsing.
     g_tmp_set_font(instance, requested, method);
     static thread_local bool refreshing = false;
-    if (refreshing || !instance || !g_font_ready || requested == g_tmp_font_asset) return;
+    if (refreshing || !instance || instance == g_language_font_update_target ||
+        !g_font_ready || requested == g_tmp_font_asset) return;
     void *text = invoke_object_getter(g_tmp_get_text_info, instance);
     if (!text || !(is_language_font_target(instance) || is_translated_managed_string(text) || is_choice_text(instance, text) ||
                   is_translated_tmp_fragment(instance, text))) return;
@@ -2948,7 +3145,7 @@ void replacement_tmp_set_font(void *instance, void *requested, const void *metho
 }
 
 void finalize_tmp_text(void *instance, void *managed_text) {
-    if (instance == nullptr || managed_text == nullptr ||
+    if (instance == nullptr || instance == g_language_font_update_target || managed_text == nullptr ||
         !(is_translated_managed_string(managed_text) || is_choice_text(instance, managed_text))) {
         return;
     }
@@ -3149,6 +3346,7 @@ void replacement_tmp_parse_input(void *instance, const void *method) {
         }
     }
     finalize_tmp_text(instance, replacement);
+    clear_inline_tmp_materials(instance);
     g_original_tmp_parse_input(instance, method);
     observe_popup_font(instance, replacement, false);
 }
@@ -3348,7 +3546,7 @@ bool load_index_file(const char *path) {
             g_font_catalogue.label_count(), g_font_catalogue.pattern_count());
     rebuild_package_line_break_index(g_index);
     rebuild_term_trie();
-    LT_LOGI("Loaded Japanese full-text translation index entries=%zu terms=%zu contexts=%zu lineBreaks=%zu path=%s",
+    LT_LOGI("Loaded multilingual full-text translation index entries=%zu terms=%zu contexts=%zu lineBreaks=%zu path=%s",
             g_index.size(), g_terms.size(), g_contextual_index.size(), g_package_line_breaks.size(), path);
     return true;
 }
@@ -3542,14 +3740,14 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
     const void *tmp_set_text_one_method = nullptr;
     const void *tmp_set_text_string_method = nullptr;
     void *tmp_text_class = nullptr;
-    void *rich_text_matcher_class = nullptr, *material_writer_class = nullptr;
+    void *rich_text_matcher_class = nullptr, *material_writer_class = nullptr, *material_reference_class = nullptr;
     void *story_dialog_class = nullptr;
     void *story_data_class = nullptr;
     void *text_data_set_class = nullptr, *gift_popup_data_class = nullptr;
     void *localize_model_base = nullptr;
-    void *language_font_classes[4] = {};
+    void *language_font_classes[kLanguageFontBindingCount] = {};
     const char *language_font_names[] = {"TextMeshProLanguageSetter", "TextMeshProLanguageSetterWithStatus",
-                                        "FontSetter", "FontTypesCategorySetter"};
+                                        "FontSetter", "FontTypesCategorySetter", "FixedFontSetter", "PretendardFontSetter"};
     void *announcer_ui_class = nullptr;
     void *choice_scroll_class = nullptr;
     void *choice_gift_class = nullptr;
@@ -3567,7 +3765,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
     void *rect_transform_class = nullptr;
     void *material_class = nullptr;
     void *tmp_settings_class = nullptr;
-    void *tmp_material_manager_class = nullptr;
+    void *tmp_material_manager_class = nullptr, *tmp_shader_utilities_class = nullptr;
     void *ruby_text_classes[3] = {};
     const char *ruby_class_names[] = {"CustomRubyTextMeshProUGUI", "RubyTextMeshProUGUI", "RubyTextMeshPro"};
     void *rpg_format_class = nullptr;
@@ -3656,7 +3854,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         if (!g_skill_tag_text_class) g_skill_tag_text_class = class_from_name(image, "", "TextData_SkillTag");
         if (!g_gift_category_text_class) g_gift_category_text_class = class_from_name(image, "", "TextData_EgoGiftCategory");
         if (!localize_model_base) localize_model_base = class_from_name(image, "", "LocalizeTextData");
-        for (size_t slot = 0; slot < 4; ++slot)
+        for (size_t slot = 0; slot < kLanguageFontBindingCount; ++slot)
             if (!language_font_classes[slot]) language_font_classes[slot] = class_from_name(image, "UtilityUI", language_font_names[slot]);
         if (!text_data_set_class) text_data_set_class = class_from_name(image, "", "TextDataSet");
         if (!gift_popup_data_class) gift_popup_data_class = class_from_name(image, "MainUI", "EgoGiftPopupData");
@@ -3670,6 +3868,8 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             ui_parameter_loader_class = class_from_name(image, "", "UITextDataLoaderWithParameters");
         if (!rich_text_matcher_class)
             rich_text_matcher_class = class_from_name(image, "UI.Utility", "TMProStringMatcher");
+        if (!material_reference_class)
+            material_reference_class = class_from_name(image, "TMPro", "MaterialReference");
         if (!material_writer_class)
             material_writer_class = class_from_name(image, "", "TextMeshProMaterialSetter");
         if (announcer_ui_class == nullptr)
@@ -3726,6 +3926,8 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         if (tmp_material_manager_class == nullptr) {
             tmp_material_manager_class = class_from_name(image, "TMPro", "TMP_MaterialManager");
         }
+        if (!tmp_shader_utilities_class)
+            tmp_shader_utilities_class = class_from_name(image, "TMPro", "ShaderUtilities");
         for (size_t ruby = 0; ruby < 3; ++ruby)
             if (!ruby_text_classes[ruby]) ruby_text_classes[ruby] = class_from_name(image, "TMPro", ruby_class_names[ruby]);
         if (rpg_format_class == nullptr) {
@@ -4234,7 +4436,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         g_font_face_info = font_face_method;
         g_face_point_size_info = face_point_method;
         g_font_atlas_padding_info = font_padding_method;
-        MSHookFunction(tmp_pointer, reinterpret_cast<void *>(replacement_tmp_set_text),
+        hook_limbus_owned_function(tmp_pointer, reinterpret_cast<void *>(replacement_tmp_set_text),
                        reinterpret_cast<void **>(&g_original_tmp_set_text));
         auto has_inline_hook_space = [&](void *klass, void *pointer) {
             if (klass == nullptr || pointer == nullptr) return false;
@@ -4261,7 +4463,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             void *replacement = target.abi == 0 ? kTableRefHooks[slot] :
                     target.abi == 1 ? kTableIntHooks[slot] : kTableListHooks[slot];
             hook.owners.insert(target.owner);
-            MSHookFunction(pointer, replacement, &hook.original);
+            hook_limbus_owned_function(pointer, replacement, &hook.original);
             if (!hook.original) { hook.owners.clear(); continue; }
             table_addresses.emplace(pointer, std::make_pair(target.abi, slot));
             ++table_counts[target.abi];
@@ -4287,8 +4489,55 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 const void *entry = verified_entry(klass, name, params, returns, false);
                 void *pointer = nullptr;
                 if (entry) memcpy(&pointer, entry, sizeof(pointer));
-                if (has_inline_hook_space(klass, pointer)) MSHookFunction(pointer, replacement, original);
+                if (has_inline_hook_space(klass, pointer)) hook_limbus_owned_function(pointer, replacement, original);
             };
+            auto inline_field = [&](const char *name, const char *expected) -> const void * {
+                if (!class_get_field_from_name || !field_get_type || !field_get_flags) return nullptr;
+                const void *field = class_get_field_from_name(tmp_text_class, name);
+                if (!field || (field_get_flags(field) & 0x0010u)) return nullptr;
+                char *type = type_get_name(field_get_type(field));
+                const bool valid = type && strcmp(type, expected) == 0;
+                if (type) il2cpp_free(type);
+                return valid ? field : nullptr;
+            };
+            g_material_set_float_info = verified_entry(material_class, "SetFloat", "System.String,System.Single", "System.Void", false);
+            g_shader_ratios_info = verified_entry(tmp_shader_utilities_class, "UpdateShaderRatios", "UnityEngine.Material", "System.Void", true);
+            void *ratio_pointer = nullptr;
+            if (g_shader_ratios_info) memcpy(&ratio_pointer, g_shader_ratios_info, sizeof(ratio_pointer));
+            if (g_material_set_float_info && g_font_face_info && g_face_point_size_info &&
+                has_inline_hook_space(tmp_shader_utilities_class, ratio_pointer)) {
+                g_material_scales.set_alive(unity_object_alive);
+                hook_limbus_owned_function(ratio_pointer, reinterpret_cast<void *>(replacement_shader_ratios),
+                        reinterpret_cast<void **>(&g_original_shader_ratios));
+            }
+            append_native_metadata("font-hooks.log", g_original_shader_ratios ? "font_material_scale=1" : "font_material_scale=0");
+            g_tmp_current_font_field = inline_field("m_currentFontAsset", "TMPro.TMP_FontAsset");
+            g_tmp_current_material_field = inline_field("m_currentMaterial", "UnityEngine.Material");
+            auto validate_tag = verified_entry(tmp_text_class, "ValidateHtmlTag",
+                    "TMPro.TMP_Text.TextProcessingElement[],System.Int32,System.Int32&", "System.Boolean", false);
+            if (!validate_tag) validate_tag = verified_entry(tmp_text_class, "ValidateHtmlTag",
+                    "TMPro.TMP_Text/TextProcessingElement[],System.Int32,System.Int32&", "System.Boolean", false);
+            auto add_material = verified_entry(material_reference_class, "AddMaterialReference",
+                    "UnityEngine.Material,TMPro.TMP_FontAsset,TMPro.MaterialReference[]&,System.Collections.Generic.Dictionary<System.Int32,System.Int32>",
+                    "System.Int32", true);
+            if (!add_material) add_material = verified_entry(material_reference_class, "AddMaterialReference",
+                    "UnityEngine.Material,TMPro.TMP_FontAsset,TMPro.MaterialReference[]&,System.Collections.Generic.Dictionary`2<System.Int32,System.Int32>",
+                    "System.Int32", true);
+            void *validate_pointer = nullptr, *add_pointer = nullptr;
+            if (validate_tag) memcpy(&validate_pointer, validate_tag, sizeof(validate_pointer));
+            if (add_material) memcpy(&add_pointer, add_material, sizeof(add_pointer));
+            if (g_tmp_current_font_field && g_tmp_current_material_field &&
+                has_inline_hook_space(tmp_text_class, validate_pointer) &&
+                has_inline_hook_space(material_reference_class, add_pointer)) {
+                hook_limbus_owned_function(add_pointer, reinterpret_cast<void *>(replacement_tmp_add_material),
+                        reinterpret_cast<void **>(&g_original_tmp_add_material));
+                if (g_original_tmp_add_material)
+                    hook_limbus_owned_function(validate_pointer, reinterpret_cast<void *>(replacement_tmp_validate_tag),
+                            reinterpret_cast<void **>(&g_original_tmp_validate_tag));
+                g_inline_materials.set_alive(unity_object_alive);
+            }
+            append_native_metadata("font-hooks.log", g_original_tmp_validate_tag && g_original_tmp_add_material ?
+                    "inline_font_materials=1" : "inline_font_materials=0");
             tmp_set_font_fn font_trampoline = nullptr;
             hook_verified(tmp_text_class, "set_font", "TMPro.TMP_FontAsset", "System.Void",
                     reinterpret_cast<void *>(replacement_tmp_set_font), reinterpret_cast<void **>(&font_trampoline));
@@ -4305,6 +4554,18 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 char *type = value && field_get_type ? type_get_name(field_get_type(value)) : nullptr;
                 const bool valid = type && strcmp(type, "System.Int32") == 0;
                 if (type) il2cpp_free(type);
+                if (valid && field_get_flags && field_get_type && field_static_get_value) {
+                    std::unordered_map<int32_t, const char *> codes;
+                    for (const auto &item : {std::make_pair("JP", "jp"), std::make_pair("EN", "en"), std::make_pair("KR", "kr")}) {
+                        const void *field = class_get_field_from_name(language, item.first);
+                        if (!field || (field_get_flags(field) & 0x0050) != 0x0050 ||
+                            class_from_type(field_get_type(field)) != language) continue;
+                        int32_t code = INT32_MIN;
+                        field_static_get_value(field, &code);
+                        codes.emplace(code, item.second);
+                    }
+                    if (codes.size() == 3) g_language_codes = std::move(codes);
+                }
                 if (valid) hook_verified(text_data_set_class, name, "LOCALIZE_LANGUAGE", "System.Void",
                         slot ? reinterpret_cast<void *>(replacement_localization_load<1>) :
                                reinterpret_cast<void *>(replacement_localization_load<0>),
@@ -4327,7 +4588,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                     if (prior->second.first == parameters) *original = prior->second.second;
                     return;
                 }
-                MSHookFunction(pointer, replacement, original);
+                hook_limbus_owned_function(pointer, replacement, original);
                 if (*original) rich_installed.emplace(pointer, std::make_pair(std::string(parameters), *original));
             };
             hook_rich("GetAppliedAllRichText", "System.String,System.Boolean",
@@ -4350,7 +4611,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 void *pointer = nullptr;
                 memcpy(&pointer, writer, sizeof(pointer));
                 if (has_inline_hook_space(material_writer_class, pointer))
-                    MSHookFunction(pointer, reinterpret_cast<void *>(replacement_material_write),
+                    hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement_material_write),
                             reinterpret_cast<void **>(&g_original_material_write));
             }
             char shared_hooks[128];
@@ -4359,7 +4620,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                     g_original_rich_text_one[1] != nullptr, g_original_rich_text_color != nullptr,
                     g_original_rich_text_one[2] != nullptr, g_original_rich_text_skill != nullptr,
                     g_original_material_write != nullptr, g_original_rich_text_event != nullptr);
-            append_native_metadata("font-state.log", shared_hooks);
+            append_native_metadata("font-hooks.log", shared_hooks);
             ruby_format_fn replacements[] = {replacement_ruby_format<0>, replacement_ruby_format<1>, replacement_ruby_format<2>};
             std::unordered_map<void *, ruby_format_fn> installed;
             for (size_t slot = 0; slot < 3; ++slot) {
@@ -4377,7 +4638,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 auto alias = installed.find(pointer);
                 if (alias != installed.end()) g_original_ruby_format[slot] = alias->second;
                 else {
-                    MSHookFunction(pointer, reinterpret_cast<void *>(replacements[slot]),
+                    hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacements[slot]),
                             reinterpret_cast<void **>(&g_original_ruby_format[slot]));
                     if (g_original_ruby_format[slot]) installed.emplace(pointer, g_original_ruby_format[slot]);
                 }
@@ -4401,7 +4662,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 void *pointer = nullptr;
                 memcpy(&pointer, entry, sizeof(pointer));
                 if (valid && has_inline_hook_space(klass, pointer))
-                    MSHookFunction(pointer, replacement, original);
+                    hook_limbus_owned_function(pointer, replacement, original);
             };
             hook_resource(localize_resource_class, "LoadLocalizeFileSync", "System.String",
                     reinterpret_cast<void *>(replacement_localize_resource), reinterpret_cast<void **>(&g_original_localize_resource));
@@ -4410,7 +4671,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             char resource_hooks[96];
             snprintf(resource_hooks, sizeof(resource_hooks), "live_resource_hooks sync=%d asset=%d",
                     g_original_localize_resource != nullptr, g_original_text_asset_text != nullptr);
-            append_native_metadata("font-state.log", resource_hooks);
+            append_native_metadata("font-hooks.log", resource_hooks);
             LT_LOGI("%s", resource_hooks);
         }
         const void *announcer_set = find_method_by_signature(announcer_ui_class, "SetDescription", "System.String");
@@ -4433,7 +4694,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             void *pointer = nullptr;
             memcpy(&pointer, announcer_set, sizeof(pointer));
             if (valid && g_announcer_description_field && has_inline_hook_space(announcer_ui_class, pointer))
-                MSHookFunction(pointer, reinterpret_cast<void *>(replacement_announcer_set_description),
+                hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement_announcer_set_description),
                                            reinterpret_cast<void **>(&g_original_announcer_set_description));
         }
         append_native_metadata("font-state.log", g_original_announcer_set_description ?
@@ -4480,7 +4741,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                     if (alias->second.first == abi) *original = alias->second.second;
                     return;
                 }
-                MSHookFunction(pointer, replacement, original);
+                hook_limbus_owned_function(pointer, replacement, original);
                 if (*original) flow_installed.emplace(pointer, std::make_pair(abi, *original));
             }
         };
@@ -4580,7 +4841,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             void *pointer = nullptr;
             memcpy(&pointer, rpg_format, sizeof(pointer));
             if (returns_string && has_inline_hook_space(rpg_format_class, pointer)) {
-                MSHookFunction(pointer, reinterpret_cast<void *>(replacement_rpg_format),
+                hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement_rpg_format),
                                            reinterpret_cast<void **>(&g_original_rpg_format));
             }
         }
@@ -4588,7 +4849,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         void *story_ctor_pointer = nullptr;
         if (story_ctor != nullptr) memcpy(&story_ctor_pointer, story_ctor, sizeof(story_ctor_pointer));
         if (has_inline_hook_space(story_dialog_class, story_ctor_pointer)) {
-            MSHookFunction(story_ctor_pointer,
+            hook_limbus_owned_function(story_ctor_pointer,
                     reinterpret_cast<void *>(replacement_story_dialog_ctor),
                     reinterpret_cast<void **>(&g_original_story_dialog_ctor));
         }
@@ -4603,7 +4864,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         }
         if (g_tmp_get_text_info != nullptr &&
             has_inline_hook_space(tmp_text_class, parse_input_pointer)) {
-            MSHookFunction(parse_input_pointer,
+            hook_limbus_owned_function(parse_input_pointer,
                     reinterpret_cast<void *>(replacement_tmp_parse_input),
                     reinterpret_cast<void **>(&g_original_tmp_parse_input));
         }
@@ -4617,7 +4878,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         }
         if (set_shared_material_pointer != nullptr &&
             has_inline_hook_space(tmp_text_class, set_shared_material_pointer)) {
-            MSHookFunction(set_shared_material_pointer,
+            hook_limbus_owned_function(set_shared_material_pointer,
                            reinterpret_cast<void *>(replacement_tmp_set_shared_material),
                            reinterpret_cast<void **>(&g_original_tmp_set_shared_material));
         } else if (set_shared_material_pointer != nullptr) {
@@ -4632,7 +4893,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         if (set_material_pointer != nullptr &&
             set_material_pointer != set_shared_material_pointer &&
             has_inline_hook_space(tmp_text_class, set_material_pointer)) {
-            MSHookFunction(set_material_pointer,
+            hook_limbus_owned_function(set_material_pointer,
                            reinterpret_cast<void *>(replacement_tmp_set_material),
                            reinterpret_cast<void **>(&g_original_tmp_set_material));
         } else if (set_material_pointer != nullptr &&
@@ -4645,7 +4906,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 set_material_pointer,
                 reinterpret_cast<void *>(g_original_tmp_set_material));
         if (ui_pointer != nullptr && has_inline_hook_space(ui_text_class, ui_pointer)) {
-            MSHookFunction(ui_pointer, reinterpret_cast<void *>(replacement_ui_set_text),
+            hook_limbus_owned_function(ui_pointer, reinterpret_cast<void *>(replacement_ui_set_text),
                            reinterpret_cast<void **>(&g_original_ui_set_text));
         } else if (ui_pointer != nullptr) {
             LT_LOGW("Skip unsafe adjacent UI.Text.set_text pointer=%p", ui_pointer);
@@ -4653,14 +4914,14 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         void *set_text_one_pointer = nullptr;
         if (tmp_set_text_one_method != nullptr) {
             memcpy(&set_text_one_pointer, tmp_set_text_one_method, sizeof(void *));
-            MSHookFunction(set_text_one_pointer,
+            hook_limbus_owned_function(set_text_one_pointer,
                            reinterpret_cast<void *>(replacement_tmp_set_text_one),
                            reinterpret_cast<void **>(&g_original_tmp_set_text_one));
         }
         void *set_text_string_pointer = nullptr;
         if (tmp_set_text_string_method != nullptr) {
             memcpy(&set_text_string_pointer, tmp_set_text_string_method, sizeof(void *));
-            MSHookFunction(set_text_string_pointer,
+            hook_limbus_owned_function(set_text_string_pointer,
                            reinterpret_cast<void *>(replacement_tmp_set_text_string),
                            reinterpret_cast<void **>(&g_original_tmp_set_text_string));
         }
@@ -4683,19 +4944,28 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             if (!enum_name || strcmp(enum_name, "LOCALIZE_LANGUAGE") ||
                 !enum_namespace || *enum_namespace) return false;
             const void *value_field = class_get_field_from_name(enum_class, "value__");
-            const void *jp_field = class_get_field_from_name(enum_class, "JP");
-            if (!value_field || !jp_field || (field_get_flags(jp_field) & 0x0050) != 0x0050)
-                return false; // Only a static literal can be read without game initialization.
-            const void *jp_type = field_get_type(jp_field);
-            if (!jp_type || class_from_type(jp_type) != enum_class) return false;
+            if (!value_field) return false;
             const void *value_type = field_get_type(value_field);
             char *value_name = value_type ? type_get_name(value_type) : nullptr;
             const bool int32_enum = value_name && strcmp(value_name, "System.Int32") == 0;
             if (value_name) il2cpp_free(value_name);
             if (!int32_enum) return false;
-            int32_t jp = INT32_MIN;
-            field_static_get_value(jp_field, &jp);
-            return jp == 2;
+            std::unordered_map<int32_t, const char *> codes;
+            for (const auto &item : {std::make_pair("JP", "jp"), std::make_pair("EN", "en"), std::make_pair("KR", "kr")}) {
+                const void *field = class_get_field_from_name(enum_class, item.first);
+                if (!field || (field_get_flags(field) & 0x0050) != 0x0050 ||
+                    class_from_type(field_get_type(field)) != enum_class) return false;
+                int32_t number = INT32_MIN;
+                field_static_get_value(field, &number);
+                if (!codes.emplace(number, item.second).second) return false;
+            }
+            if (!g_language_codes.empty()) {
+                for (const auto &entry : codes) {
+                    const auto found = g_language_codes.find(entry.first);
+                    if (found == g_language_codes.end() || strcmp(found->second, entry.second)) return false;
+                }
+            } else g_language_codes = std::move(codes);
+            return true;
         };
         const bool option_language_valid = language_getter_valid(
                 get_language_method, get_language_class, "GetLanguage");
@@ -4703,14 +4973,20 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 get_global_language_method, get_global_language_class, "get_Lang");
         // Read the original language contract for font bindings. The game's getters stay intact.
         if (global_language_valid) {
-            for (size_t slot = 0; slot < 4; ++slot) {
+            for (size_t slot = 0; slot < kLanguageFontBindingCount; ++slot) {
                 void *klass = language_font_classes[slot];
                 auto &binding = g_language_font_bindings[slot];
                 binding.target = choice_field(klass, slot < 2 ? "_text" : "_tmp", "TMPro.TextMeshProUGUI");
                 if (slot == 0) binding.use_category = choice_field(klass, "_useFontCategory", "System.Boolean");
                 if (slot == 1) binding.language = choice_field(klass, "_currentLang", "LOCALIZE_LANGUAGE");
-                else binding.category = choice_field(klass, "_fontType", slot == 2 ? "UtilityUI.FontType" : "UtilityUI.FontTypesCategory");
-                bool valid = binding.target && (slot == 1 ? binding.language != nullptr : binding.category != nullptr);
+                else if (slot == 4) binding.language = choice_field(klass, "_lang", "LOCALIZE_LANGUAGE");
+                else if (slot != 5) binding.category = choice_field(klass, "_fontType", slot == 2 ? "UtilityUI.FontType" : "UtilityUI.FontTypesCategory");
+                // FixedFontSetter selects title/body through _isTitle, while
+                // PretendardFontSetter is a dedicated body face. Neither is a
+                // numeric-font category; both still require the verified ABI.
+                bool valid = binding.target && (slot == 1 || slot == 4 ? binding.language != nullptr :
+                                                slot == 5 || binding.category != nullptr);
+                if (slot == 4) valid &= choice_field(klass, "_isTitle", "System.Boolean") != nullptr;
                 if (slot == 0) valid &= binding.use_category != nullptr;
                 if (binding.category && class_from_type && class_is_enum && class_get_field_from_name && field_static_get_value) {
                     void *category = class_from_type(field_get_type(binding.category));
@@ -4734,16 +5010,19 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 void *replacement = slot == 0 ? reinterpret_cast<void *>(replacement_language_font) :
                         slot == 1 ? reinterpret_cast<void *>(replacement_language_font_state<1>) :
                         slot == 2 ? reinterpret_cast<void *>(replacement_language_font_state<2>) :
-                                    reinterpret_cast<void *>(replacement_language_font_state<3>);
+                        slot == 3 ? reinterpret_cast<void *>(replacement_language_font_state<3>) :
+                        slot == 4 ? reinterpret_cast<void *>(replacement_language_font_state<4>) :
+                                    reinterpret_cast<void *>(replacement_language_font_state<5>);
                 hook_choice_method(klass, slot == 1 ? "UpdateTMPByCurrentLang" : "UpdateTMP",
                         slot == 0 ? "LOCALIZE_LANGUAGE" : "", "System.Void", replacement, &binding.original);
             }
             g_language_font_targets.set_alive(unity_object_alive);
-            char language_fonts[100];
-            snprintf(language_fonts, sizeof(language_fonts), "language_font_owners regular=%d state=%d role=%d category=%d",
+            char language_fonts[144];
+            snprintf(language_fonts, sizeof(language_fonts), "language_font_owners regular=%d state=%d role=%d category=%d fixed=%d body=%d",
                     g_language_font_bindings[0].original != nullptr, g_language_font_bindings[1].original != nullptr,
-                    g_language_font_bindings[2].original != nullptr, g_language_font_bindings[3].original != nullptr);
-            append_native_metadata("font-state.log", language_fonts);
+                    g_language_font_bindings[2].original != nullptr, g_language_font_bindings[3].original != nullptr,
+                    g_language_font_bindings[4].original != nullptr, g_language_font_bindings[5].original != nullptr);
+            append_native_metadata("font-hooks.log", language_fonts);
         }
         size_t acquisition_counts[] = {0, 0, 0};
         std::unordered_set<void *> acquisition_pointers;
@@ -4773,7 +5052,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 void *pointer = nullptr;
                 memcpy(&pointer, scenario, sizeof(pointer));
                 if (correct_type && has_inline_hook_space(story_data_class, pointer)) {
-                    MSHookFunction(pointer, reinterpret_cast<void *>(replacement_story_scenario),
+                    hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement_story_scenario),
                             reinterpret_cast<void **>(&g_original_story_scenario));
                     if (g_original_story_scenario) acquisition_pointers.insert(pointer);
                 }
@@ -4792,7 +5071,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 void *pointer = nullptr;
                 memcpy(&pointer, entry, sizeof(pointer));
                 if (!correct_type || acquisition_pointers.count(pointer) || !has_inline_hook_space(klass, pointer)) return;
-                MSHookFunction(pointer, reinterpret_cast<void *>(replacement), reinterpret_cast<void **>(original));
+                hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement), reinterpret_cast<void **>(original));
                 if (*original) acquisition_pointers.insert(pointer);
             };
             hook_collection_getter(g_action_event_text_class, "GetOptions", "TextData_DungeonEvents_Options", false,
@@ -4817,7 +5096,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 void *pointer = nullptr;
                 memcpy(&pointer, rpg_data, sizeof(pointer));
                 if (correct_type && !acquisition_pointers.count(pointer) && has_inline_hook_space(g_rpg_dialogue_class, pointer)) {
-                    MSHookFunction(pointer, reinterpret_cast<void *>(replacement_rpg_dialogue_data),
+                    hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement_rpg_dialogue_data),
                             reinterpret_cast<void **>(&g_original_rpg_dialogue_data));
                     if (g_original_rpg_dialogue_data) acquisition_pointers.insert(pointer);
                 }
@@ -4835,7 +5114,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 void *pointer = nullptr;
                 memcpy(&pointer, skill_level, sizeof(pointer));
                 if (correct_type && has_inline_hook_space(g_skill_text_class, pointer)) {
-                    MSHookFunction(pointer, reinterpret_cast<void *>(replacement_skill_level),
+                    hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement_skill_level),
                             reinterpret_cast<void **>(&g_original_skill_level));
                     if (g_original_skill_level) acquisition_pointers.insert(pointer);
                 }
@@ -4852,7 +5131,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 void *pointer = nullptr;
                 memcpy(&pointer, entry, sizeof(pointer));
                 if (!returns_void || acquisition_pointers.count(pointer) || !has_inline_hook_space(klass, pointer)) return;
-                MSHookFunction(pointer, reinterpret_cast<void *>(replacement), reinterpret_cast<void **>(original));
+                hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement), reinterpret_cast<void **>(original));
                 if (*original) acquisition_pointers.insert(pointer);
             };
             hook_ui_loader(ui_loader_class, replacement_ui_loader, &g_original_ui_loader);
@@ -4874,7 +5153,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 void *pointer = nullptr;
                 memcpy(&pointer, implicit_method, sizeof(pointer));
                 if (returns_string && has_inline_hook_space(ui_text_data_class, pointer)) {
-                    MSHookFunction(pointer, reinterpret_cast<void *>(replacement_ui_text_implicit),
+                    hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement_ui_text_implicit),
                             reinterpret_cast<void **>(&g_original_ui_text_implicit));
                     if (g_original_ui_text_implicit) acquisition_pointers.insert(pointer);
                 }
@@ -4931,17 +5210,17 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                     }
                     size_t slot = acquisition_counts[parameter_count];
                     if (parameter_count == 0) {
-                        MSHookFunction(pointer,
+                        hook_limbus_owned_function(pointer,
                                 reinterpret_cast<void *>(kAcquisition0Replacements[slot]),
                                 reinterpret_cast<void **>(&g_acquisition0[slot]));
                         if (g_acquisition0[slot] == nullptr) continue;
                     } else if (parameter_count == 1) {
-                        MSHookFunction(pointer,
+                        hook_limbus_owned_function(pointer,
                                 reinterpret_cast<void *>(kAcquisition1Replacements[slot]),
                                 reinterpret_cast<void **>(&g_acquisition1[slot]));
                         if (g_acquisition1[slot] == nullptr) continue;
                     } else {
-                        MSHookFunction(pointer,
+                        hook_limbus_owned_function(pointer,
                                 reinterpret_cast<void *>(kAcquisition2Replacements[slot]),
                                 reinterpret_cast<void **>(&g_acquisition2[slot]));
                         if (g_acquisition2[slot] == nullptr) continue;
@@ -5022,7 +5301,7 @@ bool install_global_dlsym_lifecycle_hook() {
     pthread_mutex_unlock(&g_lock);
     void *target = dlsym(RTLD_DEFAULT, "dlsym");
     if (target == nullptr) return false;
-    MSHookFunction(target, reinterpret_cast<void *>(replacement_unity_dlsym),
+    hook_limbus_owned_function(target, reinterpret_cast<void *>(replacement_unity_dlsym),
                    reinterpret_cast<void **>(&g_original_unity_dlsym));
     if (g_original_unity_dlsym == nullptr) {
         LT_LOGW("Unable to hook dlsym lifecycle target=%p", target);
@@ -5041,6 +5320,16 @@ bool install_global_dlsym_lifecycle_hook() {
 }
 
 }  // namespace
+
+void record_limbus_integrity_diagnostic(bool protection, bool accepted) {
+    char event[100];
+    snprintf(event, sizeof(event), "scope=%s owned_changes_only=%d", protection ? "protection" : "il2cpp", accepted);
+    append_native_metadata("integrity-state.log", event);
+}
+
+void record_limbus_integrity_detail(const char *detail) {
+    append_native_metadata("integrity-state.log", detail);
+}
 
 void configure_limbus_translation_runtime(const char *active_index_pointer, bool live_resources) {
     if (active_index_pointer == nullptr || active_index_pointer[0] != '/') {
@@ -5063,11 +5352,18 @@ void configure_limbus_translation_runtime(const char *active_index_pointer, bool
     const bool loaded = load_active_index();
     g_live_resources = false;
     g_resource_bridge_method = nullptr;
+    g_language_observer_method = nullptr;
+    g_observed_language.store(INT32_MIN);
     if (live_resources) {
         LimbusResourceJniScope jni;
         if (jni.valid()) g_resource_bridge_method = jni.env->GetStaticMethodID(nativeEngineClass,
                 "translateLimbusResource", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;");
         g_live_resources = jni.valid() && g_resource_bridge_method && load_live_font_catalogue();
+        if (jni.valid()) {
+            g_language_observer_method = jni.env->GetStaticMethodID(nativeEngineClass,
+                    "observeLimbusTextLanguage", "(Ljava/lang/String;)V");
+            if (jni.env->ExceptionCheck()) jni.env->ExceptionClear();
+        }
     }
     write_runtime_receipt((loaded || g_live_resources) ? "index_loaded" : "no_index");
     pthread_mutex_unlock(&g_lock);

@@ -241,5 +241,15 @@ int main() {
     assert(translated == "<color=red>防御</color>");
     assert(!translate_embedded_terms("<noparse>ガード</noparse>", &translated));
     assert(!translate_embedded_terms("<color=red></color>", &translated));
+    g_terms = {{"Rupture Count", "破裂层数"}, {"진동 폭발", "震颤爆发"}, {"On Hit", "命中时"}};
+    rebuild_term_trie();
+    assert(translate_embedded_terms("[On Hit] +2 Rupture Count", &translated));
+    assert(translated == "[命中时] +2 破裂层数");
+    assert(!translate_embedded_terms("Rupture Counter", &translated));
+    assert(!translate_embedded_terms("OtherRupture Count", &translated));
+    assert(translate_embedded_terms("<color=red>진동 폭발</color>", &translated));
+    assert(translated == "<color=red>震颤爆发</color>");
+    assert(!translate_embedded_terms("<noparse>Rupture Count</noparse>", &translated));
+    assert(!translate_embedded_terms("[命中时] +2 破裂层数", &translated));
     puts("Managed provenance, Ruby formatter boundary, context order, GC/address reuse, native destruction and bounds passed");
 }

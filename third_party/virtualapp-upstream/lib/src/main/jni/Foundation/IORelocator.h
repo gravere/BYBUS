@@ -88,4 +88,8 @@ namespace IOUniformer {
     void readOnly(const char *path);
 }
 
+void scanLimbusNativeSyscalls(const char *nativeLibraryDir);
+
+int maintainLimbusAppSealingPatches();
+
 #endif //NDK_HOOK_H

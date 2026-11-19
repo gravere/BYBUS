@@ -20,15 +20,16 @@ import kotlin.io.path.readText
 import kotlin.io.path.outputStream
 import kotlin.io.path.writeText
 
-internal const val TRANSLATION_COMPILER_REVISION = "jp-pairing-14"
+internal const val TRANSLATION_COMPILER_REVISION = "full-locales-18"
+internal val SOURCE_TEXT_LOCALES = listOf("jp", "en", "kr")
 
 /**
- * 表示一条从官方日文显示字段到中文显示字段的结构化配对记录。
+ * 表示一条官方原文显示字段到所选汉化显示字段的结构化配对记录。
  *
  * @property path 译文资源在汉化包内的相对路径。
  * @property id 由对象稳定标识与递归路径组成的诊断上下文。
  * @property field 已通过显示文本白名单的字段名。
- * @property source 容器内官方日文原文。
+ * @property source 容器内官方原文。
  * @property translation 与原文结构对齐的中文译文。
  */
 internal data class TranslationIndexRecord(
@@ -41,7 +42,7 @@ internal data class TranslationIndexRecord(
 )
 
 /**
- * 保存一次日文单源索引编译的不可变结果与完整性统计。
+ * 保存三种原文共用规则编译的不可变结果与完整性统计。
  *
  * @property version 汉化包版本。
  * @property archiveSha256 汉化归档的 SHA-256。
@@ -52,7 +53,7 @@ internal data class TranslationIndexRecord(
  * @property conflictCount 因译文冲突而未进入完整索引的原文数量。
  * @property dominantEntryCount 通过优势阈值解决冲突的原文数量。
  * @property candidateSourceFileCount 汉化包中候选 JSON 文件数量。
- * @property availableSourceFileCount 容器中可读取日文对应文件的数量。
+ * @property availableSourceFileCount 单种语言中有效配对文件数的最大值。
  */
 internal data class CompiledTranslationIndex(
     val version: String,
@@ -69,10 +70,14 @@ internal data class CompiledTranslationIndex(
 )
 
 /**
- * 将结构化的日中字段配对编译为确定性的完整文本索引与短术语索引。
+ * 将各语言原文与所选译文的结构化配对编译为确定性全文和术语索引。
  */
 internal class TranslationIndexCompiler {
     private val records = mutableListOf<TranslationIndexRecord>()
+    // The three locales share the same released wording and record identities.
+    // Keep one in-process copy, without using the VM's global intern table.
+    private val sharedStrings = HashMap<String, String>()
+    private fun shared(text: String) = sharedStrings.getOrPut(text) { text }
 
     /** 保存一条由下载包配对记录派生的短术语及其来源优先级。 */
     private data class TermCandidate(
@@ -84,7 +89,7 @@ internal class TranslationIndexCompiler {
     /**
      * 添加一条通过字段与编码质量校验的配对记录。
      *
-     * @param record 待验证的日中显示文本记录。
+     * @param record 待验证的原文及译文显示记录。
      */
     fun add(record: TranslationIndexRecord) {
         if (
@@ -99,7 +104,8 @@ internal class TranslationIndexCompiler {
         // An identity pair is a real context, not just font metadata. Dropping
         // it lets another resource's translation overwrite an approved label.
         // 不维护宿主自定义译名；有效译文原样来自用户已下载并校验的汉化包。
-        records += record
+        records += record.copy(path = shared(record.path), id = shared(record.id), field = shared(record.field),
+            translation = shared(record.translation), stableId = record.stableId?.let(::shared))
     }
 
     /**
@@ -108,7 +114,7 @@ internal class TranslationIndexCompiler {
      * @param version 汉化包版本。
      * @param archiveSha256 汉化归档 SHA-256。
      * @param candidateSourceFileCount 候选译文 JSON 数量。
-     * @param availableSourceFileCount 已找到官方日文对应文件的数量。
+     * @param availableSourceFileCount 单种语言中有效配对文件数的最大值。
      * @return 可写入 schema 9 二进制文件的不可变索引。
      */
     fun compile(
@@ -117,25 +123,43 @@ internal class TranslationIndexCompiler {
         candidateSourceFileCount: Int = 0,
         availableSourceFileCount: Int = 0
     ): CompiledTranslationIndex {
-        val sorted = records.distinct().sortedWith(
-            compareBy(
+        val sorted = records.toMutableList().apply {
+            sortWith(compareBy(
                 TranslationIndexRecord::source,
                 TranslationIndexRecord::translation,
                 TranslationIndexRecord::path,
                 TranslationIndexRecord::id,
                 TranslationIndexRecord::field,
                 { it.stableId.orEmpty() }
-            )
-        )
-        val bySource = sorted.groupBy(TranslationIndexRecord::source)
-        val unchangedSources = sorted.filter { it.source == it.translation }.map { it.source }.toSet()
-        val translatedOutputs = sorted.filter { it.source != it.translation }.map { it.translation }.toSet()
+            ))
+            // Sorted neighbours can be deduplicated without a second record-sized HashSet.
+            var kept = 0
+            for (i in indices) if (kept == 0 || this[i] != this[kept - 1]) this[kept++] = this[i]
+            subList(kept, size).clear()
+        }
+        val sourceNames = hashSetOf<String>()
+        val unchangedSources = hashSetOf<String>()
+        val translatedOutputs = hashSetOf<String>()
+        sorted.forEach {
+            sourceNames += it.source
+            if (it.source == it.translation) unchangedSources += it.source else translatedOutputs += it.translation
+        }
+        // Visit contiguous source groups instead of retaining hundreds of thousands of lists.
+        fun eachSource(action: (String, List<TranslationIndexRecord>) -> Unit) {
+            var first = 0
+            while (first < sorted.size) {
+                var end = first + 1
+                while (end < sorted.size && sorted[end].source == sorted[first].source) end++
+                action(sorted[first].source, sorted.subList(first, end))
+                first = end
+            }
+        }
         val unique = linkedMapOf<String, String>()
         val terms = linkedMapOf<String, String>()
         val contextual = linkedMapOf<String, String>()
         var conflicts = 0
         var dominantEntries = 0
-        bySource.toSortedMap().forEach { (source, occurrences) ->
+        eachSource { source, occurrences ->
             val translations = occurrences.groupingBy(TranslationIndexRecord::translation).eachCount()
             val numeric = isNumericLiteral(source)
             val resolved = if (source in unchangedSources) source else resolveTranslation(translations)
@@ -154,7 +178,8 @@ internal class TranslationIndexCompiler {
             if (record.source == record.translation) return@forEach
             val priority = termSourcePriority(record.path)
             if (TranslationTextPolicy.isTermField(record.field)) {
-                normalizedTerms(record.source, record.translation).forEach { (source, translation) ->
+                val phrases = record.field in setOf("name", "shortName", "abName", "title") || priority >= 2
+                normalizedTerms(record.source, record.translation, phrases).forEach { (source, translation) ->
                     termCandidates += TermCandidate(source, translation, priority)
                 }
             }
@@ -163,7 +188,7 @@ internal class TranslationIndexCompiler {
                     .forEach { (source, translation) ->
                         // A clause can include grammatical context (e.g. 与罗生蝶).
                         // It is not the glossary's formal standalone name.
-                        if (source !in bySource) termCandidates += TermCandidate(source, translation, 0)
+                        if (source !in sourceNames) termCandidates += TermCandidate(source, translation, 0)
                     }
             }
         }
@@ -186,7 +211,7 @@ internal class TranslationIndexCompiler {
         // A derived glossary spelling may replace the unscoped rule even when
         // complete records were unambiguous (e.g. a skill name inside a tag).
         // Keep each identified record's full-text spelling after that resolution.
-        bySource.forEach { (source, occurrences) ->
+        eachSource { source, occurrences ->
             val global = unique[source]
             if (occurrences.map { it.translation }.distinct().size > 1 ||
                 isNumericLiteral(source) || source in translatedOutputs ||
@@ -251,7 +276,7 @@ internal class TranslationIndexCompiler {
             none { it in '\u3040'..'\u30FF' || it in '\uFF66'..'\uFF9F' }
 
     private fun termSourcePriority(path: String): Int {
-        val fileName = path.substringAfterLast('/').substringAfterLast('\\').lowercase().removePrefix("jp_")
+        val fileName = sourceTableName(path.replace('\\', '/')).lowercase(java.util.Locale.ROOT)
         return when {
             fileName.startsWith("bufs") || fileName.startsWith("battlekeywords") ->
                 CANONICAL_GLOSSARY_PRIORITY
@@ -260,12 +285,12 @@ internal class TranslationIndexCompiler {
         }
     }
 
-    private fun normalizedTerms(source: String, translation: String): Set<Pair<String, String>> {
+    private fun normalizedTerms(source: String, translation: String, phrases: Boolean): Set<Pair<String, String>> {
         return buildSet {
-            candidateTerm(source, translation)?.let(::add)
+            candidateTerm(source, translation, phrases)?.let(::add)
             candidateTerm(
                 stripDecorativeTags(source),
-                stripDecorativeTags(translation)
+                stripDecorativeTags(translation), phrases
             )?.let(::add)
             val sourceBracketTerms = SQUARE_BRACKET_CONTENT.findAll(source)
                 .map { match -> match.groupValues[1] }
@@ -277,7 +302,7 @@ internal class TranslationIndexCompiler {
                 // 游戏格式化器可能只输出方括号内部的可见名称。同步派生内部术语，
                 // 让所有同类标签在格式化后仍能二次汉化，而不是只修某个页面或角色。
                 sourceBracketTerms.zip(translationBracketTerms).forEach { (sourceTerm, translationTerm) ->
-                    candidateTerm(sourceTerm, translationTerm)?.let(::add)
+                    candidateTerm(sourceTerm, translationTerm, phrases = true)?.let(::add)
                 }
             }
         }
@@ -297,7 +322,7 @@ internal class TranslationIndexCompiler {
                 val sourceClause = sourceLine.leadingClause()
                 val translationClause = translationLine.leadingClause()
                 if (sourceClause != null && translationClause != null) {
-                    candidateTerm(sourceClause, translationClause)?.let(::add)
+                    candidateTerm(sourceClause, translationClause, phrases = true)?.let(::add)
                 }
             }
         }
@@ -305,12 +330,13 @@ internal class TranslationIndexCompiler {
 
     private fun candidateTerm(
         sourceValue: String,
-        translationValue: String
+        translationValue: String,
+        phrases: Boolean = false
     ): Pair<String, String>? {
         val normalizedSource = sourceValue.trim().stripPairedBrackets()
         val normalizedTranslation = translationValue.trim().stripPairedBrackets()
         return (normalizedSource to normalizedTranslation).takeIf {
-            !isNumericLiteral(normalizedSource) && normalizedSource.isTermLike(minimumCodePoints = 2) &&
+            !isNumericLiteral(normalizedSource) && normalizedSource.isTermLike(minimumCodePoints = 2, phrases = phrases) &&
                 normalizedTranslation.isTermLike(minimumCodePoints = 1) &&
                 normalizedSource != normalizedTranslation
         }
@@ -336,8 +362,14 @@ internal class TranslationIndexCompiler {
             this
         }
 
-    private fun String.isTermLike(minimumCodePoints: Int): Boolean {
+    private fun String.isTermLike(minimumCodePoints: Int, phrases: Boolean = false): Boolean {
         val codePoints = codePointCount(0, length)
+        if (phrases && ' ' in this) {
+            // Names and bracketed conditions may contain spaces in English or Korean.
+            // Preserve the exact spelling; never derive a term from a sentence or format string.
+            return codePoints in minimumCodePoints..64 && split(' ').size in 2..8 &&
+                all { it.isLetterOrDigit() || it in " '-_." } && lastOrNull() != '.'
+        }
         return codePoints in minimumCodePoints..16 && none {
             it.isWhitespace() || it == '<' || it == '>' || it == '{' || it == '}' || it == '%'
         }

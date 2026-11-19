@@ -17,6 +17,8 @@ internal data class RuntimeLaunchStatus(
     val issue: String? = null
 )
 
+internal data class GameProcessExit(val pid: Int, val timestamp: Long, val detail: String)
+
 /** A request token prevents a prior process's response from being mistaken for the new launch. */
 internal class RuntimeReceipt(private val indexRoot: Path) {
     fun beginLaunch() {
@@ -28,9 +30,10 @@ internal class RuntimeReceipt(private val indexRoot: Path) {
         temp.writeText(UUID.randomUUID().toString() + "\n")
         AtomicFiles.move(temp, indexRoot.resolve("launch.request"), true)
         Files.deleteIfExists(indexRoot.resolve("runtime-state.properties"))
-        for (name in listOf("font-state.log", "integrity-state.log", "billing-state.log", "safety-alert.properties")) {
+        for (name in listOf("font-state.log", "font-hooks.log", "integrity-state.log", "billing-state.log", "safety-alert.properties")) {
             Files.deleteIfExists(indexRoot.resolve(name))
         }
+        runCatching { Files.deleteIfExists(indexRoot.resolve("game-exit.properties")) }
     }
 
     /** Called in the container server before forwarding the game's own safety dialog. */
@@ -54,13 +57,13 @@ internal class RuntimeReceipt(private val indexRoot: Path) {
         return true
     }
 
-    fun diagnosticSummary(): String = buildString {
+    fun diagnosticSummary(readGameExitCodes: ((Int, Long) -> List<String>)? = null): String = buildString {
         val request = currentRequest()
         val receipt = readReceipt("runtime-state.properties")
         val current = request != null && receipt.getProperty("request") == request
         appendLine("translationLaunchMode=${launchMode()}")
         appendLine("runtimeReceiptCurrent=$current")
-        if (current) {
+        if (request != null && current) {
             val state = receipt.getProperty("state").takeIf {
                 it in setOf("hooks_installed", "index_loaded", "no_index", "hooks_failed")
             } ?: "unknown"
@@ -69,6 +72,19 @@ internal class RuntimeReceipt(private val indexRoot: Path) {
             appendLine("runtimeFontState=$font")
             for (key in listOf("pid", "entries", "terms", "fontAttempts", "liveResources", "liveResourceMerges")) {
                 appendLine("runtime_$key=${receipt.getProperty(key)?.toLongOrNull()?.takeIf { it >= 0 } ?: -1}")
+            }
+            val started = requestTimeMillis()
+            val pid = receipt.getProperty("pid")?.toIntOrNull()
+            if (started != null && currentRequest() == request) {
+                appendLine("runtimeLaunchAtMillis=$started")
+                if (pid != null && pid > 0) {
+                    val codes = savedExitCodes(request, pid).ifEmpty {
+                        safeCodes(readGameExitCodes?.invoke(pid, started).orEmpty())
+                    }
+                    if (codes.isNotEmpty() && matchesRuntime(request, pid)) {
+                        appendLine("gameReportedExitCodes=$codes")
+                    }
+                }
             }
         }
         val alert = currentSafetyAlert()
@@ -94,6 +110,9 @@ internal class RuntimeReceipt(private val indexRoot: Path) {
         file.readText().trim().takeIf { UUID.fromString(it).toString() == it }
     }.getOrNull()
 
+    private fun requestTimeMillis() = runCatching { Files.getLastModifiedTime(indexRoot.resolve("launch.request")).toMillis() }
+        .getOrNull()?.takeIf { it > 0 }
+
     private fun launchMode(): String = runCatching {
         val file = indexRoot.resolve("launch-mode.txt")
         require(Files.size(file) <= 16)
@@ -110,13 +129,42 @@ internal class RuntimeReceipt(private val indexRoot: Path) {
         return alert
     }
 
-    private fun safeCodes(alert: Properties): String = alert.getProperty("codes", "")
-        .split(',').filter { it.matches(Regex("[1-9][0-9]{4}")) }.distinct().take(8).joinToString(",")
+    private fun safeCodes(alert: Properties): String = safeCodes(alert.getProperty("codes", "").split(','))
 
-    fun status(): RuntimeLaunchStatus {
+    private fun safeCodes(codes: List<String>): String =
+        codes.filter { it.matches(EXIT_CODE) }.distinct().take(8).joinToString(",")
+
+    private fun matchesRuntime(request: String, pid: Int): Boolean {
+        val runtime = readReceipt("runtime-state.properties")
+        return runtime.getProperty("request") == request && runtime.getProperty("pid")?.toIntOrNull() == pid &&
+            currentRequest() == request
+    }
+
+    private fun savedExitCodes(request: String, pid: Int): String {
+        val saved = readReceipt("game-exit.properties")
+        return if (saved.getProperty("request") == request && saved.getProperty("pid")?.toIntOrNull() == pid)
+            safeCodes(saved) else ""
+    }
+
+    // The host launch worker is the only writer. Exporters can still read while the file is replaced.
+    private fun saveExitCodes(request: String, pid: Int, observed: List<String>): String {
+        val codes = safeCodes(observed)
+        if (codes.isEmpty() || !matchesRuntime(request, pid)) return ""
+        val record = Properties().apply {
+            setProperty("request", request)
+            setProperty("pid", pid.toString())
+            setProperty("codes", codes)
+        }
+        runCatching { AtomicFiles.properties(indexRoot.resolve("game-exit.properties"), record) }
+        return codes
+    }
+
+    fun status(
+        readGameExitCodes: ((Int, Long, Long) -> List<String>)? = null,
+        findExit: ((Int) -> GameProcessExit?)? = null
+    ): RuntimeLaunchStatus {
         val request = currentRequest() ?: return RuntimeLaunchStatus()
-        val time = runCatching { Files.getLastModifiedTime(indexRoot.resolve("launch.request")).toMillis() }
-            .getOrNull()?.takeIf { it > 0 }
+        val time = requestTimeMillis()
         val receipt = readReceipt("runtime-state.properties").takeIf { it.getProperty("request") == request }
         val state = receipt?.getProperty("state")
         val font = when (receipt?.getProperty("fontState")) {
@@ -134,7 +182,22 @@ internal class RuntimeReceipt(private val indexRoot: Path) {
             else -> "尚未收到确认"
         }
         val alert = currentSafetyAlert()
+        val pid = receipt?.getProperty("pid")?.toIntOrNull()
+        // Android can retain an old exit after reusing a PID. Match this launch before showing it.
+        val exit = if (alert == null && time != null && pid != null && pid > 0) {
+            findExit?.invoke(pid)?.takeIf { it.pid == pid && it.timestamp >= time && it.timestamp - time <= 30_000L }
+        } else null
+        val codes = if (alert == null && pid != null && pid > 0 && time != null) {
+            savedExitCodes(request, pid).ifEmpty {
+                if (exit != null && readGameExitCodes != null && System.currentTimeMillis() - exit.timestamp in 0..300_000L) {
+                    saveExitCodes(request, pid, readGameExitCodes(pid, time, exit.timestamp))
+                } else ""
+            }
+        } else ""
+        if (exit != null && !matchesRuntime(request, exit.pid)) return status()
         val issue = alert?.let(::safetyMessage)
+            ?: codes.takeIf { it.isNotEmpty() }?.let { "游戏报告了退出错误码 ${it.replace(",", "、")}。" }
+            ?: exit?.detail
             ?: when {
                 state == "hooks_failed" -> "汉化功能未能加载，可尝试修复或导出诊断。"
                 state == "no_index" -> "汉化文件未就绪，请使用修复功能。"
@@ -143,6 +206,7 @@ internal class RuntimeReceipt(private val indexRoot: Path) {
             }
         return RuntimeLaunchStatus(time, when {
             alert != null -> "游戏发出了安全提示"
+            codes.isNotEmpty() || exit != null -> "游戏在启动后不久退出"
             issue != null -> "启动时出现问题"
             state == "hooks_installed" && font == "已加载" -> "汉化与字体已加载"
             state != null -> "已收到游戏响应"
@@ -156,6 +220,10 @@ internal class RuntimeReceipt(private val indexRoot: Path) {
         return "$label。错误信息已保存在本次运行记录中。"
     }
 
+    private companion object {
+        val EXIT_CODE = Regex("[1-9][0-9]{4}")
+    }
+
     fun description(): String = runCatching {
         currentSafetyAlert()?.let { alert ->
             return safetyMessage(alert)
@@ -163,6 +231,10 @@ internal class RuntimeReceipt(private val indexRoot: Path) {
         val request = indexRoot.resolve("launch.request").readText().trim()
         val receipt = AtomicFiles.readProperties(indexRoot.resolve("runtime-state.properties"))
         if (receipt.getProperty("request") != request) return "尚未收到本次游戏进程的确认"
+        receipt.getProperty("pid")?.toIntOrNull()?.takeIf { it > 0 }?.let { pid ->
+            val codes = savedExitCodes(request, pid)
+            if (codes.isNotEmpty()) return "游戏在启动后退出（错误码 ${codes.replace(",", "、")}）。"
+        }
         val detail = when (receipt.getProperty("state")) {
             "hooks_installed" -> when (receipt.getProperty("fontState")) {
                 "failed" -> "上次启动：中文字体初始化失败，可导出诊断包"
@@ -179,7 +251,6 @@ internal class RuntimeReceipt(private val indexRoot: Path) {
         val profile = receipt.getProperty("nativeProfile", "")
         when {
             profile.isBlank() -> "$detail；当前游戏构建的底层兼容性未验证"
-            profile == com.lody.virtual.helper.compat.LimbusNativeProfile.LOADABLE -> "$detail，官方安装包已核对"
             else -> detail
         }
     }.getOrDefault("尚未收到游戏运行时确认；当前游戏构建的底层兼容性未验证")

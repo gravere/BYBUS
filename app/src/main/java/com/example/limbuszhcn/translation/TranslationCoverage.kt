@@ -1,6 +1,7 @@
 package com.example.limbuszhcn.translation
 
 import com.example.limbuszhcn.gamefs.GameStorage
+import com.example.limbuszhcn.gamefs.GameTextLanguage
 import java.util.concurrent.CancellationException
 
 internal data class CoverageSample(val text: String, val review: Boolean, val translation: String? = null,
@@ -10,9 +11,11 @@ internal data class CoverageFile(val resource: String, val category: String, val
 internal data class CoverageReport(val sourceName: String, val checkedAt: Long, val files: Int, val total: Int,
     val covered: Int, val missing: Int, val review: Int, val aiEligible: Int, val unreadable: Int,
     val details: List<CoverageFile>, val excluded: Int = 0, val shared: Int = 0, val reviewEligible: Int = 0,
-    val independentEligible: Int = 0, val entryIndex: CoverageIndexRef? = null)
+    val independentEligible: Int = 0, val entryIndex: CoverageIndexRef? = null,
+    val language: GameTextLanguage = GameTextLanguage.Japanese)
 internal data class CoverageState(val loading: Boolean = false, val report: CoverageReport? = null,
-    val error: String? = null, val fingerprint: String? = null, val stale: Boolean = false, val independentReady: Boolean = true) {
+    val error: String? = null, val fingerprint: String? = null, val stale: Boolean = false, val independentReady: Boolean = true,
+    val language: GameTextLanguage? = null) {
     val current get() = report != null && fingerprint != null && error == null && !loading && !stale
     fun eligible(config: AiConfig): Int = report?.let {
         if (!config.missingOnly) it.independentEligible else (if (config.includeMissing) it.aiEligible else 0) + (if (config.includeReview) it.reviewEligible else 0)
@@ -84,7 +87,8 @@ internal object TranslationCoverage {
             if (fileMissing + fileReview > 0) details += CoverageFile(key, category, fileMissing, fileReview, examples)
         }
         return CoverageReport(sourceName, System.currentTimeMillis(), resources.size - unreadable, total,
-            covered, missing, review, eligible, unreadable, details, excluded, sharedCount, reviewEligible, independent)
+            covered, missing, review, eligible, unreadable, details, excluded, sharedCount, reviewEligible, independent,
+            language = inspection.language)
     }
     private fun preview(text: String) = if (text.length > 320) text.take(320) + "…" else text
     internal fun category(path: String): String {

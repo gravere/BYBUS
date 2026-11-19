@@ -146,7 +146,8 @@ class MethodProxies {
     }
 
     private static boolean shouldIsolateHostActivitiesForLimbus() {
-        return LIMBUS_PACKAGE.equals(MethodProxy.getAppPkg());
+        return LIMBUS_PACKAGE.equals(MethodProxy.getAppPkg())
+                && VClient.get().shouldHideHostPackageForLimbus();
     }
 
     private static boolean shouldExposeHostGoogleActivityToLimbus(String packageName) {

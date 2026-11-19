@@ -1,5 +1,6 @@
 #pragma once
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 
 inline bool limbus_equivalent_io_aliases(const char *a, const char *b) {
@@ -45,3 +46,18 @@ public:
         return true;
     }
 };
+
+struct LimbusSignalContextSnapshot { uint64_t regs[31], pc, sp, pstate; };
+template<class Context>
+inline LimbusSignalContextSnapshot limbus_snapshot_context(const Context &context) {
+    LimbusSignalContextSnapshot snapshot{};
+    for (size_t i = 0; i < 31; ++i) snapshot.regs[i] = context.regs[i];
+    snapshot.pc = context.pc; snapshot.sp = context.sp; snapshot.pstate = context.pstate;
+    return snapshot;
+}
+template<class Context>
+inline bool limbus_machine_context_changed(const Context &context, const LimbusSignalContextSnapshot &before) {
+    if (context.pc != before.pc || context.sp != before.sp || context.pstate != before.pstate) return true;
+    for (size_t i = 0; i < 31; ++i) if (context.regs[i] != before.regs[i]) return true;
+    return false;
+}

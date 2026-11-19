@@ -4,8 +4,6 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ApplicationInfo
-import android.content.pm.PackageInfo
 import android.content.pm.PackageInstaller
 import android.net.Uri
 import android.os.Build
@@ -81,30 +79,17 @@ internal class GamePackageInstaller(private val context: Context) {
             val installed = runCatching { AndroidInstalledGameImporter.installedVersionCode(context.packageManager) }.getOrNull()
             val base = GameApkSet.validate(records, installed, Build.VERSION.SDK_INT)
             progress("检查 BYBUS 兼容性")
-            val app = ApplicationInfo().apply {
-                packageName = PlayListing.PACKAGE
-                sourceDir = base.path.toString()
-                publicSourceDir = sourceDir
-                splitSourceDirs = records.filter { it != base }.map { it.path.toString() }.toTypedArray()
-            }
-            @Suppress("DEPRECATION")
-            val info = PackageInfo().apply {
-                packageName = PlayListing.PACKAGE
-                versionName = base.versionName
-                if (Build.VERSION.SDK_INT >= 28) setLongVersionCode(base.version) else versionCode = base.version.toInt()
-                applicationInfo = app
-                // GameApkSet has already cryptographically verified every APK in this set.
-                // Supply the same official signer evidence used by installed-game inspection.
-                val archiveInfo = requireNotNull(context.packageManager.getPackageArchiveInfo(
-                    base.path.toString(), LimbusNativeProfile.SIGNATURE_FLAGS)) { "无法读取已验证的安装包签名" }
-                if (Build.VERSION.SDK_INT >= 28) signingInfo = archiveInfo.signingInfo
-                else signatures = archiveInfo.signatures
-            }
-            require(LimbusNativeProfile.inspect(context, info, app).approved()) {
-                "游戏安装包的签名或启动组件未通过检查，请选择完整的官方安装包。"
+            val splits = records.filter { it != base }.map { it.path }
+            val archive = requireNotNull(context.packageManager.getPackageArchiveInfo(
+                base.path.toString(), LimbusNativeProfile.SIGNATURE_FLAGS)) { "无法读取已验证的安装包信息" }
+            val match = LimbusNativeProfile.inspectArchive(
+                context, archive, base.path.toString(), splits.map(Path::toString).toTypedArray()
+            )
+            require(match.approved()) {
+                match.failureReason.ifBlank { "游戏安装包的签名或启动组件未通过检查，请选择完整的官方安装包。" }
             }
             require(identity == installedIdentity()) { "校验期间游戏已更新，请重新选择安装包" }
-            return PreparedGameUpdate(listOf(base.path) + records.filter { it != base }.map { it.path },
+            return PreparedGameUpdate(listOf(base.path) + splits,
                 GameInstallReview(base.versionName, base.version, apks.size, apks.sumOf(Files::size)), identity)
         } catch (error: Exception) {
             clearStaging()

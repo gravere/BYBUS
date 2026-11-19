@@ -52,6 +52,8 @@ int main() {
     assert(rpg_dialogue_text_key("@skill:100", "2").empty());
     assert(rpg_dialogue_text_key(rpg_dialogue_root_key("chapter10_01"), "-1").empty());
     assert(story_scene_key("StoryData/JP_P10612.json") == "@story:P10612");
+    assert(story_scene_key("StoryData/EN_P10612.json") == "@story:P10612");
+    assert(story_scene_key("StoryData/KR_P10612.json") == "@story:P10612");
     assert(story_scene_key("P10612") == "@story:P10612");
     assert(story_scene_key("../P10612").empty());
     assert(story_scene_key("P10612/8").empty());

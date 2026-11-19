@@ -28,6 +28,7 @@ class VirtualAppContainerRuntime(
     private val fallback: LocalContainerRuntime
 ) : ContainerRuntime {
     private val bridge = VirtualAppBridge(context)
+    private val gameBuild = GameLaunchCompatibility(context)
 
     /**
      * 读取容器、游戏导入记录以及当前 APK 来源的综合状态。
@@ -66,6 +67,9 @@ class VirtualAppContainerRuntime(
     override fun importGame(request: GameImportRequest): GameImportResult {
         bridge.requireAvailable()
         require(request.source == "installed" || request.splitApkPaths.size == 1) { "手动导入不支持 split APK" }
+        val installed = if (request.source == "installed") {
+            gameBuild.installedBuild().also { it.requireImportSource(request) }
+        } else null
         stopGame()
         return fallback.importGame(request, bridge::referencedGameApkPaths) { prepared ->
             val result = bridge.installBaseApk(prepared.splitApkPaths.first(), prepared.source == "installed")
@@ -75,9 +79,8 @@ class VirtualAppContainerRuntime(
             bridge.ensureGoogleAppsInstalled()
             val count = bridge.installNativeLibraries(LocalContainerRuntime.GAME_PACKAGE, prepared.splitApkPaths)
             require(count > 0) { "游戏启动文件缺失，请在设置中运行修复" }
-            if (prepared.source == "installed") {
-                val current = AndroidInstalledGameImporter.installedVersionCode(context.packageManager)
-                require(current == prepared.versionCode) { "同步期间系统更新了游戏，请重试同步" }
+            if (installed != null) {
+                gameBuild.requireUnchanged(installed)
                 require(!bridge.requiresInstalledSourceResync(LocalContainerRuntime.GAME_PACKAGE)) { "容器 APK 来源校验失败" }
             }
         }
@@ -115,7 +118,9 @@ class VirtualAppContainerRuntime(
     override fun storage() =
         if (bridge.available) {
             ContainerWorkspaceStorage(bridge.localizeRoot(LocalContainerRuntime.GAME_PACKAGE).toPath(),
-                bridge.resourceMigrationRoots(LocalContainerRuntime.GAME_PACKAGE))
+                bridge.resourceMigrationRoots(LocalContainerRuntime.GAME_PACKAGE)) {
+                    GameLanguageStore(context.filesDir.toPath().resolve("translation-cache")).read()
+                }
         } else {
             fallback.storage()
         }
@@ -126,7 +131,10 @@ class VirtualAppContainerRuntime(
     override fun launchGame() {
         Log.i(TAG, "launchGame requested pid=${Process.myPid()}")
         bridge.requireAvailable()
-        require(!fallback.status().requiresInstalledGameResync) { "上次游戏同步未完成，请在设置中运行修复后启动" }
+        val imported = fallback.status()
+        require(!imported.requiresInstalledGameResync) { "上次游戏同步未完成，请在设置中运行修复后启动" }
+        val installed = if (imported.importSource == "installed") gameBuild.requireApproved() else null
+        require(installed == null || installed.version == imported.importedVersionCode) { "游戏已更新，请重新启动以同步安装文件" }
         // Redirects must not survive into the next resource-validation pass.
         TranslationRedirectGate(context).close()
         ensureGameInstalledInVirtualApp()
@@ -138,6 +146,13 @@ class VirtualAppContainerRuntime(
         bridge.logGameLocalizeDiagnostics(LocalContainerRuntime.GAME_PACKAGE)
         // This method is invoked by the host launch worker, before the guest main thread exists.
         measureStartup("font_validation") { com.lody.virtual.helper.compat.LimbusTranslationAssets.prepare(context) }
+        // A cold launch can reuse the APK import while its extracted libraries are missing or stale.
+        bridge.stopExistingGameProcess(LocalContainerRuntime.GAME_PACKAGE)
+        measureStartup("game_launch_libraries") {
+            val apks = installed?.apks?.map { it.path } ?: fallback.importedSplitApkPaths()
+            bridge.ensureGameLaunchLibraries(apks)
+            if (installed != null) gameBuild.requireUnchanged(installed)
+        }
         // Retry a prior background-policy rejection only for this explicit game launch.
         com.lody.virtual.client.stub.KeepAliveService.requestStart(context)
         measureStartup("activity_handoff") { bridge.launch(LocalContainerRuntime.GAME_PACKAGE) }
@@ -183,9 +198,6 @@ private class VirtualAppBridge(
 
     fun launch(packageName: String) {
         requireAvailable()
-        // Native 索引在进程初始化时加载；恢复旧任务无法使用刚生成的索引。
-        // 等待 VAMS 的延迟终止完成，避免把新 Activity 交给正在退出的旧进程。
-        stopExistingGameProcess(packageName)
         removePreviousGameTasks(packageName)
         val intent = VirtualCore.get().getLaunchIntent(packageName, 0)
             ?: throw ContainerRuntimeUnavailableException("VirtualApp 未找到启动入口: $packageName")
@@ -420,6 +432,10 @@ private class VirtualAppBridge(
         return nativeDeployment(packageName).install(apkPaths.map { File(it).toPath() })
     }
 
+    fun ensureGameLaunchLibraries(apkPaths: List<String>) {
+        nativeDeployment(LocalContainerRuntime.GAME_PACKAGE).ensureForLaunch(apkPaths.map { File(it).toPath() })
+    }
+
     private fun nativeDeployment(packageName: String) = NativeLibraryDeployment(
         VEnvironment.getAppLibDirectory(packageName).toPath(), Build.SUPPORTED_ABIS.toList(),
         if (packageName == LocalContainerRuntime.GAME_PACKAGE) "libil2cpp.so" else null)
@@ -464,17 +480,6 @@ private class VirtualAppBridge(
         )
         return needsResync
     }
-
-    private fun installedPackageApkPaths(packageName: String): List<String> =
-        runCatching {
-            val info = context.packageManager.getApplicationInfo(packageName, 0)
-            buildList {
-                add(info.sourceDir)
-                info.splitSourceDirs?.let(::addAll)
-            }.filter { it.isNotBlank() }
-        }.onFailure { error ->
-            Log.w(TAG, "installedPackageApkPaths unavailable package=$packageName", error)
-        }.getOrDefault(emptyList())
 
     private fun startVirtualActivity(intent: Intent, packageName: String) {
         Log.i(TAG, "VActivityManager.startActivity call package=$packageName intent=${intent.describeForLog()}")

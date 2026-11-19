@@ -27,6 +27,12 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
         reference: PreparedTranslation? = base, session: AiTaskStore? = null): AiJobResult {
         val c = config.validated()
         val inspection = TranslationInspection(storage, base.takeIf { c.missingOnly }, cancelled)
+        val pendingTask = session?.read()
+        pendingTask?.binding?.language?.let { language ->
+            require(language == inspection.language.code) {
+                "游戏语言已切换，请切回${com.example.limbuszhcn.gamefs.GameTextLanguage.fromCode(language)?.displayName ?: "原语言"}后继续此任务，或取消后重新检查。"
+            }
+        }
         val resources = inspection.resources
         require(resources.isNotEmpty()) { "尚无可翻译的游戏原文，请先进入游戏完成资源下载，再回来生成 AI 汉化" }
         val identity = identityOverride ?: digest("v2|$baseId|${c.endpoint}|${c.model}|${c.missingOnly}|${digest(c.prompt)}").take(32)
@@ -35,12 +41,12 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
         val output = root.resolve("output")
         if (Files.exists(output)) AtomicFiles.deleteOwnedTree(root, output)
         Files.createDirectories(output)
-        val originals = base?.manifest?.entries?.associateBy { resourceKey(it.targetPath) }.orEmpty()
+        val originals = base?.manifest?.entries?.associateBy { inspection.language.resourceKey(it.targetPath) }.orEmpty()
         val terminology = AiTerminology.build(storage, reference, cancelled)
         val contextReference = reference?.takeUnless { it === base }?.let { TranslationInspection(storage, it, cancelled) }
         val shared = if (c.missingOnly) inspection.sharedTranslations() else emptyMap()
         fun checkCancelled() { if (cancelled() || Thread.currentThread().isInterrupted) throw CancellationException("翻译已暂停，已完成内容会在下次继续时复用") }
-        var snapshot = session?.read()
+        var snapshot = pendingTask
         val upstream = snapshot?.upstream == true
         // A completed entry is carried outside the new batch. For upstream sync only a genuine
         // gap can be carried, even when the new official wording happens to equal our previous AI.
@@ -224,11 +230,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
     companion object {
         fun digest(text: String): String = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it.toInt() and 255) }
-        fun resourceKey(target: String): String {
-            val relative = target.removePrefix("en/")
-            return "jp/" + relative.substringBeforeLast('/', "").let { if (it.isEmpty()) "" else "$it/" } +
-                "JP_" + relative.substringAfterLast('/').removePrefix("EN_").removePrefix("JP_")
-        }
+        fun resourceKey(target: String): String = com.example.limbuszhcn.gamefs.GameTextLanguage.Japanese.resourceKey(target)
         private fun protectTranslated(original: String, translated: String): String {
             // Re-mask the original token identities, including valid Chinese word-order changes.
             val expected = ProtectedTranslation(original)

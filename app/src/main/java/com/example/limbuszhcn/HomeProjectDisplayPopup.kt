@@ -37,14 +37,7 @@ internal fun HomeProjectDisplayPopup(sources: SourceState, pinnedId: String?, on
     val space = with(LocalDensity.current) { 12.dp.roundToPx() }
     val config = LocalConfiguration.current
     val width = homeDisplayPopupWidth(config.screenWidthDp.toFloat(), LocalDensity.current.fontScale).dp
-    val position = remember(space) { object : PopupPositionProvider {
-        override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
-            val x = (anchorBounds.right - popupContentSize.width).coerceIn(space, maxOf(space, windowSize.width - popupContentSize.width - space))
-            val below = anchorBounds.bottom + space
-            val y = if (below + popupContentSize.height <= windowSize.height - space) below else anchorBounds.top - popupContentSize.height - space
-            return IntOffset(x, y.coerceIn(space, maxOf(space, windowSize.height - popupContentSize.height - space)))
-        }
-    } }
+    val position = remember(space) { EndAlignedPopupPosition(space) }
     LaunchedEffect(closing) {
         visibility.animateTo(if (closing) 0f else 1f, tween(if (closing) 120 else 160))
         if (closing) { onClosed(); if (hasSelection) onSelect(pending) }
@@ -89,3 +82,14 @@ private fun DisplayChoice(title: String, selected: Boolean, enabled: Boolean,
 internal fun homeDisplayPopupWidth(windowWidth: Float, fontScale: Float): Float =
     ((if (windowWidth >= 600) 328f else 264f) * (1f + (fontScale.coerceAtLeast(1f) - 1f) * .5f))
         .coerceAtMost((windowWidth - 48f).coerceAtLeast(140f))
+
+internal class EndAlignedPopupPosition(private val gap: Int) : PopupPositionProvider {
+    override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection,
+        popupContentSize: IntSize): IntOffset {
+        val end = if (layoutDirection == LayoutDirection.Ltr) anchorBounds.right - popupContentSize.width else anchorBounds.left
+        val below = anchorBounds.bottom + gap
+        val top = if (below + popupContentSize.height <= windowSize.height - gap) below else anchorBounds.top - popupContentSize.height - gap
+        return IntOffset(end.coerceIn(gap, maxOf(gap, windowSize.width - popupContentSize.width - gap)),
+            top.coerceIn(gap, maxOf(gap, windowSize.height - popupContentSize.height - gap)))
+    }
+}

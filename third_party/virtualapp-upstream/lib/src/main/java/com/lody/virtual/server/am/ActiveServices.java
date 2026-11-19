@@ -60,13 +60,13 @@ public class ActiveServices {
             this.userId = userId;
         }
 
-        RunningServiceData getOrCreateRunningServiceInfo(ServiceInfo serviceInfo) {
+        RunningServiceData getOrCreateRunningServiceInfo(ServiceInfo serviceInfo, ProcessRecord owner) {
             ComponentName component = ComponentUtils.toComponentName(serviceInfo);
             RunningServiceData data;
             synchronized (mRunningServices) {
                 data = mRunningServices.get(component);
-                if (data == null) {
-                    data = new RunningServiceData(serviceInfo);
+                if (data == null || data.owner != owner) {
+                    data = new RunningServiceData(serviceInfo, owner);
                     Log.e(TAG, " getOrCreateRunningServiceInfo mRunningServices put" + component.toString());
                     mRunningServices.put(component, data);
                 }
@@ -78,6 +78,7 @@ public class ActiveServices {
 
     private class RunningServiceData {
         ServiceInfo info;
+        final ProcessRecord owner;
         int clientCount;
         int restartCount;
         int startId;
@@ -86,8 +87,9 @@ public class ActiveServices {
         public long activeSince;
         public long lastActivityTime;
 
-        public RunningServiceData(ServiceInfo info) {
+        public RunningServiceData(ServiceInfo info, ProcessRecord owner) {
             this.info = info;
+            this.owner = owner;
             activeSince = SystemClock.elapsedRealtime();
         }
     }
@@ -96,17 +98,21 @@ public class ActiveServices {
         this.mAms = ams;
     }
 
-    private class BoundServiceInfo {
-        int userId;
-        int flags;
-        ComponentName component;
-        IBinder conn;
+    private class BoundServiceInfo implements IBinder.DeathRecipient {
+        final UserSpace user;
+        final IBinder connection;
+        final RunningServiceData service;
 
-        public BoundServiceInfo(int userId, int flags, ComponentName component, IBinder conn) {
-            this.userId = userId;
-            this.flags = flags;
-            this.component = component;
-            this.conn = conn;
+        BoundServiceInfo(UserSpace user, IBinder connection, RunningServiceData service) {
+            this.user = user;
+            this.connection = connection;
+            this.service = service;
+        }
+
+        @Override public void binderDied() {
+            synchronized (user.mBoundServiceInfos) {
+                if (user.mBoundServiceInfos.get(connection) == this) unbindService(user.userId, connection);
+            }
         }
     }
 
@@ -125,15 +131,21 @@ public class ActiveServices {
 
     public void onStartCommand(int userId, int startId, ServiceInfo serviceInfo, Intent intent) {
         UserSpace userSpace = getUserSpace(userId);
-        RunningServiceData info = userSpace.getOrCreateRunningServiceInfo(serviceInfo);
-        info.stickyIntents.put(startId, intent);
+        int uid = VUserHandle.getUid(userId, VUserHandle.getAppId(serviceInfo.applicationInfo.uid));
+        ProcessRecord owner = mAms.findProcess(ComponentUtils.getProcessName(serviceInfo), uid);
+        if (owner != null && owner.pid == VBinder.getCallingPid()) {
+            synchronized (userSpace.mRunningServices) {
+                RunningServiceData info = userSpace.getOrCreateRunningServiceInfo(serviceInfo, owner);
+                info.stickyIntents.put(startId, intent);
+            }
+        }
     }
 
     public void onDestroy(int userId, ComponentName componentName) {
         UserSpace userSpace = getUserSpace(userId);
         synchronized (userSpace.mRunningServices) {
             RunningServiceData info = userSpace.mRunningServices.get(componentName);
-            if (info != null) {
+            if (info != null && info.owner.pid == VBinder.getCallingPid()) {
                 info.stickyIntents.clear();
                 info.startId = 0;
             }
@@ -161,7 +173,7 @@ public class ActiveServices {
         final Intent proxyIntent = new Intent();
         proxyIntent.setAction(System.currentTimeMillis() + "");
         proxyIntent.setClassName(StubManifest.getStubPackageName(targetApp.is64bit), StubManifest.getStubServiceName(targetApp.vpid));
-        RunningServiceData info = userSpace.getOrCreateRunningServiceInfo(serviceInfo);
+        RunningServiceData info = userSpace.getOrCreateRunningServiceInfo(serviceInfo, targetApp);
         int startId = ++info.startId;
         proxyIntent.putExtra("_VA_|_start_id_", startId);
         proxyIntent.putExtra("_VA_|_service_info_", serviceInfo);
@@ -178,31 +190,6 @@ public class ActiveServices {
 
     public Intent bindService(int userId, Intent intent, ServiceInfo serviceInfo, final IBinder conn, int flags) {
         final UserSpace userSpace = getUserSpace(userId);
-        ComponentName component = ComponentUtils.toComponentName(serviceInfo);
-        boolean notBound = false;
-        synchronized (userSpace.mBoundServiceInfos) {
-            if (!userSpace.mBoundServiceInfos.containsKey(conn)) {
-                notBound = true;
-            }
-            try {
-                conn.linkToDeath(new IBinder.DeathRecipient() {
-                    @Override
-                    public void binderDied() {
-                        userSpace.mBoundServiceInfos.remove(conn);
-                        conn.unlinkToDeath(this, 0);
-                    }
-                }, 0);
-            } catch (RemoteException e) {
-                e.printStackTrace();
-            }
-            userSpace.mBoundServiceInfos.put(conn, new BoundServiceInfo(userId, flags, component, conn));
-        }
-        RunningServiceData data = userSpace.getOrCreateRunningServiceInfo(serviceInfo);
-        if (notBound) {
-            synchronized (userSpace.mRunningServices) {
-                data.clientCount++;
-            }
-        }
         ProcessRecord targetApp = mAms.startProcessIfNeedLocked(
                 ComponentUtils.getProcessName(serviceInfo),
                 userId,
@@ -213,6 +200,23 @@ public class ActiveServices {
         );
         if (targetApp == null) {
             return null;
+        }
+        RunningServiceData data = userSpace.getOrCreateRunningServiceInfo(serviceInfo, targetApp);
+        synchronized (userSpace.mBoundServiceInfos) {
+            BoundServiceInfo previous = userSpace.mBoundServiceInfos.get(conn);
+            if (previous == null || previous.service != data) {
+                BoundServiceInfo binding = new BoundServiceInfo(userSpace, conn, data);
+                try {
+                    conn.linkToDeath(binding, 0);
+                } catch (RemoteException disconnected) {
+                    return null;
+                }
+                if (previous != null) unbindService(userId, conn);
+                userSpace.mBoundServiceInfos.put(conn, binding);
+                synchronized (userSpace.mRunningServices) {
+                    data.clientCount++;
+                }
+            }
         }
         Intent proxyIntent = new Intent();
         proxyIntent.setAction(System.currentTimeMillis() + "");
@@ -234,7 +238,7 @@ public class ActiveServices {
         ServiceResult serviceResult = new ServiceResult();
         synchronized (userSpace.mRunningServices) {
             RunningServiceData info = userSpace.mRunningServices.get(component);
-            if (info == null) {
+            if (info == null || info.owner.pid != VBinder.getCallingPid()) {
                 Log.e(TAG, " onUnbind RunningServiceData is null " + component.toString());
                 serviceResult.died = true;
                 return serviceResult;
@@ -310,12 +314,9 @@ public class ActiveServices {
         synchronized (userSpace.mBoundServiceInfos) {
             BoundServiceInfo boundServiceInfo = userSpace.mBoundServiceInfos.remove(binder);
             if (boundServiceInfo != null) {
+                binder.unlinkToDeath(boundServiceInfo, 0);
                 synchronized (userSpace.mRunningServices) {
-                    RunningServiceData data = userSpace.mRunningServices.get(boundServiceInfo.component);
-                    if (data != null) {
-                        data.clientCount--;
-                    }
-
+                    boundServiceInfo.service.clientCount--;
                 }
             }
         }
@@ -333,7 +334,7 @@ public class ActiveServices {
             Iterator<RunningServiceData> it = userSpace.mRunningServices.values().iterator();
             while (it.hasNext()) {
                 RunningServiceData data = it.next();
-                if (data.info.processName.equals(process.processName)) {
+                if (data.owner == process) {
                     Log.e(TAG, " processDied remove runningServices " + data.info.toString());
                     it.remove();
                 }
@@ -354,11 +355,7 @@ public class ActiveServices {
             for (RunningServiceData data : userSpace.mRunningServices.values()) {
                 int appId = VUserHandle.getAppId(data.info.applicationInfo.uid);
                 int uid = VUserHandle.getUid(userId, appId);
-                ProcessRecord r = VActivityManagerService.get().findProcess(data.info.processName, uid);
-                if (r == null) {
-                    VLog.e(TAG, "Can't find Process for process: " + data.info.processName);
-                    continue;
-                }
+                ProcessRecord r = data.owner;
                 ActivityManager.RunningServiceInfo info = new ActivityManager.RunningServiceInfo();
                 info.process = r.processName;
                 info.pid = r.pid;

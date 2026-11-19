@@ -2,6 +2,11 @@
 #include <cstdio>
 #include <cstdint>
 #include <initializer_list>
+#include <atomic>
+#include <unordered_map>
+std::unordered_map<int32_t, const char *> g_language_codes{{2,"jp"},{1,"en"},{0,"kr"}};
+std::atomic<int32_t> g_font_language{INT32_MIN};
+thread_local void *g_language_font_update_target = nullptr;
 struct Text { bool translated=false,stream=false,fragment=false; };
 struct Component { void *font=nullptr; Text *text=nullptr; };
 int chinese,original_font,text_getter,model_class,other_class;
@@ -23,9 +28,10 @@ using Load=void(*)(void *,int32_t,const void *);
 Load g_original_localization_load[2];
 bool ready_before_load=false; int loads=0,models=0;
 int completed_loads=0;
+void observe_localization_language(int32_t language) { assert(language==2 && loads==completed_loads+1); }
 void prepare_loaded_localization(void *) { assert(loads==completed_loads+1); ++completed_loads; }
 bool ensure_tmp_font() {ready_before_load=true;return true;}
-void load(void *,int32_t lang,const void *) {assert(ready_before_load&&lang==2);++loads;}
+void load(void *,int32_t lang,const void *) {assert(ready_before_load&&lang==2&&g_font_language.load()==lang);++loads;}
 struct Model {void *klass;}; Model valid{&model_class},wrong{&other_class};
 void *get_class(void *p) {return static_cast<Model *>(p)->klass;}
 auto g_object_get_class=get_class;void *g_ego_gift_text_class=&model_class;
@@ -41,6 +47,9 @@ int main() {
     c.text=&unknown;replacement_tmp_set_font(&c,&original_font,nullptr);assert(c.font==&original_font);
     c.text=&translated;g_font_ready=false;replacement_tmp_set_font(&c,&original_font,nullptr);assert(c.font==&original_font);
     g_font_ready=true;replacement_tmp_set_font(&c,&chinese,nullptr);assert(font_prepares==3);
+    g_language_font_update_target=&c;
+    replacement_tmp_set_font(&c,&original_font,nullptr);assert(c.font==&original_font&&font_prepares==3);
+    g_language_font_update_target=nullptr;
     g_original_localization_load[0]=g_original_localization_load[1]=load;
     replacement_localization_load<0>(nullptr,2,nullptr);ready_before_load=false;
     replacement_localization_load<1>(nullptr,2,nullptr);assert(loads==2&&completed_loads==2);

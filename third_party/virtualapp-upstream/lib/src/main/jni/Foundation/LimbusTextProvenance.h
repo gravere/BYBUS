@@ -40,7 +40,8 @@ inline std::string event_root_key(const std::string &id) {
 }
 inline std::string story_scene_key(std::string name) {
     if (name.compare(0, 10, "StoryData/") == 0) name.erase(0, 10);
-    if (name.compare(0, 3, "JP_") == 0) name.erase(0, 3);
+    if (name.compare(0, 3, "JP_") == 0 || name.compare(0, 3, "EN_") == 0 ||
+        name.compare(0, 3, "KR_") == 0) name.erase(0, 3);
     if (name.size() > 5 && name.compare(name.size() - 5, 5, ".json") == 0) name.resize(name.size() - 5);
     if (name.empty() || name.size() > 96 || !std::all_of(name.begin(), name.end(), [](char c) {
         return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-';

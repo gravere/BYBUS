@@ -35,7 +35,8 @@ class BundledBattleHintsTest {
 
     @Test fun firstRunTablesUseTheSameBoundedReaderAndExactAllowlist() {
         val text = """{"dataList":[{"id":1,"content":"ログイン"}]}"""
-        for (name in listOf("JP_MainUIText", "JP_LoginUIText")) {
+        for (locale in SOURCE_TEXT_LOCALES) for (table in BundledBattleHints.tableNames) {
+            val name = "${locale.uppercase()}_$table"
             assertEquals("$name.json" to text, BundledBattleHints.parse(fixture(text, name)))
         }
         assertNull(BundledBattleHints.parse(fixture(text, "JP_LoginUIText_Other")))

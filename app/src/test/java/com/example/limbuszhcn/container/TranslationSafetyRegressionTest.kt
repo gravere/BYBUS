@@ -118,9 +118,10 @@ class TranslationSafetyRegressionTest {
         val base = ContainerWorkspaceStorage(localize)
         var reads = 0
         val storage = object : GameStorage by base {
-            override fun read(path: String): ByteArray? {
+            override fun readAtMost(path: String, maxBytes: Int): ByteArray? {
+                val original = base.readAtMost(path, maxBytes) ?: return null
                 reads++
-                return if (reads < 3) base.read(path) else """{"dataList":[{"id":1,"name":"別の文章"}]}""".toByteArray()
+                return if (reads < 3) original else """{"dataList":[{"id":1,"name":"別の文章"}]}""".toByteArray()
             }
         }
         assertFalse(installer(storage).activateRedirect(patch, manifest).indexActivated)

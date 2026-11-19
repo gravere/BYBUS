@@ -18,6 +18,19 @@ internal data class AppUpdateState(val installedCode: Long, val busy: Boolean = 
     val delta: AppDelta? = null, val retryAtElapsed: Long? = null, val reuse: AppReusePlan? = null,
     val knownVersionCode: Long = 0, val downloadPlanned: Boolean = false, val checking: Boolean = false) {
     val updateAvailable: Boolean get() = maxOf(knownVersionCode, release?.versionCode ?: 0) > installedCode
+
+    fun withPublishedVersion(code: Long): AppUpdateState {
+        if (release?.versionCode == code) return copy(knownVersionCode = code)
+        val withdrawn = ready && release != null && release.versionCode > code
+        return copy(knownVersionCode = code, release = null, checked = false, ready = false,
+            progress = null, delta = null, reuse = null, downloadPlanned = false,
+            error = if (withdrawn) null else error, message = when {
+                withdrawn -> "已下载的版本已撤回"
+                error != null -> message
+                code > installedCode -> "有新版本可用"
+                else -> "已是最新版本"
+            })
+    }
 }
 
 /** A separate worker: app update requests never block the game preparation queue. */
@@ -42,6 +55,7 @@ internal class AppUpdateController(private val app: Application) {
     private var task: Future<*>? = null
     private var noticeTask: Future<*>? = null
     private var checkingNotice = false
+    private var installAfterNotice = false
     private val noticeSession = AppUpdateNoticeSession()
     var openingGeneration by mutableStateOf(0L)
         private set
@@ -70,10 +84,10 @@ internal class AppUpdateController(private val app: Application) {
 
     fun nextNoticeDelay(): Long = maxOf(noticeSession.nextDelay(notice, System.currentTimeMillis()),
         checkPolicy.retryAtElapsed?.let { it - SystemClock.elapsedRealtime() } ?: 0,
-        if (state.busy || checkingNotice || state.ready || installRequest != null) 60_000L else 0)
+        if (state.busy || checkingNotice || installRequest != null) 60_000L else 0)
 
     fun checkForNotice() {
-        if (closed || checkingNotice || state.busy || state.ready || installRequest != null ||
+        if (closed || checkingNotice || state.busy || installRequest != null ||
             !noticeSession.shouldCheck(notice, System.currentTimeMillis())) return
         if (checkPolicy.beforeCheck(force = true) == UpdateCheckDecision.Wait) return
         noticeSession.attempted()
@@ -84,19 +98,18 @@ internal class AppUpdateController(private val app: Application) {
             val result = try { Result.success(repository.checkNotice()) } catch (error: Exception) { Result.failure(error) }
             main.post {
                 checkingNotice = false
+                val installRequested = installAfterNotice
+                installAfterNotice = false
                 // A user request started meanwhile owns the state. Never replace its progress or result.
-                if (!closed && id == generation.get() && !state.busy) result.fold(onSuccess = { code ->
+                if (closed || id != generation.get() || state.busy) return@post
+                result.fold(onSuccess = { code ->
                     checkPolicy.succeeded()
                     saveNotice(notice.checked(code, System.currentTimeMillis()))
                     android.util.Log.i("BYBUSUpdate", "Notice checked: $code")
-                    val retained = state.release?.takeIf { it.versionCode == code }
-                    state = state.copy(knownVersionCode = code, release = retained,
-                        checked = state.checked && retained != null,
-                        delta = state.delta.takeIf { retained != null }, reuse = state.reuse.takeIf { retained != null },
-                        downloadPlanned = state.downloadPlanned && retained != null,
-                        message = if (retained == null && state.error == null)
-                            if (code > state.installedCode) "有新版本可用" else "已是最新版本" else state.message)
+                    state = state.withPublishedVersion(code)
+                    if (!state.ready) readyFile = null
                 }, onFailure = { if (it is Exception) checkPolicy.failed(it) })
+                if (installRequested && state.ready) install()
             }
         }
     }
@@ -177,6 +190,10 @@ internal class AppUpdateController(private val app: Application) {
         val file = readyFile ?: return
         val release = state.release ?: return
         if (closed || state.busy) return
+        if (checkingNotice) {
+            installAfterNotice = true
+            return
+        }
         val id = generation.incrementAndGet()
         state = state.copy(busy = true, checking = false, message = "正在准备安装", error = null)
         task = worker.submit {
@@ -209,6 +226,7 @@ internal class AppUpdateController(private val app: Application) {
         state = state.copy(message = "允许安装后，返回此页点击「安装更新」")
     }
     fun cancel() {
+        installAfterNotice = false
         generation.incrementAndGet()
         task?.cancel(true)
         state = state.copy(busy = false, checking = false, progress = null, message = "已取消，可重试", error = null)

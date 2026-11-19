@@ -1,5 +1,6 @@
 #include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusFontMaterials.h"
 #include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusFontProof.h"
+#include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusFontScale.h"
 #include <cassert>
 #include <cstdio>
 #include <mutex>
@@ -19,12 +20,16 @@ struct TmpComponentState {
     uint32_t padded_crc = 0;
     bool has_padded_crc = false;
 };
-struct Component { int id; void *font; bool alive = true; void *material = nullptr; int padding_updates = 0; int redraws = 0; void *text = nullptr; bool language_owned = false; };
+struct Component { int id; void *font; bool alive = true; void *material = nullptr; int padding_updates = 0; int redraws = 0; void *text = nullptr; bool language_owned = false;
+    void *inline_font = nullptr, *inline_material = nullptr, *mesh_material = nullptr;
+};
 struct Preset {
     int style = 0;
     float outline_width = 0, underlay_x = 0, underlay_y = 0, underlay_alpha = 0, face_dilate = 0;
     unsigned keywords = 0;
     bool chinese_atlas = false;
+    float gradient = 6, normal = 0, bold = .75f, ratio_a = 1, ratio_b = 1, ratio_c = 1;
+    float outline_softness = 0, shadow_softness = 0, shadow_dilate = 0, glow_offset = 0, glow_outer = 0;
 };
 struct Converted : Preset { int references = 0; int refreshes = 0; };
 void *keep(void *object, bool) { return object; }
@@ -38,8 +43,37 @@ std::mutex g_font_state_lock;
 int chinese_font, chinese_material, japanese_font, conversion_method, retain_method, release_method;
 int texture_method, padding_method, chinese_texture, japanese_texture, crc_method;
 int writer_get_text_method, dirty_method, text_method;
+int set_float_method;
+const void *g_material_set_float_info = nullptr;
+std::string property_name;
+Preset source_font_material;
+float original_point = 110;
+float font_point_size(void *font) { return font == &chinese_font ? 34.f : original_point; }
+float read_material_number(void *object, const char *name) {
+    if (object == &chinese_material) object = &source_font_material;
+    auto &p = *static_cast<Preset *>(object);
+    const std::string key = name;
+    if (key == "_GradientScale") return p.gradient;
+    if (key == "_WeightNormal") return p.normal;
+    if (key == "_WeightBold") return p.bold;
+    if (key == "_FaceDilate") return p.face_dilate;
+    if (key == "_OutlineWidth") return p.outline_width;
+    if (key == "_OutlineSoftness") return p.outline_softness;
+    if (key == "_UnderlayOffsetX") return p.underlay_x;
+    if (key == "_UnderlayOffsetY") return p.underlay_y;
+    if (key == "_UnderlaySoftness") return p.shadow_softness;
+    if (key == "_UnderlayDilate") return p.shadow_dilate;
+    if (key == "_GlowOffset") return p.glow_offset;
+    if (key == "_GlowOuter") return p.glow_outer;
+    assert(false); return -999;
+}
+int material_keyword(void *object, const char *name) {
+    assert(std::string(name) == "RATIOS_OFF");
+    return (static_cast<Preset *>(object)->keywords & 8) != 0;
+}
 const void *g_tmp_get_text_info = &text_method;
 bool g_font_ready = true;
+thread_local void *g_language_font_update_target = nullptr;
 void *game_font_material = nullptr;
 struct MaterialWriter { Component *text; Preset *cached; float outline, alpha, dilate; };
 const void *g_material_writer_get_text_info = &writer_get_text_method;
@@ -89,10 +123,20 @@ void *invoke_object_getter(const void *method, void *object) {
     if (method == g_tmp_get_text_info) return static_cast<Component *>(object)->text;
     if (method == g_material_writer_get_text_info) return static_cast<MaterialWriter *>(object)->text;
     if (method == g_tmp_get_shared_material_info) return static_cast<Component *>(object)->material;
+    if (object == &japanese_font) return &source_font_material;
     assert(object == g_tmp_font_asset);
     return &chinese_material;
 }
 void *invoke(const void *method, void *object, void **args, void **exception) {
+    if (method == &set_float_method) {
+        auto &p = *static_cast<Preset *>(object);
+        auto &key = *static_cast<std::string *>(args[0]);
+        float value = *static_cast<float *>(args[1]);
+        if (key == "_ScaleRatioA") p.ratio_a = value;
+        else if (key == "_ScaleRatioB") p.ratio_b = value;
+        else { assert(key == "_ScaleRatioC"); p.ratio_c = value; }
+        return nullptr;
+    }
     if (method == &dirty_method) { ++static_cast<Component *>(object)->redraws; return nullptr; }
     if (method == g_material_compute_crc_info) {
         static uint32_t hash;
@@ -153,8 +197,8 @@ bool ensure_tmp_font() { return true; }
 bool is_choice_text(void *, void *) { return false; }
 void *translate_managed_string(void *text) { return text; }
 void *new_managed_string(const std::string &value) {
-    assert(value == "_MainTex");
-    return &texture_method;
+    property_name = value;
+    return &property_name;
 }
 bool remember_translated_text(void *, const std::string &) { assert(false); return false; }
 void *apply_tmp_component_layout_markup(void *, void *text) { return text; }
@@ -189,6 +233,29 @@ bool is_language_font_target(void *p) { return static_cast<Component *>(p)->lang
 #include "runtime-prepare-text-under-test.inc"
 #include "runtime-font-refresh-under-test.inc"
 
+int inline_font_field, inline_material_field;
+void inline_get_field(void *object, const void *field, void *out) {
+    auto &c=*static_cast<Component *>(object);
+    *static_cast<void **>(out)=field==&inline_font_field?c.inline_font:c.inline_material;
+}
+void inline_set_field(void *object, const void *field, void *value) {
+    assert(field==&inline_material_field);
+    static_cast<Component *>(object)->inline_material=*static_cast<void **>(value);
+}
+auto g_field_get_value=inline_get_field;
+auto g_field_set_value=inline_set_field;
+#include "runtime-inline-material-under-test.inc"
+int32_t add_inline_reference(void *material, void *font, void **references, void *, const void *) {
+    assert(font); *references=material; return 7;
+}
+bool parse_inline_tag(void *object, void *, int32_t start, int32_t *end, const void *) {
+    auto &c=*static_cast<Component *>(object);
+    assert(g_inline_material_target==object);
+    if(start<0)return false;
+    assert(replacement_tmp_add_material(c.inline_material,c.inline_font,&c.mesh_material,nullptr,nullptr)==7);
+    *end=start+3; return true;
+}
+
 void forget(Component &component) {
     TmpComponentState saved;
     assert(g_original_tmp_states.take(&component, component.id, &saved));
@@ -201,6 +268,9 @@ int main() {
     Preset preset{42};
     assert(translated_tmp_material(&first, &preset) == &preset);
     first.font = &chinese_font;
+    g_language_font_update_target = &first;
+    assert(translated_tmp_material(&first, &preset) == &preset);
+    g_language_font_update_target = nullptr;
     assert(translated_tmp_material(&first, &preset) == &chinese_material);
     assert(g_original_tmp_states.put(&first, first.id, {}));
     auto material = static_cast<Converted *>(translated_tmp_material(&first, &preset));
@@ -377,5 +447,79 @@ int main() {
     }
     assert(restore_calls == restores_before_owner);
     forget(rebound);
-    puts("Material styles, live sharing, cache boundary, destruction and failure fallback passed");
+    // A <material> style registers a submesh directly, bypassing the public
+    // material setter. Both the stored mesh and the active parser material
+    // must use the Chinese atlas, with source outline and shadow intact.
+    g_original_tmp_validate_tag=parse_inline_tag;
+    g_original_tmp_add_material=add_inline_reference;
+    g_tmp_current_font_field=&inline_font_field;
+    g_tmp_current_material_field=&inline_material_field;
+    Component inline_text{902,&japanese_font}; inline_text.language_owned=true;
+    Preset red{95}; red.outline_width=.15f;red.underlay_alpha=.4f;red.keywords=5;
+    inline_text.material=&red;prepare_tmp_text(&inline_text,&caption);
+    inline_text.inline_font=&chinese_font;inline_text.inline_material=&red;
+    int32_t end=0;
+    assert(replacement_tmp_validate_tag(&inline_text,nullptr,4,&end,nullptr)&&end==7);
+    auto inline_painted=static_cast<Converted *>(inline_text.inline_material);
+    assert(inline_text.mesh_material==inline_painted&&inline_painted->chinese_atlas);
+    assert(inline_painted->outline_width==.15f&&inline_painted->underlay_alpha==.4f&&inline_painted->keywords==5);
+    assert(!red.chinese_atlas&&inline_text.material!=&red&&g_inline_material_target==nullptr);
+    TmpComponentState inline_restore;assert(find_tmp_component_state(&inline_text,&inline_restore));
+    assert(inline_restore.shared_material==&red);inline_restore={};
+    red.underlay_alpha=.9f;inline_text.inline_material=&red;
+    replacement_tmp_validate_tag(&inline_text,nullptr,0,&end,nullptr);
+    assert(static_cast<Converted *>(inline_text.mesh_material)->underlay_alpha==.9f);
+    // Explicit numeric fonts and non-owned labels never receive Chinese material.
+    inline_text.inline_font=&japanese_font;inline_text.inline_material=&red;
+    replacement_tmp_validate_tag(&inline_text,nullptr,0,&end,nullptr);
+    assert(inline_text.mesh_material==&red&&inline_text.inline_material==&red);
+    inline_text.inline_font=&chinese_font;
+    g_inline_material_target=&untouched;
+    assert(!replacement_tmp_validate_tag(&inline_text,nullptr,-1,&end,nullptr));
+    assert(g_inline_material_target==&untouched);g_inline_material_target=nullptr;
+    clear_inline_tmp_materials(&inline_text);forget(inline_text);
+    inline_text.inline_material=&red;
+    replacement_tmp_validate_tag(&inline_text,nullptr,0,&end,nullptr);
+    assert(inline_text.mesh_material==&red&&inline_text.inline_material==&red);
+    // Actual conversion/refresh hook with the 110pt English source observed on
+    // device. Compare physical outline/shadow widths, not just equal numbers.
+    g_material_set_float_info = &set_float_method;
+    g_original_shader_ratios = [](void *object, const void *) {
+        auto &p = *static_cast<Preset *>(object);
+        p.ratio_a = p.ratio_b = p.ratio_c = .833333333f;
+    };
+    Component pass{950, &japanese_font}; pass.language_owned = true;
+    Preset pass_style{96}; pass_style.outline_width = .3f; pass_style.underlay_y = -.4f;
+    pass.material = &pass_style;
+    prepare_tmp_text(&pass, &caption);
+    auto scaled = static_cast<Converted *>(pass.material);
+    auto near = [](float a, float b) { assert(std::abs(a - b) < .00001f); };
+    near(scaled->outline_width * scaled->ratio_a * 6 / 34, .3f * (5.f / 6) * 6 / 110);
+    near(scaled->underlay_y * scaled->ratio_c * 6 / 34, -.4f * (5.f / 6) * .8125f * 6 / 110);
+    near(pass_style.ratio_a, 1); // Never writes source game material.
+    const float first_ratio = scaled->ratio_a;
+    replacement_shader_ratios(scaled, nullptr); // TMP GetPadding recalculation.
+    replacement_shader_ratios(scaled, nullptr);
+    near(scaled->ratio_a, first_ratio); // No accumulating rescale.
+    pass_style.outline_width = .6f;
+    prepare_tmp_text(&pass, &caption);
+    near(scaled->outline_width * scaled->ratio_a * 6 / 34, .6f * (5.f / 6) * 6 / 110);
+    Preset animated = *scaled; animated.style = 97; pass.material = &animated;
+    prepare_tmp_text(&pass, &caption);
+    animated.underlay_y = -.8f;
+    replacement_shader_ratios(&animated, nullptr);
+    near(animated.underlay_y * animated.ratio_c * 6 / 34, -.8f * (5.f / 6) * .8125f * 6 / 110);
+    assert(pass.material == &animated && animated.underlay_y == -.8f);
+    forget(pass);
+    // Exercise different atlas padding as well as different point sizes.
+    for (const auto metrics : {std::pair<float,float>{34,6}, {51,5}, {110,6}, {195,12}}) {
+        limbus_font_scale::Basis basis{metrics.first, metrics.second, 0, .75f, 34};
+        limbus_font_scale::Style s; s.outline=.3f;s.shadow_y=-.4f;s.glow_outer=.5f;
+        auto r=limbus_font_scale::calculate(basis,s,6);
+        near(r.a*6/34,(metrics.second-1)/metrics.second*metrics.second/metrics.first);
+        near(r.c*6/34,(metrics.second-1)*.8125f/metrics.first);
+        s.ratios_off=true;r=limbus_font_scale::calculate(basis,s,6);
+        near(r.a*6/34,metrics.second/metrics.first);
+    }
+    puts("Material styles, lifecycle, inline styles, physical SDF scale and animated clones passed");
 }

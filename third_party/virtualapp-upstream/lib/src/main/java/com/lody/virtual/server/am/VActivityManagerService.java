@@ -475,8 +475,8 @@ public class VActivityManagerService extends IActivityManager.Stub {
                     onProcessDied(app);
                 }
             }, 0);
-        } catch (RemoteException e) {
-            e.printStackTrace();
+        } catch (RemoteException alreadyDead) {
+            return false;
         }
         app.client = client;
         notifyAppProcessStatus(app, 0, true);
@@ -515,9 +515,8 @@ public class VActivityManagerService extends IActivityManager.Stub {
 
     private void onProcessDied(ProcessRecord record) {
         synchronized (mProcessLock) {
-            mProcessNames.remove(record.processName, record.vuid);
-            //bug：ProcessRecord#equals 根据processName判断，这样会移除多开的相同进程名的对象
-            mPidsSelfLocked.remove(record);
+            mProcessNames.removeIfCurrent(record.processName, record.vuid, record);
+            mPidsSelfLocked.removeIf(candidate -> candidate == record);
         }
         //xdja
         notifyAppProcessStatus(record, 0, false);
@@ -594,7 +593,7 @@ public class VActivityManagerService extends IActivityManager.Stub {
                     if (app.initLock != null) {
                         app.initLock.block();
                     }
-                    if (app.client != null) {
+                    if (app.client != null && app.client.asBinder().isBinderAlive()) {
                         return app;
                     }
                 }
@@ -607,7 +606,7 @@ public class VActivityManagerService extends IActivityManager.Stub {
             }
             if (app != null) {
                 VLog.w(TAG, "remove invalid process record: " + app.processName);
-                mProcessNames.remove(app.processName, app.vuid);
+                mProcessNames.removeIfCurrent(app.processName, app.vuid, app);
                 mPidsSelfLocked.remove(app);
             }
             app = new ProcessRecord(info, processName, vuid, vpid, callingUid, is64bit);
@@ -615,7 +614,7 @@ public class VActivityManagerService extends IActivityManager.Stub {
             mPidsSelfLocked.add(app);
             if (!initProcess(app)) {
                 //init process fail
-                mProcessNames.remove(app.processName, app.vuid);
+                mProcessNames.removeIfCurrent(app.processName, app.vuid, app);
                 mPidsSelfLocked.remove(app);
                 app = null;
             }
@@ -891,9 +890,14 @@ public class VActivityManagerService extends IActivityManager.Stub {
                                         } catch (InterruptedException e) {
                                             e.printStackTrace();
                                         }
-                                        r.kill();
-                                        if (CANCEL_ALL_NOTIFICATION_BY_KILL_APP) {
-                                            VNotificationManagerService.get().cancelAllNotification(pkg, userId);
+                                        synchronized (mProcessLock) {
+                                            // The client or its OS PID may have been replaced during the grace period.
+                                            if (mProcessNames.get(r.processName, r.vuid) != r || r.client == null
+                                                    || !r.client.asBinder().isBinderAlive()) return;
+                                            r.kill();
+                                            if (CANCEL_ALL_NOTIFICATION_BY_KILL_APP) {
+                                                VNotificationManagerService.get().cancelAllNotification(pkg, userId);
+                                            }
                                         }
                                     }
                                 }).start();
@@ -1200,7 +1204,9 @@ public class VActivityManagerService extends IActivityManager.Stub {
 
 
     public void beforeProcessKilled(ProcessRecord processRecord) {
-        // EMPTY
+        if ("com.ProjectMoon.LimbusCompany".equals(processRecord.getPackageName())) {
+            Log.i("LimbusVA", "Container requested game process stop pid=" + processRecord.pid);
+        }
     }
 
     void scheduleStaticBroadcast(final BroadcastIntentData data, final int appId, final ActivityInfo info, final int flags,final BroadcastReceiver.PendingResult result) {
