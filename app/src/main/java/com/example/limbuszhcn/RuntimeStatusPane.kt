@@ -56,6 +56,7 @@ internal fun RuntimeStatusPane(state: LauncherUiState, onGameUpdates: () -> Unit
                 val source = state.sources.selected
                 val prepared = state.translation ?: state.resourcePreparation
                 DetailRow("汉化来源", source.name)
+                if (source.kind == "ai") source.aiEntryCount?.let { DetailRow("AI 译文", "$it 条") }
                 state.packageTimeLabel(source)?.let { DetailRow("文件时间", it) }
                 DetailRow("资源状态", when {
                     prepared?.liveResourcesReady == true -> "已准备，随游戏资源加载"
@@ -66,6 +67,7 @@ internal fun RuntimeStatusPane(state: LauncherUiState, onGameUpdates: () -> Unit
                 })
                 DetailRow("更新方式", when {
                     source.isOfficial -> "启动前自动检查"
+                    source.kind == "ai" && (source.independent || source.baseId != null && source.baseId != "zero") -> "按需管理和继续 AI 翻译"
                     source.kind == "ai" -> "检查零协更新或继续补译"
                     else -> "导入新包替换"
                 })

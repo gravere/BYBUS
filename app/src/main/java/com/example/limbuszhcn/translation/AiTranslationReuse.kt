@@ -12,7 +12,7 @@ import java.util.concurrent.CancellationException
 /** Reuse only committed AI text with an exact original-field fingerprint, never arbitrary old output. */
 internal object AiTranslationReuse {
     fun collect(cache: Path, source: TranslationSource, previous: PreparedTranslation, storage: GameStorage,
-        cancelled: () -> Boolean = { false }): Map<String, String> {
+        cancelled: () -> Boolean = { false }, requestedLanguage: com.example.limbuszhcn.gamefs.GameTextLanguage? = null): Map<String, String> {
         if (source.kind != "ai" || !source.id.matches(Regex("ai-[a-f0-9]{32}"))) return emptyMap()
         val folder = cache.resolve("ai-jobs/${source.id.removePrefix("ai-")}/cache")
         if (!Files.isDirectory(folder, LinkOption.NOFOLLOW_LINKS)) return emptyMap()
@@ -37,7 +37,7 @@ internal object AiTranslationReuse {
             }
         } }
         if (saved.isEmpty()) return emptyMap()
-        val language = requireNotNull(storage.textLanguage()) { "请先启动游戏，以读取当前游戏语言" }.language
+        val language = requestedLanguage ?: requireNotNull(storage.textLanguage()) { "请先启动游戏，以读取当前游戏语言" }.language
         val entries = previous.manifest.entries.associateBy { language.resourceKey(it.targetPath) }
         val reusable = mutableMapOf<String, String>()
         var readBytes = 0L

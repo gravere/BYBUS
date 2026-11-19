@@ -34,12 +34,18 @@ internal data class TranslationActions(
     val generateAi: (AiConfig, String) -> Unit = { _, _ -> }, val cancelAi: () -> Unit = {},
     val saveKey: (String, String, String, String) -> Unit = { _, _, _, _ -> },
     val selectKey: (String) -> Unit = {}, val clearKey: (String) -> Unit = {},
+    val renameKey: (String, String) -> Unit = { _, _ -> }, val reorderKeys: (List<String>) -> Unit = {},
     val pauseAi: () -> Unit = {}, val resumeAi: () -> Unit = {},
     val loadModels: (String, String) -> Unit = { _, _ -> }, val clearModels: () -> Unit = {},
     val inspectCoverage: () -> Unit = {}, val undoAi: () -> Unit = {}, val removeAi: (String) -> Unit = {},
     val chooseAiUpdate: (com.example.limbuszhcn.translation.AiUpdateChoice?) -> Unit = {},
     val savePrompt: (String) -> Unit = {},
-    val coverageEntries: CoveragePageReader = { _, _, _, _ -> error("无法读取明细") }
+    val coverageEntries: CoveragePageReader = { _, _, _, _ -> error("无法读取明细") },
+    val inspectAiEntries: (String?, Boolean) -> Unit = { _, _ -> },
+    val downloadAiOriginals: () -> Unit = {},
+    val aiEntries: AiEntryReader = { _, _, _, _ -> error("无法读取明细") },
+    val generateEntries: (AiConfig, String, AiEntryRequest) -> Unit = { _, _, _ -> },
+    val deleteEntries: (AiEntryRequest) -> Unit = {}
 )
 
 private val packageDateFormat = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm")

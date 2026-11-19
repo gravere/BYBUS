@@ -11,7 +11,8 @@ internal object AiUpstreamUpdate {
         "upstream-v1|${source.id}|${source.revision}|$version|${config.endpoint}|${config.model}|${AiTranslationJob.digest(config.prompt)}").take(32)
 
     fun shouldOffer(source: TranslationSource, latest: Long, lastOffered: Long, force: Boolean = false) =
-        source.kind == "ai" && latest > (source.officialVersion ?: 0) && (force || latest > lastOffered)
+        source.kind == "ai" && !source.independent && (source.baseId == null || source.baseId == "zero") &&
+            latest > (source.officialVersion ?: 0) && (force || latest > lastOffered)
 
     fun requireCurrent(offer: AiUpstreamOffer, source: TranslationSource) {
         require(source.kind == "ai" && source.id == offer.sourceId && source.revision == offer.revision) {

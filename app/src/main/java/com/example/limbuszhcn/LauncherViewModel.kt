@@ -107,6 +107,15 @@ internal class LauncherViewModel(application: Application) : AndroidViewModel(ap
     fun saveAiKey(endpoint: String, model: String, key: String, name: String) = coordinator.saveAiKey(endpoint, model, key, name)
     fun selectAiKey(id: String) = coordinator.selectAiKey(id)
     fun clearAiKey(id: String) = coordinator.clearAiKey(id)
+    fun renameAiKey(id: String, name: String) = coordinator.renameAiKey(id, name)
+    fun reorderAiKeys(ids: List<String>) = coordinator.reorderAiKeys(ids)
+    fun inspectAiEntries(id: String?, force: Boolean) = coordinator.inspectAiEntries(id, force)
+    fun downloadAiOriginals() = coordinator.launchForAiResources()
+    fun aiEntries(report: com.example.limbuszhcn.translation.AiEntryReport, filter: com.example.limbuszhcn.translation.AiEntryFilter,
+        page: Int, cancel: android.os.CancellationSignal) = coordinator.aiEntries(report, filter, page, cancel)
+    fun generateAiEntries(config: com.example.limbuszhcn.translation.AiConfig, key: String, request: com.example.limbuszhcn.translation.AiEntryRequest) =
+        coordinator.generateAiEntries(config, key, request)
+    fun deleteAiEntries(request: com.example.limbuszhcn.translation.AiEntryRequest) = coordinator.deleteAiEntries(request)
     fun checkGameUpdate() = coordinator.checkGameUpdate(force = true)
     fun requestGameUpdates() = coordinator.requestGameUpdates()
     fun preparePackageUpdate(uris: List<Uri>) = coordinator.preparePackageUpdate(uris)

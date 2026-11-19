@@ -15,7 +15,8 @@ import kotlin.io.path.writeText
 internal data class TranslationSource(val id: String, val name: String, val kind: String = "local",
     val revision: String = "", val archive: String = "", val icon: String? = null, val baseId: String? = null,
     val updatedAtMillis: Long = 0, val textFileCount: Int = 0, val officialVersion: Long? = null,
-    val independent: Boolean = false) {
+    val independent: Boolean = false, val language: String? = null, val aiEntryCount: Int? = null,
+    val baseName: String? = null) {
     val isOfficial get() = id == "zero"
     val label get() = when { isOfficial -> "自动更新"; kind == "ai" -> "AI 译文"; else -> "本地文件" }
 }
@@ -63,10 +64,17 @@ internal class TranslationSources(val cache: Path) {
                 it.optString("revision"), it.optString("archive"),
                 it.optString("icon").takeIf(String::isNotBlank), it.optString("baseId").takeIf(String::isNotBlank),
                 it.optLong("updatedAtMillis").coerceAtLeast(0), it.optInt("textFileCount").coerceAtLeast(0),
-                it.optLong("officialVersion").takeIf { version -> version > 0 }, it.optBoolean("independent"))
+                it.optLong("officialVersion").takeIf { version -> version > 0 }, it.optBoolean("independent"),
+                it.optString("language").takeIf { code -> code in setOf("jp", "en", "kr") },
+                if (it.has("aiEntryCount") && !it.isNull("aiEntryCount")) it.optInt("aiEntryCount").coerceAtLeast(0) else null,
+                it.optString("baseName").takeIf(String::isNotBlank))
         } }
         require(sources.map { it.id }.distinct().size == sources.size && sources.none { it.isOfficial })
-        val all = listOf(OFFICIAL.copy(icon = json.optString("officialIcon").takeIf(String::isNotBlank))) + sources
+        val taken = (listOf(OFFICIAL.name) + sources.filterNot { it.kind == "ai" }.map { it.name }).toMutableList()
+        val normalized = sources.map { source -> if (source.kind != "ai") source else {
+            val name = uniqueName(source.name, taken); taken += name; source.copy(name = name)
+        } }
+        val all = listOf(OFFICIAL.copy(icon = json.optString("officialIcon").takeIf(String::isNotBlank))) + normalized
         val selected = json.optString("selected", "zero")
         require(all.any { it.id == selected }) { "选中的汉化源已不存在，请重新选择" }
         val undo = json.optJSONObject("aiUndo")?.let { point -> runCatching {
@@ -77,7 +85,10 @@ internal class TranslationSources(val cache: Path) {
                 TranslationSource(id, cleanName(old.getString("name")), old.getString("kind"),
                     old.getString("revision"), old.getString("archive"), old.optString("icon").takeIf(String::isNotBlank),
                     old.optString("baseId").takeIf(String::isNotBlank), old.optLong("updatedAtMillis"), old.optInt("textFileCount"),
-                    old.optLong("officialVersion").takeIf { version -> version > 0 }, old.optBoolean("independent"))
+                    old.optLong("officialVersion").takeIf { version -> version > 0 }, old.optBoolean("independent"),
+                    old.optString("language").takeIf { code -> code in setOf("jp", "en", "kr") },
+                    if (old.has("aiEntryCount") && !old.isNull("aiEntryCount")) old.optInt("aiEntryCount").coerceAtLeast(0) else null,
+                    old.optString("baseName").takeIf(String::isNotBlank))
             }
             AiUndoPoint(id, revision, previous, point.getString("previousSelectedId"))
         }.getOrNull() }
@@ -101,13 +112,29 @@ internal class TranslationSources(val cache: Path) {
         .put("revision", s.revision).put("archive", s.archive).put("icon", s.icon.orEmpty())
         .put("baseId", s.baseId.orEmpty()).put("updatedAtMillis", s.updatedAtMillis).put("textFileCount", s.textFileCount)
         .put("officialVersion", s.officialVersion).put("independent", s.independent)
+        .put("language", s.language).put("aiEntryCount", s.aiEntryCount).put("baseName", s.baseName)
 
     fun select(id: String): SourceState = read().let { state ->
         require(state.sources.any { it.id == id }) { "汉化源不存在" }
         state.copy(selectedId = id).also(::save)
     }
 
-    fun rename(id: String, name: String): SourceState = change(id) { it.copy(name = cleanName(name)) }
+    fun rename(id: String, name: String): SourceState {
+        val unique = uniqueName(cleanName(name), read().sources.filterNot { it.id == id }.map { it.name })
+        return change(id) { it.copy(name = unique) }
+    }
+    fun recordAiCount(id: String, revision: String, language: String, count: Int) {
+        val state = read()
+        val source = state.sources.find { it.id == id && it.kind == "ai" && it.revision == revision } ?: return
+        if (source.aiEntryCount != count || source.language != language)
+            change(id) {
+                val base = it.baseName ?: state.sources.find { candidate -> candidate.id == it.baseId }?.name
+                val legacy = it.language == null && (it.name.substringBefore(" (") == "AI 汉化" || it.name.substringBefore(" (").endsWith(" · AI 补全"))
+                val label = com.example.limbuszhcn.gamefs.GameTextLanguage.fromCode(language)?.displayName.orEmpty()
+                val name = if (legacy) uniqueName("${(base ?: "全局 AI 翻译").take(48)} · $label", state.sources.filterNot { s -> s.id == id }.map { s -> s.name }) else it.name
+                it.copy(aiEntryCount = count, language = language, name = name, baseName = base ?: it.baseName)
+            }
+    }
     fun setIcon(id: String, png: ByteArray?): SourceState {
         require(read().sources.any { it.id == id })
         val file = root.resolve("icons/$id.png")
@@ -133,7 +160,8 @@ internal class TranslationSources(val cache: Path) {
 
     private fun importArchive(input: InputStream, name: String, replaceId: String? = null,
                               generatedId: String? = null, baseId: String? = null, officialVersion: Long? = null,
-                              activate: Boolean = true, independent: Boolean = false): TranslationSource {
+                              activate: Boolean = true, independent: Boolean = false, language: String? = null,
+                              aiEntryCount: Int? = null, baseName: String? = null): TranslationSource {
         require(generatedId == null || validId(generatedId))
         val state = read()
         val previous = replaceId?.let { id -> requireNotNull(state.sources.find { it.id == id && !it.isOfficial }) }
@@ -148,12 +176,13 @@ internal class TranslationSources(val cache: Path) {
             require(prepared.manifest.entries.isNotEmpty()) { "没有可用的汉化文本" }
             AtomicFiles.move(staged, target, true)
             val source = TranslationSource(generatedId ?: previous?.id ?: "local-${UUID.randomUUID()}",
-                previous?.name ?: cleanName((if (generatedId != null) name else name.substringBeforeLast('.'))
-                    .ifBlank { "本地汉化" }.take(64)),
+                uniqueName(previous?.name ?: cleanName((if (generatedId != null) name else name.substringBeforeLast('.'))
+                    .ifBlank { "本地汉化" }.take(64)), state.sources.filterNot { it.id == previous?.id }.map { it.name }),
                 kind = if (generatedId != null) "ai" else "local", baseId = baseId,
                 revision = hash, archive = target.fileName.toString(), icon = previous?.icon,
                 updatedAtMillis = System.currentTimeMillis(), textFileCount = prepared.manifest.entries.size,
-                officialVersion = officialVersion?.takeIf { it > 0 }, independent = independent)
+                officialVersion = officialVersion?.takeIf { it > 0 }, independent = independent, language = language,
+                aiEntryCount = aiEntryCount, baseName = baseName)
             val sources = if (previous == null) state.sources + source
                 else state.sources.map { if (it.id == source.id) source else it }
             val undo = if (generatedId != null) AiUndoPoint(source.id, source.revision, previous, state.selectedId)
@@ -172,12 +201,14 @@ internal class TranslationSources(val cache: Path) {
     }
 
     @JvmOverloads fun addGenerated(archive: Path, baseId: String, identity: String, name: String, officialVersion: Long? = null,
-        activate: Boolean = true, independent: Boolean = false): TranslationSource {
+        activate: Boolean = true, independent: Boolean = false, language: String? = null,
+        aiEntryCount: Int? = null, baseName: String? = null): TranslationSource {
         val state = read()
         val id = "ai-$identity"
         val previous = state.sources.find { it.id == id }
         require(previous == null || previous.kind == "ai") { "目标已替换为本地汉化文件，已保留原文件" }
-        return Files.newInputStream(archive).use { importArchive(it, name, previous?.id, id, baseId, officialVersion, activate, independent) }
+        return Files.newInputStream(archive).use { importArchive(it, name, previous?.id, id, baseId, officialVersion, activate,
+            independent, language, aiEntryCount, baseName) }
     }
 
     fun undoGenerated(): SourceState {
@@ -247,6 +278,13 @@ internal class TranslationSources(val cache: Path) {
 
     companion object {
         val OFFICIAL = TranslationSource("zero", "都市零协会", "official")
+        fun uniqueName(preferred: String, names: Collection<String>): String {
+            val base = cleanName(preferred)
+            if (names.none { it.equals(base, ignoreCase = true) }) return base
+            return generateSequence(2) { it + 1 }.map { number ->
+                val suffix = " ($number)"; base.take(64 - suffix.length) + suffix
+            }.first { candidate -> names.none { it.equals(candidate, ignoreCase = true) } }
+        }
         fun availableAiIdentity(preferred: String, state: SourceState): String =
             if (state.sources.any { it.id == "ai-$preferred" && it.kind != "ai" }) UUID.randomUUID().toString().replace("-", "") else preferred
         fun validId(id: String) = id.matches(Regex("(?:local|ai)-[a-f0-9-]{16,80}"))

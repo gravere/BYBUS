@@ -35,6 +35,7 @@ internal fun publishAiResult(sources: TranslationSources, tasks: AiTaskStore, ta
     tasks.write(task.copy(phase = AiTaskPhase.Applying, resultHash = hash, resultTarget = "ai-$id"))
     tasks.retainCommittedCache(result.identity, id)
     val name = if (unchanged) task.outputName else task.outputName.take(55) + " · 另存"
-    sources.addGenerated(result.archive, task.baseId, id, name, task.officialVersion, activate = unchanged, independent = !task.config.missingOnly)
+    sources.addGenerated(result.archive, task.baseId, id, name, task.officialVersion, activate = unchanged, independent = !task.config.missingOnly || task.baseId == "global",
+        language = task.binding?.language, aiEntryCount = result.aiEntryCount, baseName = task.baseName)
     return if (unchanged) AiPublication.Generated else AiPublication.SeparateCopy
 }

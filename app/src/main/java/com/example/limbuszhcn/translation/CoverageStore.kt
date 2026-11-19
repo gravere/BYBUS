@@ -107,7 +107,7 @@ internal class CoverageStore(private val cache: Path) {
     fun hasHistory(source: TranslationSource) = Files.isRegularFile(legacy) || Files.isRegularFile(pointer(source.id)) ||
         Files.isRegularFile(directory(packageKey(source.id, sourceRevision(source))).resolve("result.json"))
 
-    @Synchronized private fun resourceFingerprint(storage: GameStorage, language: GameTextLanguage, verifyContents: Boolean): String {
+    @Synchronized fun resourceFingerprint(storage: GameStorage, language: GameTextLanguage, verifyContents: Boolean): String {
         val metadata = storage.textResourceMetadata(language) ?: storage.textResources(language).associateWith { "unknown" }
         val index = cache.resolve("coverage/resources.json")
         val previous = runCatching {
