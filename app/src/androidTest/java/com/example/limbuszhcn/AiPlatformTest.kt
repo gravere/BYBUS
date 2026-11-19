@@ -38,10 +38,21 @@ class AiPlatformTest {
             reopened.selectKey(second)
             assertEquals("demo-a", reopened.config().model)
             assertEquals("fixture-two", reopened.key(endpoint))
+            val encryptedBefore = prefs.getString("keys", "")!!
+            reopened.renameKey(second, "备用服务")
+            reopened.reorderKeys(listOf(third, second, first))
+            val again = AiSettingsStore(context)
+            assertEquals(listOf(third, second, first), again.choices().second.map { it.id })
+            assertEquals(second, again.choices().first)
+            assertEquals("备用服务", again.choices().second[1].name)
+            assertEquals("fixture-two", again.key(endpoint))
+            val beforeValues = org.json.JSONArray(encryptedBefore).let { a -> (0 until a.length()).associate { a.getJSONObject(it).getString("id") to a.getJSONObject(it).getString("encrypted") } }
+            val afterValues = org.json.JSONArray(prefs.getString("keys", "")!!).let { a -> (0 until a.length()).associate { a.getJSONObject(it).getString("id") to a.getJSONObject(it).getString("encrypted") } }
+            assertEquals(beforeValues, afterValues)
             assertEquals("", reopened.requestKey(otherPath, ""))
             reopened.selectKey(first)
             assertEquals("fixture-one", reopened.key(endpoint))
-            assertTrue(runCatching { reopened.saveKey(endpoint, "", "fixture-new", "工作") }.isFailure)
+            assertTrue(runCatching { reopened.saveKey(endpoint, "", "fixture-new", "备用服务") }.isFailure)
             assertEquals(first, reopened.choices().first)
             reopened.clearKey(third)
             assertEquals(first, reopened.choices().first)

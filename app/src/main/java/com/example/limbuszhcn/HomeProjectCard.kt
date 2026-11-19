@@ -26,13 +26,13 @@ internal data class HomeProjectDisplay(val source: TranslationSource, val pinned
 
 @Composable
 internal fun HomeProjectCard(state: LauncherUiState, tracking: ProjectTrackingState, pinnedId: String?,
-    onPin: (String?) -> Unit, onProject: () -> Unit, onSources: () -> Unit, onAi: () -> Unit,
+    onPin: (String?) -> Unit, onProject: () -> Unit, onSources: () -> Unit, onAi: (String) -> Unit,
     modifier: Modifier = Modifier) {
     val display = HomeProjectDisplay.resolve(state.sources, pinnedId)
     val source = display.source
     var choose by remember { mutableStateOf(false) }
-    val continueAi = source.kind == "ai" && source.id == state.sources.selectedId
-    val open = if (source.isOfficial) onProject else if (continueAi) onAi else onSources
+    val continueAi = source.kind == "ai"
+    val open = if (source.isOfficial) onProject else if (continueAi) ({ onAi(source.id) }) else onSources
     HomeSummaryCard(open, modifier.animateContentSize(tween(220)).semantics {
         stateDescription = if (display.pinned) "固定显示：${source.name}" else "跟随当前汉化源：${source.name}"
     }) {
@@ -50,7 +50,8 @@ internal fun HomeProjectCard(state: LauncherUiState, tracking: ProjectTrackingSt
         if (source.isOfficial) ZeroProjectSummary(tracking) else {
             Text(source.label, color = C.Muted, style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(6.dp))
-            Text(if (source.textFileCount > 0) "已保存 ${source.textFileCount} 个文本文件" else "已保存到本地",
+            Text(if (continueAi) source.aiEntryCount?.let { "AI 已翻译 $it 条" } ?: "查看 AI 译文"
+                else if (source.textFileCount > 0) "已保存 ${source.textFileCount} 个文本文件" else "已保存到本地",
                 style = MaterialTheme.typography.titleLarge)
             state.packageTimeLabel(source)?.let { date ->
                 Spacer(Modifier.height(6.dp))
@@ -58,7 +59,7 @@ internal fun HomeProjectCard(state: LauncherUiState, tracking: ProjectTrackingSt
             }
             HorizontalDivider(Modifier.padding(vertical = 12.dp), color = C.Line)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(if (continueAi) "继续 AI 翻译" else "管理汉化源", color = C.Muted,
+                Text(if (continueAi) "查看与管理译文" else "管理汉化源", color = C.Muted,
                     style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
                 LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(16.dp))
             }

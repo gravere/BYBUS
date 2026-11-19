@@ -66,6 +66,7 @@ internal fun LauncherScreen(
     var confirmation by rememberSaveable { mutableStateOf<ConfirmedOperation?>(null) }
     var confirmZeroSource by rememberSaveable { mutableStateOf(false) }
     var requestedAiScope by remember { mutableStateOf<com.example.limbuszhcn.translation.AiScope?>(null) }
+    var requestedAiEntries by remember { mutableStateOf<com.example.limbuszhcn.translation.AiEntryRequest?>(null) }
     var handledUpdatesRequest by rememberSaveable { mutableLongStateOf(0L) }
     var handledPreparationRequest by rememberSaveable { mutableLongStateOf(0L) }
     var hideAiLaunchProgress by remember { mutableStateOf(false) }
@@ -96,12 +97,18 @@ internal fun LauncherScreen(
         val destination = state.taskDestination()
         if (destination == "migration") onMigration() else {
             requestedAiScope = null
+            requestedAiEntries = null
             open(destination)
         }
     }
     fun openCoverage() {
         if (state.coverage.report != null) openChild("coverage")
         else if (!state.coverage.loading) translationActions.inspectCoverage()
+    }
+    fun openAiEntries(id: String?) {
+        requestedAiScope = null; requestedAiEntries = null
+        if (sheet != "ai-entries") openChild("ai-entries")
+        translationActions.inspectAiEntries(id, false)
     }
 
     Surface(Modifier.fillMaxSize(), color = C.Background) {
@@ -143,7 +150,7 @@ internal fun LauncherScreen(
                                     modifier = Modifier.width(layout.actionWidth.dp))
                                 HomeProjectCard(state, projectState, homeProjectSourceId, onHomeProjectSource,
                                     onProject = { open("project") }, onSources = { open("translation") },
-                                    onAi = { requestedAiScope = null; open("translation"); openChild("ai-translation") },
+                                    onAi = { id -> open("translation"); openAiEntries(id) },
                                     modifier = Modifier.weight(1f).fillMaxHeight())
                             }
                         }
@@ -159,7 +166,7 @@ internal fun LauncherScreen(
                                 modifier = Modifier.widthIn(max = layout.actionWidth.dp).fillMaxWidth())
                             HomeProjectCard(state, projectState, homeProjectSourceId, onHomeProjectSource,
                                 onProject = { open("project") }, onSources = { open("translation") },
-                                onAi = { requestedAiScope = null; open("translation"); openChild("ai-translation") })
+                                onAi = { id -> open("translation"); openAiEntries(id) })
                         }
                     }
                 }
@@ -182,7 +189,7 @@ internal fun LauncherScreen(
                     } }) { active ->
                     if (active == "coverage") {
                         TranslationCoveragePane(state, translationActions.inspectCoverage, translationActions.coverageEntries) { scope ->
-                            requestedAiScope = scope; openChild("ai-translation")
+                            requestedAiScope = scope; requestedAiEntries = null; openChild("ai-translation")
                         }
                     } else if (active == "repair") {
                         RepairPane(state, { confirmation = ConfirmedOperation.Repair }, onExport)
@@ -202,10 +209,15 @@ internal fun LauncherScreen(
                         AppUpdatesPane(appUpdateState, onCheckAppUpdate, onOpenAppRelease)
                     } else if (active == "translation") {
                         TranslationSourcesPane(state, translationActions, onProject = { openChild("project") }, onCoverage = ::openCoverage) {
-                            requestedAiScope = null; openChild("ai-translation")
+                            requestedAiScope = null; requestedAiEntries = null; openChild("ai-translation")
                         }
                     } else if (active == "ai-translation") {
-                        AiTranslationPane(state, translationActions, onCoverage = ::openCoverage, requestedScope = requestedAiScope)
+                        AiTranslationPane(state, translationActions, onCoverage = ::openCoverage, requestedScope = requestedAiScope,
+                            requestedEntries = requestedAiEntries, onEntries = ::openAiEntries)
+                    } else if (active == "ai-entries") {
+                        AiEntriesPane(state, translationActions) { request ->
+                            requestedAiScope = null; requestedAiEntries = request; openChild("ai-translation")
+                        }
                     } else {
                         LauncherDetails(active, state, onGameStore = { openChild("updates") },
                             appUpdateAvailable = appUpdateState.updateAvailable,

@@ -16,7 +16,7 @@ internal data class AiProgress(val completed: Int = 0, val limit: Int = 0, val r
     val inputTokens: Long = 0, val outputTokens: Long = 0, val message: String = "",
     val scannedFiles: Int = 0, val totalFiles: Int = 0)
 internal data class AiJobResult(val archive: Path, val identity: String, val progress: AiProgress, val remaining: Int,
-    val carried: Int = 0)
+    val carried: Int = 0, val aiEntryCount: Int? = null)
 
 /** Batch translation stays outside game processes. Validated responses survive pauses until explicit task cancellation. */
 internal class AiTranslationJob(private val cache: Path, private val storage: GameStorage,
@@ -26,8 +26,10 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
         reuse: Map<String, String> = emptyMap(), reuseOnly: Boolean = false,
         reference: PreparedTranslation? = base, session: AiTaskStore? = null): AiJobResult {
         val c = config.validated()
-        val inspection = TranslationInspection(storage, base.takeIf { c.missingOnly }, cancelled)
         val pendingTask = session?.read()
+        val preserveBase = c.missingOnly || pendingTask?.explicitEntries == true
+        val boundLanguage = pendingTask?.takeIf { it.explicitEntries }?.binding?.language?.let(com.example.limbuszhcn.gamefs.GameTextLanguage::fromCode)
+        val inspection = TranslationInspection(storage, base.takeIf { preserveBase }, cancelled, boundLanguage)
         pendingTask?.binding?.language?.let { language ->
             require(language == inspection.language.code) {
                 "游戏语言已切换，请切回${com.example.limbuszhcn.gamefs.GameTextLanguage.fromCode(language)?.displayName ?: "原语言"}后继续此任务，或取消后重新检查。"
@@ -42,22 +44,26 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
         if (Files.exists(output)) AtomicFiles.deleteOwnedTree(root, output)
         Files.createDirectories(output)
         val originals = base?.manifest?.entries?.associateBy { inspection.language.resourceKey(it.targetPath) }.orEmpty()
-        val terminology = AiTerminology.build(storage, reference, cancelled)
-        val contextReference = reference?.takeUnless { it === base }?.let { TranslationInspection(storage, it, cancelled) }
+        val terminology = AiTerminology.build(storage, reference, cancelled, inspection.language)
+        val contextReference = reference?.takeUnless { it === base }?.let { TranslationInspection(storage, it, cancelled, inspection.language) }
         val shared = if (c.missingOnly) inspection.sharedTranslations() else emptyMap()
         fun checkCancelled() { if (cancelled() || Thread.currentThread().isInterrupted) throw CancellationException("翻译已暂停，已完成内容会在下次继续时复用") }
         var snapshot = pendingTask
         val upstream = snapshot?.upstream == true
+        val explicit = snapshot?.explicitEntries == true
+        val requestedIds = if (explicit) snapshot?.plan?.selected?.values?.flatten()?.toSet().orEmpty() else emptySet()
+        fun selected(field: TranslationField) = if (explicit) field.canTranslate && field.id in requestedIds else AiTextSelection.includes(field, c, shared)
         // A completed entry is carried outside the new batch. For upstream sync only a genuine
         // gap can be carried, even when the new official wording happens to equal our previous AI.
         fun carriedText(field: TranslationField): String? {
+            if (field.id in requestedIds) return null
             val masked = reuse[field.id] ?: return null
             if (!field.canTranslate || c.missingOnly && !(upstream && AiTextSelection.missing(field, shared))) return null
             return runCatching { ProtectedTranslation(field.text).restore(masked).also {
                 if (upstream) AiTerminology.validate(it, terminology.forText(field.text, field.context))
             } }.getOrNull()
         }
-        fun candidate(field: TranslationField) = AiTextSelection.includes(field, c, shared) && carriedText(field) == null
+        fun candidate(field: TranslationField) = selected(field) && carriedText(field) == null
         fun emit(value: AiProgress) {
             snapshot = snapshot?.let { session!!.write(it.copy(progress = value)) }
             progress(value)
@@ -91,11 +97,12 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
             val eligible = current.fields.filter(::candidate).map { it.id }.toSet()
             require(eligible.containsAll(plan.selected.getValue(key))) { "本次任务的翻译范围已变化，请取消任务后重新检查" }
         }
-        if (c.missingOnly && base != null) for ((key, entry) in originals) {
+        if (preserveBase && base != null) for ((key, entry) in originals) {
             val target = output.resolve(key); Files.createDirectories(target.parent)
             Files.copy(base.directory.resolve(entry.cachePath), target, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
         }
         var done = 0; var reused = 0; var carried = 0; var remaining = 0; var input = previousInput; var tokens = previousOutput; var totalBytes = 0L
+        val aiIds = hashSetOf<String>()
         val progressLimit = plan?.total ?: c.limit
         for (key in resources) {
             checkCancelled()
@@ -121,16 +128,16 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
                     return@filter false
                 }
                 // Retain provenance for an unchanged AI base in case a paused job must save a separate copy.
-                if (!upstream && !reuseOnly && snapshot?.binding?.selected?.startsWith("ai-") == true && c.missingOnly && leaf.covered) {
+                if (!upstream && !reuseOnly && preserveBase && leaf.covered && leaf.id !in requestedIds) {
                     reuse[leaf.id]?.let { masked -> if (runCatching { ProtectedTranslation(leaf.text).restore(masked) }.getOrNull() == leaf.translated)
                         carriedInFile[leaf.id] = masked }
                 }
-                val selected = AiTextSelection.includes(leaf, c, shared)
+                val chosen = selected(leaf)
                 if (!leaf.covered) {
                     val publicText = shared[leaf.text]
                     if (publicText != null) leaf.apply(publicText) else leaf.clear()
                 }
-                selected && (plan == null || leaf.id in plan.selected[key].orEmpty())
+                chosen && (plan == null || leaf.id in plan.selected[key].orEmpty())
             }
             require(plan == null || leaves.map { it.id }.toSet() == plan.selected[key].orEmpty()) {
                 "本次任务的翻译范围已变化，请取消任务后重新检查"
@@ -151,7 +158,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
             for (leaf in leaves) {
                 val savedId = responseKey(leaf)
                 val review = c.missingOnly && c.includeReview && AiTextSelection.review(leaf, shared)
-                val old = if (review || upstream) saved.optString(savedId) else reuse[leaf.id] ?: saved.optString(savedId)
+                val old = if (explicit || review || upstream) saved.optString(savedId) else reuse[leaf.id] ?: saved.optString(savedId)
                 if (old.isNotBlank()) {
                     val validated = runCatching { ProtectedTranslation(leaf.text).restore(old).also {
                         AiTerminology.validate(it, terminology.forText(leaf.text, leaf.context))
@@ -200,6 +207,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
                 val verified = TranslationJsonPairer.mergeWithCoverage("Localize/$key", raw, generated)
                 val loaded = TranslationFields.collect(original, verified.document, key, verified).filter { it.covered }.map { it.id }.toSet()
                 check(loaded.containsAll(applied) && loaded.containsAll(carriedInFile.keys)) { "译文已保存到任务，但部分条目未通过加载检查；未替换当前汉化" }
+                aiIds += applied; aiIds += carriedInFile.keys
             }
             Files.write(target, generated.toByteArray(Charsets.UTF_8))
         }
@@ -224,7 +232,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
             else if (done + reused == 0) "所选范围没有需要 AI 处理的文本"
             else if (remaining > 0) "本批完成，还有 $remaining 条可继续翻译" else "翻译完成，下次启动时加载")
         emit(result)
-        return AiJobResult(archive, identity, result, remaining, carried)
+        return AiJobResult(archive, identity, result, remaining, carried, aiIds.size)
     }
 
     companion object {

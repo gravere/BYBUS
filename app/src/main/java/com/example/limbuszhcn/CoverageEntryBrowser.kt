@@ -164,20 +164,25 @@ internal fun CoverageEntryBrowser(report: CoverageReport, kind: CoverageKind?, o
 }
 
 @Composable
-private fun CoverageCategoryPicker(selected: String?, categories: List<String>, onSelect: (String?) -> Unit) {
+internal fun CoverageCategoryPicker(selected: String?, categories: List<String>, onSelect: (String?) -> Unit) {
     val menu = remember { MutableTransitionState(false) }
     val transition = updateTransition(menu, label = "category menu")
     val opacity by transition.animateFloat({ tween(if (targetState) 150 else 90) }, label = "menu opacity") { if (it) 1f else 0f }
     val chevron by transition.animateFloat({ tween(160) }, label = "category chevron") { if (it) 270f else 90f }
     val shape = RoundedCornerShape(16.dp)
+    val interactions = remember { MutableInteractionSource() }
+    val pressed by interactions.collectIsPressedAsState()
+    val focused by interactions.collectIsFocusedAsState()
+    val fill by animateColorAsState(if (selected != null || menu.targetState || pressed || focused) C.AccentSoft else C.Panel,
+        tween(130), label = "category feedback")
     Box {
-        Box(Modifier.widthIn(max = 140.dp).heightIn(min = 48.dp).clip(shape).clickable(role = Role.Button) {
+        Box(Modifier.widthIn(max = 140.dp).heightIn(min = 48.dp).clickable(interactionSource = interactions, indication = null, role = Role.Button) {
             menu.targetState = !menu.targetState
         }.semantics {
             contentDescription = "筛选内容类别"
             stateDescription = if (menu.targetState) "已展开" else "已收起"
         }, contentAlignment = Alignment.Center) {
-            Row(Modifier.background(if (selected == null && !menu.targetState) C.Panel else C.AccentSoft, shape)
+            Row(Modifier.clip(shape).background(fill)
                 .padding(horizontal = 10.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(5.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 Text(selected ?: "全部类别", Modifier.weight(1f, fill = false), maxLines = 2,

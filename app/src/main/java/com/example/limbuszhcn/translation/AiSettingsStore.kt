@@ -96,6 +96,18 @@ internal class AiSettingsStore(context: Context) {
         val choice = keys.firstOrNull { it.choice.id == id }?.choice ?: error("密钥已移除")
         commit(prefs.edit().putString("endpoint", choice.endpoint).putString("model", choice.model), keys, id)
     }
+    fun renameKey(id: String, name: String) = synchronized(lock) {
+        val keys = entries()
+        val entry = keys.firstOrNull { it.choice.id == id } ?: error("密钥已移除")
+        val label = AiKeyOrder.name(name, id, keys.map { it.choice })
+        require(!label.contains(decrypt(entry))) { "名称不能包含密钥" }
+        commit(prefs.edit(), keys.map { if (it === entry) Entry(it.choice.copy(name = label), it.encrypted) else it }, activeId())
+    }
+    fun reorderKeys(ids: List<String>) = synchronized(lock) {
+        val keys = entries()
+        AiKeyOrder.validate(ids, keys.map { it.choice.id })
+        commit(prefs.edit(), ids.map { id -> keys.first { it.choice.id == id } }, activeId())
+    }
     /** A connection test reads credentials but never commits configuration. */
     fun test(config: AiConfig, replacement: String, transport: AiHttpTransport = AiHttpTransport(AiTranslationClient::post)): AiResult {
         val settings = config.validated()

@@ -36,9 +36,10 @@ internal class AiTerminology(private val values: Map<String, String>, private va
             "イシュメール" to "以实玛利", "ロージャ" to "罗佳", "シンクレア" to "辛克莱", "ウーティス" to "奥提斯",
             "グレゴール" to "格里高尔", "ダンテ" to "但丁", "ヴェルギリウス" to "维吉里乌斯", "カロン" to "卡戎")
         val DEFAULT = AiTerminology(DEFAULT_NAMES, DEFAULT_NAMES.keys)
-        fun build(storage: GameStorage, base: PreparedTranslation?, cancelled: () -> Boolean = { false }): AiTerminology {
+        fun build(storage: GameStorage, base: PreparedTranslation?, cancelled: () -> Boolean = { false },
+            language: com.example.limbuszhcn.gamefs.GameTextLanguage? = null): AiTerminology {
             if (base == null) return DEFAULT
-            val inspection = TranslationInspection(storage, base, cancelled)
+            val inspection = TranslationInspection(storage, base, cancelled, language)
             val terms = linkedMapOf<String, String>(); val names = mutableSetOf<String>(); val conflicts = mutableSetOf<String>()
             var bytes = 0L
             for (key in inspection.resources) {

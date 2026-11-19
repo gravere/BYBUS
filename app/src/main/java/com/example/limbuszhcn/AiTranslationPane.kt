@@ -18,11 +18,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -33,14 +35,18 @@ import com.example.limbuszhcn.translation.AiKeyChoice
 import com.example.limbuszhcn.translation.AiScope
 import com.example.limbuszhcn.translation.AiTranslationPrompt
 import com.example.limbuszhcn.translation.normalizedAiEndpoint
+import com.example.limbuszhcn.translation.AiEntryRequest
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
 @Composable
-internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActions, onCoverage: () -> Unit = {}, requestedScope: AiScope? = null) {
+internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActions, onCoverage: () -> Unit = {}, requestedScope: AiScope? = null,
+    requestedEntries: AiEntryRequest? = null, onEntries: (String?) -> Unit = {}) {
     val ai = state.ai
     var endpoint by remember(ai.config.endpoint, ai.activeKeyId) { mutableStateOf(ai.config.endpoint) }
     var model by remember(ai.config.model, ai.activeKeyId) { mutableStateOf(ai.config.model) }
-    var missing by remember(ai.config.missingOnly, requestedScope) { mutableStateOf(requestedScope != null || ai.config.missingOnly) }
+    var missing by remember(ai.config.missingOnly, requestedScope, requestedEntries) { mutableStateOf(
+        requestedEntries?.let { request -> state.sources.sources.find { it.id == request.report.sourceId }?.independent == false }
+            ?: (requestedScope != null || ai.config.missingOnly)) }
     var scope by remember(ai.config.includeMissing, ai.config.includeReview, requestedScope) {
         mutableStateOf(requestedScope ?: if (ai.config.includeReview) if (ai.config.includeMissing) AiScope.Both else AiScope.Review else AiScope.Missing)
     }
@@ -73,7 +79,9 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
         normalizedAiEndpoint(endpoint) == normalizedAiEndpoint(ai.config.endpoint)
     }.getOrDefault(false)
     val hasCredential = key.isNotBlank() || savedKeyAvailable
-    val coverageReady = state.coverage.canGenerate(config())
+    val coverageReady = if (requestedEntries == null) state.coverage.canGenerate(config()) else
+        !ai.library.stale && ai.library.report?.key == requestedEntries.report.key &&
+            (requestedEntries.report.sourceId == null || state.sources.sources.any { it.id == requestedEntries.report.sourceId && it.revision == requestedEntries.report.revision })
     LaunchedEffect(endpoint, key, ai.activeKeyId) { actions.clearModels(); showModels = false; search = "" }
     LaunchedEffect(ai.models.request, ai.models.loading) {
         if (!ai.models.loading && ai.models.values.isNotEmpty()) showModels = true
@@ -87,7 +95,12 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
             }
         }
         if (!pending || showConfiguration) {
-        CoverageSummary(state, onCoverage, actions.inspectCoverage)
+        if (requestedEntries != null) DetailCard {
+            Text("${requestedEntries.report.name} · ${requestedEntries.report.language.displayName}", style = MaterialTheme.typography.titleSmall)
+            Text("已选 ${requestedEntries.count} 条，本批最多 ${minOf(limit, requestedEntries.count)} 条", style = MaterialTheme.typography.bodyMedium)
+            Text("已有译文的所选条目会重新翻译，其他条目保留。", color = C.Muted, style = MaterialTheme.typography.bodySmall)
+            if (!coverageReady) TextButton({ onEntries(requestedEntries.report.sourceId) }, enabled = enabled) { Text("重新读取并选择条目") }
+        } else if (missing) CoverageSummary(state, onCoverage, actions.inspectCoverage)
         DetailCard {
             Text("连接设置", style = MaterialTheme.typography.titleSmall)
             AiField("服务地址", endpoint, { if (it.length <= 2048) endpoint = it }, "https://api.openai.com/v1",
@@ -184,9 +197,12 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
             }
         }
         if (!pending) DetailCard {
+            if (requestedEntries == null) {
             Text("翻译方式", style = MaterialTheme.typography.titleSmall)
-            SourceTabs(listOf(true, false), missing, { if (it) "补充当前汉化" else "独立翻译" }, "翻译方式", { if (enabled) missing = it })
-            if (missing) {
+            SourceTabs(listOf(true, false), missing, { if (it) "补充当前汉化" else "从零全局翻译" }, "翻译方式", { if (enabled) missing = it })
+            if (!missing) Text("不需要现成汉化包。读取已下载的游戏原文后，按类别和条目分批翻译。", style = MaterialTheme.typography.bodySmall, color = C.Muted)
+            }
+            if (missing && requestedEntries == null) {
                 Text("处理范围", style = MaterialTheme.typography.titleSmall)
                 SourceTabs(AiScope.entries.toList(), scope, { it.label }, "处理范围", { if (enabled) scope = it })
                 if (scope.review) Text("待核对不一定是漏译，请先查看原文与现有译文。处理结果另存，原包保留。", style = MaterialTheme.typography.bodySmall, color = C.Muted)
@@ -198,7 +214,10 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
         }
         }
         if (!pending) {
-            if (!state.coverage.current) {
+            if (!missing && requestedEntries == null) {
+                Button({ finishEditing(); onEntries(null) }, enabled = enabled,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("读取原文并选择范围") }
+            } else if (requestedEntries == null && !state.coverage.current) {
                 FilledTonalButton({ finishEditing(); actions.inspectCoverage() }, enabled = enabled && !state.coverage.loading,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                     Text(if (state.coverage.loading) "正在检查汉化覆盖" else "先检查汉化覆盖")
@@ -213,19 +232,34 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
             }
         }
         if (state.sources.undo != null) OutlinedButton({ finishEditing(); undo = true }, enabled = enabled,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("撤回上次 AI 生成") }
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("撤回上次译文改动") }
         val generated = state.sources.sources.filter { it.kind == "ai" }
-        if (generated.isNotEmpty()) DetailCard {
+        if (generated.isNotEmpty() && requestedEntries == null) DetailCard {
             Text("已生成的汉化", style = MaterialTheme.typography.titleSmall)
             SheetAction(Glyph.Translation, "恢复默认汉化", enabled && !state.sources.selected.isOfficial,
                 onClick = { finishEditing(); restoreDefault = true })
-            generated.forEach { source ->
+            generated.groupBy { it.baseId ?: if (it.independent) "global" else it.id }.forEach { (baseId, versions) ->
+                val base = state.sources.sources.find { it.id == baseId }
+                val groupName = if (baseId == "global") "全局 AI 翻译" else base?.name ?: versions.first().baseName ?: "原始汉化包"
+                var expanded by androidx.compose.runtime.saveable.rememberSaveable(baseId) { mutableStateOf(false) }
+                val angle by androidx.compose.animation.core.animateFloatAsState(if (expanded) 270f else 90f, tween(160), label = "AI group disclosure")
                 HorizontalDivider(color = C.Line)
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { expanded = !expanded }
+                    .semantics { stateDescription = if (expanded) "已展开" else "已折叠" }.heightIn(min = 56.dp).padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (base != null) TranslationSourceIcon(base, Modifier.size(28.dp)) else LauncherGlyph(Glyph.Ai, C.Accent, Modifier.size(28.dp))
+                    Text("$groupName · ${versions.size} 个版本", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                    LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(16.dp).rotate(angle))
+                }
+                AnimatedVisibility(expanded) { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                versions.sortedByDescending { it.updatedAtMillis }.forEach { source ->
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     TranslationSourceIcon(source, Modifier.size(32.dp))
-                    Column(Modifier.weight(1f)) {
+                    Column(Modifier.weight(1f).clickable(enabled = !state.busy) { onEntries(source.id) }.padding(vertical = 6.dp)) {
                         Text(source.name, style = MaterialTheme.typography.bodyMedium)
+                        Text(listOfNotNull(source.language?.let { com.example.limbuszhcn.gamefs.GameTextLanguage.fromCode(it)?.displayName },
+                            source.aiEntryCount?.let { "AI 已译 $it 条" } ?: "查看已译条目").joinToString(" · "), color = C.Muted, style = MaterialTheme.typography.bodySmall)
                         state.packageTimeLabel(source)?.let { Text(it, color = C.Muted, style = MaterialTheme.typography.bodySmall) }
                         if (source.id == state.sources.selectedId) Text("当前使用", color = C.Accent,
                             style = MaterialTheme.typography.labelSmall)
@@ -233,6 +267,8 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
                     ActionIconButton(Glyph.Delete, "删除 ${source.name}",
                         { finishEditing(); deleteAi = source }, enabled = enabled)
                 }
+                }
+                } }
             }
         }
     }
@@ -242,8 +278,11 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
             enabled = ai.task?.phase != com.example.limbuszhcn.translation.AiTaskPhase.Applying) { Text("取消并删除") } },
         dismissButton = { TextButton({ cancelTask = false }) { Text("保留任务") } })
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("开始 AI 翻译？") },
-        text = { Text("${if (missing) scope.label else "尚未完成的可译文本"}共 ${state.coverage.eligible(config())} 条，本批最多 ${minOf(limit, state.coverage.eligible(config()))} 条。将关闭游戏，使用你的 API 翻译并计费。已完成的译文保留。") },
-        confirmButton = { TextButton({ confirm = false; reveal = false; actions.generateAi(config(), key) }, enabled = enabled && coverageReady) { Text("开始翻译") } },
+        text = { val count = requestedEntries?.count ?: state.coverage.eligible(config())
+            Text("${if (requestedEntries != null) "所选文本" else if (missing) scope.label else "尚未完成的可译文本"}共 $count 条，本批最多 ${minOf(limit, count)} 条。将关闭游戏，使用你的 API 翻译并计费。${if (requestedEntries != null) "仅重译本批选中的条目，其余译文保留。" else "已完成的译文保留。"}") },
+        confirmButton = { TextButton({ confirm = false; reveal = false
+            if (requestedEntries == null) actions.generateAi(config(), key) else actions.generateEntries(config(), key, requestedEntries)
+        }, enabled = enabled && coverageReady) { Text("开始翻译") } },
         dismissButton = { TextButton({ confirm = false }) { Text("取消") } })
     if (namingKey) AlertDialog(onDismissRequest = { namingKey = false }, title = { Text("保存密钥") },
         text = { AiField("密钥名称", newKeyName, { if (it.length <= 48) newKeyName = it },
@@ -251,35 +290,14 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
         confirmButton = { TextButton({ namingKey = false; actions.saveKey(endpoint, model, key, newKeyName) },
             enabled = enabled && key.isNotBlank()) { Text("保存") } },
         dismissButton = { TextButton({ namingKey = false }) { Text("取消") } })
-    if (selectingKey) AlertDialog(onDismissRequest = { selectingKey = false }, title = { Text("已保存的密钥") },
-        text = {
-            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 330.dp)) {
-                items(ai.keys, key = { it.id }) { choice ->
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Row(Modifier.weight(1f).clickable(enabled = enabled) {
-                            selectingKey = false
-                            actions.selectKey(choice.id)
-                        }.heightIn(min = 48.dp).padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Box(Modifier.size(18.dp)) {
-                                if (choice.id == ai.activeKeyId) LauncherGlyph(Glyph.Check, C.Accent, Modifier.fillMaxSize(), "当前密钥")
-                            }
-                            Column(Modifier.weight(1f)) {
-                                Text(choice.name, color = C.Ink, style = MaterialTheme.typography.bodyMedium)
-                                Text(choice.endpoint.removePrefix("https://"), color = C.Muted, style = MaterialTheme.typography.labelSmall)
-                            }
-                        }
-                        ActionIconButton(Glyph.Delete, "移除${choice.name}", { selectingKey = false; clear = choice }, enabled = enabled)
-                    }
-                }
-            }
-        }, confirmButton = { TextButton({ selectingKey = false }) { Text("关闭") } })
+    if (selectingKey) AiKeyPicker(ai.keys, ai.activeKeyId, enabled, actions,
+        onRemove = { selectingKey = false; clear = it }, onDismiss = { selectingKey = false }, error = ai.message.takeIf { ai.failed })
     clear?.let { item -> AlertDialog(onDismissRequest = { clear = null }, title = { Text("移除「${item.name}」？") },
         text = { Text("此密钥将从本机删除。") },
         confirmButton = { TextButton({ clear = null; actions.clearModels(); actions.clearKey(item.id) }, enabled = enabled) { Text("移除") } },
         dismissButton = { TextButton({ clear = null }) { Text("取消") } }) }
-    if (undo) AlertDialog(onDismissRequest = { undo = false }, title = { Text("撤回上次 AI 生成？") },
-        text = { Text("将关闭游戏，恢复上次生成前的汉化和来源选择。游戏资源、账号与 API 设置会保留；已产生的 API 费用不会返还。") },
+    if (undo) AlertDialog(onDismissRequest = { undo = false }, title = { Text("撤回上次译文改动？") },
+        text = { Text("将关闭游戏，恢复上次改动前的汉化和来源选择。游戏资源、账号与 API 设置会保留；已产生的 API 费用不会返还。") },
         confirmButton = { TextButton({ undo = false; actions.undoAi() }, enabled = enabled) { Text("撤回") } },
         dismissButton = { TextButton({ undo = false }) { Text("取消") } })
     if (resetPrompt) AlertDialog(onDismissRequest = { resetPrompt = false }, title = { Text("恢复默认提示词？") },

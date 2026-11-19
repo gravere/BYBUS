@@ -24,8 +24,9 @@ internal data class AiTaskSnapshot(val id: String, val config: AiConfig, val bas
     val sourceName: String, val outputIdentity: String, val outputName: String, val officialVersion: Long?,
     val phase: AiTaskPhase = AiTaskPhase.Running, val progress: AiProgress = AiProgress(),
     val plan: AiTaskPlan? = null, val error: String? = null, val resultHash: String? = null,
-    val binding: AiTaskBinding? = null, val upstream: Boolean = false, val resultTarget: String? = null) {
-    val scopeLabel get() = if (!config.missingOnly) "全部文本" else when {
+    val binding: AiTaskBinding? = null, val upstream: Boolean = false, val resultTarget: String? = null,
+    val explicitEntries: Boolean = false, val baseName: String? = null) {
+    val scopeLabel get() = if (explicitEntries) "所选条目" else if (!config.missingOnly) "全部文本" else when {
         config.includeMissing && config.includeReview -> "未覆盖与待核对"
         config.includeReview -> "待核对"
         else -> "未覆盖"
@@ -67,7 +68,8 @@ internal class AiTaskStore(private val cache: Path) {
             plan, j.optString("error").takeIf { it.isNotBlank() }, j.optString("resultHash").takeIf { it.isNotBlank() },
             j.optJSONObject("binding")?.let { b -> AiTaskBinding(b.getString("selected"), b.getString("revision"),
                 b.optString("targetRevision").takeIf(String::isNotEmpty), b.optString("selectedKind"), b.optString("language", "jp")) }, j.optBoolean("upstream"),
-            j.optString("resultTarget").takeIf(String::isNotEmpty)).also {
+            j.optString("resultTarget").takeIf(String::isNotEmpty), j.optBoolean("explicitEntries"),
+            j.optString("baseName").takeIf(String::isNotEmpty)).also {
             require(it.id.matches(ID) && it.outputIdentity.matches(ID))
         }
     }
@@ -75,14 +77,16 @@ internal class AiTaskStore(private val cache: Path) {
     fun createForSelection(config: AiConfig, sources: TranslationSources, base: PreparedTranslation?, reference: PreparedTranslation?,
         independentInput: TranslationSource?, storage: GameStorage, cancelled: () -> Boolean = { false }): AiTaskSnapshot {
         val source = sources.read().selected
-        val previous = if (config.missingOnly) source.takeIf { it.kind == "ai" } else independentInput
+        val language = requireNotNull(storage.textLanguage()).language.code
+        val previous = (if (config.missingOnly) source.takeIf { it.kind == "ai" } else independentInput)
+            ?.takeIf { it.language == null || it.language == language }
         val prior = previous?.let { from ->
             val pack = if (from.id == source.id && base != null) base else sources.prepare(from)
             AiTranslationReuse.collect(cache, from, pack, storage, cancelled)
         }.orEmpty()
         val target = previous?.takeIf { !config.missingOnly && (it.independent || it.id != source.id) }?.id?.removePrefix("ai-")
         return create(config, source, base, reference, identityOverride = target, committed = prior,
-            language = requireNotNull(storage.textLanguage()).language.code)
+            language = language)
     }
 
     /** Build 109 froze a premerged archive for an upstream job. Upgrade it only when the stored
@@ -103,27 +107,32 @@ internal class AiTaskStore(private val cache: Path) {
 
     fun create(config: AiConfig, source: TranslationSource, base: PreparedTranslation?, reference: PreparedTranslation?,
         identityOverride: String? = null, officialVersionOverride: Long? = null,
-        committed: Map<String, String> = emptyMap(), upstream: Boolean = false, language: String = "jp"): AiTaskSnapshot {
+        committed: Map<String, String> = emptyMap(), upstream: Boolean = false, language: String = "jp",
+        explicitPlan: AiTaskPlan? = null): AiTaskSnapshot {
         check(!exists()) { "请先继续或取消已有翻译任务" }
         if (Files.exists(root)) AtomicFiles.deleteOwnedTree(cache, root)
         Files.createDirectories(root)
         snapshot("base", base)
         if (reference != null && (base == null || reference.manifest.archiveSha256 != base.manifest.archiveSha256)) snapshot("reference", reference)
-        val preferred = identityOverride ?: source.id.takeIf { source.kind == "ai" && (config.missingOnly || source.independent) }?.removePrefix("ai-")
-            ?: identityFor(source.baseId ?: source.id, config)
+        val preferred = identityOverride ?: source.id.takeIf { source.kind == "ai" && (source.language == null || source.language == language) && (config.missingOnly || source.independent) }?.removePrefix("ai-")
+            ?: UUID.randomUUID().toString().replace("-", "")
         val state = TranslationSources(cache).read()
         val identity = TranslationSources.availableAiIdentity(preferred, state)
         val binding = AiTaskBinding(state.selectedId, CoverageStore(cache).sourceRevision(state.selected),
             state.sources.find { it.id == "ai-$identity" }?.revision, state.selected.kind, language)
         writeCommitted(committed)
-        return AiTaskSnapshot(UUID.randomUUID().toString().replace("-", ""), config.validated(), source.baseId ?: source.id,
-            source.name, identity, if (!config.missingOnly) "AI 汉化" else if (source.kind == "ai")
-                source.name.replace(Regex("( · AI 补全){2,}$"), " · AI 补全") else "${source.name.take(48)} · AI 补全",
-            officialVersionOverride ?: if (config.missingOnly && source.isOfficial) base?.manifest?.requestedVersion?.toLongOrNull() else source.officialVersion,
-            progress = AiProgress(message = "正在核对所选文本范围"), binding = binding, upstream = upstream).also {
+        val baseId = source.baseId ?: source.id
+        val baseName = if (baseId == "global") "全局 AI 翻译" else source.baseName ?: state.sources.find { it.id == baseId }?.name ?: source.name
+        val label = requireNotNull(com.example.limbuszhcn.gamefs.GameTextLanguage.fromCode(language)).displayName
+        val outputName = if (source.id == "ai-$identity") source.name else "${baseName.take(48)} · $label"
+        return AiTaskSnapshot(UUID.randomUUID().toString().replace("-", ""), config.validated(), baseId,
+            source.name, identity, outputName,
+            if (!config.missingOnly) null else officialVersionOverride ?: if (source.isOfficial) base?.manifest?.requestedVersion?.toLongOrNull() else source.officialVersion,
+            progress = AiProgress(message = "正在核对所选文本范围"), plan = explicitPlan, binding = binding, upstream = upstream,
+            explicitEntries = explicitPlan != null, baseName = baseName).also {
                 write(it)
                 // Previously reviewed text is not a response to a newly requested recheck.
-                if (!config.includeReview && !upstream) adoptLegacyCache(identity)
+                if (!config.includeReview && !upstream && explicitPlan == null) adoptLegacyCache(identity)
             }
     }
 
@@ -134,6 +143,7 @@ internal class AiTaskStore(private val cache: Path) {
             .put("officialVersion", task.officialVersion).put("phase", task.phase.name).put("error", task.error)
             .put("binding", task.binding?.let { JSONObject().put("selected", it.selected).put("revision", it.revision).put("targetRevision", it.targetRevision).put("selectedKind", it.selectedKind).put("language", it.language) })
             .put("upstream", task.upstream).put("resultTarget", task.resultTarget)
+            .put("explicitEntries", task.explicitEntries).put("baseName", task.baseName)
             .put("resultHash", task.resultHash).put("config", JSONObject().put("endpoint", c.endpoint).put("model", c.model)
                 .put("missingOnly", c.missingOnly).put("limit", c.limit).put("includeMissing", c.includeMissing)
                 .put("includeReview", c.includeReview).put("prompt", c.prompt))
@@ -261,8 +271,8 @@ internal class AiTaskStore(private val cache: Path) {
     fun requestDiscard() { TranslationSources.writeAtomic(root.resolve("discard"), "cancelled") }
 
     companion object {
-        fun identityFor(base: String, config: AiConfig) =
-            AiTranslationJob.digest("v2|$base|${config.endpoint}|${config.model}|${config.missingOnly}|${AiTranslationJob.digest(config.prompt)}").take(32)
+        fun identityFor(base: String, config: AiConfig, language: String? = null) =
+            AiTranslationJob.digest("${if (language == null) "v2" else "v3|$language"}|$base|${config.endpoint}|${config.model}|${config.missingOnly}|${AiTranslationJob.digest(config.prompt)}").take(32)
         private val ID = Regex("[a-f0-9]{32}")
         private val HASH = Regex("[a-f0-9]{64}")
         private fun validateRelative(path: String) {

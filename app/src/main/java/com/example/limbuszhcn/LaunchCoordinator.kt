@@ -188,7 +188,10 @@ internal class LaunchCoordinator private constructor(application: Application) {
             coverageRequest.incrementAndGet()
         publish {
             val changed = sources.selected.id != it.sources.selected.id || sources.selected.revision != it.sources.selected.revision
-            it.copy(sources = sources, coverage = if (changed) CoverageState() else it.coverage)
+            val report = it.ai.library.report
+            val stale = report?.sourceId?.let { id -> sources.sources.find { s -> s.id == id }?.revision != report.revision } == true
+            it.copy(sources = sources, coverage = if (changed) CoverageState() else it.coverage,
+                ai = it.ai.copy(library = it.ai.library.copy(stale = it.ai.library.stale || stale)))
         }
         runCatching { publishAiSettings() }.onFailure {
             publish { current -> current.copy(ai = current.ai.copy(hasKey = false, failed = true, keys = emptyList(),
@@ -496,6 +499,12 @@ internal class LaunchCoordinator private constructor(application: Application) {
     fun clearAiKey(id: String) = aiSettingsOperation("正在移除密钥") {
         aiSettings.clearKey(id); publishAiSettings(); "所选密钥已移除"
     }
+    fun renameAiKey(id: String, name: String) = aiSettingsOperation("正在修改密钥名称") {
+        aiSettings.renameKey(id, name); publishAiSettings(); "名称已保存"
+    }
+    fun reorderAiKeys(ids: List<String>) = aiSettingsOperation("正在保存密钥顺序") {
+        aiSettings.reorderKeys(ids); publishAiSettings(); "顺序已保存"
+    }
     fun saveAiPrompt(prompt: String) = aiSettingsOperation("正在保存提示词") {
         aiSettings.savePrompt(prompt); publishSources(); "全局提示词已保存，仅影响之后的翻译请求"
     }
@@ -522,6 +531,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
 
     fun generateAi(config: AiConfig, key: String) {
         if (state.busy || state.ai.hasPendingTask) return
+        if (!config.missingOnly) { inspectAiEntries(null, false); return }
         if (!state.coverage.canGenerate(config)) {
             state = state.copy(ai = state.ai.copy(message = if (state.coverage.current) "所选范围没有可补译条目" else "请先检查汉化覆盖，再选择翻译范围"))
             return
@@ -547,6 +557,82 @@ internal class LaunchCoordinator private constructor(application: Application) {
                 aiSettings.save(config, key); publishAiSettings(keySaved = key.isNotBlank()); stopGame()
                 aiTaskStore.createForSelection(config, translationSources, prepared, reference, independent, runtime.storage(), aiCancelled::get)
             }.message
+        }
+    }
+
+    fun inspectAiEntries(sourceId: String?, force: Boolean = false) {
+        if (state.busy) {
+            if (state.ai.library.sourceId != sourceId) state = state.copy(ai = state.ai.copy(library = AiLibraryState(
+                sourceId = sourceId, error = "当前任务结束后，可读取此包的翻译条目")))
+            return
+        }
+        perform("读取 AI 翻译条目", preserveFailure = true, page = "ai-entries") {
+            publish { it.copy(ai = it.ai.copy(library = AiLibraryState(
+                report = it.ai.library.report?.takeIf { report -> report.sourceId == sourceId }, loading = true, sourceId = sourceId))) }
+            refreshAiLibrary(sourceId, force)
+        }
+    }
+    private fun refreshAiLibrary(sourceId: String?, force: Boolean = false): String {
+        val result = runCatching { AiEntryStore(translationCache).inspect(translationSources, runtime.storage(), sourceId, force) }
+        publish { it.copy(ai = it.ai.copy(library = it.ai.library.copy(loading = false, sourceId = sourceId,
+            report = result.getOrNull() ?: it.ai.library.report?.takeIf { r -> r.sourceId == sourceId }, stale = result.isFailure,
+            error = result.exceptionOrNull()?.userMessage()))) }
+        if (result.isSuccess) publishSources()
+        return result.fold({ "已读取 ${it.total} 条${it.language.displayName}文本" }, { it.userMessage() })
+    }
+    fun aiEntries(report: AiEntryReport, filter: AiEntryFilter, page: Int, cancel: android.os.CancellationSignal) =
+        AiEntryStore(translationCache).entries(report, filter, page, cancel)
+
+    fun launchForAiResources() {
+        if (state.ai.hasPendingTask) return
+        perform("下载游戏原文", page = "ai-entries") {
+            val approved = gameCompatibility.requireApproved()
+            prepareGame(); stopGame()
+            installer().uninstallLatest()
+            preparationPreferences.edit().remove("pending").apply()
+            publish { it.copy(translation = null, resourcePreparation = null) }
+            gameCompatibility.requireUnchanged(approved)
+            stage("启动游戏下载原文", 2)
+            receipt().beginLaunch()
+            runtime.launchGame()
+            publish { it.copy(canResumeGame = runtime.hasRunningGame(), runtimeStatus = receipt().status()) }
+            "下载结束后返回 AI 翻译页，读取原文即可开始"
+        }
+    }
+
+    fun generateAiEntries(config: AiConfig, key: String, request: AiEntryRequest) {
+        if (state.busy || state.ai.settingsBusy || state.ai.hasPendingTask) return
+        synchronized(aiControl) { aiCancelled.set(false); aiDiscarded.set(false); aiCommitting = false }
+        perform("生成 AI 汉化", preserveFailure = true, page = "ai-translation") {
+            runAiTask {
+                check(!aiTaskStore.exists()) { "请先继续或取消已有翻译任务" }
+                val storage = runtime.storage(); val library = AiEntryStore(translationCache)
+                library.validate(request.report, translationSources, storage, true)
+                val plan = library.plan(request, config.validated().limit)
+                val existing = request.report.sourceId?.let { id -> requireNotNull(translationSources.read().sources.find { it.id == id && it.kind == "ai" }) }
+                val source = existing ?: TranslationSource("global", "全局 AI 翻译", independent = true)
+                val prepared = existing?.let(translationSources::prepare)
+                val settings = config.copy(missingOnly = existing?.independent == false, includeMissing = true, includeReview = false).validated()
+                val proof = if (existing == null) emptyMap() else AiTranslationReuse.collect(translationCache, existing,
+                    requireNotNull(prepared), storage, aiCancelled::get, request.report.language)
+                val identity = existing?.id?.removePrefix("ai-") ?: java.util.UUID.randomUUID().toString().replace("-", "")
+                translationSources.read().requireSlot(existing)
+                aiSettings.save(settings, key); publishAiSettings(keySaved = key.isNotBlank()); stopGame()
+                aiTaskStore.create(settings, source, prepared, prepared, identityOverride = identity, committed = proof,
+                    language = request.report.language.code, explicitPlan = plan)
+            }.message
+        }
+    }
+    fun deleteAiEntries(request: AiEntryRequest) {
+        if (state.busy || state.ai.hasPendingTask) return
+        perform("删除所选 AI 译文", preserveFailure = true, page = "ai-entries") {
+            stopGame()
+            val removed = AiEntryRemoval.remove(translationCache, translationSources, runtime.storage(), request)
+            publish { it.copy(translation = null, resourcePreparation = null) }
+            publishSources("已删除 ${request.count} 条 AI 译文")
+            if (removed) publish { it.copy(ai = it.ai.copy(library = AiLibraryState(error = "译文已全部删除，此汉化包已移除"))) }
+            else refreshAiLibrary(request.report.sourceId)
+            "已删除 ${request.count} 条 AI 译文"
         }
     }
 
@@ -591,6 +677,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
                 AiPublication.Generated -> if (task.upstream) "已使用新版零协，沿用 ${result.carried} 条 AI 译文" else "AI 汉化已保存"
             }
             publishSources(status)
+            if (task.explicitEntries && published == AiPublication.Generated) refreshAiLibrary("ai-${task.outputIdentity}")
             val report = refreshCoverageAfterTranslation(published == AiPublication.Generated || published == AiPublication.Official)
             val message = if (published == AiPublication.SeparateCopy) status else report?.let {
                 "$status · 未覆盖 ${it.missing} · 待核对 ${it.review}"
@@ -648,9 +735,9 @@ internal class LaunchCoordinator private constructor(application: Application) {
         translationSources.undoGenerated()
         preparationPreferences.edit().remove("pending").apply()
         publish { it.copy(translation = null, resourcePreparation = null,
-            ai = it.ai.copy(progress = AiProgress(), failed = false, message = "已撤回上次生成，下次启动使用恢复的汉化")) }
-        publishSources("已恢复上次生成前的汉化")
-        "已撤回上次 AI 生成"
+            ai = it.ai.copy(progress = AiProgress(), failed = false, message = "已撤回上次译文改动，下次启动使用恢复的汉化")) }
+        publishSources("已恢复上次改动前的汉化")
+        "已撤回上次译文改动"
     }
 
     private fun offerAiUpdate(source: TranslationSource, metadata: String, launchAfter: Boolean, force: Boolean = false): Boolean {
@@ -935,9 +1022,10 @@ internal class LaunchCoordinator private constructor(application: Application) {
                 app.filesDir.toPath().resolve("translation-cache")).hasLaunchCandidate()
             val selectedSource = translationSources.read().selected
             if (update != null) AiUpstreamUpdate.requireCurrent(update.offer, selectedSource)
-            val metadata = if (update == null && (selectedSource.isOfficial || selectedSource.kind == "ai"))
+            val followsOfficial = selectedSource.kind == "ai" && !selectedSource.independent && (selectedSource.baseId == null || selectedSource.baseId == "zero")
+            val metadata = if (update == null && (selectedSource.isOfficial || followsOfficial))
                 releaseCheck.start(if (selectedSource.kind == "ai" || localCandidate) 4_000 else 15_000) else null
-            if (update == null && selectedSource.kind == "ai") {
+            if (update == null && followsOfficial) {
                 val latest = runCatching { requireNotNull(metadata).await() }.getOrElse { error ->
                     if (error is java.util.concurrent.CancellationException) throw error
                     PersistentDiagnosticLog.warn(TAG, "AI upstream notice unavailable; verify selected local pack", error)
@@ -984,6 +1072,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
     fun updateTranslation() = perform("校验与更新汉化资源", page = "translation") {
         val source = translationSources.read().selected
         if (source.kind == "ai") {
+            if (source.independent || source.baseId != null && source.baseId != "zero") return@perform "此包保存在本地，可在 AI 翻译中管理条目和继续翻译"
             if (offerAiUpdate(source, releaseCheck.start(15_000).await(), launchAfter = false, force = true))
                 return@perform "请选择更新后的汉化方式"
             return@perform "零协暂无更新，可在 AI 翻译中继续补译"
