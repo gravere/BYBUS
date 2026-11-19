@@ -2,9 +2,11 @@ package com.example.limbuszhcn.container
 
 import com.example.limbuszhcn.storage.AtomicFiles
 import java.io.FileOutputStream
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
+import java.util.Properties
 import java.util.UUID
 import java.util.zip.CRC32
 import java.util.zip.ZipFile
@@ -31,13 +33,17 @@ internal class NativeLibraryDeployment(private val target: Path, private val sup
         return files
     }
 
-    private fun complete(directory: Path, libraries: List<Library>): Boolean {
+    private fun hasExactly(directory: Path, libraries: List<Library>): Boolean {
         if (!Files.isDirectory(directory, NOFOLLOW_LINKS)) return false
         val names = Files.list(directory).use { it.iterator().asSequence().map { path -> path.fileName.toString() }.toSet() }
-        if (names != libraries.map { it.name }.toSet()) return false
+        return names == libraries.map { it.name }.toSet()
+    }
+
+    private fun complete(directory: Path, libraries: List<Library>): Boolean {
+        if (!hasExactly(directory, libraries)) return false
         return libraries.all { library ->
             val path = directory.resolve(library.name)
-            if (!Files.isRegularFile(path, NOFOLLOW_LINKS) || Files.size(path) != library.size) false
+            if (!Files.isRegularFile(path, NOFOLLOW_LINKS) || !Files.isReadable(path) || Files.size(path) != library.size) false
             else {
                 val crc = CRC32()
                 Files.newInputStream(path).use { input ->
@@ -51,9 +57,55 @@ internal class NativeLibraryDeployment(private val target: Path, private val sup
 
     fun isComplete(apks: List<Path>): Boolean = complete(target, libraries(apks))
 
-    /** Caller stops the owning processes and holds the host operation lock. */
-    fun install(apks: List<Path>): Int {
+    /** Only host-owned files with an unchanged inode and change time can reuse a previous content check. */
+    private fun launchStamp(files: List<Library>): Properties? {
+        val stamp = Properties()
+        try {
+            if (!hasExactly(target, files)) return null
+            for (library in files) {
+                val path = target.resolve(library.name)
+                val attrs = Files.readAttributes(path, "unix:dev,ino,ctime,lastModifiedTime,size,isRegularFile", NOFOLLOW_LINKS)
+                if (attrs["isRegularFile"] != true || attrs["size"] != library.size) return null
+                val dev = attrs["dev"] ?: return null
+                val ino = attrs["ino"] ?: return null
+                val changed = attrs["ctime"] ?: return null
+                val modified = attrs["lastModifiedTime"] ?: return null
+                stamp.setProperty(library.name, "${library.crc}/${library.size}/$dev/$ino/$changed/$modified")
+            }
+        } catch (_: UnsupportedOperationException) {
+            return null
+        } catch (_: IllegalArgumentException) {
+            return null
+        } catch (_: IOException) {
+            return null
+        }
+        return stamp
+    }
+
+    /** The caller holds the host operation lock and has stopped the guest. */
+    fun ensureForLaunch(apks: List<Path>): Int {
         val files = libraries(apks)
+        val receipt = target.resolveSibling(".${target.fileName}.launch-verified.properties")
+        val before = launchStamp(files)
+        if (before != null && Files.isRegularFile(receipt, NOFOLLOW_LINKS)) {
+            val saved = try { AtomicFiles.readProperties(receipt) }
+                catch (_: IOException) { null }
+                catch (_: IllegalArgumentException) { null }
+            if (saved == before) return files.size
+        }
+        val count = installLibraries(files)
+        // Only publish a fast path if the same files were present throughout full verification.
+        if (before != null && before == launchStamp(files)) {
+            try { AtomicFiles.properties(receipt, before) }
+            catch (_: IOException) { /* The libraries are verified; retry saving the cache on the next launch. */ }
+        }
+        return count
+    }
+
+    /** Explicit import and repair always verify the contents. */
+    fun install(apks: List<Path>): Int = installLibraries(libraries(apks))
+
+    private fun installLibraries(files: List<Library>): Int {
         Files.createDirectories(target.parent)
         // Only this deployment's orphan staging directories; never APKs or account/game data.
         val prefix = ".${target.fileName}.staging-"

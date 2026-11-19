@@ -10,8 +10,9 @@ import org.json.JSONException
 
 /** Bounded per-file reads; public-text fallback uses the production compiler, not guessed IDs. */
 internal class TranslationInspection(private val storage: GameStorage, private val base: PreparedTranslation?, private val cancelled: () -> Boolean = { false }) {
-    val resources = storage.japaneseResources().sorted()
-    val entries = base?.manifest?.entries?.associateBy { AiTranslationJob.resourceKey(it.targetPath) }.orEmpty()
+    val language = requireNotNull(storage.textLanguage()) { "请先从 BYBUS 启动一次游戏，以读取当前游戏语言。" }.language
+    val resources = storage.textResources(language).sorted()
+    val entries = base?.manifest?.entries?.associateBy { language.resourceKey(it.targetPath) }.orEmpty()
     data class Resource(val raw: String, val original: Any, val document: Any, val fields: List<TranslationField>, val bytes: Int)
     fun read(key: String): Resource {
         checkCancelled()

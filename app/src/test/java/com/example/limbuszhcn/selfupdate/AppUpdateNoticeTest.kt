@@ -15,6 +15,26 @@ class AppUpdateNoticeTest {
     }
     private val now = 1_800_000_000_000L
 
+    @Test fun hidingAReadyReleaseRemovesTheInstallActionAndStaleNotice() {
+        val release = AppRelease("v1.0.66-build.113", "v1.0.66", 113, 26, "0".repeat(64),
+            ReleaseAsset(1, AppReleases.APK, 100), "说明")
+        val ready = AppUpdateState(111, checked = true, release = release, ready = true,
+            knownVersionCode = 113, downloadPlanned = true, message = "已准备好安装")
+        assertEquals(ready, ready.withPublishedVersion(113))
+
+        val withdrawn = ready.withPublishedVersion(111)
+        assertFalse(withdrawn.ready)
+        assertFalse(withdrawn.updateAvailable)
+        assertNull(withdrawn.release)
+        assertFalse(withdrawn.downloadPlanned)
+        assertEquals("已下载的版本已撤回", withdrawn.message)
+
+        val replaced = ready.withPublishedVersion(118)
+        assertFalse(replaced.ready)
+        assertTrue(replaced.updateAvailable)
+        assertEquals("有新版本可用", replaced.message)
+    }
+
     @Test fun restartRetainsNoticeAndInstallingThatBuildClearsIt() {
         val saved = AppUpdateNotice().checked(59, now)
         val restored = AppUpdateNotice(saved.versionCode, saved.checkedAt, saved.attemptedAt)

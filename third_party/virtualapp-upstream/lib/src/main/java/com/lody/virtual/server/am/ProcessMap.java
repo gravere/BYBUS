@@ -24,16 +24,14 @@ class ProcessMap<E> {
         return value;
     }
 
-    public E remove(String name, int uid) {
+    public void removeIfCurrent(String name, int uid, E expected) {
         SparseArray<E> uids = mMap.get(name);
-        if (uids != null) {
-            final E old = uids.removeReturnOld(uid);
+        if (uids != null && uids.get(uid) == expected) {
+            uids.remove(uid);
             if (uids.size() == 0) {
                 mMap.remove(name);
             }
-            return old;
         }
-        return null;
     }
 
     public ArrayMap<String, SparseArray<E>> getMap() {

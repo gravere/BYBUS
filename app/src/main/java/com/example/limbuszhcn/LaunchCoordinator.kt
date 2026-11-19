@@ -184,14 +184,23 @@ internal class LaunchCoordinator private constructor(application: Application) {
 
     private fun publishSources(message: String? = null) {
         val sources = translationSources.read().copy(message = message)
-        val config = aiSettings.config(); val keyPresent = aiSettings.hasKey()
         if (sources.selected.id != state.sources.selected.id || sources.selected.revision != state.sources.selected.revision)
             coverageRequest.incrementAndGet()
         publish {
             val changed = sources.selected.id != it.sources.selected.id || sources.selected.revision != it.sources.selected.revision
-            it.copy(sources = sources, coverage = if (changed) CoverageState() else it.coverage,
-                ai = it.ai.copy(config = config, hasKey = keyPresent))
+            it.copy(sources = sources, coverage = if (changed) CoverageState() else it.coverage)
         }
+        runCatching { publishAiSettings() }.onFailure {
+            publish { current -> current.copy(ai = current.ai.copy(hasKey = false, failed = true, keys = emptyList(),
+                activeKeyId = null, message = "无法读取本机密钥列表")) }
+        }
+    }
+
+    private fun publishAiSettings(keySaved: Boolean = false) {
+        val config = aiSettings.config()
+        val (activeKey, keys) = aiSettings.choices()
+        publish { it.copy(ai = it.ai.copy(config = config, hasKey = activeKey != null, activeKeyId = activeKey, keys = keys,
+            savedKeyRevision = it.ai.savedKeyRevision + if (keySaved) 1 else 0)) }
     }
 
     private fun prepareTranslation(patch: ContainerPatchInstaller, repair: Boolean = false): PatchInstallSummary {
@@ -323,9 +332,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
         state = state.copy(ai = state.ai.copy(models = AiModelsState(request, endpoint, loading = true)))
         modelsTask = modelsWorker.submit {
             val result = runCatching {
-                val credential = aiModelsKey(endpoint, aiSettings.config().endpoint, key) {
-                    if (aiSettings.hasKey()) aiSettings.key() else ""
-                }
+                val credential = aiSettings.requestKey(endpoint, key)
                 AiModelsClient().list(endpoint, credential)
             }
             publish {
@@ -348,10 +355,13 @@ internal class LaunchCoordinator private constructor(application: Application) {
             var ticket: CoverageCheck? = null
             val result = runCatching {
                 check(coverageRequest.get() == request) { "已有新的覆盖检查" }
-                val checkId = coverageStore.beginCheck(translationSources.read().selected)
-                ticket = checkId
                 val storage = runtime.storage()
-                require(storage.japaneseResources().isNotEmpty()) { "还没有本地游戏文本。请先从 BYBUS 进入游戏完成资源下载，再回来检查。" }
+                val language = requireNotNull(storage.textLanguage()) { "请先从 BYBUS 启动一次游戏，以读取当前游戏语言。" }.language
+                val checkId = coverageStore.beginCheck(translationSources.read().selected, language)
+                ticket = checkId
+                publish { current -> current.copy(coverage = current.coverage.copy(language = language,
+                    report = current.coverage.report?.takeIf { it.language == language })) }
+                require(storage.textResources(language).isNotEmpty()) { "还没有${language.displayName}游戏文本。请先进入游戏完成资源下载，再回来检查。" }
                 val pair = com.example.limbuszhcn.storage.OperationLock.run(app.filesDir.toPath()) {
                     val source = translationSources.read().selected
                     val base = if (source.isOfficial) {
@@ -372,6 +382,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
                 if (coverageRequest.get() != request) it else it.copy(coverage = it.coverage.copy(loading = false,
                     report = result.getOrNull()?.report ?: it.coverage.report,
                     fingerprint = result.getOrNull()?.fingerprint ?: it.coverage.fingerprint,
+                    language = result.getOrNull()?.report?.language ?: it.coverage.language,
                     stale = result.isFailure, independentReady = result.getOrNull()?.independentReady ?: it.coverage.independentReady,
                     error = result.exceptionOrNull()?.let { error ->
                         if (error is IllegalArgumentException || error is IllegalStateException) error.message
@@ -406,11 +417,13 @@ internal class LaunchCoordinator private constructor(application: Application) {
 
     private fun restoreCoverage(sources: SourceState): CoverageState = try {
         val source = sources.selected
-        if (!coverageStore.hasHistory(source)) CoverageState() else {
-            val storage by lazy { runtime.storage() }
+        val storage = runtime.storage()
+        val language = storage.textLanguage()?.language
+        if (language == null) CoverageState(error = "请先启动一次游戏，以读取当前游戏语言")
+        else if (!coverageStore.hasHistory(source)) CoverageState(language = language) else {
             val prior = sources.independentInput(aiSettings.config())
             val input = runCatching { coverageStore.inputs(source, storage, independentInput = prior) }.getOrElse {
-                CoverageInputs(source, coverageStore.sourceRevision(source), "unavailable", prior)
+                CoverageInputs(source, coverageStore.sourceRevision(source), "unavailable", prior, language)
             }
             val saved = coverageStore.read(input) {
                 try {
@@ -423,8 +436,8 @@ internal class LaunchCoordinator private constructor(application: Application) {
                     -1
                 }
             }
-            if (saved == null) CoverageState() else CoverageState(report = saved.report, fingerprint = saved.fingerprint,
-                stale = saved.needsCheck, independentReady = saved.independentReady)
+            if (saved == null) CoverageState(stale = true, language = language) else CoverageState(report = saved.report, fingerprint = saved.fingerprint,
+                stale = saved.needsCheck, independentReady = saved.independentReady, language = language)
         }
     } catch (cancel: java.util.concurrent.CancellationException) {
         throw cancel
@@ -466,12 +479,22 @@ internal class LaunchCoordinator private constructor(application: Application) {
             val result = aiSettings.test(settings, key)
             "测试成功：${result.translations.getValue("connection")}。配置尚未保存，游戏汉化未改变。"
         } else {
-            aiSettings.save(settings, key); publishSources(); "API 设置已保存"
+            aiSettings.save(settings, key); publishAiSettings(keySaved = key.isNotBlank()); "API 设置已保存"
         }
     }
 
-    fun clearAiKey() = aiSettingsOperation("正在移除 Key") {
-        aiSettings.clearKey(); publishSources(); "本机 API Key 已移除"
+    fun saveAiKey(endpoint: String, model: String, key: String, name: String) = aiSettingsOperation("正在保存密钥") {
+        aiSettings.saveKey(endpoint, model, key, name)
+        publishAiSettings(keySaved = true)
+        "密钥已保存到本机"
+    }
+    fun selectAiKey(id: String) = aiSettingsOperation("正在切换密钥") {
+        aiSettings.selectKey(id)
+        publishAiSettings()
+        "已切换密钥"
+    }
+    fun clearAiKey(id: String) = aiSettingsOperation("正在移除密钥") {
+        aiSettings.clearKey(id); publishAiSettings(); "所选密钥已移除"
     }
     fun saveAiPrompt(prompt: String) = aiSettingsOperation("正在保存提示词") {
         aiSettings.savePrompt(prompt); publishSources(); "全局提示词已保存，仅影响之后的翻译请求"
@@ -521,7 +544,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
                     input.fingerprint == checkedFingerprint && (config.missingOnly || recorded.independentReady)) {
                     "汉化或游戏文本已变化，请重新检查后再翻译"
                 }
-                aiSettings.save(config, key); publishSources(); stopGame()
+                aiSettings.save(config, key); publishAiSettings(keySaved = key.isNotBlank()); stopGame()
                 aiTaskStore.createForSelection(config, translationSources, prepared, reference, independent, runtime.storage(), aiCancelled::get)
             }.message
         }
@@ -546,7 +569,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
             val (prepared, reference) = aiTaskStore.inputs(task)
             val reusable = aiTaskStore.committed()
             val result = AiTranslationJob(translationCache, runtime.storage(), task.config,
-                AiTranslationClient(task.config, aiSettings.key()), aiCancelled::get) { progress ->
+                AiTranslationClient(task.config, aiSettings.key(task.config.endpoint)), aiCancelled::get) { progress ->
                 val saved = aiTaskStore.read()
                 publish { it.copy(ai = it.ai.copy(task = saved, progress = progress,
                     message = if (it.ai.stopping) it.ai.message else progress.message)) }
@@ -603,8 +626,8 @@ internal class LaunchCoordinator private constructor(application: Application) {
         publish { it.copy(coverage = it.coverage.copy(loading = true, stale = true, error = null), stage = "正在核对翻译结果") }
         val result = runCatching {
             val source = translationSources.read().selected
-            val checkId = coverageStore.beginCheck(source)
             val storage = runtime.storage()
+            val checkId = coverageStore.beginCheck(source, requireNotNull(storage.textLanguage()).language)
             val base = if (source.isOfficial) {
                 val extracted = com.example.limbuszhcn.update.TranslationRepository(translationCache).verifiedForLaunch(null)
                 PreparedTranslation(extracted.outputDirectory, extracted.manifest)
@@ -614,7 +637,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
             saveCoverage(storage, source, base, input, verified)
         }
         publish { current -> result.fold(
-            { saved -> current.copy(coverage = CoverageState(report = saved.report, fingerprint = saved.fingerprint)) },
+            { saved -> current.copy(coverage = CoverageState(report = saved.report, fingerprint = saved.fingerprint, language = saved.report.language)) },
             { current.copy(coverage = current.coverage.copy(loading = false, stale = true, error = "汉化已保存，覆盖检查未完成。请重新检查。")) }) }
         return result.getOrNull()?.report
     }
@@ -692,13 +715,13 @@ internal class LaunchCoordinator private constructor(application: Application) {
             if (supplement) {
                 val outcome = runAiTask {
                     aiTaskStore.create(config, TranslationSources.OFFICIAL, base, base, identity, offer.version,
-                        committed = reusable, upstream = true)
+                        committed = reusable, upstream = true, language = requireNotNull(runtime.storage().textLanguage()).language.code)
                 }
                 if (!outcome.completed) throw java.util.concurrent.CancellationException(outcome.message)
                 return outcome.message
             }
             val result = AiTranslationJob(translationCache, runtime.storage(), config,
-                AiTranslationClient(config, if (supplement) aiSettings.key() else ""), aiCancelled::get) { progress ->
+                AiTranslationClient(config, if (supplement) aiSettings.key(config.endpoint) else ""), aiCancelled::get) { progress ->
                 publish { it.copy(ai = it.ai.copy(progress = progress, message = progress.message)) }
             }.run("zero", base, identity, reusable, reuseOnly = !supplement)
             if (aiCancelled.get()) throw java.util.concurrent.CancellationException("已取消本次启动")
@@ -788,7 +811,11 @@ internal class LaunchCoordinator private constructor(application: Application) {
             }
         } else null
         val compatibility = DeviceCompatibility(app).report()
-        val runtimeStatus = receipt().status()
+        val runtimeStatus = receipt().status(readGameExitCodes = { pid, start, end ->
+            readGameExitCodes(app, pid, start, end)
+        }) { pid ->
+            SystemStartupDiagnostics.gameProcessExit(app, pid)
+        }
         if (state.googlePayment != null) {
             val payment = runCatching { (runtime as? com.example.limbuszhcn.container.VirtualAppContainerRuntime)?.googlePaymentState() }
             publish { it.copy(googlePayment = payment.getOrNull(), googlePaymentIssue = payment.exceptionOrNull()?.userMessage()) }
@@ -950,7 +977,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
             measureStartup("container_launch") { runtime.launchGame() }
             val canResume = runtime.hasRunningGame()
             publish { it.copy(canResumeGame = canResume) }
-            "${updateMessage ?: summary.description()}；游戏已打开"
+            "${updateMessage ?: summary.description()}，已交给游戏启动"
         }
     }
 

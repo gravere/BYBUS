@@ -97,6 +97,11 @@ class LimbusZhCNApplication : Application() {
         override fun translateLimbusResource(resource: String, original: String): String? =
             liveTranslation?.translate(resource, original)
 
+        override fun onLimbusTextLanguage(language: String) {
+            com.example.limbuszhcn.container.GameLanguageStore(
+                VirtualCore.get().context.filesDir.toPath().resolve("translation-cache")).observe(language)
+        }
+
         override fun getHostPackageName(): String = hostPackageName
 
         override fun getPluginEnginePackageName(): String? = null

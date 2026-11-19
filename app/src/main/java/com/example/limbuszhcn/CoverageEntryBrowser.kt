@@ -1,36 +1,52 @@
 package com.example.limbuszhcn
 
 import android.os.CancellationSignal
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.updateTransition
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import com.example.limbuszhcn.translation.*
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 import kotlinx.coroutines.CancellationException
@@ -149,20 +165,51 @@ internal fun CoverageEntryBrowser(report: CoverageReport, kind: CoverageKind?, o
 
 @Composable
 private fun CoverageCategoryPicker(selected: String?, categories: List<String>, onSelect: (String?) -> Unit) {
-    var menu by remember { mutableStateOf(false) }
+    val menu = remember { MutableTransitionState(false) }
+    val transition = updateTransition(menu, label = "category menu")
+    val opacity by transition.animateFloat({ tween(if (targetState) 150 else 90) }, label = "menu opacity") { if (it) 1f else 0f }
+    val chevron by transition.animateFloat({ tween(160) }, label = "category chevron") { if (it) 270f else 90f }
+    val shape = RoundedCornerShape(16.dp)
     Box {
-        TextButton({ menu = true }, modifier = Modifier.widthIn(max = 122.dp).semantics { contentDescription = "筛选内容类别" },
-            contentPadding = PaddingValues(horizontal = 6.dp)) {
-            Text(selected ?: "全部类别", Modifier.weight(1f, fill = false), maxLines = 2,
-                overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium, color = C.Accent)
-            LauncherGlyph(Glyph.Chevron, C.Accent, Modifier.size(14.dp).rotate(90f))
+        Box(Modifier.widthIn(max = 140.dp).heightIn(min = 48.dp).clip(shape).clickable(role = Role.Button) {
+            menu.targetState = !menu.targetState
+        }.semantics {
+            contentDescription = "筛选内容类别"
+            stateDescription = if (menu.targetState) "已展开" else "已收起"
+        }, contentAlignment = Alignment.Center) {
+            Row(Modifier.background(if (selected == null && !menu.targetState) C.Panel else C.AccentSoft, shape)
+                .padding(horizontal = 10.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text(selected ?: "全部类别", Modifier.weight(1f, fill = false), maxLines = 2,
+                    overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium, color = C.Ink)
+                LauncherGlyph(Glyph.Chevron, C.Accent, Modifier.size(13.dp).rotate(chevron))
+            }
         }
-        DropdownMenu(menu, { menu = false }, modifier = Modifier.heightIn(max = 360.dp)) {
-            for (option in listOf(null) + categories) {
-                DropdownMenuItem(text = { Text(option ?: "全部类别") }, onClick = {
-                    menu = false
-                    onSelect(option)
-                }, trailingIcon = { if (selected == option) LauncherGlyph(Glyph.Check, C.Accent, Modifier.size(16.dp)) })
+        if (menu.currentState || menu.targetState || !menu.isIdle) {
+            val config = LocalConfiguration.current
+            val gap = with(LocalDensity.current) { 6.dp.roundToPx() }
+            val position = remember(gap) { EndAlignedPopupPosition(gap) }
+            Popup(position, onDismissRequest = { menu.targetState = false }, properties = PopupProperties(focusable = true)) {
+                Surface(Modifier.padding(4.dp).width(minOf(208.dp, (config.screenWidthDp - 24).coerceAtLeast(1).dp))
+                    .graphicsLayer { alpha = opacity }, shape = shape, color = C.Panel,
+                    border = BorderStroke(1.dp, C.Line), shadowElevation = 3.dp) {
+                    Column(Modifier.heightIn(max = minOf(352.dp, (config.screenHeightDp - 64).coerceAtLeast(48).dp))
+                        .verticalScroll(rememberScrollState()).selectableGroup().padding(vertical = 4.dp)) {
+                        for (option in listOf(null) + categories) {
+                            val active = selected == option
+                            Row(Modifier.fillMaxWidth().background(if (active) C.AccentSoft else C.Panel)
+                                .selectable(active, enabled = menu.targetState, role = Role.RadioButton) {
+                                    menu.targetState = false
+                                    if (!active) onSelect(option)
+                                }.heightIn(min = 48.dp).padding(horizontal = 14.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text(option ?: "全部类别", Modifier.weight(1f), color = if (active) C.OnAccentSoft else C.Ink,
+                                    style = MaterialTheme.typography.bodyMedium)
+                                if (active) LauncherGlyph(Glyph.Check, C.Accent, Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -192,22 +239,27 @@ private fun CoverageRows(result: CoveragePage, legacy: Boolean, enabled: Boolean
 @Composable
 private fun CoverageStatusTabs(kind: CoverageKind?, onKind: (CoverageKind?) -> Unit) {
     val states = remember { listOf(null, CoverageKind.Missing, CoverageKind.Review) }
-    val selected = states.indexOf(kind)
-    TabRow(selectedTabIndex = selected, containerColor = C.Background, contentColor = C.Accent,
-        divider = { HorizontalDivider(color = C.Line) },
-        indicator = { tabs ->
-            Box(Modifier.tabIndicatorOffset(tabs[selected]), contentAlignment = Alignment.BottomCenter) {
-                Spacer(Modifier.size(width = 30.dp, height = 3.dp).background(C.Accent, RoundedCornerShape(2.dp)))
-            }
-        }) {
+    val selected = animateFloatAsState(states.indexOf(kind).toFloat(), tween(190), label = "coverage selection")
+    val marker = C.AccentSoft
+    Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 4.dp)
+        .clip(RoundedCornerShape(14.dp)).background(C.Panel).selectableGroup().drawBehind {
+            val slot = size.width / states.size
+            val index = if (layoutDirection == LayoutDirection.Ltr) selected.value else states.lastIndex - selected.value
+            val inset = 3.dp.toPx()
+            drawRoundRect(marker, Offset(index * slot + inset, inset),
+                Size((slot - 2 * inset).coerceAtLeast(0f), (size.height - 2 * inset).coerceAtLeast(0f)), CornerRadius(11.dp.toPx()))
+        }.height(IntrinsicSize.Min)) {
         for (option in states) {
             val label = option?.label ?: "全部"
-            Tab(selected = option == kind, onClick = { onKind(option) },
-                selectedContentColor = C.Accent, unselectedContentColor = C.Muted,
-                modifier = Modifier.semantics {
+            val active = option == kind
+            val ink by animateColorAsState(if (active) C.OnAccentSoft else C.Muted, tween(135), label = "tab label")
+            Box(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(12.dp))
+                .selectable(active, role = Role.Tab, onClick = { if (!active) onKind(option) }).semantics {
                     contentDescription = if (option == null) "查看全部状态" else "只看$label"
                     option?.let { stateDescription = if (it == CoverageKind.Missing) "尚无译文" else "已有译文，仍含日文或韩文" }
-                }, text = { Text(label, style = MaterialTheme.typography.titleSmall) })
+                }.heightIn(min = 48.dp).padding(horizontal = 4.dp, vertical = 6.dp), contentAlignment = Alignment.Center) {
+                Text(label, style = MaterialTheme.typography.labelLarge, color = ink)
+            }
         }
     }
 }

@@ -6,6 +6,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption.REPLACE_EXISTING
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -31,6 +32,44 @@ class NativeLibraryDeploymentTest {
         }
         Files.delete(target.resolve("libgoogle.so")); assertFalse(deployment.isComplete(listOf(archive)))
         deployment.install(listOf(archive)); assertTrue(deployment.isComplete(listOf(archive)))
+    }
+
+    @Test fun coldLaunchRepairsAReplacedOrMissingLibraryWithoutReimportingTheGame() {
+        val root = temporary.newFolder().toPath()
+        val target = root.resolve("lib")
+        val archive = apk("lib/arm64-v8a/libil2cpp.so" to byteArrayOf(1, 2, 3))
+        val deployment = NativeLibraryDeployment(target, listOf("arm64-v8a"), "libil2cpp.so")
+        deployment.install(listOf(archive))
+        val library = target.resolve("libil2cpp.so")
+        val data = Files.write(root.resolve("player-data"), byteArrayOf(7))
+        val originalTime = Files.getLastModifiedTime(library)
+        deployment.ensureForLaunch(listOf(archive))
+        assertEquals(originalTime, Files.getLastModifiedTime(library))
+
+        // Keep both size and mtime, as can happen when files are restored from a backup.
+        val wrong = Files.write(root.resolve("wrong.so"), byteArrayOf(4, 5, 6))
+        Files.setLastModifiedTime(wrong, originalTime)
+        Files.move(wrong, library, REPLACE_EXISTING)
+        deployment.ensureForLaunch(listOf(archive))
+        assertArrayEquals(byteArrayOf(1, 2, 3), Files.readAllBytes(library))
+
+        Files.delete(library)
+        deployment.ensureForLaunch(listOf(archive))
+        assertArrayEquals(byteArrayOf(1, 2, 3), Files.readAllBytes(library))
+        assertArrayEquals(byteArrayOf(7), Files.readAllBytes(data))
+    }
+
+    @Test fun coldLaunchUsesTheLibrariesInTheCurrentSplitEvenIfItsPathDoesNotChange() {
+        val target = temporary.newFolder().toPath().resolve("lib")
+        val base = apk("assets/game.dat" to byteArrayOf(0))
+        val split = apk("lib/arm64-v8a/libil2cpp.so" to byteArrayOf(1, 2, 3))
+        val paths = listOf(base, split)
+        val deployment = NativeLibraryDeployment(target, listOf("arm64-v8a"), "libil2cpp.so")
+        deployment.install(paths)
+        deployment.ensureForLaunch(paths)
+        Files.copy(apk("lib/arm64-v8a/libil2cpp.so" to byteArrayOf(4, 5, 6)), split, REPLACE_EXISTING)
+        deployment.ensureForLaunch(paths)
+        assertArrayEquals(byteArrayOf(4, 5, 6), Files.readAllBytes(target.resolve("libil2cpp.so")))
     }
 
     @Test fun interruptedDirectorySwapRestoresPreviousWithoutTouchingAccountData() {

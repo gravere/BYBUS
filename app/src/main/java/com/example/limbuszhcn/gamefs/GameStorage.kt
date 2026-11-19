@@ -8,10 +8,16 @@ interface GameStorage {
     fun probe(): GameStorageProbe
     fun exists(path: String): Boolean
     fun read(path: String): ByteArray?
+    fun readAtMost(path: String, limit: Int): ByteArray? = read(path)?.takeIf { it.size <= limit }
     fun write(path: String, source: Path)
     fun delete(path: String): Boolean
     fun resolvePatchTarget(targetPath: String): String
     fun rootPath(): String
+    fun textLanguage(): GameTextLanguageState? = GameTextLanguageState(GameTextLanguage.Japanese, "jp")
+    fun textResources(language: GameTextLanguage): List<String> =
+        if (language == GameTextLanguage.Japanese) japaneseResources() else emptyList()
+    fun textResourceMetadata(language: GameTextLanguage): Map<String, String>? =
+        if (language == GameTextLanguage.Japanese) japaneseResourceMetadata() else null
     /** Relative, bounded static Japanese resources only; never account or preference files. */
     fun japaneseResources(): List<String> = emptyList()
     fun japaneseResourceMetadata(): Map<String, String>? = null

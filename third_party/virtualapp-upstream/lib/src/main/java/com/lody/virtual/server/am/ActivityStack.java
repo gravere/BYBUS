@@ -185,7 +185,7 @@ import static android.content.pm.ActivityInfo.LAUNCH_SINGLE_TOP;
                 TaskRecord task = mHistory.valueAt(N);
                 synchronized (task.activities) {
                     for (ActivityRecord r : task.activities) {
-                        if (r.process.pid == record.pid) {
+                        if (r.process == record) {
                             Log.e("wxd", " finishActivity : " + r.component);
                             try {
                                 r.process.client.finishActivity(r.token);
@@ -757,7 +757,7 @@ import static android.content.pm.ActivityInfo.LAUNCH_SINGLE_TOP;
                     Iterator<ActivityRecord> iterator = task.activities.iterator();
                     while (iterator.hasNext()) {
                         ActivityRecord r = iterator.next();
-                        if (r.process.pid != record.pid) {
+                        if (r.process != record) {
                             continue;
                         }
                         iterator.remove();

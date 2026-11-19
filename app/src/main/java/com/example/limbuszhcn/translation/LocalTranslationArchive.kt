@@ -118,14 +118,14 @@ internal class LocalTranslationArchive(private val cache: Path) {
         }
         fun mapResource(path: String): String? {
             if (!path.endsWith(".json", true)) return null
-            val prefixes = listOf("LimbusCompany_Data/Lang/LLC_zh-CN/", "LLC_zh-CN/", "Localize/jp/", "Localize/en/", "jp/", "en/", "files/en/")
+            val prefixes = listOf("LimbusCompany_Data/Lang/LLC_zh-CN/", "LLC_zh-CN/", "Localize/jp/", "Localize/en/", "Localize/kr/", "jp/", "en/", "kr/", "files/en/")
             val prefix = prefixes.firstOrNull { path.startsWith(it) }
             val relative = prefix?.let { path.removePrefix(it) } ?: path
             if (relative.startsWith("Info/") || relative.substringAfterLast('/') in setOf("manifest.json", "bybus-pack.json", "version.json")) return null
             // Flat resources and the game's known nested resource directories are supported.
             if (prefix == null && '/' in relative && relative.substringBefore('/') !in RESOURCE_FOLDERS) return null
             val folder = relative.substringBeforeLast('/', "").let { if (it.isEmpty()) "" else "$it/" }
-            val file = relative.substringAfterLast('/').removePrefix("EN_").removePrefix("JP_")
+            val file = relative.substringAfterLast('/').removePrefix("EN_").removePrefix("JP_").removePrefix("KR_")
             return "$folder" + "EN_$file"
         }
     }

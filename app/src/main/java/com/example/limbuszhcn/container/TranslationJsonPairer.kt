@@ -135,7 +135,7 @@ internal object TranslationJsonPairer {
                 }
                 val skillRoot = skillContext ?: directId?.takeIf { id ->
                     id.isSkillNumber() && original.optJSONArray("levelList") != null &&
-                        path.substringAfterLast('/').removePrefix("JP_").let {
+                        sourceTableName(path).let {
                             it == "Skills.json" || it.startsWith("Skills_")
                         }
                 }?.let { "@skill:$it" }
@@ -150,7 +150,7 @@ internal object TranslationJsonPairer {
                     }
                 }
                 val storyScope = path.takeIf { it.substringBeforeLast('/', "").endsWith("/StoryData") }
-                        ?.substringAfterLast('/')?.removePrefix("JP_")?.removeSuffix(".json")
+                        ?.let(::sourceTableName)?.removeSuffix(".json")
                         ?.takeIf { it.length in 1..96 && it.all { c -> c in 'a'..'z' || c in 'A'..'Z' || c in '0'..'9' || c in "_-" } }
                         ?.let { scene -> "@story:$scene" + (directId?.takeIf { it.isSkillNumber() }?.let { "/dialog:$it" } ?: "") }
                 val stableId = skillRoot ?: tableScope ?: storyScope ?: directId?.let { tableIdentity(path, it) }
@@ -214,16 +214,18 @@ internal object TranslationJsonPairer {
                 for (index in 0 until original.length()) {
                     val source = original.opt(index)
                     val key = (source as? JSONObject)?.let(::identity)
-                    val target = snapshots?.get(source) ?: if (key != null) {
+                    val target = if (original === translated) source else snapshots?.get(source) ?: if (key != null) {
                         val sourceGroup = sources[key].orEmpty()
                         val targetGroup = targets[key].orEmpty()
                         if (sourceGroup.size == 1 && targetGroup.size == 1) targetGroup.single()
                         else {
-                            // Some official story rows repeat an id. A matching model/voice
-                            // can identify one row without guessing by position or changing ids.
-                            val metadata = stableMetadata(source as JSONObject)
-                            if (metadata.isEmpty() || sourceGroup.count { stableMetadata(it) == metadata } != 1) null
-                            else targetGroup.filter { stableMetadata(it) == metadata }.singleOrNull()
+                            // Repeated story IDs may share a speaker but differ in display
+                            // structure (e.g. only one row also sets a place). Compare the
+                            // structure, never the translated value or the row position.
+                            val story = path.substringBeforeLast('/', "").endsWith("/StoryData")
+                            val metadata = duplicateIdentity(source as JSONObject, story)
+                            if (metadata == null || sourceGroup.count { duplicateIdentity(it, story) == metadata } != 1) null
+                            else targetGroup.filter { duplicateIdentity(it, story) == metadata }.singleOrNull()
                         }
                     } else if (original.length() == translated.length()) {
                         translated.opt(index).takeUnless { it is JSONObject && identity(it) != null }
@@ -255,22 +257,38 @@ internal object TranslationJsonPairer {
         }.groupBy({ it.first }, { it.second })
         val sources = groups(original)
         val targets = groups(translated)
+        val resolved = IdentityHashMap<JSONObject, JSONObject>()
+        if (original !== translated) for ((id, sourceGroup) in sources) {
+            val targetGroup = targets[id].orEmpty()
+            if (targetGroup.isEmpty()) continue
+            for (source in sourceGroup) {
+                val target = if (sourceGroup.all { equivalentJson(it, source) } &&
+                    targetGroup.all { equivalentJson(it, targetGroup.first()) }) targetGroup.first()
+                else {
+                    val fingerprint = giftEffectFingerprint(source) ?: continue
+                    if (sourceGroup.count { giftEffectFingerprint(it) == fingerprint } != 1) continue
+                    targetGroup.filter { giftEffectFingerprint(it) == fingerprint }.singleOrNull() ?: continue
+                }
+                if (equivalentJson(nonDisplayMetadata(source), nonDisplayMetadata(target))) resolved[source] = target
+            }
+            // Translation can spell out an implicit quantity (e.g. "one ally").
+            // After all other effects are uniquely matched, the only remaining
+            // pair has a stable parent + ability identity, without using order.
+            if (sourceGroup.size > 1 && sourceGroup.size == targetGroup.size) {
+                val remainingSource = sourceGroup.filterNot(resolved::containsKey).singleOrNull()
+                val remainingTarget = targetGroup.filterNot { target -> sourceGroup.any { resolved[it] === target } }.singleOrNull()
+                if (remainingSource != null && remainingTarget != null &&
+                    displayShape(remainingSource) == displayShape(remainingTarget) &&
+                    equivalentJson(nonDisplayMetadata(remainingSource), nonDisplayMetadata(remainingTarget))) {
+                    resolved[remainingSource] = remainingTarget
+                }
+            }
+        }
         for (index in 0 until original.length()) {
             val source = original.optJSONObject(index) ?: continue
             val id = source.opt("abilityID")?.toString()?.takeIf { it.isSkillNumber() } ?: continue
-            val sourceGroup = sources.getValue(id)
-            val targetGroup = targets[id].orEmpty()
-            if (targetGroup.isEmpty()) continue
-            val target = snapshots?.get(source) as? JSONObject ?: if (sourceGroup.all { equivalentJson(it, source) } &&
-                targetGroup.all { equivalentJson(it, targetGroup.first()) }) targetGroup.first()
-            else {
-                // Repeated ability IDs can carry DIFFERENT effects. A unique set
-                // of explicit status tokens/numbers identifies one display leaf;
-                // neither array order nor the ability ID alone can do that.
-                val fingerprint = giftEffectFingerprint(source) ?: continue
-                if (sourceGroup.count { giftEffectFingerprint(it) == fingerprint } != 1) continue
-                targetGroup.filter { giftEffectFingerprint(it) == fingerprint }.singleOrNull() ?: continue
-            }
+            val target = if (original === translated) source else
+                snapshots?.get(source) as? JSONObject ?: resolved[source] ?: continue
             // Ability IDs are metadata, not a license to pair changed structures.
             if (!equivalentJson(nonDisplayMetadata(source), nonDisplayMetadata(target))) continue
             collect(source, target, path, "$context[$index]", records, depth + 1,
@@ -354,7 +372,7 @@ internal object TranslationJsonPairer {
     }
 
     private fun belongsTo(path: String, family: String): Boolean {
-        val file = path.substringAfterLast('/').removePrefix("JP_")
+        val file = sourceTableName(path)
         return file == "$family.json" || file.startsWith("${family}_") || file.startsWith("$family-")
     }
 
@@ -365,5 +383,17 @@ internal object TranslationJsonPairer {
         listOf("model", "voicefile").mapNotNull { field ->
             (value.opt(field) as? String)?.takeIf(String::isNotBlank)?.let { field to it }
         }.toMap()
+    private fun displayShape(value: JSONObject): Set<String> = value.keys().asSequence()
+        .filter { TranslationTextPolicy.isDisplayField(it) && value.opt(it) is String }.toSet()
+    private fun duplicateIdentity(value: JSONObject, story: Boolean): Pair<Map<String, String>, Set<String>>? {
+        val metadata = stableMetadata(value)
+        if (!story && metadata.isEmpty()) return null
+        return metadata to if (story) displayShape(value) else emptySet()
+    }
     private val ID_FIELDS = listOf("id", "key", "level", "index", "idx", "originalId")
+}
+
+internal fun sourceTableName(path: String): String {
+    val name = path.substringAfterLast('/')
+    return if (name.startsWith("JP_") || name.startsWith("EN_") || name.startsWith("KR_")) name.drop(3) else name
 }

@@ -118,7 +118,7 @@ remain independent of preparation.
 Archive validation and build fingerprinting share content digests only within one
 locked preparation operation. Reuse requires unchanged file identity, size and
 modification/creation times; changed files are hashed again. Every new launch still
-reads and validates all translation bytes, all Japanese inputs and the active
+reads and validates all translation bytes, all available JP/EN/KR inputs and the active
 index. Rebuild stability checks always reread inputs. This does not replace
 integrity validation with a persistent metadata-only cache. Timings are recorded
 per phase in the bounded, redacted diagnostic log.
@@ -133,7 +133,7 @@ flowchart LR
     GitHub["Fixed LLC GitHub release"] --> Download["Download or validate cached 7z"]
     Download --> Extract["Verify and extract"]
     Extract --> Pair["Pair stable identities and display fields"]
-    Japanese["Unmodified container jp resources"] --> Pair
+    Originals["Unmodified JP / EN / KR resources"] --> Pair
     Pair --> Index["Validated persistent index generation"]
     Index --> Game
 ```
@@ -261,10 +261,12 @@ The file redirect experiment proved that enabling redirects after login is too
 late: the official localization tables have already been loaded into the game.
 The replacement data path is therefore a versioned, host-private text index.
 
-The production path is a Japanese-only full text takeover modeled on the observed
-OurPlay pipeline. During translation activation, `ContainerPatchInstaller`
-recursively pairs the translated JSON with the container-visible official Japanese
-JSON. Stable `id` values are preferred for array alignment, while matching nested
+During translation activation, `ContainerPatchInstaller` recursively pairs the
+selected pack with the game's Japanese, English and Korean JSON using the same
+table, record, field and nested-structure rules for each language. Full text,
+context and glossary entries include all three locales. Locale prefixes do not
+change the scoped identity of skills, EGO gifts, events or scenarios.
+Stable `id` values are preferred for array alignment, while matching nested
 arrays such as skill levels and coin descriptions are traversed structurally. Only
 explicitly whitelisted display fields enter the runtime index. String arrays in
 `successDesc`, `failureDesc` and `result` use the same
@@ -280,7 +282,9 @@ or rich text. Dominant conflicts are accepted only with at least three samples,
 text tags are removed when deriving terms, so sources such as `[攻撃前]` and
 `<color><s>長姉</s></color>` also cover their embedded runtime forms.
 Runtime longest-match replacement copies complete `<...>` TMP tags without
-inspection and requires word boundaries around ASCII-only terms. Schema 8 keeps
+inspection and requires word boundaries at ASCII word edges, including phrases
+such as `Rupture Count`. Verified names, glossary labels and bracketed conditions
+may contain spaces; arbitrary prose is not reduced to phrase replacements. Schema 8 keeps
 expanding package terms such as `以上 -> 或以上`, while the native matcher detects
 whether a source occurrence is already inside the complete translated value. This
 makes repeated `SkillPerLevel -> Skill -> TMP` passes idempotent without discarding
@@ -289,12 +293,12 @@ The compiler and native object-graph traversal use the same explicit display-fie
 policy. In addition to the original skill/UI fields, schema 8 includes verified
 display values such as `story`, `relatedChapterText`, and `openConditionNumber`.
 Translations containing Unicode replacement characters or illegal control bytes
-are omitted so a damaged package entry leaves the official Japanese text intact.
+are omitted so a damaged package entry leaves the selected original language intact.
 
 TMP text assignment is the final UI fallback, not the complete translation path.
 Character, identity, skill and story text must also be intercepted while the game
 obtains or formats strings from `TextData_*` and related localization objects. This
-keeps the index Japanese-only without reducing coverage to static UI labels.
+preserves structured identity before formatting in all three original languages.
 The native layer enumerates every runtime class whose name starts with
 `TextData_`, then hooks instance string-returning formatters with zero to two
 ABI-checked parameters only when the method has enough space (16/20 bytes) before
@@ -329,15 +333,21 @@ short dialog bodies retain wrapping unless their layout is actually single-line.
 
 The ordinary launcher path is a single `Launch translated game` action. It synchronizes the installed game only when needed, stops the old guest, checks the fixed LLC release, reuses a hash-validated archive when possible, prepares a complete index, and launches the guest. The source is not editable in the production UI. Offline fallback revalidates the active release archive, extracted files and index before requesting launch.
 
-Package freshness, Japanese-resource readiness, and active-index state are
+Package freshness, original-resource readiness, and active-index state are
 separate. A fresh game install or game update may not have downloaded its
-`jp/JP_*.json` resources yet. Index compilation counts candidate translation JSON
-files and valid, sufficiently paired Japanese counterparts. Missing translation files still count as candidates. Invalid JSON does not count as available. Stable identities must match without positional fallback; duplicate identities are rejected. Inputs must remain unchanged throughout compilation, and the record count must not collapse below 90 percent of the previous index. Fewer than 90 percent available sources
+localization resources yet. Index compilation counts candidate translation JSON
+files and valid, sufficiently paired counterparts separately for JP, EN and KR.
+At least one locale must cover 90 percent of the candidates; files from different
+languages are not summed to invent a complete resource set. Missing translation
+files still count as candidates. Invalid JSON does not count as available. Stable
+identities must match without positional fallback; duplicate identities are
+rejected. Inputs must remain unchanged throughout compilation, and the record
+count must not collapse below 90 percent of the previous index. Fewer than 90 percent available sources
 is a resource-preparation state: the package remains cached, any prior valid index
 remains active, and no partial index or misleading active marker is written. The
 game is launched so it can download resources after login. On the next launcher
 run, the cached package is paired with the newly available sources and activated.
-An individual exact-match miss remains Japanese and does not invalidate the rest
+An individual exact-match miss remains in the selected language and does not invalidate the rest
 of the index.
 
 Saved files, initialized container, native index loading and text-hook installation are separate states. Native launch receipts carry a fresh request token, and do not claim that the game screen, Chinese font or login actually succeeded. Version-specific native operations require a shipped profile matching the game version, Android API range, ABI and both native library hashes. The catalog contains exact game 471, 475 and 478 profiles for SDK 36 / arm64 / 4 KiB pages; unknown builds do not run those operations and may fail to enter the game. The 478 qualification and event text flow boundaries are recorded in `runtime-text-and-478.md`. See `text-coverage-audit.md` for current validation limits and `architecture-hardening.md` for earlier recovery design.
@@ -378,9 +388,13 @@ signed outer APK assets. Debug-only path/URL overrides remain available for
 development, but are not part of the user workflow. The embedded Apache-2.0
 license and component provenance are shipped alongside the APK assets.
 
-The compiled source-text index uses Japanese originals. The live resource reader also
-accepts the corresponding English and Korean tables. It resolves the table and
-record before merging display fields from the same verified translation snapshot.
+The live resource reader accepts Japanese, English and Korean tables. It resolves
+the table and record before merging display fields from the selected translation
+snapshot. The same matching rules produce the full-text fallback for all three
+languages, including story, skill, gift, event and UI tables. Conflicting labels
+require their resource identity and display field. Changes to any locale's
+downloaded text invalidate the index. Shared translations and identities are
+deduplicated in memory while building the combined index.
 The game reads its own language preference. Release verification requires an
 actual translated game screen in addition to loader diagnostics.
 

@@ -2,7 +2,23 @@
 
 本文从 AGENTS.md 拆出,记录 VirtualApp 接入状态、设备实测结论和 Limbus 专项兼容细节。AGENTS.md 只保留架构边界和当前关键判断。
 
-当前启动流程保留游戏声明的 Application，原样交付游戏的完整性判断和终止信号。BYBUS 接收游戏已发出的告警，按本次启动记录错误码和类型，再将原提示交给游戏显示。汉化或字体已经加载，也不能据此把被游戏拒绝的启动记为成功。
+游戏校验兼容链路沿用构建 112 已匹配的 70034/50040 分支。启用条件为官方签名、已核对的原生库结构和现场预期指令；不能使用普通可加载标记授权旧地址补丁。JNI 接口、加载期扫描、校验布局、自有修改账本及原生兼容处理与安装元数据、ABI、语言资源和生命周期修正共同保留。游戏原始 APK 不改变；缺少声明的启动库时终止准备，不能改成普通 Application。直接 ARM 的进程 JNI 接入沿用实际主 ABI 条件，不能把 ARM 函数地址交给 x86 平台 JNI。
+
+BYBUS 接收游戏实际发出的告警，按本次启动记录错误码和类型，再将原提示交给游戏显示。汉化或字体已经加载不能代替游戏稳定启动的验收。当前官方游戏 494 的原始库已通过旧结构校验器的 4 KB / 16 KB 只读检查；这一步本身不代表游戏已恢复启动。
+
+## 安装源元数据
+
+游戏加载和 PlayCore 本地资源映射读取安装源时，复用 PackageManager 注入前保存的原始 Binder。
+缓存一个 `ApplicationPackageManager` 对象不能保证后续查询不经过容器：Android 15 的
+`getApplicationInfoAsUserCached` 在缓存未命中时会重新读取 `ActivityThread` 的当前服务。
+普通访客查询仍由原来的虚拟包管理器处理，不扩大宿主包可见范围。
+
+`sourceDir/publicSourceDir` 与 `scanSourceDir/scanPublicSourceDir` 分别保留系统提供的值；
+不能用 `base.apk` 路径覆盖安装扫描目录。分包名称、源路径及公开路径从同一个系统查询结果
+一起复制，系统结果为空时也要清除旧值。原 Application 类、真实 UID 的容器路由、存储重定向
+以及游戏自己的安全判断不因这项元数据修正而改变。定向测试覆盖元数据行为，不能证明游戏启动已恢复。
+
+参考：[AOSP PackageManager 缓存实现](https://android.googlesource.com/platform/frameworks/base/+/android15-release/core/java/android/content/pm/PackageManager.java)、[ApplicationInfo 路径字段](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/core/java/android/content/pm/ApplicationInfo.java)。
 
 ## ARM 转译中的 JNI 边界
 

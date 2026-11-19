@@ -354,10 +354,10 @@ class TranslationIndexCompilerTest {
 
     @Test
     fun requiresNinetyPercentOfJapaneseSourcesBeforeActivation() {
-        assertTrue(hasSufficientJapaneseSources(90, 100))
-        assertTrue(hasSufficientJapaneseSources(9, 10))
-        assertFalse(hasSufficientJapaneseSources(89, 100))
-        assertFalse(hasSufficientJapaneseSources(0, 0))
+        assertTrue(hasSufficientOriginalSources(90, 100))
+        assertTrue(hasSufficientOriginalSources(9, 10))
+        assertFalse(hasSufficientOriginalSources(89, 100))
+        assertFalse(hasSufficientOriginalSources(0, 0))
     }
 
     @Test

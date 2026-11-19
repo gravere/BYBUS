@@ -11,7 +11,8 @@ import java.nio.file.Path
 import java.util.UUID
 
 internal enum class AiTaskPhase { Running, Paused, Applying }
-internal data class AiTaskBinding(val selected: String, val revision: String, val targetRevision: String?, val selectedKind: String = "") {
+internal data class AiTaskBinding(val selected: String, val revision: String, val targetRevision: String?, val selectedKind: String = "",
+    val language: String = "jp") {
     fun unchanged(state: SourceState, target: String, activeRevision: String) =
         state.selectedId == selected && activeRevision == revision && (selectedKind.isEmpty() || selectedKind == state.selected.kind) &&
             state.sources.find { it.id == target }.let { it?.revision == targetRevision && (it == null || it.kind == "ai") }
@@ -65,7 +66,7 @@ internal class AiTaskStore(private val cache: Path) {
                 p.optInt("scannedFiles"), p.optInt("totalFiles")),
             plan, j.optString("error").takeIf { it.isNotBlank() }, j.optString("resultHash").takeIf { it.isNotBlank() },
             j.optJSONObject("binding")?.let { b -> AiTaskBinding(b.getString("selected"), b.getString("revision"),
-                b.optString("targetRevision").takeIf(String::isNotEmpty), b.optString("selectedKind")) }, j.optBoolean("upstream"),
+                b.optString("targetRevision").takeIf(String::isNotEmpty), b.optString("selectedKind"), b.optString("language", "jp")) }, j.optBoolean("upstream"),
             j.optString("resultTarget").takeIf(String::isNotEmpty)).also {
             require(it.id.matches(ID) && it.outputIdentity.matches(ID))
         }
@@ -80,7 +81,8 @@ internal class AiTaskStore(private val cache: Path) {
             AiTranslationReuse.collect(cache, from, pack, storage, cancelled)
         }.orEmpty()
         val target = previous?.takeIf { !config.missingOnly && (it.independent || it.id != source.id) }?.id?.removePrefix("ai-")
-        return create(config, source, base, reference, identityOverride = target, committed = prior)
+        return create(config, source, base, reference, identityOverride = target, committed = prior,
+            language = requireNotNull(storage.textLanguage()).language.code)
     }
 
     /** Build 109 froze a premerged archive for an upstream job. Upgrade it only when the stored
@@ -101,7 +103,7 @@ internal class AiTaskStore(private val cache: Path) {
 
     fun create(config: AiConfig, source: TranslationSource, base: PreparedTranslation?, reference: PreparedTranslation?,
         identityOverride: String? = null, officialVersionOverride: Long? = null,
-        committed: Map<String, String> = emptyMap(), upstream: Boolean = false): AiTaskSnapshot {
+        committed: Map<String, String> = emptyMap(), upstream: Boolean = false, language: String = "jp"): AiTaskSnapshot {
         check(!exists()) { "请先继续或取消已有翻译任务" }
         if (Files.exists(root)) AtomicFiles.deleteOwnedTree(cache, root)
         Files.createDirectories(root)
@@ -112,7 +114,7 @@ internal class AiTaskStore(private val cache: Path) {
         val state = TranslationSources(cache).read()
         val identity = TranslationSources.availableAiIdentity(preferred, state)
         val binding = AiTaskBinding(state.selectedId, CoverageStore(cache).sourceRevision(state.selected),
-            state.sources.find { it.id == "ai-$identity" }?.revision, state.selected.kind)
+            state.sources.find { it.id == "ai-$identity" }?.revision, state.selected.kind, language)
         writeCommitted(committed)
         return AiTaskSnapshot(UUID.randomUUID().toString().replace("-", ""), config.validated(), source.baseId ?: source.id,
             source.name, identity, if (!config.missingOnly) "AI 汉化" else if (source.kind == "ai")
@@ -130,7 +132,7 @@ internal class AiTaskStore(private val cache: Path) {
         val j = JSONObject().put("schema", 1).put("id", task.id).put("baseId", task.baseId)
             .put("sourceName", task.sourceName).put("outputIdentity", task.outputIdentity).put("outputName", task.outputName)
             .put("officialVersion", task.officialVersion).put("phase", task.phase.name).put("error", task.error)
-            .put("binding", task.binding?.let { JSONObject().put("selected", it.selected).put("revision", it.revision).put("targetRevision", it.targetRevision).put("selectedKind", it.selectedKind) })
+            .put("binding", task.binding?.let { JSONObject().put("selected", it.selected).put("revision", it.revision).put("targetRevision", it.targetRevision).put("selectedKind", it.selectedKind).put("language", it.language) })
             .put("upstream", task.upstream).put("resultTarget", task.resultTarget)
             .put("resultHash", task.resultHash).put("config", JSONObject().put("endpoint", c.endpoint).put("model", c.model)
                 .put("missingOnly", c.missingOnly).put("limit", c.limit).put("includeMissing", c.includeMissing)

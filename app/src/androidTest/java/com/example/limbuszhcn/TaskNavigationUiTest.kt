@@ -22,15 +22,45 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class TaskNavigationUiTest {
     @get:Rule val compose = createComposeRule()
+    @Test fun savedKeyCanBeChosenAndAFailedSaveKeepsTheDraft() {
+        val first = AiKeyChoice("one", "个人账号", "https://example.test/v1", "old-model")
+        val other = AiKeyChoice("two", "备用账号", "https://elsewhere.test/v1", "other-model")
+        var ui by mutableStateOf(LauncherUiState(ai = AiUiState(config = AiConfig(first.endpoint, first.model),
+            hasKey = true, keys = listOf(first, other), activeKeyId = first.id)))
+        var selected = ""
+        var saved = ""
+        val actions = TranslationActions(selectKey = { id ->
+            selected = id
+            ui = ui.copy(ai = ui.ai.copy(config = AiConfig(other.endpoint, other.model), activeKeyId = id))
+        }, saveKey = { _, _, value, _ ->
+            saved = value
+            ui = ui.copy(ai = ui.ai.copy(message = "保存未完成", failed = true))
+        })
+        compose.setContent { Screen(ui, actions) }
+        compose.onNodeWithContentDescription("设置与工具").performClick()
+        compose.onNodeWithText("汉化源与更新").performScrollTo().performClick()
+        compose.onNodeWithText("AI 翻译").performScrollTo().performClick()
+        compose.onNodeWithText("切换密钥（2）").performScrollTo().performClick()
+        compose.onNodeWithText("备用账号").performClick()
+        compose.runOnIdle { assertEquals(other.id, selected) }
+        compose.onNodeWithContentDescription("API Key").performScrollTo().performTextInput("fixture-ui")
+        compose.onNodeWithText("保存密钥").performScrollTo().performClick()
+        compose.onNodeWithText("保存", substring = false).performClick()
+        compose.runOnIdle { assertEquals("fixture-ui", saved) }
+        compose.onNodeWithText("保存未完成").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("显示").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("API Key").assertTextContains("fixture-ui")
+    }
     private fun task() = AiTaskSnapshot("a".repeat(32), AiConfig(includeMissing = false, includeReview = true),
         "zero", "都市零协会", "b".repeat(32), "AI 汉化", 2026111401,
         progress = AiProgress(8, 10, message = "已完成 8/10 条"),
         plan = AiTaskPlan(mapOf("jp/JP_Test.json" to (0..9).map { "$it" }.toSet()), mapOf("jp/JP_Test.json" to "hash"), 10))
-    private fun capture(name: String) {
+    private fun capture(name: String, popup: Boolean = false) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val width = context.resources.displayMetrics.widthPixels
         val file = java.io.File(context.getExternalFilesDir(null), "$name-$width.png")
-        file.outputStream().use { compose.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+        val node = if (popup) compose.onNode(isPopup()) else compose.onRoot()
+        file.outputStream().use { node.captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
     }
 
     @Composable private fun Screen(state: LauncherUiState, actions: TranslationActions = TranslationActions(), migration: () -> Unit = {}) {
@@ -193,6 +223,18 @@ class TaskNavigationUiTest {
         all.performScrollTo().assertIsSelected()
         listOf(all, missing, review).forEach { it.assertHeightIsAtLeast(48.dp).assertWidthIsAtLeast(48.dp) }
         capture("coverage-controls")
+        val allBounds = all.getUnclippedBoundsInRoot()
+        compose.mainClock.autoAdvance = false
+        try {
+            missing.performClick()
+            compose.mainClock.advanceTimeBy(80)
+            assertEquals(allBounds, all.getUnclippedBoundsInRoot())
+            all.performClick()
+            compose.mainClock.advanceTimeBy(240)
+            all.assertIsSelected()
+        } finally {
+            compose.mainClock.autoAdvance = true
+        }
         compose.onNodeWithText("下一页").performScrollTo().performClick()
         waitForText("#7")
         review.performScrollTo().performClick()
@@ -210,6 +252,8 @@ class TaskNavigationUiTest {
         compose.onNodeWithText("jp/StoryData/JP_A.json\n/dataList/6/content").assertExists()
         capture("coverage-review-rows")
         compose.onNodeWithContentDescription("筛选内容类别").performScrollTo().performClick()
+        compose.onNode(hasText("全部类别") and hasAnyAncestor(isPopup())).assertIsSelected()
+        capture("coverage-categories", popup = true)
         compose.onNode(hasText(battle) and hasAnyAncestor(isPopup())).performClick()
         waitForText("1 条")
         compose.onNodeWithText("#9").assertExists()

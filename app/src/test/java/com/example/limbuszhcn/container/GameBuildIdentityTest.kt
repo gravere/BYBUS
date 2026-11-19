@@ -11,6 +11,21 @@ class GameBuildIdentityTest {
         requireSameGameBuild(baseline, baseline.copy())
     }
 
+    @Test fun importMustUseTheCurrentBaseAndAllItsSplits() {
+        val data = GameApkIdentity("/data/app/game/data.apk", 300, 10)
+        val installed = baseline.copy(apks = baseline.apks + data)
+        val (base, arm, assets) = installed.apks.map { it.path }
+        val selected = GameImportRequest(listOf(base, assets, arm), installed.version, "installed")
+        installed.requireImportSource(selected)
+        for (stale in listOf(selected.copy(versionCode = 474),
+            selected.copy(splitApkPaths = listOf(arm, base, assets)),
+            selected.copy(splitApkPaths = listOf(base, arm)),
+            selected.copy(splitApkPaths = listOf(base, arm, arm)),
+            selected.copy(splitApkPaths = listOf(base, arm, "/data/app/old/data.apk")))) {
+            assertThrows(IllegalArgumentException::class.java) { installed.requireImportSource(stale) }
+        }
+    }
+
     @Test fun updateOrSplitReplacementDuringPreparationCannotLaunchMixedGenerations() {
         for (changed in listOf(baseline.copy(version = 476), baseline.copy(updated = 11),
             baseline.copy(apks = baseline.apks.dropLast(1)),

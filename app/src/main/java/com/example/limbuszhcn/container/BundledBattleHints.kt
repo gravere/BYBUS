@@ -7,8 +7,11 @@ import java.util.zip.ZipFile
 
 /** Read-only startup tables. Unsupported Unity layouts are deliberately ignored. */
 internal object BundledBattleHints {
-    private val names = setOf("JP_MainUIText", "JP_LoginUIText",
-        "JP_BattleHint", "JP_BattleHint_NormalBattle", "JP_BattleHint_AbnorBattle")
+    val tableNames = setOf("MainUIText", "LoginUIText", "BattleHint",
+        "BattleHint_NormalBattle", "BattleHint_AbnorBattle")
+    private val names = SOURCE_TEXT_LOCALES.flatMap { language ->
+        tableNames.map { name -> "${language.uppercase(java.util.Locale.ROOT)}_$name" }
+    }.toSet()
     fun isStartupTable(fileName: String): Boolean = fileName.removeSuffix(".json") in names
     private val assetPath = Regex("assets/bin/Data/[0-9a-f]{32}")
     private const val MAX_FILE = 1024 * 1024

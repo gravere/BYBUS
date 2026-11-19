@@ -29,6 +29,8 @@ internal fun CoverageSummary(state: LauncherUiState, onOpen: () -> Unit, onCheck
                 verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically)) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("汉化覆盖", modifier = Modifier.align(Alignment.CenterVertically), style = MaterialTheme.typography.titleSmall)
+                    coverage.language?.let { Text("${it.displayName}原文", style = MaterialTheme.typography.labelMedium,
+                        color = C.Muted, modifier = Modifier.align(Alignment.CenterVertically)) }
                     if (report != null) Row(Modifier.align(Alignment.CenterVertically), verticalAlignment = Alignment.CenterVertically) {
                         Text(resultLabel, style = MaterialTheme.typography.labelMedium, color = C.Accent)
                         LauncherGlyph(Glyph.Chevron, C.Accent, Modifier.size(12.dp))
@@ -37,7 +39,7 @@ internal fun CoverageSummary(state: LauncherUiState, onOpen: () -> Unit, onCheck
                 Text(when {
                     coverage.loading -> "正在对照本地文本"
                     coverage.error != null -> "本次检查未完成"
-                    coverage.stale && report != null -> "当前汉化需要重新检查"
+                    coverage.stale -> "游戏语言或汉化已变化，请重新检查"
                     report != null && report.unreadable > 0 -> "${report.unreadable} 个文件未能检查"
                     report != null && report.total == 0 -> "已读文件中没有可检查的文本"
                     report != null && report.missing == 0 && report.review == 0 -> "${report.total} 条本地文本已覆盖"
@@ -78,7 +80,7 @@ internal fun TranslationCoveragePane(state: LauncherUiState, onCheck: () -> Unit
             coverage.error?.let { Text(it, color = C.Error, style = MaterialTheme.typography.bodyMedium) }
             if (coverage.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (report != null) {
-                Text(report.sourceName, style = MaterialTheme.typography.bodyMedium)
+                Text("${report.sourceName} · ${report.language.displayName}原文", style = MaterialTheme.typography.bodyMedium)
                 Row(Modifier.fillMaxWidth()) {
                     Box(Modifier.weight(1f)) { CoverageMetric("已覆盖", report.covered - report.review) }
                     Box(Modifier.weight(1f)) { CoverageMetric("未覆盖", report.missing) }

@@ -30,6 +30,15 @@ static void jni_nativeHookLimbusFindClass(JNIEnv *env, jclass clazz) {
     hookLimbusFindClass(env);
 }
 
+static void jni_nativeScanLimbusNativeSyscalls(JNIEnv *env, jclass clazz, jstring nativeLibraryDir) {
+    ScopeUtfString dir(nativeLibraryDir);
+    scanLimbusNativeSyscalls(dir.c_str());
+}
+
+static jint jni_nativeMaintainLimbusAppSealingPatches(JNIEnv *env, jclass clazz) {
+    return maintainLimbusAppSealingPatches();
+}
+
 static void jni_nativeConfigureLimbusTranslationRuntime(JNIEnv *env, jclass clazz,
                                                         jstring activeIndexPointer, jboolean liveResources) {
     ScopeUtfString pointer(activeIndexPointer);
@@ -177,6 +186,8 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *_vm, void *) {
             {"nativeLaunchEngine",                     "([Ljava/lang/Object;Ljava/lang/String;ZIII)V",                (void *) jni_nativeLaunchEngine},
             {"nativeHookLimbusProcessExit",            "()V",                                                         (void *) jni_nativeHookLimbusProcessExit},
             {"nativeHookLimbusFindClass",              "()V",                                                         (void *) jni_nativeHookLimbusFindClass},
+            {"nativeScanLimbusNativeSyscalls",         "(Ljava/lang/String;)V",                                       (void *) jni_nativeScanLimbusNativeSyscalls},
+            {"nativeMaintainLimbusAppSealingPatches",  "()I",                                                        (void *) jni_nativeMaintainLimbusAppSealingPatches},
             {"nativeConfigureLimbusTranslationRuntime", "(Ljava/lang/String;Z)V",                                     (void *) jni_nativeConfigureLimbusTranslationRuntime},
             {"nativeReverseRedirectedPath",            "(Ljava/lang/String;)Ljava/lang/String;",                      (void *) jni_nativeReverseRedirectedPath},
             {"nativeGetRedirectedPath",                "(Ljava/lang/String;)Ljava/lang/String;",                      (void *) jni_nativeGetRedirectedPath},

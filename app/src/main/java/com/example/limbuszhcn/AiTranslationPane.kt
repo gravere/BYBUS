@@ -29,6 +29,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.example.limbuszhcn.translation.AiConfig
+import com.example.limbuszhcn.translation.AiKeyChoice
 import com.example.limbuszhcn.translation.AiScope
 import com.example.limbuszhcn.translation.AiTranslationPrompt
 import com.example.limbuszhcn.translation.normalizedAiEndpoint
@@ -37,20 +38,23 @@ import com.example.limbuszhcn.ui.theme.LauncherColors as C
 @Composable
 internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActions, onCoverage: () -> Unit = {}, requestedScope: AiScope? = null) {
     val ai = state.ai
-    var endpoint by remember(ai.config.endpoint) { mutableStateOf(ai.config.endpoint) }
-    var model by remember(ai.config.model) { mutableStateOf(ai.config.model) }
+    var endpoint by remember(ai.config.endpoint, ai.activeKeyId) { mutableStateOf(ai.config.endpoint) }
+    var model by remember(ai.config.model, ai.activeKeyId) { mutableStateOf(ai.config.model) }
     var missing by remember(ai.config.missingOnly, requestedScope) { mutableStateOf(requestedScope != null || ai.config.missingOnly) }
     var scope by remember(ai.config.includeMissing, ai.config.includeReview, requestedScope) {
         mutableStateOf(requestedScope ?: if (ai.config.includeReview) if (ai.config.includeMissing) AiScope.Both else AiScope.Review else AiScope.Missing)
     }
     var limit by remember(ai.config.limit) { mutableIntStateOf(ai.config.limit) }
     // Never saved in a Bundle or ViewModel; the persisted value is encrypted separately.
-    var key by remember { mutableStateOf("") }
-    var reveal by remember { mutableStateOf(false) }
+    var key by remember(endpoint, ai.activeKeyId, ai.savedKeyRevision) { mutableStateOf("") }
+    var reveal by remember(endpoint, ai.activeKeyId, ai.savedKeyRevision) { mutableStateOf(false) }
+    var newKeyName by remember(endpoint, ai.savedKeyRevision) { mutableStateOf("") }
+    var namingKey by remember { mutableStateOf(false) }
+    var selectingKey by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf(false) }
     var cancelTask by remember { mutableStateOf(false) }
     var showConfiguration by remember { mutableStateOf(false) }
-    var clear by remember { mutableStateOf(false) }
+    var clear by remember { mutableStateOf<AiKeyChoice?>(null) }
     var undo by remember { mutableStateOf(false) }
     var prompt by remember(ai.config.prompt) { mutableStateOf(ai.config.prompt) }
     var editPrompt by remember { mutableStateOf(false) }
@@ -70,7 +74,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
     }.getOrDefault(false)
     val hasCredential = key.isNotBlank() || savedKeyAvailable
     val coverageReady = state.coverage.canGenerate(config())
-    LaunchedEffect(endpoint, key) { actions.clearModels(); showModels = false; search = "" }
+    LaunchedEffect(endpoint, key, ai.activeKeyId) { actions.clearModels(); showModels = false; search = "" }
     LaunchedEffect(ai.models.request, ai.models.loading) {
         if (!ai.models.loading && ai.models.values.isNotEmpty()) showModels = true
     }
@@ -91,14 +95,21 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("API Key", color = C.Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
-                    if (ai.hasKey) TextButton({ clear = true }, enabled = enabled,
-                        contentPadding = PaddingValues(horizontal = 8.dp)) { Text("移除已存 Key") }
+                    if (ai.keys.isNotEmpty()) TextButton({ finishEditing(); selectingKey = true }, enabled = enabled,
+                        contentPadding = PaddingValues(horizontal = 8.dp)) {
+                        Text("切换密钥（${ai.keys.size}）", style = MaterialTheme.typography.labelMedium)
+                    }
                 }
                 AiInput(key, { if (it.length <= 1024) key = it }, "API Key",
-                    if (savedKeyAvailable) "已安全保存，留空继续使用" else "翻译时需要填写",
+                    if (savedKeyAvailable) ai.keys.find { it.id == ai.activeKeyId }?.let { "当前使用 ${it.name}" }
+                        ?: "已保存密钥" else "输入服务商提供的密钥",
                     enabled, type = KeyboardType.Password,
                     transformation = if (reveal) VisualTransformation.None else PasswordVisualTransformation(),
                     trailing = if (key.isNotEmpty()) ({ TextButton({ reveal = !reveal }) { Text(if (reveal) "隐藏" else "显示") } }) else null)
+                if (key.isNotBlank()) {
+                    FilledTonalButton({ finishEditing(); reveal = false; namingKey = true },
+                        enabled = enabled, modifier = Modifier.align(Alignment.End)) { Text("保存密钥") }
+                }
             }
             HorizontalDivider(color = C.Line)
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -107,9 +118,9 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
                     TextButton({ finishEditing(); actions.loadModels(endpoint.trim(), key) },
                         enabled = enabled && !ai.models.loading && endpoint.isNotBlank(), contentPadding = PaddingValues(horizontal = 8.dp)) {
                         if (ai.models.loading) LauncherSpinner(Modifier.size(16.dp), strokeWidth = 1.6.dp)
-                        else LauncherGlyph(Glyph.Refresh, C.Accent, Modifier.size(18.dp))
+                        else LauncherGlyph(Glyph.Refresh, LocalContentColor.current, Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text(if (ai.models.loading) "正在获取" else "获取模型")
+                        Text(if (ai.models.loading) "正在获取" else "获取模型", style = MaterialTheme.typography.labelMedium)
                     }
                 }
                 AiInput(model, { if (it.length <= 128) model = it }, "模型", "填写模型 ID，或从上游选择", enabled,
@@ -140,7 +151,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                FilledTonalButton({ finishEditing(); val value = key; key = ""; reveal = false; actions.saveAi(config(), value, false) },
+                FilledTonalButton({ finishEditing(); reveal = false; actions.saveAi(config(), key, false) },
                     enabled = enabled, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("保存设置") }
                 TextButton({ finishEditing(); reveal = false; actions.saveAi(config(), key, true) },
                     enabled = enabled && hasCredential, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text(if (ai.settingsBusy) "处理中" else "测试翻译") }
@@ -232,12 +243,41 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
         dismissButton = { TextButton({ cancelTask = false }) { Text("保留任务") } })
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("开始 AI 翻译？") },
         text = { Text("${if (missing) scope.label else "尚未完成的可译文本"}共 ${state.coverage.eligible(config())} 条，本批最多 ${minOf(limit, state.coverage.eligible(config()))} 条。将关闭游戏，使用你的 API 翻译并计费。已完成的译文保留。") },
-        confirmButton = { TextButton({ confirm = false; val value = key; key = ""; reveal = false; actions.generateAi(config(), value) }, enabled = enabled && coverageReady) { Text("开始翻译") } },
+        confirmButton = { TextButton({ confirm = false; reveal = false; actions.generateAi(config(), key) }, enabled = enabled && coverageReady) { Text("开始翻译") } },
         dismissButton = { TextButton({ confirm = false }) { Text("取消") } })
-    if (clear) AlertDialog(onDismissRequest = { clear = false }, title = { Text("移除 API Key？") },
-        text = { Text("已生成的译文会保留。再次使用 API 时需要重新填写 Key。") },
-        confirmButton = { TextButton({ clear = false; key = ""; reveal = false; actions.clearModels(); actions.clearKey() }, enabled = enabled) { Text("移除") } },
-        dismissButton = { TextButton({ clear = false }) { Text("取消") } })
+    if (namingKey) AlertDialog(onDismissRequest = { namingKey = false }, title = { Text("保存密钥") },
+        text = { AiField("密钥名称", newKeyName, { if (it.length <= 48) newKeyName = it },
+            "可选，例如「个人账号」", enabled, KeyboardType.Text) },
+        confirmButton = { TextButton({ namingKey = false; actions.saveKey(endpoint, model, key, newKeyName) },
+            enabled = enabled && key.isNotBlank()) { Text("保存") } },
+        dismissButton = { TextButton({ namingKey = false }) { Text("取消") } })
+    if (selectingKey) AlertDialog(onDismissRequest = { selectingKey = false }, title = { Text("已保存的密钥") },
+        text = {
+            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 330.dp)) {
+                items(ai.keys, key = { it.id }) { choice ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.weight(1f).clickable(enabled = enabled) {
+                            selectingKey = false
+                            actions.selectKey(choice.id)
+                        }.heightIn(min = 48.dp).padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Box(Modifier.size(18.dp)) {
+                                if (choice.id == ai.activeKeyId) LauncherGlyph(Glyph.Check, C.Accent, Modifier.fillMaxSize(), "当前密钥")
+                            }
+                            Column(Modifier.weight(1f)) {
+                                Text(choice.name, color = C.Ink, style = MaterialTheme.typography.bodyMedium)
+                                Text(choice.endpoint.removePrefix("https://"), color = C.Muted, style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                        ActionIconButton(Glyph.Delete, "移除${choice.name}", { selectingKey = false; clear = choice }, enabled = enabled)
+                    }
+                }
+            }
+        }, confirmButton = { TextButton({ selectingKey = false }) { Text("关闭") } })
+    clear?.let { item -> AlertDialog(onDismissRequest = { clear = null }, title = { Text("移除「${item.name}」？") },
+        text = { Text("此密钥将从本机删除。") },
+        confirmButton = { TextButton({ clear = null; actions.clearModels(); actions.clearKey(item.id) }, enabled = enabled) { Text("移除") } },
+        dismissButton = { TextButton({ clear = null }) { Text("取消") } }) }
     if (undo) AlertDialog(onDismissRequest = { undo = false }, title = { Text("撤回上次 AI 生成？") },
         text = { Text("将关闭游戏，恢复上次生成前的汉化和来源选择。游戏资源、账号与 API 设置会保留；已产生的 API 费用不会返还。") },
         confirmButton = { TextButton({ undo = false; actions.undoAi() }, enabled = enabled) { Text("撤回") } },

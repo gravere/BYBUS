@@ -111,11 +111,11 @@ class ContainerPatchInstaller(
     }
 
     /**
-     * 将汉化 JSON 与设备上的日文资源配对，生成只包含明确文本映射的运行时索引。
+     * 用所选汉化包与日、英、韩原文生成全文、上下文和术语索引。
      *
      * @param patchDirectory 已解压的汉化包缓存目录。
      * @param manifest 汉化包文件清单和版本信息。
-     * @return 候选资源、可读日文源文件和索引激活结果。
+     * @return 候选资源、有效原文配对和索引激活结果。
      */
     fun activateRedirect(patchDirectory: Path, manifest: PatchManifest): PatchInstallSummary {
         return activateVerifiedRedirect(patchDirectory, manifest, FileDigestSession())
@@ -141,12 +141,22 @@ class ContainerPatchInstaller(
         val store = TranslationIndexStore(indexRoot())
         val active = measureStartup("active_index_validation") { store.activeManifest() }
         val buildCache = TranslationBuildCache(indexRoot().resolve("build-receipt.properties"))
+        val localizeRoot = storage.rootPath().replace('\\', '/').trimEnd('/')
         val inputs = manifest.entries.mapNotNull { entry ->
             val source = patchDirectory.resolve(entry.cachePath).toAbsolutePath().normalize()
             if (!source.isRegularFile() || !source.name.endsWith(".json", ignoreCase = true)) null
             else TranslationBuildCache.Input(source, japaneseSourceFor(storage.resolvePatchTarget(entry.targetPath)))
         }
         val bundledHints = measureStartup("bundled_hints") { BundledBattleHints.read(installedApkPaths()) }
+        fun localizedSource(japanesePath: String, locale: String): String {
+            val relative = japanesePath.removePrefix("$localizeRoot/jp/")
+            val directory = relative.substringBeforeLast('/', "").let { if (it.isEmpty()) "" else "$it/" }
+            val name = relative.substringAfterLast('/').removePrefix("JP_")
+            return "$localizeRoot/$locale/$directory${locale.uppercase(java.util.Locale.ROOT)}_$name"
+        }
+        val localizedInputs = inputs.flatMap { input -> SOURCE_TEXT_LOCALES.map { locale ->
+            TranslationBuildCache.Input(input.translation, localizedSource(input.originalPath, locale))
+        } }
         val sourceNameCounts = inputs.groupingBy { it.originalPath.substringAfterLast('/') }.eachCount()
         fun inputIdentity(hints: Map<String, String>): String {
             val digest = java.security.MessageDigest.getInstance("SHA-256")
@@ -159,7 +169,7 @@ class ContainerPatchInstaller(
         }
         val identity = inputIdentity(bundledHints)
         val fingerprint = measureStartup("translation_input_validation") {
-            buildCache.fingerprint(identity, inputs, storage, digests::sha256)
+            buildCache.fingerprint(identity, localizedInputs, storage, digests::sha256)
         }
         // Legacy overlays must also be cleared on the fast path.
         Files.deleteIfExists(activeRedirectFile())
@@ -179,65 +189,65 @@ class ContainerPatchInstaller(
         val rebuildStarted = System.nanoTime()
         var activeFiles = 0
         val candidateFiles = manifest.entries.count { it.cachePath.endsWith(".json", ignoreCase = true) }
-        var availableFiles = 0
+        val availableByLocale = SOURCE_TEXT_LOCALES.associateWith { 0 }.toMutableMap()
         var readableFiles = 0
         var pairedFiles = 0
         val indexCompiler = TranslationIndexCompiler()
         val startupCompiler = TranslationIndexCompiler()
-        manifest.entries.forEach { entry ->
-            val source = patchDirectory.resolve(entry.cachePath).toAbsolutePath().normalize()
-            if (!source.isRegularFile() || !source.name.endsWith(".json", ignoreCase = true)) {
-                return@forEach
-            }
-            val target = storage.resolvePatchTarget(entry.targetPath)
-            val japaneseSource = japaneseSourceFor(target)
+        inputs.forEach { input ->
+            val source = input.translation
+            val japaneseSource = input.originalPath
+            val translation by lazy(LazyThreadSafetyMode.NONE) { source.readText(Charsets.UTF_8) }
             // Only uniquely named manifest resources can be matched to a bundled name.
             val bundledName = japaneseSource.substringAfterLast('/')
             val isStartupTable = sourceNameCounts[bundledName] == 1 &&
                 BundledBattleHints.isStartupTable(bundledName) &&
-                japaneseSource == storage.rootPath().replace('\\', '/').trimEnd('/') + "/jp/" + bundledName
+                japaneseSource == "$localizeRoot/jp/$bundledName"
             fun addRecords(records: List<TranslationIndexRecord>) {
                 records.forEach(indexCompiler::add)
                 if (isStartupTable) records.forEach(startupCompiler::add)
             }
-            val bundled = bundledHints[bundledName].takeIf {
-                sourceNameCounts[bundledName] == 1
-            }
-            if (bundled != null) {
-                runCatching { TranslationJsonPairer.pair(japaneseSource, bundled, source.readText(Charsets.UTF_8)) }
-                    .getOrNull()?.records?.let(::addRecords)
-            }
-            val japaneseJson = storage.read(japaneseSource) ?: return@forEach
-            readableFiles += 1
-            val pair = runCatching { TranslationJsonPairer.pair(
-                path = japaneseSource,
-                originalJson = japaneseJson.toString(Charsets.UTF_8),
-                translationJson = source.readText(Charsets.UTF_8)
-            ) }.getOrNull() ?: return@forEach
-            pairedFiles += 1
-            if (pair.sufficientlyPaired) availableFiles += 1
-            // Coverage is a readiness gate, not evidence that individually paired
-            // rows are wrong. Keep proven rows from partially translated tables.
-            if (pair.records.isNotEmpty()) {
+            var hasRecords = false
+            for (locale in SOURCE_TEXT_LOCALES) {
+                val sourcePath = localizedSource(japaneseSource, locale)
+                val bundled = bundledHints[sourcePath.substringAfterLast('/')].takeIf { isStartupTable }
+                if (bundled != null) {
+                    runCatching { TranslationJsonPairer.pair(sourcePath, bundled, translation) }
+                        .getOrNull()?.records?.let(::addRecords)
+                }
+                val original = storage.readAtMost(sourcePath, LiveTranslationStore.MAX_JSON_BYTES.toInt()) ?: continue
+                readableFiles += 1
+                val text = original.toString(Charsets.UTF_8)
+                val pair = runCatching { TranslationJsonPairer.pair(sourcePath, text, translation) }
+                    .getOrNull() ?: continue
+                pairedFiles += 1
+                if (pair.sufficientlyPaired) availableByLocale[locale] = availableByLocale.getValue(locale) + 1
                 addRecords(pair.records)
-                activeFiles += 1
+                hasRecords = hasRecords || pair.records.isNotEmpty()
+                if (pair.matchedFields < pair.sourceFields) {
+                    val matched = pair.records.mapTo(hashSetOf()) { it.id to it.field }
+                    runCatching { TranslationJsonPairer.pair(sourcePath, text, text) }.getOrNull()?.records
+                        ?.filter { (it.id to it.field) !in matched }?.let(::addRecords)
+                }
             }
+            if (hasRecords) activeFiles += 1
         }
         // The production path is runtime-only. Stale merged-file redirects must not survive an
         // upgrade from the earlier experiment.
         Files.deleteIfExists(activeRedirectFile())
         Files.deleteIfExists(pendingRedirectFile())
+        val availableFiles = availableByLocale.values.maxOrNull() ?: 0
         val compiledIndex = indexCompiler.compile(
             version = manifest.requestedVersion,
             archiveSha256 = manifest.archiveSha256,
             candidateSourceFileCount = candidateFiles,
             availableSourceFileCount = availableFiles
         )
-        val resourcesReady = hasSufficientJapaneseSources(availableFiles, candidateFiles)
+        val resourcesReady = hasSufficientOriginalSources(availableFiles, candidateFiles)
         val previousIndexAvailable = active != null
         val previousCount = active?.getProperty("sourceRecordCount")?.toIntOrNull() ?: 0
         val recordCountSafe = previousCount == 0 || compiledIndex.sourceRecordCount * 100L >= previousCount * 90L
-        val stableInputs = fingerprint == buildCache.fingerprint(identity, inputs, storage) &&
+        val stableInputs = fingerprint == buildCache.fingerprint(identity, localizedInputs, storage) &&
             identity == inputIdentity(BundledBattleHints.read(installedApkPaths()))
         val activated = resourcesReady && recordCountSafe && stableInputs && compiledIndex.uniqueEntries.isNotEmpty()
         val activationReason = when {
@@ -253,7 +263,7 @@ class ContainerPatchInstaller(
             val activeIndex = TranslationIndexStore(indexRoot()).activate(compiledIndex)
             runCatching { android.util.Log.i(
                 TAG,
-                "Activated Japanese full-text translation index version=${manifest.requestedVersion}" +
+                "Activated multilingual full-text translation index version=${manifest.requestedVersion}" +
                     " unique=${compiledIndex.uniqueEntries.size}" +
                     " terms=${compiledIndex.termEntries.size}" +
                     " sources=${compiledIndex.sourceRecordCount}" +
@@ -267,7 +277,7 @@ class ContainerPatchInstaller(
         } else if (!resourcesReady) {
             runCatching { android.util.Log.w(
                 TAG,
-                "Japanese resources not ready version=${manifest.requestedVersion}" +
+                "Game text resources not ready version=${manifest.requestedVersion}" +
                     " available=$availableFiles candidate=$candidateFiles" +
                     " preserved=$previousIndexAvailable"
             ) }
@@ -303,6 +313,7 @@ class ContainerPatchInstaller(
                     " sourceRecords=${compiledIndex.sourceRecordCount} uniqueEntries=${compiledIndex.uniqueEntries.size}" +
                 " bundledTables=${bundledHints.size} readableFiles=$readableFiles pairedFiles=$pairedFiles" +
                 " availableFiles=$availableFiles candidateFiles=$candidateFiles" +
+                    " localePairs=$availableByLocale" +
                     " startupActivated=$startupAvailable startupCompiled=${startupRecords != null}" +
                     " startupRecords=${startupRecords ?: "not_run"}") }
         return PatchInstallSummary(
@@ -318,7 +329,7 @@ class ContainerPatchInstaller(
             pendingReason = when {
                 activated -> null
                 !stableInputs -> "资源正在变化，保留已有汉化，请在游戏下载结束后重试"
-                !resourcesReady -> "有效日文资源或译文配对不足，需要完成资源下载"
+                !resourcesReady -> "有效游戏原文或译文配对不足，需要完成资源下载"
                 !recordCountSafe -> "新索引记录数量异常减少，已保留上一版汉化"
                 else -> "尚无可用的文本映射"
             }
@@ -403,5 +414,5 @@ class ContainerPatchInstaller(
 
 }
 
-internal fun hasSufficientJapaneseSources(available: Int, candidate: Int): Boolean =
+internal fun hasSufficientOriginalSources(available: Int, candidate: Int): Boolean =
     candidate > 0 && available * 100L >= candidate * 90L

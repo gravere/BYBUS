@@ -6,6 +6,7 @@ import android.content.Context
 import android.os.Build
 import android.os.Process
 import com.example.limbuszhcn.container.ContainerStatus
+import com.example.limbuszhcn.container.LocalContainerRuntime
 import com.example.limbuszhcn.container.MicrogContainerConfig
 import com.example.limbuszhcn.gamefs.PatchInstallSummary
 import java.io.BufferedOutputStream
@@ -17,6 +18,8 @@ import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.FutureTask
+import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -71,7 +74,7 @@ internal class DebugLogExporter(private val context: Context) {
                     zip.writeText("legacy-host/${file.name}", text.redactedAndBounded(32 * 1024))
                 }
             // Fixed, bounded runtime metadata only; never include the index or game text.
-            for (name in listOf("font-state.log", "integrity-state.log", "billing-state.log")) {
+            for (name in listOf("font-state.log", "font-hooks.log", "integrity-state.log", "billing-state.log")) {
                 val file = File(context.filesDir, "translation-cache/translation-index/$name")
                 if (file.isFile) {
                     val text = file.inputStream().use { String(it.readBounded(32 * 1024), Charsets.UTF_8) }
@@ -158,7 +161,11 @@ internal class DebugLogExporter(private val context: Context) {
             val startup = com.example.limbuszhcn.container.TranslationIndexStore(indexRoot).bootstrapManifest()
             appendLine("translationStartupAvailable=${startup != null}")
             appendLine("translationStartupRecords=${startup?.getProperty("sourceRecordCount")?.toIntOrNull() ?: 0}")
-            append(com.example.limbuszhcn.container.RuntimeReceipt(indexRoot).diagnosticSummary())
+            append(com.example.limbuszhcn.container.RuntimeReceipt(indexRoot).diagnosticSummary { pid, started ->
+                val exit = SystemStartupDiagnostics.gameProcessExit(context, pid)
+                val until = exit?.timestamp?.takeIf { it >= started } ?: Long.MAX_VALUE
+                readGameExitCodes(context, pid, started, until)
+            })
             appendLine("microgSource=${microgStatus.source}")
             appendLine("microgApks=${microgStatus.availableApkCount}/${microgStatus.configuredApkCount}")
             appendLine("microgMigrationCompleted=${microgStatus.migrationCompleted}")
@@ -231,6 +238,7 @@ internal class DebugLogExporter(private val context: Context) {
                 appendLine()
                 appendLine("[$index]")
                 appendLine("timestamp=${Instant.ofEpochMilli(reason.timestamp)}")
+                appendLine("pid=${reason.pid}")
                 appendLine("process=${reason.processName}")
                 appendLine("reason=${exitReasonName(reason.reason)}(${reason.reason})")
                 appendLine("status=${reason.status}")
@@ -453,6 +461,76 @@ internal fun String.redactedAndBounded(maxBytes: Int): String {
     if (bytes.size <= maxBytes) return value
     val suffix = bytes.copyOfRange(bytes.size - maxBytes, bytes.size)
     return "[truncated to recent data]\n" + String(suffix, Charsets.UTF_8)
+}
+
+private val GAME_EXIT_LOG = Regex("""(\d{1,11})\.(\d{3,9})\s+(\d+)\s+\d+\s+[EF]\s+AppSealing\s*:\s*[! ]*Kill\s+Process[. ]*\[([1-9]\d{4})\]""")
+
+private const val EARLY_GAME_EXIT_MS = 30_000L
+private const val GAME_BIND_EVENT = "VClient.bindApplication before makeApplication"
+private val GAME_BIND_LOG = Regex("""(\d{1,11})\.(\d{3,9})\s+(\d+)\s+\d+\s+I\s+LimbusVA\s*:\s*VClient\.bindApplication before makeApplication package=(\S+) process=(\S+) info=.*""")
+
+internal fun readGameExitCodes(context: Context, pid: Int, started: Long, until: Long): List<String> {
+    val direct = readGameLog(started, listOf("--pid=$pid", "AppSealing:E")) { lines ->
+        lines.take(256).mapNotNull { gameReportedExitCode(it, pid, started, until) }.distinct().take(8).toList()
+    }
+    if (direct.isNotEmpty() || until - started !in 0..EARLY_GAME_EXIT_MS) return direct
+    return readGameLog(started, listOf("LimbusVA:I", "AppSealing:E")) { lines ->
+        launchGameExitCodes(lines, pid, started, until) { SystemStartupDiagnostics.gameSlotExitTime(context, it) }
+    }
+}
+
+private fun readGameLog(started: Long, filters: List<String>, parse: (Sequence<String>) -> List<String>): List<String> = runCatching {
+    val since = "${started / 1000}.${(started % 1000).toString().padStart(3, '0')}"
+    val args = listOf("logcat", "-d", "-b", "main", "-v", "epoch", "-T", since, "--uid=${Process.myUid()}") + filters + "*:S"
+    val process = ProcessBuilder(args).redirectErrorStream(true).start()
+    val read = FutureTask {
+        process.inputStream.bufferedReader().useLines(parse)
+    }
+    try {
+        Thread(read, "bybus-game-exit-log").apply { isDaemon = true; start() }
+        read.get(2, TimeUnit.SECONDS)
+    } finally {
+        process.destroy()
+        read.cancel(true)
+    }
+}.getOrDefault(emptyList())
+
+/** Android can recreate a game activity under a new PID before it returns to BYBUS. */
+internal fun launchGameExitCodes(
+    lines: Sequence<String>, pid: Int, started: Long, until: Long, exitTime: (Int) -> Long?
+): List<String> {
+    val logs = lines.take(4096).filter { GAME_BIND_EVENT in it || "AppSealing" in it }.take(256).toList()
+    val direct = logs.mapNotNull { gameReportedExitCode(it, pid, started, until) }.distinct().take(8)
+    if (direct.isNotEmpty() || until - started !in 0..EARLY_GAME_EXIT_MS) return direct
+
+    val bindings = logs.mapNotNull { GAME_BIND_LOG.matchEntire(it.trim()) }
+        .filter { logTimeMillis(it) in started..until }
+        .groupBy { it.groupValues[3].toIntOrNull() }
+    val codes = linkedSetOf<String>()
+    val game = LocalContainerRuntime.GAME_PACKAGE
+    for ((priorPid, records) in bindings) {
+        if (priorPid == null || priorPid <= 0 || priorPid == pid) continue
+        // A reused PID or a helper process cannot establish ownership of a game error.
+        val binding = records.singleOrNull() ?: continue
+        if (binding.groupValues[4] != game || binding.groupValues[5] != game) continue
+        val boundAt = logTimeMillis(binding)
+        if (logs.none { gameReportedExitCode(it, priorPid, boundAt, until) != null }) continue
+        val endedAt = exitTime(priorPid)?.takeIf { it in boundAt..until } ?: continue
+        logs.mapNotNullTo(codes) { gameReportedExitCode(it, priorPid, boundAt, endedAt) }
+        if (codes.size >= 8) break
+    }
+    return codes.take(8)
+}
+
+private fun logTimeMillis(match: MatchResult): Long =
+    match.groupValues[1].toLong() * 1000 + match.groupValues[2].take(3).toLong()
+
+/** Only the game's numeric code is exported, bound to the time and PID of this launch. */
+internal fun gameReportedExitCode(line: String, pid: Int, started: Long, until: Long = Long.MAX_VALUE): String? {
+    val match = GAME_EXIT_LOG.matchEntire(line.trim()) ?: return null
+    if (match.groupValues[3].toIntOrNull() != pid) return null
+    val time = logTimeMillis(match)
+    return match.groupValues[4].takeIf { time in started..until && time - started <= 5 * 60_000L }
 }
 
 private val URL_CREDENTIAL = Regex("(https?://)[^\\s/@:]+(?::[^\\s/@]*)?@", RegexOption.IGNORE_CASE)

@@ -2,6 +2,10 @@
 
 本文记录已解决黑屏问题的诊断过程。架构约定仍以 `AGENTS.md` 为准,VirtualApp 兼容细节见 `docs/container-runtime-notes.md`。
 
+游戏窗口进入前台仅代表启动交接完成。返回首页时，运行状态可按本次汉化进程 PID 和启动时间读取本应用的系统退出记录。记录为信号终止时显示信号编号，信号的发送者仍需独立证据。容器自己发出的终止请求在本地留下目标 PID。旧进程延迟返回的退出回调只能清理旧实例的记录和窗口。
+
+导出时若游戏主进程在本次启动的前五分钟内明确记录过退出编号，`runtime.txt` 会列出 `gameReportedExitCodes` 和启动时间 `runtimeLaunchAtMillis`。这里只保存编号。日志已经轮换或游戏未输出编号时，该字段会缺席，`process-exits.txt` 仍提供 Android 留存的退出原因。
+
 ## 宿主异常与安装后打开
 
 首页保留唯一 `MAIN/LAUNCHER` 入口，并接受 `DEFAULT`，使限定到本包的隐式启动与桌面
@@ -300,9 +304,8 @@ AppSealing 后台 `Thread-5` 会稳定在 `libcovault-appsec.so +0x248d4` 以空
    - 当前 SurfaceFlinger 能看到 `SurfaceView[ShadowActivity$P0]` 和 Activity 主窗口,但截图仍全黑。
    - 需要对比容器外开屏视频结束后是否还会创建额外 Surface、切换 EGL/Vulkan 上下文或进入登录 UI 场景。
 
-4. 检查 AppSealing 后续保护分支。
-   - 已知 `libcovault-appsec.so +0x23088` 和 `+0x20c58` 会调用 `exit(0)`,并有后续 direct `exit_group`。
-   - 当前策略是补掉后续 `exit_group` 并终止当前 native 调用线程;如果原游戏在同一时间点没有这些分支,需要继续定位触发条件。
+4. 核对游戏提示及退出顺序。
+   - 分别记录游戏主进程和提示窗口进程的 PID、退出时间与系统原因。提示窗口稍后退出时，保留游戏先前发出的错误编号。
 
 ## 建议采集
 

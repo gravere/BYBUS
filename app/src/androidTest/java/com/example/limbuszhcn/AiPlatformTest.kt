@@ -13,6 +13,69 @@ import org.junit.runner.RunWith
 /** Exercises Android ICU and org.json, with an in-memory API response and no network request. */
 @RunWith(AndroidJUnit4::class)
 class AiPlatformTest {
+    @Test fun keysPersistIndependentlyOfModelsAndStayWithTheirService() {
+        val context = object : ContextWrapper(InstrumentationRegistry.getInstrumentation().targetContext) {
+            override fun getSharedPreferences(name: String, mode: Int) = super.getSharedPreferences("keyring-probe-$name", mode)
+        }
+        val prefs = context.getSharedPreferences("ai-translation-private", 0)
+        prefs.edit().clear().commit()
+        val endpoint = "https://example.test/v1"
+        val otherPath = "https://example.test/another/v1"
+        try {
+            val store = AiSettingsStore(context)
+            store.saveKey(endpoint, "", "fixture-one", "个人")
+            val first = requireNotNull(store.choices().first)
+            assertEquals("", store.config().model)
+            store.saveKey(endpoint, "demo-a", "fixture-two", "工作")
+            val second = requireNotNull(store.choices().first)
+            store.saveKey(otherPath, "demo-b", "fixture-three", "其他接口")
+            val third = requireNotNull(store.choices().first)
+            val reopened = AiSettingsStore(context)
+            assertEquals(3, reopened.choices().second.size)
+            assertEquals("fixture-three", reopened.key(otherPath))
+            assertEquals("", reopened.requestKey(endpoint, ""))
+            assertTrue(runCatching { reopened.key(endpoint) }.isFailure)
+            reopened.selectKey(second)
+            assertEquals("demo-a", reopened.config().model)
+            assertEquals("fixture-two", reopened.key(endpoint))
+            assertEquals("", reopened.requestKey(otherPath, ""))
+            reopened.selectKey(first)
+            assertEquals("fixture-one", reopened.key(endpoint))
+            assertTrue(runCatching { reopened.saveKey(endpoint, "", "fixture-new", "工作") }.isFailure)
+            assertEquals(first, reopened.choices().first)
+            reopened.clearKey(third)
+            assertEquals(first, reopened.choices().first)
+            reopened.clearKey(first)
+            assertFalse(reopened.hasKey())
+            assertEquals(second, reopened.choices().second.single().id)
+            assertTrue(prefs.all.values.none { it.toString().contains("fixture-") })
+        } finally { prefs.edit().clear().commit() }
+    }
+
+    @Test fun legacyEncryptedKeySurvivesAddingAndSwitching() {
+        val context = object : ContextWrapper(InstrumentationRegistry.getInstrumentation().targetContext) {
+            override fun getSharedPreferences(name: String, mode: Int) = super.getSharedPreferences("legacy-key-probe-$name", mode)
+        }
+        val prefs = context.getSharedPreferences("ai-translation-private", 0)
+        prefs.edit().clear().commit()
+        try {
+            val store = AiSettingsStore(context)
+            store.saveKey(AiConfig().endpoint, "", "fixture-seed", "准备")
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            val ks = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+            cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, ks.getKey("bybus.ai.credential.v1", null))
+            val original = android.util.Base64.encodeToString(cipher.iv + cipher.doFinal("fixture-old".toByteArray()), android.util.Base64.NO_WRAP)
+            prefs.edit().clear().putString("credential", original).putString("model", "old-model").commit()
+            val old = requireNotNull(store.choices().first)
+            assertEquals("fixture-old", store.key())
+            store.saveKey("https://example.test/v1", "other-model", "fixture-new", "第二把")
+            assertFalse(prefs.contains("credential"))
+            AiSettingsStore(context).selectKey(old)
+            assertEquals("fixture-old", store.key(AiConfig().endpoint))
+            assertEquals("old-model", store.config().model)
+        } finally { prefs.edit().clear().commit() }
+    }
+
     @Test fun globalPromptPersistsIndependentlyAndRestoresWithoutChangingCredentials() {
         val context = object : ContextWrapper(InstrumentationRegistry.getInstrumentation().targetContext) {
             override fun getSharedPreferences(name: String, mode: Int) = super.getSharedPreferences("prompt-probe-$name", mode)

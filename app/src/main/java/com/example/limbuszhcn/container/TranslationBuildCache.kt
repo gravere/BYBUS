@@ -20,10 +20,11 @@ internal class TranslationBuildCache(private val receipt: Path) {
         fun field(value: String) { digest.update(value.toByteArray(Charsets.UTF_8)); digest.update(0) }
         // Bump when JSON pairing/text policy changes, independently of the native file format.
         field(TRANSLATION_COMPILER_REVISION); field(identity)
+        val translationHashes = mutableMapOf<Path, String>()
         inputs.sortedBy { it.originalPath }.forEach { input ->
             field(input.originalPath)
-            field(fileDigest(input.translation))
-            val original = storage.read(input.originalPath)
+            field(translationHashes.getOrPut(input.translation) { fileDigest(input.translation) })
+            val original = storage.readAtMost(input.originalPath, LiveTranslationStore.MAX_JSON_BYTES.toInt())
             field(if (original == null) "missing" else MessageDigest.getInstance("SHA-256").digest(original).toLowerHex())
         }
         return digest.digest().toLowerHex()

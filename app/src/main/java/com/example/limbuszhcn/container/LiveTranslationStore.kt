@@ -107,7 +107,7 @@ internal class LiveTranslationStore(private val cache: Path) {
     data class Snapshot(val version: String, val archive: String, val entries: List<Entry>, val fontHash: String, val labels: Int)
 
     companion object {
-        private const val SCHEMA = 4
+        private const val SCHEMA = 5
         const val MAX_JSON_BYTES = 16L * 1024 * 1024
         private val SHA = Regex("[0-9a-f]{64}")
         private fun validKey(key: String): Boolean = key.startsWith("jp/") && key.length <= 512 &&

@@ -7,6 +7,7 @@ import hashlib
 import os
 from pathlib import Path
 import re
+import subprocess
 import time
 import urllib.request
 import zipfile
@@ -14,13 +15,17 @@ import zipfile
 GAME = "com.ProjectMoon.LimbusCompany"
 HOST = "io.github.gravere.bybus"
 GAME_SIGNER = "9ea88fdc27195dfef99050f88a889cad86cdf1a80faca2e22d6464d47f973145"
-GAME_URL = "https://d.apkpure.net/b/XAPK/com.ProjectMoon.LimbusCompany?versionCode=488"
+DEFAULT_GAME_VERSION = "492"
 MAX_ARCHIVE = 1600 * 1024 * 1024
 
 
-def download_game(directory):
+def download_game(directory, version_code):
+    if not re.fullmatch(r"[1-9][0-9]{0,9}", version_code):
+        raise ValueError("Expected a positive Android game version code")
     archive = directory / "game.xapk"
-    request = urllib.request.Request(GAME_URL, headers={"User-Agent": "Mozilla/5.0"})
+    # The default variant for a version can be 32-bit even when an ARM64 split is available.
+    url = f"https://d.apkpure.net/b/XAPK/{GAME}?versionCode={version_code}&nc=arm64-v8a"
+    request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     digest = hashlib.sha256()
     count = 0
     with urllib.request.urlopen(request, timeout=60) as response, archive.open("wb") as output:
@@ -46,7 +51,7 @@ def download_game(directory):
                     dst.write(chunk)
             apks.append(target)
     archive.unlink()
-    return apks, {"version_code": 488, "source_archive_bytes": count,
+    return apks, {"version_code": int(version_code), "source_archive_bytes": count,
                   "source_archive_sha256": digest.hexdigest()}
 
 
@@ -61,7 +66,10 @@ def sanitize(text):
 
 def capture(adb, out, label):
     (out / (label + ".png")).write_bytes(adb("exec-out", "screencap", "-p", binary=True))
-    activity = adb("shell", "dumpsys", "activity", "activities", timeout=20)
+    try:
+        activity = adb("shell", "dumpsys", "activity", "activities", timeout=20)
+    except (subprocess.TimeoutExpired, TimeoutError):
+        activity = ""
     resumed = [line.strip() for line in activity.splitlines()
                if "mResumedActivity" in line or "topResumedActivity" in line]
     logs = adb("logcat", "-d", "LimbusSafety:V", "PackageQueries:V",
@@ -70,9 +78,7 @@ def capture(adb, out, label):
     (out / (label + "-log.txt")).write_text(sanitize(logs[-150000:]), encoding="utf-8")
     crashes = adb("logcat", "-d", "-b", "crash", "-t", "180", check=False)
     (out / (label + "-crashes.txt")).write_text(sanitize(crashes), encoding="utf-8")
-    return {"resumed": resumed, "safety_70036_observed": "70036" in logs,
-            "native_crash_observed": "Fatal signal" in logs or "signal 11 (SIGSEGV)" in crashes,
-            "screenshot_requires_review": True}
+    return {"resumed": resumed, "screenshot_requires_review": True}
 
 
 def security_evidence(logs):
@@ -92,24 +98,40 @@ def security_evidence(logs):
 def observe_startup(adb, out, label, timeout, container=False, failure_probe=None):
     deadline = time.monotonic() + timeout
     first_game_frame = None
+    foreground_interrupted = False
+    activity_poll_timeouts = 0
     alert_seen = False
     preparation_error = None
     next_probe = time.monotonic() + 8
-    while time.monotonic() < deadline:
-        activities = adb("shell", "dumpsys", "activity", "activities", timeout=15)
-        resumed = "\n".join(line for line in activities.splitlines()
-                            if "topResumedActivity=" in line or "mResumedActivity:" in line)
-        if "AppSealingAlertDialog" in resumed:
+
+    def game_window(line):
+        return (HOST + "/" in line and "ShadowActivity" in line) if container else GAME + "/" in line
+
+    while True:
+        try:
+            activities = adb("shell", "dumpsys", "activity", "activities", timeout=15)
+        except (subprocess.TimeoutExpired, TimeoutError):
+            # Keep the same launch and its logs. A missing sample cannot prove a sustained window.
+            activities = ""
+            activity_poll_timeouts += 1
+        resumed = [line for line in activities.splitlines()
+                   if "topResumedActivity=" in line or "mResumedActivity:" in line]
+        if any("AppSealingAlertDialog" in line for line in resumed):
             alert_seen = True
             time.sleep(.4)
             capture(adb, out, label + "-safety")
             break
-        in_game = (HOST + "/" in resumed and "ShadowActivity" in resumed) if container else GAME + "/" in resumed
-        if in_game and first_game_frame is None:
-            first_game_frame = time.monotonic()
-        if first_game_frame is not None and time.monotonic() - first_game_frame >= 30:
+        in_game = any(map(game_window, resumed))
+        now = time.monotonic()
+        if first_game_frame is None and in_game:
+            first_game_frame = now
+        elif first_game_frame is not None and not in_game:
+            foreground_interrupted = True
+        if first_game_frame is not None and now - first_game_frame >= 30:
             break
-        if (failure_probe and first_game_frame is None and HOST + "/" in resumed and
+        if first_game_frame is None and now >= deadline:
+            break
+        if (failure_probe and first_game_frame is None and any(HOST + "/" in line for line in resumed) and
                 time.monotonic() >= next_probe):
             preparation_error = failure_probe()
             next_probe = time.monotonic() + 8
@@ -117,41 +139,52 @@ def observe_startup(adb, out, label, timeout, container=False, failure_probe=Non
                 break
         time.sleep(1)
     result = capture(adb, out, label)
-    result.update(game_activity_seen=first_game_frame is not None, security_dialog_seen=alert_seen,
-                  security_rejection_seen=False, observed_security_codes=[])
+    result.update(game_activity_seen=first_game_frame is not None, activity_poll_timeouts=activity_poll_timeouts,
+                  security_dialog_seen=alert_seen,
+                  security_rejection_seen=False, observed_security_codes=[], safety_70036_observed=False,
+                  native_crash_observed=False)
     if preparation_error:
         result["preparation_error"] = preparation_error
-    result["game_in_foreground_at_capture"] = any(
-        (HOST + "/" in line and "ShadowActivity" in line) if container else GAME + "/" in line
-        for line in result["resumed"])
-    # Scope logs to fresh game/host UIDs. No account is created in this emulator.
+    result["game_in_foreground_at_capture"] = any(map(game_window, result["resumed"]))
+    result["game_foreground_30s"] = (
+        first_game_frame is not None and not foreground_interrupted and not alert_seen
+        and time.monotonic() - first_game_frame >= 30 and result["game_in_foreground_at_capture"]
+    )
+    # Scope each launch to its own UID. The other app and the OS can log unrelated failures.
     packages = adb("shell", "cmd", "package", "list", "packages", "-U", timeout=15)
-    uids = [uid for package, uid in re.findall(r"package:(\S+) uid:(\d+)", packages)
-            if package in (HOST, GAME)]
-    if uids:
-        logs = adb("logcat", "-d", "--uid=" + ",".join(uids), timeout=20)
+    uid = dict(re.findall(r"package:(\S+) uid:(\d+)", packages)).get(HOST if container else GAME)
+    result["app_uid_logs_obtained"] = False
+    if uid:
+        logs = adb("logcat", "-d", "--uid=" + uid, timeout=20)
+        result["app_uid_logs_obtained"] = bool(logs.strip())
         (out / (label + "-app-log.txt")).write_text(sanitize(logs[-150000:]), encoding="utf-8")
         # A short-lived alert can disappear between activity samples. Include
         # the existing process log so an observed rejection cannot be missed.
         codes = security_evidence(logs)
         result["observed_security_codes"] = codes
         result["security_rejection_seen"] = bool(codes)
-        result["safety_70036_observed"] |= "70036" in codes
+        result["safety_70036_observed"] = "70036" in codes
+        result["native_crash_observed"] = "Fatal signal" in logs or "signal 11 (SIGSEGV)" in logs
     return result
 
 
 def inspect(adb, command, hierarchy, locate, tap, report, out, verifier):
     directory = Path(os.environ["RUNNER_TEMP"]) / "bybus-game-inspection"
     directory.mkdir(exist_ok=True)
-    apks, source = download_game(directory)
+    version_code = os.environ.get("GAME_VERSION_CODE") or DEFAULT_GAME_VERSION
+    apks, source = download_game(directory, version_code)
     for apk in apks:
         result = command(str(verifier), "verify", "--print-certs", str(apk), timeout=150)
         certs = re.findall(r"Signer #\d+ certificate SHA-256 digest: ([a-fA-F0-9]+)", result)
         if {c.lower() for c in certs} != {GAME_SIGNER}:
             raise RuntimeError("Official game split signer mismatch")
-    badging = command(str(verifier.with_name("aapt2")), "dump", "badging", str(apks[0]), timeout=30)
-    if f"name='{GAME}' versionCode='488'" not in badging:
-        raise RuntimeError("Downloaded game version differs from the diagnostic")
+        badging = command(str(verifier.with_name("aapt2")), "dump", "badging", str(apk), timeout=30)
+        manifest = next((line for line in badging.splitlines() if line.startswith("package:")), "")
+        fields = dict(re.findall(r"(\w+)='([^']*)'", manifest))
+        expected_split = None if apk.name == GAME + ".apk" else apk.stem
+        if (fields.get("name") != GAME or fields.get("versionCode") != version_code
+                or fields.get("split") != expected_split):
+            raise RuntimeError(f"Wrong package, version or split in {apk.name} for game {version_code}")
     source["split_signatures_verified"] = True
     report["game"] = source
     result = adb("install-multiple", "--no-streaming", "-r", *map(str, apks), timeout=300)
@@ -205,7 +238,7 @@ def inspect(adb, command, hierarchy, locate, tap, report, out, verifier):
     # a cold import can consume most of the former four-minute total by itself.
     report["container_startup"] = observe_startup(adb, out, "container-startup", 600, container=True,
                                                  failure_probe=preparation_failure)
-    report["result"] = "official/container startup evidence captured; compare screenshots and logs"
+    report["result"] = "startup evidence captured; foreground and visible game state require separate checks"
     report["checks"].append("one fresh container startup; no login" if live else "one startup each, original signed game and published BYBUS; no login")
     if not report["container_startup"]["game_activity_seen"]:
         raise RuntimeError(report["container_startup"].get("preparation_error") or
@@ -213,7 +246,8 @@ def inspect(adb, command, hierarchy, locate, tap, report, out, verifier):
     for kind in (("container_startup",) if live else ("official_startup", "container_startup")):
         status = report[kind]
         if (status["security_dialog_seen"] or status["security_rejection_seen"] or status["safety_70036_observed"] or
-                status["native_crash_observed"] or not status["game_in_foreground_at_capture"]):
+                status["native_crash_observed"] or not status["game_foreground_30s"]
+                or not status["app_uid_logs_obtained"]):
             raise RuntimeError(kind + " did not remain on the game page; inspect captured evidence")
 
     if live:

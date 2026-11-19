@@ -236,8 +236,8 @@ public class NativeEngine {
                     SystemPropertiesCompat.get("ro.dalvik.vm.native.bridge", ""),
                     java.util.Arrays.toString(Build.SUPPORTED_ABIS));
             if ("com.ProjectMoon.LimbusCompany".equals(VClient.get().getCurrentPackage())) {
-                nativeHookLimbusProcessExit();
                 if (LimbusAuthenticationCompat.supportsDirectArmJniTable(Build.SUPPORTED_ABIS)) {
+                    nativeHookLimbusProcessExit();
                     nativeHookLimbusFindClass();
                 } else {
                     VLog.w(TAG, "Keep platform JNI table for translated ARM runtime");
@@ -263,6 +263,23 @@ public class NativeEngine {
         sFlag = true;
     }
 
+    public static void scanLimbusNativeSyscalls(String nativeLibraryDir) {
+        try {
+            nativeScanLimbusNativeSyscalls(nativeLibraryDir);
+        } catch (Throwable e) {
+            VLog.e(TAG, VLog.getStackTraceString(e));
+        }
+    }
+
+    public static int maintainLimbusAppSealingPatches() {
+        try {
+            return nativeMaintainLimbusAppSealingPatches();
+        } catch (Throwable e) {
+            VLog.e(TAG, VLog.getStackTraceString(e));
+            return -1;
+        }
+    }
+
     public static void configureLimbusTranslationRuntime(String activeIndexPointer) {
         try {
             nativeConfigureLimbusTranslationRuntime(activeIndexPointer, VirtualCore.getConfig().prepareLimbusTranslationResources());
@@ -274,6 +291,12 @@ public class NativeEngine {
     @Keep
     public static String translateLimbusResource(String resource, String original) {
         return VirtualCore.getConfig().translateLimbusResource(resource, original);
+    }
+
+    @Keep
+    public static void observeLimbusTextLanguage(String language) {
+        if ("com.ProjectMoon.LimbusCompany".equals(VClient.get().getCurrentPackage()))
+            VirtualCore.getConfig().onLimbusTextLanguage(language);
     }
 
     @Keep
@@ -553,7 +576,9 @@ public class NativeEngine {
 
     private static native void nativeHookLimbusFindClass();
 
+    private static native void nativeScanLimbusNativeSyscalls(String nativeLibraryDir);
 
+    private static native int nativeMaintainLimbusAppSealingPatches();
 
     private static native void nativeConfigureLimbusTranslationRuntime(String activeIndexPointer, boolean liveResources);
 
@@ -641,10 +666,6 @@ public class NativeEngine {
         }
         VLog.w("V++", "onSendSignal:" + pid + ", " + sig + ", quiet=" + quiet
                 + ", pkg=" + VClient.get().getCurrentPackage());
-        if (shouldBlockLimbusSelfSigalrm(pid, sig)) {
-            VLog.w("V++", "block Limbus self SIGALRM from android.os.Process");
-            return true;
-        }
         //返回主界面
         if (pid == android.os.Process.myPid() && sig == android.os.Process.SIGNAL_KILL) {
             if (VClient.get().countOfActivity > 0) {//有前台activity才返回桌面。
@@ -653,13 +674,6 @@ public class NativeEngine {
             }
         }
         return false;
-    }
-
-    private static boolean shouldBlockLimbusSelfSigalrm(int pid, int sig) {
-        String currentPackage = VClient.get().getCurrentPackage();
-        return pid == android.os.Process.myPid()
-                && sig == 14
-                && "com.ProjectMoon.LimbusCompany".equals(currentPackage);
     }
 
 }

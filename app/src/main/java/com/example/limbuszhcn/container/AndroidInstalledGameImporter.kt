@@ -1,6 +1,5 @@
 package com.example.limbuszhcn.container
 
-import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.os.Build
@@ -13,10 +12,10 @@ class AndroidInstalledGameImporter(
 ) {
     // The name is retained for callers; snapshot copying is owned by the import transaction.
     fun copyInstalledGame(): InstalledGameImport {
-        val appInfo = applicationInfo()
         val packageInfo = packageInfo(packageManager, packageName)
-        val sourcePaths = listOfNotNull(appInfo.sourceDir) + appInfo.splitSourceDirs.orEmpty().toList()
-        require(sourcePaths.isNotEmpty()) { "未找到已安装游戏的 APK 路径" }
+        val appInfo = requireNotNull(packageInfo.applicationInfo) { "未找到已安装游戏的信息" }
+        val base = requireNotNull(appInfo.sourceDir?.takeIf { it.isNotBlank() }) { "未找到已安装游戏的基础 APK" }
+        val sourcePaths = listOf(base) + appInfo.splitSourceDirs.orEmpty()
 
         require(sourcePaths.all { File(it).isFile }) { "无法读取已安装游戏的完整 APK 集合" }
         return InstalledGameImport(
@@ -25,14 +24,6 @@ class AndroidInstalledGameImporter(
             splitApkPaths = sourcePaths
         )
     }
-
-    private fun applicationInfo(): ApplicationInfo =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            packageManager.getApplicationInfo(packageName, PackageManager.ApplicationInfoFlags.of(0))
-        } else {
-            @Suppress("DEPRECATION")
-            packageManager.getApplicationInfo(packageName, 0)
-        }
 
     companion object {
         fun installedVersionName(packageManager: PackageManager): String? =

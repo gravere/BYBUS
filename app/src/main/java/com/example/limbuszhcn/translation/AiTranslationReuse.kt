@@ -37,10 +37,11 @@ internal object AiTranslationReuse {
             }
         } }
         if (saved.isEmpty()) return emptyMap()
-        val entries = previous.manifest.entries.associateBy { AiTranslationJob.resourceKey(it.targetPath) }
+        val language = requireNotNull(storage.textLanguage()) { "请先启动游戏，以读取当前游戏语言" }.language
+        val entries = previous.manifest.entries.associateBy { language.resourceKey(it.targetPath) }
         val reusable = mutableMapOf<String, String>()
         var readBytes = 0L
-        for (key in storage.japaneseResources()) {
+        for (key in storage.textResources(language)) {
             checkCancelled()
             val entry = entries[key] ?: continue
             val raw = storage.read(storage.rootPath().trimEnd('/') + "/$key") ?: continue

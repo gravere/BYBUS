@@ -7,12 +7,14 @@ class VirtualAppSessionTest {
     private val game = LocalContainerRuntime.GAME_PACKAGE
     private fun task(id: Int = 8, activities: Int = 1, pkg: String = game) =
         SessionTask(id, activities, "$pkg/$pkg.Main", "com.lody.virtual.client.stub.ShadowActivity\$P1", null)
-    private class Access(var state: SessionSnapshot, var fail: Boolean = false) : SessionTaskAccess {
+    private class Access(var state: SessionSnapshot, var fail: Boolean = false, var taskRemoved: Boolean = false) : SessionTaskAccess {
         val moved = mutableListOf<Int>()
         override fun snapshot() = state
-        override fun moveToFront(taskId: Int) {
+        override fun moveToFront(taskId: Int): Boolean {
             check(!fail) { "task move failed" }
+            if (taskRemoved) return false
             moved += taskId
+            return true
         }
     }
 
@@ -62,10 +64,42 @@ class VirtualAppSessionTest {
         assertTrue(access.moved.isEmpty())
     }
 
+    @Test fun gameExitingDuringEntryDoesNotRestoreAnEmptyWindow() {
+        val access = Access(SessionSnapshot(game, setOf(123), listOf(task())))
+        val resumed = VirtualAppSession(access).resume {
+            access.state = access.state.copy(pids = setOf(456), servicePids = setOf(456))
+            true
+        }
+        assertFalse(resumed)
+        assertTrue(access.moved.isEmpty())
+    }
+
+    @Test fun entryUsesTheLiveReplacementForAnExpiredTask() {
+        val access = Access(SessionSnapshot(game, setOf(123), listOf(task())))
+        val resumed = VirtualAppSession(access).resume {
+            access.state = access.state.copy(tasks = listOf(task(id = 9)))
+            true
+        }
+        assertTrue(resumed)
+        assertEquals(listOf(9), access.moved)
+    }
+
+    @Test fun taskRemovedByAndroidDuringMoveDoesNotReportSuccess() {
+        val access = Access(SessionSnapshot(game, setOf(123), listOf(task())), taskRemoved = true)
+        assertFalse(VirtualAppSession(access).resume())
+        assertTrue(access.moved.isEmpty())
+    }
+
     @Test fun diagnosticContainsOnlyBoundedOwnGameMetadata() {
         val info = SessionSnapshot(game, setOf(123), listOf(task(), task(pkg = "private.other"))).diagnostic()
         assertTrue(info.contains("liveGuestPids=123"))
         assertTrue(info.contains("taskId=8 activities=1 resumable=true"))
         assertFalse(info.contains("private.other"))
+    }
+
+    @Test fun serviceOnlyProcessCannotResumeAStaleGameTask() {
+        val snapshot = SessionSnapshot(game, setOf(321), listOf(task()), servicePids = setOf(321))
+        assertTrue(snapshot.resumableTasks.isEmpty())
+        assertEquals(1, snapshot.copy(pids = setOf(321, 444)).resumableTasks.size)
     }
 }

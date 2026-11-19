@@ -1,6 +1,7 @@
 package com.example.limbuszhcn.translation
 
 import com.example.limbuszhcn.gamefs.GameStorage
+import com.example.limbuszhcn.gamefs.GameTextLanguage
 import com.example.limbuszhcn.update.TranslationRepository
 import org.json.JSONArray
 import org.json.JSONObject
@@ -10,16 +11,18 @@ import java.nio.file.Path
 internal data class SavedCoverage(val fingerprint: String, val report: CoverageReport, val needsCheck: Boolean = false,
     val independentReady: Boolean = true)
 
-private fun packageKey(sourceId: String, revision: String) = AiTranslationJob.digest(revision.ifEmpty { sourceId })
+private fun packageKey(sourceId: String, revision: String, language: GameTextLanguage = GameTextLanguage.Japanese) =
+    AiTranslationJob.digest("${revision.ifEmpty { sourceId }}|${language.code}")
 
-internal class CoverageInputs(source: TranslationSource, revision: String, game: String, independent: TranslationSource?) {
+internal class CoverageInputs(source: TranslationSource, revision: String, game: String, independent: TranslationSource?,
+    val language: GameTextLanguage = GameTextLanguage.Japanese, languageRevision: String = language.code) {
     val sourceId = source.id
     val name = source.name
-    val pack = packageKey(source.id, revision)
-    val content = AiTranslationJob.digest("package-coverage|$revision|$game")
+    val pack = packageKey(source.id, revision, language)
+    val content = AiTranslationJob.digest("package-coverage-v5|$revision|$game|${language.code}|$languageRevision")
     val independentKey = AiTranslationJob.digest("$content|${independent?.id.orEmpty()}|${independent?.revision.orEmpty()}")
     // The previous single-report format can be adopted only if all of its inputs match.
-    val fingerprint = AiTranslationJob.digest("coverage-v3|${source.id}|$revision|${independent?.id.orEmpty()}|${independent?.revision.orEmpty()}|$game")
+    val fingerprint = AiTranslationJob.digest("coverage-v4|${source.id}|$content|${independent?.id.orEmpty()}|${independent?.revision.orEmpty()}")
 }
 
 internal data class CoverageCheck(val sourceId: String, val pack: String, val token: String, val wasPending: Boolean)
@@ -37,7 +40,8 @@ internal class CoverageStore(private val cache: Path) {
         if (Files.isRegularFile(path) && Files.size(path) <= limit) String(Files.readAllBytes(path), Charsets.UTF_8) else null
 
     fun beginCheck(input: CoverageInputs) = beginCheck(input.sourceId, input.pack)
-    fun beginCheck(source: TranslationSource) = beginCheck(source.id, packageKey(source.id, sourceRevision(source)))
+    fun beginCheck(source: TranslationSource, language: GameTextLanguage = GameTextLanguage.Japanese) =
+        beginCheck(source.id, packageKey(source.id, sourceRevision(source), language))
 
     @Synchronized private fun beginCheck(sourceId: String, pack: String): CoverageCheck {
         val path = marker(sourceId, pack)
@@ -94,14 +98,17 @@ internal class CoverageStore(private val cache: Path) {
     }
 
     fun inputs(source: TranslationSource, storage: GameStorage, verifyContents: Boolean = false,
-        independentInput: TranslationSource? = null, verifiedOfficial: String? = null) =
-        CoverageInputs(source, sourceRevision(source, verifiedOfficial), resourceFingerprint(storage, verifyContents), independentInput)
+        independentInput: TranslationSource? = null, verifiedOfficial: String? = null): CoverageInputs {
+        val selected = requireNotNull(storage.textLanguage()) { "请先从 BYBUS 启动一次游戏，以读取当前游戏语言。" }
+        return CoverageInputs(source, sourceRevision(source, verifiedOfficial),
+            resourceFingerprint(storage, selected.language, verifyContents), independentInput, selected.language, selected.revision)
+    }
 
     fun hasHistory(source: TranslationSource) = Files.isRegularFile(legacy) || Files.isRegularFile(pointer(source.id)) ||
         Files.isRegularFile(directory(packageKey(source.id, sourceRevision(source))).resolve("result.json"))
 
-    @Synchronized private fun resourceFingerprint(storage: GameStorage, verifyContents: Boolean): String {
-        val metadata = storage.japaneseResourceMetadata() ?: return storage.japaneseResourceStamp()
+    @Synchronized private fun resourceFingerprint(storage: GameStorage, language: GameTextLanguage, verifyContents: Boolean): String {
+        val metadata = storage.textResourceMetadata(language) ?: storage.textResources(language).associateWith { "unknown" }
         val index = cache.resolve("coverage/resources.json")
         val previous = runCatching {
             require(Files.size(index) <= 8 * 1024 * 1024)
@@ -113,7 +120,7 @@ internal class CoverageStore(private val cache: Path) {
             val saved = previous.optJSONObject(key)
             val oldHash = saved?.optString("hash").orEmpty()
             val sameStamp = saved?.optString("stamp") == stamp
-            val hash = if (!verifyContents && sameStamp && oldHash.matches(Regex("[a-f0-9]{64}"))) oldHash else {
+            val hash = if (!verifyContents && stamp != "unknown" && sameStamp && oldHash.matches(Regex("[a-f0-9]{64}"))) oldHash else {
                 val bytes = requireNotNull(storage.read(storage.rootPath().trimEnd('/') + "/$key"))
                 readBytes += bytes.size; require(bytes.size <= 8 * 1024 * 1024 && readBytes <= 128L * 1024 * 1024)
                 val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
@@ -124,7 +131,9 @@ internal class CoverageStore(private val cache: Path) {
             current.put(key, JSONObject().put("stamp", stamp).put("hash", hash))
         }
         if (changed || verifyContents)
-            check(storage.japaneseResourceMetadata() == metadata) { "游戏文本正在变化，请在资源下载结束后检查" }
+            check((storage.textResourceMetadata(language) ?: storage.textResources(language).associateWith { "unknown" }) == metadata) {
+                "游戏文本正在变化，请在资源下载结束后检查"
+            }
         if (changed) {
             TranslationSources.writeAtomic(index, current.toString())
         }
@@ -162,11 +171,12 @@ internal class CoverageStore(private val cache: Path) {
         CoverageEntryIndex.read(ref.file(cache), filter, page, cancel)
 
     @Synchronized fun save(input: CoverageInputs, r: CoverageReport, ticket: CoverageCheck): SavedCoverage {
+        check(r.language == input.language) { "游戏语言已变化，请重新检查" }
         val pending = marker(input.sourceId, input.pack)
         check(ticket.sourceId == input.sourceId && ticket.pack == input.pack && shortText(pending) == ticket.token) { "已有新的覆盖检查，请查看最新结果" }
         val json = JSONObject().put("schema", 2).put("fingerprint", input.fingerprint)
             .put("content", input.content).put("independentKey", input.independentKey).put("entryIndex", r.entryIndex?.generation)
-            .put("sourceName", r.sourceName).put("checkedAt", r.checkedAt).put("files", r.files).put("total", r.total)
+            .put("sourceName", r.sourceName).put("language", r.language.code).put("checkedAt", r.checkedAt).put("files", r.files).put("total", r.total)
             .put("covered", r.covered).put("missing", r.missing).put("review", r.review).put("aiEligible", r.aiEligible)
             .put("unreadable", r.unreadable).put("excluded", r.excluded).put("shared", r.shared).put("reviewEligible", r.reviewEligible)
             .put("independentEligible", r.independentEligible)
@@ -219,6 +229,8 @@ internal class CoverageStore(private val cache: Path) {
         require(json.getInt("schema") == 2)
         val index = if (json.isNull("entryIndex")) null else CoverageIndexRef(storedPack, json.getString("entryIndex"))
         val report = decode(json).copy(sourceName = input.name, entryIndex = index)
+        // Never display another language's totals as the current game's coverage.
+        if (report.language != input.language) return null
         if (!currentPack || json.getString("content") != input.content)
             return SavedCoverage(json.getString("fingerprint"), report, needsCheck = true)
         remember(input)
@@ -248,7 +260,7 @@ internal class CoverageStore(private val cache: Path) {
         return CoverageReport(j.getString("sourceName"), j.getLong("checkedAt"),
             j.getInt("files"), j.getInt("total"), j.getInt("covered"), j.getInt("missing"), j.getInt("review"),
             j.getInt("aiEligible"), j.getInt("unreadable"), details, j.getInt("excluded"), j.getInt("shared"), j.getInt("reviewEligible"),
-            j.optInt("independentEligible"))
+            j.optInt("independentEligible"), language = GameTextLanguage.fromCode(j.optString("language", "jp")) ?: GameTextLanguage.Japanese)
     }
 
     private companion object {

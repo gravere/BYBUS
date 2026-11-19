@@ -14,7 +14,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import kotlin.math.PI
 import kotlin.math.sin
 
-internal enum class LaunchSymbol { Ready, Scan, Prepare, Translate, Depart, Working, Attention, Info, Retry, Complete }
+internal enum class LaunchSymbol { Ready, Resume, Scan, Prepare, Translate, Depart, Working, Attention, Info, Retry, Complete }
 
 /** One rounded-line family. Read the shared clock only while drawing an active stage. */
 @Composable
@@ -38,6 +38,23 @@ internal fun LaunchPhaseGlyph(symbol: LaunchSymbol, phase: State<Float>, moving:
                 LaunchSymbol.Ready -> {
                     drawArc(color, -48f, 276f, false, Offset(4f, 4f), Size(16f, 16f), style = stroke)
                     line(12f, 2.5f, 12f, 11f)
+                }
+                LaunchSymbol.Resume -> {
+                    // A gamepad distinguishes resuming an existing game from powering it on.
+                    drawPath(Path().apply {
+                        moveTo(8f, 6.5f); lineTo(16f, 6.5f)
+                        cubicTo(18.4f, 6.5f, 19.5f, 8.4f, 20.2f, 11f)
+                        lineTo(21f, 15.5f)
+                        cubicTo(21.5f, 18.5f, 19.4f, 19.1f, 17.8f, 17.5f)
+                        lineTo(15.5f, 15.2f); lineTo(8.5f, 15.2f); lineTo(6.2f, 17.5f)
+                        cubicTo(4.6f, 19.1f, 2.5f, 18.5f, 3f, 15.5f)
+                        lineTo(3.8f, 11f)
+                        cubicTo(4.5f, 8.4f, 5.6f, 6.5f, 8f, 6.5f); close()
+                    }, color, style = stroke)
+                    line(6f, 10.8f, 10f, 10.8f)
+                    line(8f, 8.8f, 8f, 12.8f)
+                    drawCircle(color, .9f, Offset(16f, 9.5f))
+                    drawCircle(color, .9f, Offset(18f, 12f))
                 }
                 LaunchSymbol.Scan -> {
                     path(3.5f, 8f, 3.5f, 4f, 7.5f, 4f)
