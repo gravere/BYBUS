@@ -32,15 +32,16 @@ internal typealias AiEntryReader = (AiEntryReport, AiEntryFilter, Int, android.o
 /** The archive is the display truth; a response cache alone never makes an entry AI-owned. */
 internal object AiEntryScan {
     fun scan(storage: GameStorage, base: PreparedTranslation?, language: GameTextLanguage,
-        proof: Map<String, String>, cancelled: () -> Boolean = { false }, add: (AiEntry) -> Unit): Pair<Map<AiEntryKind, Int>, Int> {
+        proof: Map<String, String>, cancelled: () -> Boolean = { false }, progress: (String, Int, Int) -> Unit = { _, _, _ -> }, add: (AiEntry) -> Unit): Pair<Map<AiEntryKind, Int>, Int> {
         val inspection = TranslationInspection(storage, base, cancelled, language)
         require(inspection.resources.isNotEmpty()) { "尚无${language.displayName}原文，请先完成游戏资源下载" }
-        val shared = inspection.sharedTranslations()
+        val shared = inspection.sharedTranslations { done, total -> progress("匹配共用译文", done, total) }
         val counts = AiEntryKind.entries.associateWith { 0 }.toMutableMap()
         var number = 0; var bytes = 0L; var unreadable = 0
-        for (resource in inspection.resources) {
+        progress("读取翻译条目", 0, inspection.resources.size)
+        for ((index, resource) in inspection.resources.withIndex()) {
             val r = inspection.readable(resource)
-            if (r == null) { unreadable++; continue }
+            if (r == null) { unreadable++; progress("读取翻译条目", index + 1, inspection.resources.size); continue }
             bytes += r.bytes; require(bytes <= 128L * 1024 * 1024) { "游戏文本超出本地处理上限" }
             val hash = AiTranslationJob.digest(r.raw)
             for (field in r.fields.filter { it.canTranslate }) {
@@ -52,6 +53,7 @@ internal object AiEntryScan {
                 add(AiEntry(number, field.id, kind, TranslationCoverage.category(resource), resource, hash,
                     field.text, translated, field.pointer, field.recordId))
             }
+            progress("读取翻译条目", index + 1, inspection.resources.size)
         }
         return counts to unreadable
     }

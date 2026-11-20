@@ -65,9 +65,13 @@ internal object CoverageEntryIndex {
         if (text == null) bindNull(index) else bindString(index, text)
     }
 
-    fun read(file: Path, filter: CoverageFilter, requestedPage: Int, cancel: CancellationSignal? = null): CoveragePage {
+    private fun query(filter: CoverageFilter, numbers: Set<Int>? = null): Pair<String, Array<String>> {
         val args = ArrayList<String>()
         val conditions = ArrayList<String>()
+        if (numbers != null) {
+            require(numbers.isNotEmpty() && numbers.size <= 1000 && numbers.all { it > 0 })
+            conditions += numbers.joinToString(",", "i.number IN (", ")")
+        }
         filter.kind?.let { conditions += "i.review = ?"; args += if (it == CoverageKind.Review) "1" else "0" }
         filter.category?.let { conditions += "f.category = ?"; args += it }
         val number = filter.exactNumber
@@ -81,22 +85,72 @@ internal object CoverageEntryIndex {
         }
         val from = " FROM issues i JOIN files f ON f.id = i.file" +
             if (conditions.isEmpty()) "" else conditions.joinToString(" AND ", " WHERE ")
+        return from to args.toTypedArray()
+    }
+
+    fun read(file: Path, filter: CoverageFilter, requestedPage: Int, cancel: CancellationSignal? = null): CoveragePage {
+        val (from, args) = query(filter)
         val flags = SQLiteDatabase.OPEN_READONLY or SQLiteDatabase.NO_LOCALIZED_COLLATORS
         return SQLiteDatabase.openDatabase(file.toString(), null, flags).use { db ->
             check(db.version == 1) { "无法读取此版本的明细" }
-            val total = db.rawQuery("SELECT count(*)" + from, args.toTypedArray(), cancel).use { it.moveToFirst(); it.getInt(0) }
+            val total = db.rawQuery("SELECT count(*)" + from, args, cancel).use { it.moveToFirst(); it.getInt(0) }
             val page = requestedPage.coerceIn(0, (total - 1).coerceAtLeast(0) / COVERAGE_PAGE_SIZE)
             // Bound displayed strings for Android's CursorWindow. Searches above use the full stored text.
             val select = """SELECT i.number,i.review,f.category,f.resource,substr(i.original,1,12001),
                 substr(i.translation,1,12001),substr(i.game_id,1,256),substr(i.pointer,1,4096)"""
             val order = " ORDER BY i.review, i.section, i.file, i.number LIMIT ? OFFSET ?"
             val rows = db.rawQuery(select + from + order, (args + listOf(COVERAGE_PAGE_SIZE.toString(),
-                (page * COVERAGE_PAGE_SIZE).toString())).toTypedArray(), cancel).use { c ->
+                (page * COVERAGE_PAGE_SIZE).toString())), cancel).use { c ->
                 buildList { while (c.moveToNext()) add(CoverageEntry(c.getInt(0),
                     if (c.getInt(1) == 1) CoverageKind.Review else CoverageKind.Missing, c.getString(2), c.getString(3),
                     c.getString(4), c.getString(5), c.getString(6), c.getString(7))) }
             }
             CoveragePage(rows, total, page)
         }
+    }
+
+    /** Stream bounded strings instead of loading a potentially large report into memory. */
+    private fun selection(file: Path, filter: CoverageFilter, numbers: Set<Int>?, cancel: CancellationSignal?,
+        consume: (String, String, String) -> Unit): Int {
+        val (from, args) = query(filter, numbers)
+        return SQLiteDatabase.openDatabase(file.toString(), null,
+            SQLiteDatabase.OPEN_READONLY or SQLiteDatabase.NO_LOCALIZED_COLLATORS).use { db ->
+            check(db.version == 1)
+            var count = 0
+            db.rawQuery("SELECT f.resource,i.pointer,substr(i.original,1,6001)" + from + " ORDER BY i.number", args, cancel).use { c ->
+                while (c.moveToNext()) {
+                    cancel?.throwIfCanceled()
+                    val text = c.getString(2); val pointer = c.getString(1)
+                    val eligible = pointer.isNotEmpty() && text.length <= 6000 && !Regex("⟦P[0-9]+⟧").containsMatchIn(text)
+                    require(numbers == null || eligible) { "所选条目过长，无法交给 AI 翻译" }
+                    if (eligible) { count++; consume(c.getString(0), pointer, text) }
+                }
+            }
+            require(numbers == null || count == numbers.size) { "所选条目已变化，请重新选择" }
+            count
+        }
+    }
+
+    fun count(file: Path, filter: CoverageFilter, numbers: Set<Int>?, cancel: CancellationSignal? = null) =
+        selection(file, filter, numbers, cancel) { _, _, _ -> }
+
+    fun plan(file: Path, request: CoverageRequest, storage: com.example.limbuszhcn.gamefs.GameStorage, limit: Int): AiTaskPlan {
+        require(limit in 1..MAX_AI_TASK_ENTRIES)
+        val selected = linkedMapOf<String, MutableSet<String>>()
+        var taken = 0
+        val count = selection(file, request.filter, request.numbers, null) { resource, pointer, text ->
+            if (taken < limit) {
+                selected.getOrPut(resource) { linkedSetOf() }.add(AiTranslationJob.digest("$resource|$pointer|$text"))
+                taken++
+            }
+        }
+        require(count == request.count && count in 1..MAX_AI_TASK_ENTRIES) { "所选范围已变化，请重新选择" }
+        val inspection = TranslationInspection(storage, null, requestedLanguage = request.report.language)
+        val hashes = selected.mapValues { (key, ids) ->
+            val resource = requireNotNull(inspection.readable(key)) { "游戏原文无法读取，请重新检查" }
+            require(resource.fields.filter { it.canTranslate }.map { it.id }.toSet().containsAll(ids)) { "游戏原文已变化，请重新检查" }
+            AiTranslationJob.digest(resource.raw)
+        }
+        return AiTaskPlan(selected, hashes, count)
     }
 }

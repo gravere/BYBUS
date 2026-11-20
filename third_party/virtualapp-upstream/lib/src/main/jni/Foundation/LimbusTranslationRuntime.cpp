@@ -289,12 +289,22 @@ tmp_set_text_fn g_original_choice_set_total = nullptr;
 tmp_set_text_fn g_original_choice_set_text = nullptr;
 tmp_set_text_fn g_original_notice_set_data = nullptr;
 const void *g_notice_body_field = nullptr;
+const void *g_notice_format_field = nullptr;
+const void *g_notice_extra_fields[3] = {};
+tmp_set_text_fn g_original_notice_extra[3] = {};
+const void *g_notice_preferred_info = nullptr;
+const void *g_notice_set_extent_info = nullptr;
+void *g_notice_rect_class = nullptr;
 struct NoticeTextState {
     int32_t id; std::string translated;
+    std::string formatted, source;
+    bool dynamic = false, body = true;
+    limbus_managed::Ref retained;
     NoticeTextState(int32_t value = 0, std::string text = {}) : id(value), translated(std::move(text)) {}
 };
 std::unordered_map<void *, NoticeTextState> g_notice_texts;
 void prepare_notice_body(void *target);
+void *translate_notice_component(void *target, void *source);
 const void *g_choice_content_field = nullptr;
 tmp_parse_input_fn g_original_choice_clear = nullptr;
 tmp_parse_input_fn g_original_choice_disable = nullptr;
@@ -2007,7 +2017,7 @@ bool is_notice_text(void *instance, void *managed = nullptr, bool require_transl
     pthread_mutex_lock(&g_font_state_lock);
     auto found = g_notice_texts.find(instance);
     const bool valid = found != g_notice_texts.end() && found->second.id == id &&
-        (!require_translation || (!found->second.translated.empty() && found->second.translated == text));
+        (!require_translation || (!found->second.translated.empty() && (found->second.translated == text || found->second.formatted == text)));
     pthread_mutex_unlock(&g_font_state_lock);
     return valid;
 }
@@ -3093,9 +3103,9 @@ void *prepare_tmp_text(void *instance, void *managed_text, bool restore_untransl
             // Event typewriter fragments are already translated. Do not run a
             // second glossary pass over an in-progress sentence.
             const bool notice = is_notice_text(instance);
-            const bool notice_proof = notice && is_notice_text(instance, managed_text, true);
             const bool choice_proof = is_choice_text(instance, managed_text);
-            replacement = (notice || choice_proof) ? managed_text : translate_managed_string(managed_text);
+            replacement = notice ? translate_notice_component(instance, managed_text) : choice_proof ? managed_text : translate_managed_string(managed_text);
+            const bool notice_proof = notice && is_notice_text(instance, replacement, true);
             if (!notice && replacement == managed_text) {
                 const std::string status = limbus_ui_labels::translate_status(source);
                 if (!status.empty() && ensure_tmp_font()) {
@@ -3334,12 +3344,47 @@ void replacement_tmp_set_text(void *instance, void *managed_text, const void *me
 
 void prepare_notice_body(void *target) {
     if (!target) return;
+    pthread_mutex_lock(&g_font_state_lock);
+    auto found = g_notice_texts.find(target);
+    const bool registered = found != g_notice_texts.end();
+    pthread_mutex_unlock(&g_font_state_lock);
+    if (!registered) return;
     // Run before SetData measures preferredHeight, including after TMP restores an original style.
     // No font size, link, colour or unrelated component is changed.
     invoke_bool_setter(g_tmp_set_word_wrapping_info, target, true);
     int32_t mode = 0;
     if (invoke_int_getter(g_tmp_get_overflow_mode_info, target, &mode) && (mode == 1 || mode == 3))
         invoke_int_setter(g_tmp_set_overflow_mode_info, target, 0);
+}
+
+// Re-measure only verified body components. Keep the scroll viewport and title/date layout intact.
+void reflow_notice_body(void *target) {
+    if (!target || !g_notice_preferred_info || !g_notice_set_extent_info || !g_runtime_invoke || !g_object_unbox) return;
+    auto rect = read_component_rect(target, g_tmp_get_rect_transform_info);
+    void *transform = invoke_object_getter(g_tmp_get_rect_transform_info, target);
+    if (!rect.valid || !transform) return;
+    float width = rect.width;
+    void *parent = invoke_object_getter(g_transform_get_parent_info, transform);
+    if (parent && g_object_get_class && g_object_get_class(parent) == g_notice_rect_class) {
+        auto available = read_component_rect(parent, g_component_get_transform_info);
+        if (available.valid) width = std::min(width, available.width);
+    }
+    void *exception = nullptr;
+    if (width < rect.width) {
+        int32_t axis = 0; void *args[] = {&axis, &width};
+        g_runtime_invoke(g_notice_set_extent_info, transform, args, &exception);
+        if (exception) return;
+    }
+    float max_height = 100000.0f;
+    void *args[] = {&width, &max_height};
+    void *boxed = g_runtime_invoke(g_notice_preferred_info, target, args, &exception);
+    if (exception || !boxed) return;
+    auto values = static_cast<float *>(g_object_unbox(boxed));
+    if (!values || !std::isfinite(values[1]) || values[1] <= 0 || values[1] >= max_height) return;
+    float height = std::ceil(values[1]);
+    if (std::fabs(height - rect.height) < .5f) return;
+    int32_t axis = 1; void *height_args[] = {&axis, &height};
+    g_runtime_invoke(g_notice_set_extent_info, transform, height_args, &exception);
 }
 
 void *translated_notice_body(void *source) {
@@ -3365,6 +3410,48 @@ void *translated_notice_body(void *source) {
     return translated ? translated : source;
 }
 
+void *translate_notice_component(void *target, void *source) {
+    if (!is_notice_text(target) || !source || !g_string_length || !g_string_chars) return source;
+    pthread_mutex_lock(&g_font_state_lock);
+    const NoticeTextState state = g_notice_texts[target];
+    pthread_mutex_unlock(&g_font_state_lock);
+    if (!state.dynamic) return source;
+    std::string raw;
+    const int32_t length = g_string_length(source);
+    if (length <= 0 || length > 128 * 1024 || !utf16_to_utf8(g_string_chars(source), length, &raw)) return source;
+    if (raw == state.translated) return source;
+    if (raw == state.source) return state.retained ? state.retained->get() : source;
+    void *replacement = translated_notice_body(source);
+    auto retained = replacement != source ? limbus_managed::retain(g_gc, replacement) : nullptr;
+    std::string translated;
+    if (retained && !utf16_to_utf8(g_string_chars(retained->get()), g_string_length(retained->get()), &translated)) retained.reset();
+    pthread_mutex_lock(&g_font_state_lock);
+    auto found = g_notice_texts.find(target);
+    if (found != g_notice_texts.end() && found->second.id == state.id) {
+        found->second.source = raw; found->second.translated = retained ? translated : ""; found->second.retained = retained;
+    }
+    pthread_mutex_unlock(&g_font_state_lock);
+    return retained ? retained->get() : source;
+}
+
+template<size_t Slot>
+void replacement_notice_extra(void *instance, void *source, const void *method) {
+    void *target = nullptr;
+    if (instance && g_notice_extra_fields[Slot] && g_field_get_value) g_field_get_value(instance, g_notice_extra_fields[Slot], &target);
+    int32_t id = 0;
+    if (target && invoke_int_getter(g_object_get_instance_id_info, target, &id) && id) {
+        pthread_mutex_lock(&g_font_state_lock);
+        if (g_notice_texts.size() >= 256 && !g_notice_texts.count(target)) g_notice_texts.erase(g_notice_texts.begin());
+        NoticeTextState state(id); state.dynamic = true; state.body = Slot == 2;
+        g_notice_texts[target] = std::move(state);
+        pthread_mutex_unlock(&g_font_state_lock);
+    }
+    prepare_notice_body(target);
+    g_original_notice_extra[Slot](instance, source, method);
+    prepare_notice_body(target);
+    if (Slot == 2) reflow_notice_body(target);
+}
+
 void replacement_notice_set_data(void *instance, void *source, const void *method) {
     void *target = nullptr;
     if (instance && g_notice_body_field && g_field_get_value)
@@ -3381,14 +3468,24 @@ void replacement_notice_set_data(void *instance, void *source, const void *metho
         std::string translated;
         if (replacement != source && g_string_length && g_string_chars)
             utf16_to_utf8(g_string_chars(replacement), g_string_length(replacement), &translated);
+        std::string formatted;
+        void *format = nullptr;
+        if (!translated.empty() && g_notice_format_field) g_field_get_value(instance, g_notice_format_field, &format);
+        if (format && g_string_length(format) <= 4096 && utf16_to_utf8(g_string_chars(format), g_string_length(format), &formatted)) {
+            auto at = formatted.find("{0}");
+            if (at != std::string::npos && formatted.find("{0}", at + 3) == std::string::npos) formatted.replace(at, 3, translated);
+            else formatted.clear();
+        }
         pthread_mutex_lock(&g_font_state_lock);
         if (g_notice_texts.size() >= 256 && !g_notice_texts.count(target)) g_notice_texts.erase(g_notice_texts.begin());
         g_notice_texts[target] = {id, translated};
+        g_notice_texts[target].formatted = formatted;
         pthread_mutex_unlock(&g_font_state_lock);
     }
     prepare_notice_body(target);
     g_original_notice_set_data(instance, replacement, method);
     prepare_notice_body(target);
+    reflow_notice_body(target);
 }
 
 void replacement_tmp_parse_input(void *instance, const void *method) {
@@ -3826,6 +3923,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
     void *choice_gift_class = nullptr;
     void *choice_button_class = nullptr;
     void *notice_body_class = nullptr;
+    void *notice_extra_classes[3] = {};
     void *ui_text_class = nullptr;
     void *tmp_font_class = nullptr;
     void *unity_font_class = nullptr;
@@ -3953,6 +4051,9 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             choice_gift_class = class_from_name(image, "", "ChoiceScrollViewBoxWithEgoGift");
         if (!notice_body_class)
             notice_body_class = class_from_name(image, "MainUI.NoticeUI", "NoticeUIContentText");
+        if (!notice_extra_classes[0]) notice_extra_classes[0] = class_from_name(image, "", "NoticeUITitleButtonScrollViewItem");
+        if (!notice_extra_classes[1]) notice_extra_classes[1] = class_from_name(image, "MainUI.NoticeUI", "NoticeUITitleButton");
+        if (!notice_extra_classes[2]) notice_extra_classes[2] = class_from_name(image, "MainUI.NoticeUI", "NoticeUIContentHyperLink");
         if (!content_fitter_class)
             content_fitter_class = class_from_name(image, "UnityEngine.UI", "ContentSizeFitter");
         if (choice_button_class == nullptr)
@@ -4792,6 +4893,28 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         g_choice_button_text_field = choice_field(choice_button_class, "tmp_button", "TMPro.TextMeshProUGUI");
         g_choice_button_result_field = choice_field(choice_button_class, "_activeResultDesc", "TMPro.TextMeshProUGUI");
         g_notice_body_field = choice_field(notice_body_class, "tmp_main", "TMPro.TextMeshProUGUI");
+        g_notice_format_field = choice_field(notice_body_class, "textFormat", "System.String");
+        for (size_t slot = 0; slot < 3; ++slot) {
+            const char *name = slot == 0 ? "tmp_title" : slot == 1 ? "tmp_text" : "tmp_main";
+            void *klass = notice_extra_classes[slot];
+            for (int depth = 0; klass && depth < 5 && !g_notice_extra_fields[slot]; ++depth, klass = g_class_get_parent(klass))
+                for (const char *type : {"TMPro.TextMeshProUGUI", "TMPro.TMP_Text"})
+                    if (!g_notice_extra_fields[slot]) g_notice_extra_fields[slot] = choice_field(klass, name, type);
+        }
+        auto notice_method = [&](void *klass, const char *name, const char *args, const char *result) -> const void * {
+            const void *entry = find_method_by_signature(klass, name, args);
+            if (!entry || !method_get_return_type || !method_get_flags) return nullptr;
+            uint32_t flags = 0;
+            char *type = type_get_name(method_get_return_type(entry));
+            bool valid = type && strcmp(type, result) == 0 && (method_get_flags(entry, &flags) & 0x0010u) == 0;
+            if (type) il2cpp_free(type);
+            return valid ? entry : nullptr;
+        };
+        g_notice_rect_class = rect_transform_class;
+        g_notice_preferred_info = notice_method(tmp_text_class, "GetPreferredValues", "System.Single,System.Single", "UnityEngine.Vector2");
+        g_notice_set_extent_info = notice_method(rect_transform_class, "SetSizeWithCurrentAnchors", "UnityEngine.RectTransform.Axis,System.Single", "System.Void");
+        if (!g_notice_set_extent_info)
+            g_notice_set_extent_info = notice_method(rect_transform_class, "SetSizeWithCurrentAnchors", "UnityEngine.RectTransform/Axis,System.Single", "System.Void");
         for (const char *text_type : {"TMPro.TextMeshProUGUI", "TMPro.CustomRubyTextMeshProUGUI", "TMPro.TMP_Text"})
             if (!g_choice_content_field) g_choice_content_field = choice_field(choice_scroll_class, "tmp_content", text_type);
         std::unordered_map<void *, std::pair<std::string, void *>> flow_installed;
@@ -4821,6 +4944,14 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         if (g_notice_body_field)
             hook_choice_method(notice_body_class, "SetData", "System.String", "System.Void",
                     reinterpret_cast<void *>(replacement_notice_set_data), reinterpret_cast<void **>(&g_original_notice_set_data));
+        void *notice_replacements[] = {reinterpret_cast<void *>(replacement_notice_extra<0>),
+            reinterpret_cast<void *>(replacement_notice_extra<1>), reinterpret_cast<void *>(replacement_notice_extra<2>)};
+        for (size_t slot = 0; slot < 3; ++slot) if (g_notice_extra_fields[slot])
+            hook_choice_method(notice_extra_classes[slot], "SetData", slot < 2 ? "Notice" : "System.String", "System.Void",
+                notice_replacements[slot], reinterpret_cast<void **>(&g_original_notice_extra[slot]));
+        append_native_metadata("font-state.log", ("notice_scopes=" + std::to_string(g_original_notice_extra[0] != nullptr) +
+            "," + std::to_string(g_original_notice_extra[1] != nullptr) + "," + std::to_string(g_original_notice_extra[2] != nullptr) +
+            " reflow=" + std::to_string(g_notice_preferred_info && g_notice_set_extent_info)).c_str());
         if (g_choice_content_field) {
             hook_choice_method(choice_scroll_class, "ReadingContent", "System.String,System.Boolean",
                     "System.Collections.IEnumerator", reinterpret_cast<void *>(replacement_choice_content<0>),

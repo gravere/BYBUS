@@ -36,19 +36,24 @@ import com.example.limbuszhcn.translation.AiScope
 import com.example.limbuszhcn.translation.AiTranslationPrompt
 import com.example.limbuszhcn.translation.normalizedAiEndpoint
 import com.example.limbuszhcn.translation.AiEntryRequest
+import com.example.limbuszhcn.translation.CoverageRequest
+import com.example.limbuszhcn.translation.CoverageFilter
+import com.example.limbuszhcn.translation.CoverageKind
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
 @Composable
 internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActions, onCoverage: () -> Unit = {}, requestedScope: AiScope? = null,
-    requestedEntries: AiEntryRequest? = null, onEntries: (String?) -> Unit = {}) {
+    requestedEntries: AiEntryRequest? = null, onEntries: (String?) -> Unit = {}, requestedCoverage: CoverageRequest? = null) {
     val ai = state.ai
     var endpoint by remember(ai.config.endpoint, ai.activeKeyId) { mutableStateOf(ai.config.endpoint) }
     var model by remember(ai.config.model, ai.activeKeyId) { mutableStateOf(ai.config.model) }
-    var missing by remember(ai.config.missingOnly, requestedScope, requestedEntries) { mutableStateOf(
+    var missing by remember(ai.config.missingOnly, requestedScope, requestedEntries, requestedCoverage) { mutableStateOf(
         requestedEntries?.let { request -> state.sources.sources.find { it.id == request.report.sourceId }?.independent == false }
-            ?: (requestedScope != null || ai.config.missingOnly)) }
-    var scope by remember(ai.config.includeMissing, ai.config.includeReview, requestedScope) {
-        mutableStateOf(requestedScope ?: if (ai.config.includeReview) if (ai.config.includeMissing) AiScope.Both else AiScope.Review else AiScope.Missing)
+            ?: (requestedCoverage != null || requestedScope != null || ai.config.missingOnly)) }
+    var scope by remember(ai.config.includeMissing, ai.config.includeReview, requestedScope, requestedCoverage) {
+        mutableStateOf(requestedScope ?: requestedCoverage?.let { when (it.filter.kind) {
+            CoverageKind.Missing -> AiScope.Missing; CoverageKind.Review -> AiScope.Review; null -> AiScope.Both
+        } } ?: if (ai.config.includeReview) if (ai.config.includeMissing) AiScope.Both else AiScope.Review else AiScope.Missing)
     }
     var limit by remember(ai.config.limit) { mutableIntStateOf(ai.config.limit) }
     // Never saved in a Bundle or ViewModel; the persisted value is encrypted separately.
@@ -73,13 +78,17 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
     val keyboard = LocalSoftwareKeyboardController.current
     fun finishEditing() { focus.clearFocus(); keyboard?.hide() }
     fun config() = AiConfig(endpoint.trim(), model.trim(), missing, limit, scope.missing, scope.review, prompt)
+    var category by remember(state.coverage.report?.entryIndex) { mutableStateOf<String?>(null) }
+    val coverageFilter = CoverageFilter(when (scope) { AiScope.Missing -> CoverageKind.Missing; AiScope.Review -> CoverageKind.Review; else -> null }, category)
+    val coverageRequest = if (requestedEntries == null && missing) requestedCoverage ?: coverageSelection(state.coverage, coverageFilter, null, actions.coverageCount) else null
     val enabled = !state.busy && !ai.settingsBusy && !ai.running
     val pending = ai.hasPendingTask || ai.running
     val savedKeyAvailable = ai.hasKey && runCatching {
         normalizedAiEndpoint(endpoint) == normalizedAiEndpoint(ai.config.endpoint)
     }.getOrDefault(false)
     val hasCredential = key.isNotBlank() || savedKeyAvailable
-    val coverageReady = if (requestedEntries == null) state.coverage.canGenerate(config()) else
+    val coverageReady = if (requestedEntries == null) state.coverage.current && coverageRequest != null && coverageRequest.count > 0 &&
+        coverageRequest.fingerprint == state.coverage.fingerprint && coverageRequest.report.entryIndex == state.coverage.report?.entryIndex else
         !ai.library.stale && ai.library.report?.key == requestedEntries.report.key &&
             (requestedEntries.report.sourceId == null || state.sources.sources.any { it.id == requestedEntries.report.sourceId && it.revision == requestedEntries.report.revision })
     LaunchedEffect(endpoint, key, ai.activeKeyId) { actions.clearModels(); showModels = false; search = "" }
@@ -100,6 +109,11 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
             Text("已选 ${requestedEntries.count} 条，本次最多 ${minOf(limit, requestedEntries.count)} 条", style = MaterialTheme.typography.bodyMedium)
             Text("已有译文的所选条目会重新翻译，其他条目保留。", color = C.Muted, style = MaterialTheme.typography.bodySmall)
             if (!coverageReady) TextButton({ onEntries(requestedEntries.report.sourceId) }, enabled = enabled) { Text("重新读取并选择条目") }
+        } else if (requestedCoverage != null) DetailCard {
+            Text("${requestedCoverage.report.sourceName} · ${requestedCoverage.report.language.displayName}原文", style = MaterialTheme.typography.titleSmall)
+            Text(listOfNotNull(requestedCoverage.filter.category ?: "全部类别", requestedCoverage.filter.kind?.label,
+                "已选 ${requestedCoverage.count} 条").joinToString(" · "), style = MaterialTheme.typography.bodyMedium)
+            if (!coverageReady) TextButton(onCoverage) { Text("返回覆盖明细重新选择") }
         } else if (missing) CoverageSummary(state, onCoverage, actions.inspectCoverage)
         DetailCard {
             Text("连接设置", style = MaterialTheme.typography.titleSmall)
@@ -199,14 +213,19 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
         AiPricingCard(endpoint.trim(), model.trim(), ai, actions, enabled)
         if (!pending && ai.progress.requests > 0) DetailCard { Text("上次翻译用量", style = MaterialTheme.typography.titleSmall); AiUsageSummary(ai.progress) }
         if (!pending) DetailCard {
-            if (requestedEntries == null) {
+            if (requestedEntries == null && requestedCoverage == null) {
             Text("翻译方式", style = MaterialTheme.typography.titleSmall)
             SourceTabs(listOf(true, false), missing, { if (it) "补充当前汉化" else "从零全局翻译" }, "翻译方式", { if (enabled) missing = it })
             if (!missing) Text("无需现成汉化包，可选择全部原文或指定类别。", style = MaterialTheme.typography.bodySmall, color = C.Muted)
             }
-            if (missing && requestedEntries == null) {
+            if (missing && requestedEntries == null && requestedCoverage == null) {
                 Text("处理范围", style = MaterialTheme.typography.titleSmall)
                 SourceTabs(AiScope.entries.toList(), scope, { it.label }, "处理范围", { if (enabled) scope = it })
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("内容分类", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    CoverageCategoryPicker(category, state.coverage.report?.details?.map { it.category }?.distinct()?.sorted().orEmpty()) { if (enabled) category = it }
+                }
+                coverageRequest?.let { Text("当前范围 ${it.count} 条", style = MaterialTheme.typography.bodySmall, color = C.Muted) }
                 if (scope.review) Text("待核对：译文仍含日语或韩语。先查看明细，避免改掉刻意保留的用词。", style = MaterialTheme.typography.bodySmall, color = C.Muted)
             }
             Text("本次翻译数量", style = MaterialTheme.typography.titleSmall)
@@ -220,7 +239,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
             if (!missing && requestedEntries == null) {
                 Button({ finishEditing(); onEntries(null) }, enabled = enabled,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("读取原文并选择范围") }
-            } else if (requestedEntries == null && !state.coverage.current) {
+            } else if (requestedEntries == null && (!state.coverage.current || state.coverage.report?.entryIndex == null)) {
                 FilledTonalButton({ finishEditing(); actions.inspectCoverage() }, enabled = enabled && !state.coverage.loading,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                     Text(if (state.coverage.loading) "正在检查汉化覆盖" else "先检查汉化覆盖")
@@ -265,16 +284,17 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
             }
         }
     }
-    if (cancelTask) BybusDialog(onDismissRequest = { cancelTask = false }, title = { Text("取消翻译任务？") },
+    if (cancelTask) BybusDialog(destructive = true, onDismissRequest = { cancelTask = false }, title = { Text("取消翻译任务？") },
         text = { Text("删除本次任务及尚未发布的译文，之后不能继续。此前生成的汉化包会保留，已产生的 API 费用不会返还。") },
         confirmButton = { TextButton({ cancelTask = false; actions.cancelAi() },
             enabled = ai.task?.phase != com.example.limbuszhcn.translation.AiTaskPhase.Applying) { Text("取消并删除") } },
         dismissButton = { TextButton({ cancelTask = false }) { Text("保留任务") } })
     if (confirm) BybusDialog(onDismissRequest = { confirm = false }, title = { Text("开始 AI 翻译？") },
-        text = { val count = requestedEntries?.count ?: state.coverage.eligible(config())
+        text = { val count = requestedEntries?.count ?: coverageRequest?.count ?: 0
             Text("${if (requestedEntries != null) "所选文本" else if (missing) scope.label else "尚未完成的可译文本"}共 $count 条，本次最多 ${minOf(limit, count)} 条。将关闭游戏，使用你的 API 翻译并计费。${if (requestedEntries != null) "仅翻译所选条目，其余译文保留。" else "已完成的译文保留。"}") },
         confirmButton = { TextButton({ confirm = false; reveal = false
-            if (requestedEntries == null) actions.generateAi(config(), key) else actions.generateEntries(config(), key, requestedEntries)
+            if (requestedEntries != null) actions.generateEntries(config(), key, requestedEntries)
+            else coverageRequest?.let { actions.generateCoverage(config(), key, it) }
         }, enabled = enabled && coverageReady) { Text("开始翻译") } },
         dismissButton = { TextButton({ confirm = false }) { Text("取消") } })
     if (namingKey) BybusDialog(onDismissRequest = { namingKey = false }, title = { Text("保存密钥") },
@@ -285,7 +305,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
         dismissButton = { TextButton({ namingKey = false }) { Text("取消") } })
     if (selectingKey) AiKeyPicker(ai.keys, ai.activeKeyId, enabled, actions,
         onRemove = { selectingKey = false; clear = it }, onDismiss = { selectingKey = false }, error = ai.message.takeIf { ai.failed })
-    clear?.let { item -> BybusDialog(onDismissRequest = { clear = null }, title = { Text("移除「${item.name}」？") },
+    clear?.let { item -> BybusDialog(destructive = true, onDismissRequest = { clear = null }, title = { Text("移除「${item.name}」？") },
         text = { Text("此密钥将从本机删除。") },
         confirmButton = { TextButton({ clear = null; actions.clearModels(); actions.clearKey(item.id) }, enabled = enabled) { Text("移除") } },
         dismissButton = { TextButton({ clear = null }) { Text("取消") } }) }
@@ -293,7 +313,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
         text = { Text("将关闭游戏，恢复上次改动前的汉化和来源选择。游戏资源、账号与 API 设置会保留；已产生的 API 费用不会返还。") },
         confirmButton = { TextButton({ undo = false; actions.undoAi() }, enabled = enabled) { Text("撤回") } },
         dismissButton = { TextButton({ undo = false }) { Text("取消") } })
-    if (resetPrompt) BybusDialog(onDismissRequest = { resetPrompt = false }, title = { Text("恢复默认提示词？") },
+    if (resetPrompt) BybusDialog(destructive = true, onDismissRequest = { resetPrompt = false }, title = { Text("恢复默认提示词？") },
         text = { Text("将替换当前输入的自定义提示词，保存后生效。已有汉化包不会改变。") },
         confirmButton = { TextButton({ resetPrompt = false; prompt = AiTranslationPrompt.DEFAULT }, enabled = enabled) { Text("恢复") } },
         dismissButton = { TextButton({ resetPrompt = false }) { Text("取消") } })
@@ -301,7 +321,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
         text = { Text("将关闭游戏并切回都市零协会，下次启动检查正式汉化更新。已生成的 AI 汉化会保留，可随时重新选择；游戏数据与账号不变。") },
         confirmButton = { TextButton({ restoreDefault = false; actions.select("zero") }, enabled = enabled) { Text("恢复") } },
         dismissButton = { TextButton({ restoreDefault = false }) { Text("取消") } })
-    deleteAi?.let { source -> BybusDialog(onDismissRequest = { deleteAi = null }, title = { Text("删除 AI 汉化？") },
+    deleteAi?.let { source -> BybusDialog(destructive = true, onDismissRequest = { deleteAi = null }, title = { Text("删除 AI 汉化？") },
         text = { Text("删除“${source.name}”及其生成缓存，不能撤回。${if (source.id == state.sources.selectedId) "将关闭游戏并切回都市零协会。" else "当前使用的汉化不变。"}游戏数据、账号、其他汉化源与 API 设置会保留。") },
         confirmButton = { TextButton({ deleteAi = null; actions.removeAi(source.id) }, enabled = enabled) { Text("删除") } },
         dismissButton = { TextButton({ deleteAi = null }) { Text("取消") } }) }

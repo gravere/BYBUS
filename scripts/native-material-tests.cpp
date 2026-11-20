@@ -198,6 +198,7 @@ void *notice_target = nullptr, *notice_translation = nullptr;
 int generic_passes = 0;
 bool is_notice_text(void *target, void *text = nullptr, bool proof = false) { return target == notice_target && (!proof || text == notice_translation); }
 void prepare_notice_body(void *) {}
+void *translate_notice_component(void *, void *source) { return source; }
 bool is_choice_text(void *, void *) { return false; }
 void *translate_managed_string(void *text) { ++generic_passes; return text; }
 void *new_managed_string(const std::string &value) {

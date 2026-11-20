@@ -3,7 +3,14 @@ package com.example.limbuszhcn.translation
 internal enum class CoverageKind(val label: String) { Missing("未覆盖"), Review("待核对") }
 
 internal data class CoverageEntry(val number: Int, val kind: CoverageKind, val category: String, val resource: String,
-    val text: String, val translation: String?, val recordId: String? = null, val pointer: String = "", val note: String = "")
+    val text: String, val translation: String?, val recordId: String? = null, val pointer: String = "", val note: String = "") {
+    val canTranslate get() = pointer.isNotEmpty() && text.length <= 6000 && !Regex("⟦P[0-9]+⟧").containsMatchIn(text)
+}
+
+/** A selection belongs to one immutable check, never to whichever source is selected later. */
+internal data class CoverageRequest(val report: CoverageReport, val fingerprint: String, val filter: CoverageFilter,
+    val numbers: Set<Int>? = null, val count: Int)
+internal typealias CoverageCountReader = (CoverageIndexRef, CoverageFilter, Set<Int>?, android.os.CancellationSignal) -> Int
 
 internal data class CoverageFilter(val kind: CoverageKind? = null, val category: String? = null, val text: String = "") {
     val term get() = text.trim()

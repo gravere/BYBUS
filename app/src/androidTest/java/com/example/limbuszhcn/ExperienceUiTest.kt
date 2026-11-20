@@ -50,8 +50,8 @@ class ExperienceUiTest {
         compose.runOnIdle { pricing=pricing.copy(pricing=AiPricingState("https://relay.example/v1","model",AiPrice(10.0,20.0))) }
         compose.onNode(hasSetTextAction() and hasText("币种，例如 USD / CNY")).performImeAction()
         compose.onNodeWithText("保存").assertIsDisplayed();compose.onNodeWithText("取消").assertIsDisplayed()
-        val left=compose.onNodeWithText("取消").fetchSemanticsNode().boundsInRoot
-        val right=compose.onNodeWithText("保存").fetchSemanticsNode().boundsInRoot
+        val left=compose.onNodeWithText("保存").fetchSemanticsNode().boundsInRoot
+        val right=compose.onNodeWithText("取消").fetchSemanticsNode().boundsInRoot
         assertTrue(right.center.x>left.center.x);assertEquals(left.center.y,right.center.y,3f)
         capture("manual-price")
         compose.onNodeWithText("保存").performClick();compose.runOnIdle { assertEquals(AiPrice(2.0,8.0,.5,"CNY",true).copy(fetchedAt=0),saved!!.copy(fetchedAt=0)) }

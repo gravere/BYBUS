@@ -59,7 +59,8 @@ private data class LoadedCoveragePage(val filter: CoverageFilter, val page: Int,
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun CoverageEntryBrowser(report: CoverageReport, kind: CoverageKind?, onKind: (CoverageKind?) -> Unit,
-    readEntries: CoveragePageReader): Unit = key(report.entryIndex, report.checkedAt) {
+    readEntries: CoveragePageReader, coverage: CoverageState = CoverageState(), readCount: CoverageCountReader = { _, _, _, _ -> 0 },
+    enabled: Boolean = false, onTranslate: (CoverageRequest) -> Unit = {}): Unit = key(report.entryIndex, report.checkedAt) {
     var category by rememberSaveable { mutableStateOf<String?>(null) }
     var search by rememberSaveable { mutableStateOf("") }
     var searching by rememberSaveable { mutableStateOf(false) }
@@ -67,6 +68,9 @@ internal fun CoverageEntryBrowser(report: CoverageReport, kind: CoverageKind?, o
     var expanded by rememberSaveable(kind, category, search, page) { mutableStateOf<Int?>(null) }
     val categories = remember(report.details) { report.details.map { it.category }.distinct().sorted() }
     val filter = CoverageFilter(kind, category, search)
+    var selected by remember(filter) { mutableStateOf<Set<Int>>(emptySet()) }
+    val request = coverageSelection(coverage, filter, selected.takeIf { it.isNotEmpty() }, readCount)
+    val selectable = enabled && coverage.current && report.entryIndex != null
     val reader by rememberUpdatedState(readEntries)
     val focus = LocalFocusManager.current
     val searchFocus = remember { FocusRequester() }
@@ -156,8 +160,22 @@ internal fun CoverageEntryBrowser(report: CoverageReport, kind: CoverageKind?, o
                         focus.clearFocus()
                     }) { Text("清除筛选", style = MaterialTheme.typography.labelMedium) }
                 }
-                else -> CoverageRows(visible, legacy, current, expanded,
-                    onExpand = { expanded = if (expanded == it) null else it }, onPage = { page = it })
+                else -> {
+                    if (selectable) Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        TextButton({ selected = if (selected.isEmpty()) visible.rows.filter { it.canTranslate }.map { it.number }.toSet() else emptySet() }) {
+                            Text(if (selected.isEmpty()) "选择本页" else "清空选择", style = MaterialTheme.typography.labelMedium)
+                        }
+                        Spacer(Modifier.weight(1f))
+                        TextButton({ request?.takeIf { it.count > 0 }?.let(onTranslate) }, enabled = current && request != null && request.count > 0) {
+                            Text(if (selected.isEmpty()) "翻译全部已筛选条目" else "翻译所选 ${selected.size} 条", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                    CoverageRows(visible, legacy, current, expanded,
+                        onExpand = { expanded = if (expanded == it) null else it }, onPage = { page = it },
+                        selected = selected, selectable = selectable, onSelect = { row ->
+                            selected = if (row in selected) selected - row else if (selected.size < 1000) selected + row else selected
+                        })
+                }
             }
         }
     }
@@ -222,13 +240,19 @@ internal fun CoverageCategoryPicker(selected: String?, categories: List<String>,
 
 @Composable
 private fun CoverageRows(result: CoveragePage, legacy: Boolean, enabled: Boolean, expanded: Int?,
-    onExpand: (Int) -> Unit, onPage: (Int) -> Unit) {
+    onExpand: (Int) -> Unit, onPage: (Int) -> Unit, selected: Set<Int> = emptySet(), selectable: Boolean = false, onSelect: (Int) -> Unit = {}) {
     for ((group, rows) in result.rows.groupBy { it.kind to it.category }) {
         Text(group.second, Modifier.padding(start = 16.dp, end = 16.dp, top = 10.dp).semantics { heading() },
             style = MaterialTheme.typography.titleSmall)
         for ((i, row) in rows.withIndex()) {
             if (i > 0) HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = C.Line)
-            key(row.number) { CoverageEntryRow(row, legacy, expanded == row.number, enabled) { onExpand(row.number) } }
+            key(row.number) {
+                Row(verticalAlignment = Alignment.Top) {
+                    Box(Modifier.weight(1f)) { CoverageEntryRow(row, legacy, expanded == row.number, enabled) { onExpand(row.number) } }
+                    if (selectable && row.canTranslate) Checkbox(row.number in selected, { onSelect(row.number) }, enabled = enabled,
+                        modifier = Modifier.semantics { contentDescription = "选择第 ${row.number} 条" })
+                }
+            }
         }
     }
     if (result.pages > 1) {

@@ -26,7 +26,8 @@ internal class AiBaseUpdate(private val cache: Path) {
     private fun file(key: String): Path { require(key.matches(Regex("[a-f0-9]{64}"))); return root.resolve("$key.db") }
     private fun open(r: AiBaseReport) = SQLiteDatabase.openDatabase(file(r.key).toString(),null,SQLiteDatabase.OPEN_READONLY or SQLiteDatabase.NO_LOCALIZED_COLLATORS)
 
-    fun inspect(sources: TranslationSources, source: TranslationSource, latest: PreparedTranslation, storage: GameStorage): AiBaseReport {
+    fun inspect(sources: TranslationSources, source: TranslationSource, latest: PreparedTranslation, storage: GameStorage,
+        progress: (String, Int, Int) -> Unit = { _, _, _ -> }): AiBaseReport {
         require(source.kind == "ai" && !source.independent && source.baseId != "global") { "从零生成的包没有上游底包" }
         val language = source.language?.let(GameTextLanguage::fromCode) ?: requireNotNull(storage.textLanguage()).language
         val snapshots = AiBaseSnapshots(cache)
@@ -48,7 +49,9 @@ internal class AiBaseUpdate(private val cache: Path) {
                 try {
                     db.execSQL("CREATE TABLE changes(number INTEGER PRIMARY KEY,id TEXT UNIQUE,kind TEXT,resource TEXT,hash TEXT,original TEXT,current TEXT,updated TEXT)")
                     db.compileStatement("INSERT INTO changes VALUES(?,?,?,?,?,?,?,?)").use { insert ->
-                        for (key in newer.resources) {
+                        progress("对照原包译文", 0, newer.resources.size)
+                        for ((index, key) in newer.resources.withIndex()) {
+                            progress("对照原包译文", index, newer.resources.size)
                             val fresh = newer.readable(key)
                             if (fresh == null) { require(key !in newer.entries) { "部分原文无法读取，未更新底包；请先修复游戏资源" }; continue }
                             totalBytes += fresh.bytes; require(totalBytes <= 128L*1024*1024)
@@ -69,6 +72,7 @@ internal class AiBaseUpdate(private val cache: Path) {
                                 };insert.executeInsert()
                             }
                         }
+                        progress("对照原包译文", newer.resources.size, newer.resources.size)
                     }
                     db.execSQL("CREATE INDEX change_kind ON changes(kind,number)");db.execSQL("CREATE INDEX change_resource ON changes(resource)");db.setTransactionSuccessful()
                 } finally { db.endTransaction() }
@@ -97,7 +101,7 @@ internal class AiBaseUpdate(private val cache: Path) {
             buildList { while(c.moveToNext()) add(AiBaseChange(c.getString(0),AiBaseChangeKind.valueOf(c.getString(1)),c.getString(2),c.getString(3),c.getString(4),c.getString(5))) }
         };AiBasePage(rows,total,page)
     }
-    fun apply(sources: TranslationSources, storage: GameStorage, request: AiBaseRequest) {
+    fun apply(sources: TranslationSources, storage: GameStorage, request: AiBaseRequest, progress: (String, Int, Int) -> Unit = { _, _, _ -> }) {
         val r=request.report
         val source=requireNotNull(sources.read().sources.find { it.id==r.sourceId && it.revision==r.revision && it.kind=="ai" }) { "AI 包已变化，请重新检查" }
         val base=sources.prepare(source); val snapshots=AiBaseSnapshots(cache);val latest=snapshots.read(r.latest)
@@ -113,7 +117,9 @@ internal class AiBaseUpdate(private val cache: Path) {
         val archive=root.resolve("merged.zip")
         try {
             open(r).use { db -> ZipOutputStream(Files.newOutputStream(archive)).use { zip ->
-                (entries.keys+selected.keys).forEach { key ->
+                val resources = (entries.keys+selected.keys).toList()
+                progress("合并所选译文", 0, resources.size)
+                resources.forEachIndexed { index, key ->
                     val ids=selected[key]
                     val values=ids?.let { selectedIds -> db.rawQuery("SELECT id,updated FROM changes WHERE resource=?",arrayOf(key)).use { c ->
                         buildMap { while(c.moveToNext()) if(c.getString(0) in selectedIds) put(c.getString(0),c.getString(1)) }
@@ -128,6 +134,7 @@ internal class AiBaseUpdate(private val cache: Path) {
                         TranslationSnapshot.encode(resource.raw,resource.document).toByteArray(Charsets.UTF_8)
                     }
                     zip.putNextEntry(ZipEntry(key).apply{time=0});zip.write(bytes);zip.closeEntry()
+                    progress("合并所选译文", index + 1, resources.size)
                 }
             } }
             val proof=AiTranslationReuse.collect(cache,source,base,storage,requestedLanguage=r.language)

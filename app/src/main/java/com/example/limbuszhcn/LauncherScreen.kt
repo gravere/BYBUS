@@ -67,6 +67,7 @@ internal fun LauncherScreen(
     var confirmZeroSource by rememberSaveable { mutableStateOf(false) }
     var requestedAiScope by remember { mutableStateOf<com.example.limbuszhcn.translation.AiScope?>(null) }
     var requestedAiEntries by remember { mutableStateOf<com.example.limbuszhcn.translation.AiEntryRequest?>(null) }
+    var requestedCoverage by remember { mutableStateOf<com.example.limbuszhcn.translation.CoverageRequest?>(null) }
     var handledUpdatesRequest by rememberSaveable { mutableLongStateOf(0L) }
     var handledPreparationRequest by rememberSaveable { mutableLongStateOf(0L) }
     var hideAiLaunchProgress by remember { mutableStateOf(false) }
@@ -98,6 +99,7 @@ internal fun LauncherScreen(
         if (destination == "migration") onMigration() else {
             requestedAiScope = null
             requestedAiEntries = null
+            requestedCoverage = null
             open(destination)
         }
     }
@@ -106,7 +108,7 @@ internal fun LauncherScreen(
         else if (!state.coverage.loading) translationActions.inspectCoverage()
     }
     fun openAiEntries(id: String?) {
-        requestedAiScope = null; requestedAiEntries = null
+        requestedAiScope = null; requestedAiEntries = null; requestedCoverage = null
         if (sheet != "ai-entries") openChild("ai-entries")
         translationActions.inspectAiEntries(id, false)
     }
@@ -178,7 +180,7 @@ internal fun LauncherScreen(
                 LauncherDetailSurface(layout, page, onDismiss = ::close,
                     compactContent = (page == "project" && projectState.loading && (if (projectState.source == com.example.limbuszhcn.tracking.ProjectSource.GitHub) projectState.github.snapshot == null else projectState.paratranz.snapshot == null)) ||
                         (page == "ai-entries" && state.ai.library.loading && state.ai.library.report == null) ||
-                        (page == "coverage" && state.coverage.loading && state.coverage.report == null),
+                        (page == "coverage" && state.coverage.loading && state.coverage.report == null) || page == "ai-base-update",
                     onBack = parentSheets.lastOrNull()?.let { parent -> { sheet = parent; parentSheets = parentSheets.dropLast(1) } },
                     footer = { active -> when (active) {
                         "app-update" -> AppUpdateControls(appUpdateState, state, onDownloadAppUpdate, onInstallAppUpdate, onCancelAppUpdate, layout.detailPadding.dp)
@@ -191,9 +193,11 @@ internal fun LauncherScreen(
                             actionEnabled = !state.busy, onAction = { confirmZeroSource = true })
                     } }) { active ->
                     if (active == "coverage") {
-                        TranslationCoveragePane(state, translationActions.inspectCoverage, translationActions.coverageEntries) { scope ->
-                            requestedAiScope = scope; requestedAiEntries = null; openChild("ai-translation")
-                        }
+                        TranslationCoveragePane(state, translationActions.inspectCoverage, translationActions.coverageEntries,
+                            onTranslate = { scope -> requestedAiScope = scope; requestedAiEntries = null; requestedCoverage = null; openChild("ai-translation") },
+                            readCount = translationActions.coverageCount, onSelected = { request ->
+                                requestedAiScope = null; requestedAiEntries = null; requestedCoverage = request; openChild("ai-translation")
+                            })
                     } else if (active == "repair") {
                         RepairPane(state, { confirmation = ConfirmedOperation.Repair }, onExport)
                     } else if (active == "clear-data") {
@@ -213,16 +217,16 @@ internal fun LauncherScreen(
                     } else if (active == "translation") {
                         TranslationSourcesPane(state, translationActions, onProject = { openChild("project") }, onCoverage = ::openCoverage,
                             onBaseUpdate = { id -> translationActions.inspectBaseUpdate(id); openChild("ai-base-update") }) {
-                            requestedAiScope = null; requestedAiEntries = null; openChild("ai-translation")
+                            requestedAiScope = null; requestedAiEntries = null; requestedCoverage = null; openChild("ai-translation")
                         }
                     } else if (active == "ai-translation") {
                         AiTranslationPane(state, translationActions, onCoverage = ::openCoverage, requestedScope = requestedAiScope,
-                            requestedEntries = requestedAiEntries, onEntries = ::openAiEntries)
+                            requestedEntries = requestedAiEntries, onEntries = ::openAiEntries, requestedCoverage = requestedCoverage)
                     } else if (active == "ai-base-update") {
                         AiBaseUpdatePane(state, translationActions)
                     } else if (active == "ai-entries") {
                         AiEntriesPane(state, translationActions, onBaseUpdate = { id -> translationActions.inspectBaseUpdate(id); openChild("ai-base-update") }) { request ->
-                            requestedAiScope = null; requestedAiEntries = request; openChild("ai-translation")
+                            requestedAiScope = null; requestedAiEntries = request; requestedCoverage = null; openChild("ai-translation")
                         }
                     } else {
                         LauncherDetails(active, state, onGameStore = { openChild("updates") },
@@ -316,6 +320,7 @@ private fun InstallationRow(icon: Glyph, title: String, value: String, status: S
 
 @Composable
 internal fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefresh: () -> Unit, onDetails: () -> Unit, animated: Boolean) {
+    val seconds = operationSeconds(state)
     val feedback = rememberOperationFeedback(state)
     val missing = state.container != null && state.installedVersion == null
     val canLaunch = state.container?.available == true && state.installedVersion != null &&
@@ -339,9 +344,9 @@ internal fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefre
         LaunchButton(action, enabled = state.busy || state.container != null || state.failed,
             step = state.launchStep, animated = animated, feedback = feedback,
             status = if (state.busy) state.stage else feedback.orEmpty(), progressFraction = state.workProgress.fraction,
-            progressText = if (!state.busy) "" else if (state.workProgress.total > 0)
+            progressText = if (!state.busy) "" else (if (state.workProgress.total > 0)
                 "${state.workProgress.done}/${state.workProgress.total} · ${((state.workProgress.fraction ?: 0f) * 100).toInt()}%"
-                else if (state.launchStep in 0..2) "第 ${state.launchStep + 1}/3 步" else "正在处理",
+                else if (state.launchStep in 0..2) "第 ${state.launchStep + 1}/3 步" else "处理中") + " · ${seconds}秒",
             onClick = { when { state.busy -> onDetails(); state.canResumeGame -> onLaunch(); needsDetection -> onRefresh(); canLaunch -> onLaunch(); else -> onDetails() } })
         if (!state.busy && state.ai.hasPendingTask) TextButton(onClick = onDetails) {
             Text("翻译已暂停 · 查看任务", style = MaterialTheme.typography.bodySmall)

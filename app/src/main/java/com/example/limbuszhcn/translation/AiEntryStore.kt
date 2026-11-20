@@ -24,7 +24,7 @@ internal class AiEntryStore(private val cache: Path) {
         }.language
 
     fun inspect(sources: TranslationSources, storage: GameStorage, sourceId: String?, force: Boolean = false,
-        cancelled: () -> Boolean = { false }): AiEntryReport {
+        cancelled: () -> Boolean = { false }, progress: (String, Int, Int) -> Unit = { _, _, _ -> }): AiEntryReport {
         val source = sourceId?.let { id -> requireNotNull(sources.read().sources.find { it.id == id && it.kind == "ai" }) { "此 AI 汉化包已不存在" } }
         val lang = language(source, storage)
         val game = CoverageStore(cache).resourceFingerprint(storage, lang, force)
@@ -46,7 +46,7 @@ internal class AiEntryStore(private val cache: Path) {
                 try {
                     db.execSQL("CREATE TABLE entries(number INTEGER PRIMARY KEY,id TEXT NOT NULL UNIQUE,kind TEXT NOT NULL,category TEXT NOT NULL,resource TEXT NOT NULL,hash TEXT NOT NULL,original TEXT NOT NULL,translation TEXT,pointer TEXT NOT NULL,game_id TEXT)")
                     val scanned = db.compileStatement("INSERT INTO entries VALUES(?,?,?,?,?,?,?,?,?,?)").use { insert ->
-                        AiEntryScan.scan(storage, base, lang, proof, cancelled) { row ->
+                        AiEntryScan.scan(storage, base, lang, proof, cancelled, progress) { row ->
                             insert.bindLong(1, row.number.toLong())
                             listOf(row.id, row.kind.name, row.category, row.resource, row.hash, row.original, row.translation, row.pointer, row.recordId)
                                 .forEachIndexed { i, text -> if (text == null) insert.bindNull(i + 2) else insert.bindString(i + 2, text) }

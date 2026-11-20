@@ -39,19 +39,20 @@ internal object TranslationCoverage {
     }
 
     fun scan(storage: GameStorage, base: PreparedTranslation, sourceName: String, committedAi: Set<String> = emptySet(),
-        onEntry: ((CoverageEntry) -> Unit)? = null): CoverageReport {
+        onEntry: ((CoverageEntry) -> Unit)? = null, onProgress: (String, Int, Int) -> Unit = { _, _, _ -> }): CoverageReport {
         val inspection = TranslationInspection(storage, base)
         val resources = inspection.resources
         require(resources.isNotEmpty()) { "还没有本地游戏文本。请先从 BYBUS 进入游戏完成资源下载，再回来检查。" }
-        val shared = inspection.sharedTranslations()
+        val shared = inspection.sharedTranslations { done, total -> onProgress("匹配共用译文", done, total) }
         var total = 0; var covered = 0; var missing = 0; var review = 0; var eligible = 0
         var excluded = 0; var sharedCount = 0; var reviewEligible = 0
         var unreadable = 0; var independent = 0; var bytesRead = 0L
         val details = mutableListOf<CoverageFile>()
-        for (key in resources) {
+        onProgress("检查本地文本", 0, resources.size)
+        for ((index, key) in resources.withIndex()) {
             if (Thread.currentThread().isInterrupted) throw CancellationException()
             val resource = inspection.readable(key)
-            if (resource == null) { unreadable++; continue }
+            if (resource == null) { unreadable++; onProgress("检查本地文本", index + 1, resources.size); continue }
             bytesRead += resource.bytes
             require(bytesRead <= 128L * 1024 * 1024) { "本地文本过多，本次检查已停止" }
             val all = resource.fields
@@ -85,6 +86,7 @@ internal object TranslationCoverage {
                 }
             }
             if (fileMissing + fileReview > 0) details += CoverageFile(key, category, fileMissing, fileReview, examples)
+            onProgress("检查本地文本", index + 1, resources.size)
         }
         return CoverageReport(sourceName, System.currentTimeMillis(), resources.size - unreadable, total,
             covered, missing, review, eligible, unreadable, details, excluded, sharedCount, reviewEligible, independent,

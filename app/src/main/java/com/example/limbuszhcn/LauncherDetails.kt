@@ -80,7 +80,7 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
 
 @Composable
 internal fun SheetAction(icon: Glyph, title: String, enabled: Boolean = true, subtitle: String? = null,
-    external: Boolean = false, navigation: Boolean = false, showUpdate: Boolean = false, onClick: () -> Unit) {
+    external: Boolean = false, navigation: Boolean = false, showUpdate: Boolean = false, destructive: Boolean = false, onClick: () -> Unit) {
     val opacity by androidx.compose.animation.core.animateFloatAsState(if (enabled) 1f else .4f,
         androidx.compose.animation.core.tween(140), label = "row enabled")
     // The containing group owns the rounded outline; the entire row owns its feedback.
@@ -88,10 +88,10 @@ internal fun SheetAction(icon: Glyph, title: String, enabled: Boolean = true, su
         .semantics { if (showUpdate) stateDescription = "有 BYBUS 新版本" }
         .heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 10.dp).graphicsLayer { alpha = opacity },
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        IconTile(icon)
+        if (destructive) LauncherGlyph(icon, C.Error, Modifier.size(38.dp).padding(8.dp)) else IconTile(icon)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f, fill = false))
+                Text(title, color = if (destructive) C.Error else C.Ink, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f, fill = false))
                 if (showUpdate) UpdateDot()
             }
             subtitle?.let { Text(it, color = C.Muted, style = MaterialTheme.typography.bodySmall) }
@@ -139,21 +139,37 @@ private fun AboutPane() {
         Text(androidx.compose.ui.res.stringResource(R.string.app_version_name), color = C.Ink,
             style = MaterialTheme.typography.labelMedium)
     }
-    DetailSection("开始使用") {
-        Column(Modifier.padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            listOf("安装官方游戏，回到 BYBUS 点击启动。", "汉化包准备好后进入游戏，登录并下载资源，汉化会随资源加载生效。", "以后从 BYBUS 启动。默认汉化源自动检查更新，也可在设置的「汉化」分组导入本地包或使用 AI 翻译。").forEachIndexed { index, text ->
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
-                    Text("0${index + 1}", color = C.Accent, style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.padding(top = 3.dp))
-                    Text(text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                }
-            }
-        }
-    }
-    DetailSection("游戏更新与数据缓存") {
-        Column(Modifier.padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("保留系统安装的游戏，从原渠道更新后，BYBUS 会自动同步。", style = MaterialTheme.typography.bodyMedium)
-            Text("游戏资源在 BYBUS 内下载一次即可。覆盖更新 BYBUS 会保留资源与登录信息；卸载或在系统设置中清除 BYBUS 数据会删除它们。", style = MaterialTheme.typography.bodyMedium)
+    GuideSection("开始使用", listOf(
+        "安装官方游戏即可，不用先打开它。回到 BYBUS，点「启动游戏」。",
+        "BYBUS 准备汉化后会打开游戏。在游戏里登录、下载资源，汉化随资源加载生效。",
+        "以后从 BYBUS 启动即可。需要自行具备能连接游戏、GitHub 或所用 AI 服务的网络。"))
+    GuideSection("返回游戏与管理", listOf(
+        "游戏运行时，点桌面 BYBUS 图标会返回游戏。",
+        "想调整设置：长按桌面图标，选择「管理 BYBUS」。它打开启动器首页，方便换汉化、查看任务和更新。",
+        "首页正在处理的按钮可打开当前任务。AI 翻译可暂停、继续；取消会删除本次尚未发布的译文。"))
+    GuideSection("汉化与 AI 翻译", listOf(
+        "「汉化源与更新」可更新零协资源、导入本地包，以及切换、改名或删除汉化包。",
+        "「汉化覆盖」检查当前游戏语言：未覆盖是没有匹配译文，待核对是译文仍含日文或韩文。可按剧情、战斗等分类，勾选需要翻译的条目。",
+        "「AI 翻译」可补充当前包，也可从零翻译。先填写服务地址、密钥和模型，再选范围、数量与提示词；费用由你的 API 服务商收取。",
+        "生成的 AI 包可查看、删除或重译条目，也能检查原包更新，采用原包的新译文。汉化包或游戏文本变动后再检查覆盖。"))
+    GuideSection("应用与游戏更新", listOf(
+        "「应用更新」更新 BYBUS；「游戏更新」查看游戏版本并打开安装来源。系统里的官方游戏更新后，BYBUS 会同步安装文件。",
+        "保留官方游戏安装包。大型游戏资源只在 BYBUS 内下载一次，日常更新仅补充游戏需要的新资源。"))
+    GuideSection("账号、后台与翻译项目", listOf(
+        "可在游戏登录页添加 Google 账号，也可从「Google 账号与付款」管理容器内账号。商店服务默认开启。",
+        "切到后台容易被系统关闭时，查看「后台运行」中的系统设置入口。",
+        "首页翻译项目可跟随当前汉化源，也可固定显示；都市零协会可查看 GitHub 更新和翻译进度。"))
+    GuideSection("数据与维护", listOf(
+        "「数据迁移」可导入、导出游戏资源 ZIP。账号与 API 密钥不包含在资源包中。",
+        "汉化或安装文件异常时用「修复」，会保留账号和已下载资源。仍有问题可「导出诊断」反馈。",
+        "「清除数据」会删除游戏下载资源，下次需重新下载。覆盖更新 BYBUS 会保留数据，卸载或系统清除应用数据会删除它们。"))
+}
+
+@Composable
+private fun GuideSection(title: String, items: List<String>) {
+    DetailSection(title) {
+        Column(Modifier.padding(vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            items.forEach { Text(it, color = C.Ink, style = MaterialTheme.typography.bodyMedium) }
         }
     }
 }

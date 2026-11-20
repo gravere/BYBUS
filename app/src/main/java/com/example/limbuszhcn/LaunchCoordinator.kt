@@ -95,7 +95,6 @@ internal class LaunchCoordinator private constructor(application: Application) {
     private val aiTaskStore by lazy { AiTaskStore(translationCache) }
     private val modelsWorker = Executors.newSingleThreadExecutor { task -> Thread(task, "bybus-models") }
     private val aiSettingsWorker = Executors.newSingleThreadExecutor { task -> Thread(task, "bybus-ai-settings") }
-    private val coverageWorker = Executors.newSingleThreadExecutor { task -> Thread(task, "bybus-coverage") }
     private val coverageRequest = java.util.concurrent.atomic.AtomicLong()
     private val coverageStore by lazy { CoverageStore(translationCache) }
     private var modelsTask: java.util.concurrent.Future<*>? = null
@@ -150,8 +149,13 @@ internal class LaunchCoordinator private constructor(application: Application) {
 
     private fun stage(label: String, step: Int = -1) = publish { it.copy(stage = label, launchStep = step,
         workProgress = it.workProgress.copy(done = 0, total = 0)) }
-    private fun workProgress(label: String, done: Int, total: Int) = publish {
-        it.copy(stage = label, workProgress = it.workProgress.copy(done = done.coerceAtLeast(0), total = total.coerceAtLeast(0)))
+    private var lastProgressAt = 0L
+    private var lastProgressLabel = ""
+    private fun workProgress(label: String, done: Int, total: Int) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (label == lastProgressLabel && done != 0 && done != total && now - lastProgressAt < 80) return
+        lastProgressAt = now; lastProgressLabel = label
+        publish { it.copy(stage = label, workProgress = it.workProgress.copy(done = done.coerceAtLeast(0), total = total.coerceAtLeast(0))) }
     }
 
     private fun perform(label: String, allowPackageUpdate: Boolean = false,
@@ -362,8 +366,8 @@ internal class LaunchCoordinator private constructor(application: Application) {
     fun inspectCoverage() {
         if (state.busy || state.coverage.loading) return
         val request = coverageRequest.incrementAndGet()
-        state = state.copy(coverage = state.coverage.copy(loading = true, error = null))
-        coverageWorker.execute {
+        perform("检查汉化覆盖", preserveFailure = true, page = "coverage") {
+            publish { it.copy(coverage = it.coverage.copy(loading = true, error = null)) }
             var ticket: CoverageCheck? = null
             val result = runCatching {
                 check(coverageRequest.get() == request) { "已有新的覆盖检查" }
@@ -374,7 +378,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
                 publish { current -> current.copy(coverage = current.coverage.copy(language = language,
                     report = current.coverage.report?.takeIf { it.language == language })) }
                 require(storage.textResources(language).isNotEmpty()) { "还没有${language.displayName}游戏文本。请先进入游戏完成资源下载，再回来检查。" }
-                val pair = com.example.limbuszhcn.storage.OperationLock.run(app.filesDir.toPath()) {
+                val pair = run {
                     val source = translationSources.read().selected
                     val base = if (source.isOfficial) {
                         val extracted = com.example.limbuszhcn.update.TranslationRepository(translationCache).verifiedForLaunch(null)
@@ -401,6 +405,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
                         else "本地文本读取失败，请在资源下载完成后重新检查"
                     }))
             }
+            result.fold({ "已检查 ${it.report.total} 条文本" }, { it.userMessage() })
         }
     }
 
@@ -413,12 +418,15 @@ internal class LaunchCoordinator private constructor(application: Application) {
     fun coverageEntries(ref: CoverageIndexRef, filter: CoverageFilter, page: Int, cancel: android.os.CancellationSignal) =
         coverageStore.entries(ref, filter, page, cancel)
 
+    fun coverageCount(ref: CoverageIndexRef, filter: CoverageFilter, numbers: Set<Int>?, cancel: android.os.CancellationSignal) =
+        CoverageEntryIndex.count(ref.file(translationCache), filter, numbers, cancel)
+
     private fun saveCoverage(storage: com.example.limbuszhcn.gamefs.GameStorage, source: TranslationSource, base: PreparedTranslation,
         input: CoverageInputs, ticket: CoverageCheck, stillSelected: () -> Boolean = { true }) = coverageStore.indexedCheck(input, ticket) { add ->
         val prior = independentInput()
         val proof = prior?.let { AiTranslationReuse.collect(translationCache, it,
             if (it.id == source.id) base else translationSources.prepare(it), storage).keys }.orEmpty()
-        val report = TranslationCoverage.scan(storage, base, source.name, proof, add)
+        val report = TranslationCoverage.scan(storage, base, source.name, proof, add, ::workProgress)
         check(stillSelected() && coverageInputs(translationSources.read().selected, storage).fingerprint == input.fingerprint) {
             "检查期间资源发生变化，请重新检查"
         }
@@ -482,7 +490,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
                     PreparedTranslation(extracted.outputDirectory, extracted.manifest)
                 } else translationSources.prepare(requireNotNull(translationSources.read().sources.find { it.id == source.baseId }) { "原始汉化包已删除，请先重新导入" })
                 stage("对照底包与 AI 译文")
-                AiBaseUpdate(translationCache).inspect(translationSources, source, base, translationStorage())
+                AiBaseUpdate(translationCache).inspect(translationSources, source, base, translationStorage(), ::workProgress)
             }
             publish { it.copy(ai = it.ai.copy(baseUpdate = AiBaseState(id, result.getOrNull(), error = result.exceptionOrNull()?.userMessage()))) }
             result.fold({ "发现 ${it.total} 条底包变动" }, { it.userMessage() })
@@ -494,7 +502,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
         if (state.ai.hasPendingTask) return
         perform("更新底包译文", preserveFailure = true, page = "ai-base-update") {
             stopGame()
-            AiBaseUpdate(translationCache).apply(translationSources, translationStorage(), request)
+            AiBaseUpdate(translationCache).apply(translationSources, translationStorage(), request, ::workProgress)
             publishSources("底包译文已更新")
             publish { it.copy(translation = null, ai = it.ai.copy(baseUpdate = AiBaseState(sourceId = request.report.sourceId,
                 message = "所选译文已更新"), library = it.ai.library.copy(stale = true))) }
@@ -590,7 +598,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
         }
     }
 
-    fun generateAi(config: AiConfig, key: String) {
+    fun generateAi(config: AiConfig, key: String, selection: CoverageRequest? = null) {
         if (state.busy || state.ai.hasPendingTask) return
         if (!config.missingOnly) { inspectAiEntries(null, false); return }
         if (!state.coverage.canGenerate(config)) {
@@ -598,6 +606,10 @@ internal class LaunchCoordinator private constructor(application: Application) {
             return
         }
         val checkedFingerprint = state.coverage.fingerprint
+        if (selection != null && (selection.fingerprint != checkedFingerprint || selection.report.entryIndex != state.coverage.report?.entryIndex)) {
+            state = state.copy(ai = state.ai.copy(message = "检查结果已变化，请重新选择翻译条目"))
+            return
+        }
         synchronized(aiControl) { aiCancelled.set(false); aiDiscarded.set(false); aiCommitting = false }
         perform("生成 AI 汉化", preserveFailure = true, page = "ai-translation") {
             runAiTask {
@@ -615,8 +627,12 @@ internal class LaunchCoordinator private constructor(application: Application) {
                     input.fingerprint == checkedFingerprint && (config.missingOnly || recorded.independentReady)) {
                     "汉化或游戏文本已变化，请重新检查后再翻译"
                 }
+                val plan = selection?.let {
+                    require(it.report.entryIndex == recorded.report.entryIndex && it.fingerprint == recorded.fingerprint) { "检查结果已变化，请重新选择" }
+                    CoverageEntryIndex.plan(requireNotNull(it.report.entryIndex).file(translationCache), it, translationStorage(), config.validated().limit)
+                }
                 aiSettings.save(config, key); publishAiSettings(keySaved = key.isNotBlank()); stopGame()
-                aiTaskStore.createForSelection(config, translationSources, prepared, reference, independent, translationStorage(), aiCancelled::get)
+                aiTaskStore.createForSelection(config, translationSources, prepared, reference, independent, translationStorage(), aiCancelled::get, plan)
             }.message
         }
     }
@@ -634,7 +650,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
         }
     }
     private fun refreshAiLibrary(sourceId: String?, force: Boolean = false): String {
-        val result = runCatching { AiEntryStore(translationCache).inspect(translationSources, translationStorage(), sourceId, force) }
+        val result = runCatching { AiEntryStore(translationCache).inspect(translationSources, translationStorage(), sourceId, force, progress = ::workProgress) }
         publish { it.copy(ai = it.ai.copy(library = it.ai.library.copy(loading = false, sourceId = sourceId,
             report = result.getOrNull() ?: it.ai.library.report?.takeIf { r -> r.sourceId == sourceId }, stale = result.isFailure,
             error = result.exceptionOrNull()?.userMessage()))) }
@@ -718,6 +734,9 @@ internal class LaunchCoordinator private constructor(application: Application) {
             val result = AiTranslationJob(translationCache, translationStorage(), task.config,
                 AiTranslationClient(task.config, aiSettings.key(task.config.endpoint)), aiCancelled::get) { progress ->
                 val saved = aiTaskStore.read()
+                val plan = saved?.plan
+                if (plan != null) workProgress("正在翻译所选文本", (progress.completed + progress.reused).coerceAtMost(plan.total), plan.total)
+                else if (progress.totalFiles > 0) workProgress("核对翻译范围", progress.scannedFiles, progress.totalFiles)
                 publish { it.copy(ai = it.ai.copy(task = saved, progress = progress,
                     message = if (it.ai.stopping) it.ai.message else progress.message)) }
             }.run(task.baseId, prepared, task.outputIdentity, reuse = reusable, reference = reference, session = aiTaskStore,

@@ -30,20 +30,26 @@ internal class TranslationInspection(private val storage: GameStorage, private v
         return Resource(raw, original, document, TranslationFields.collect(original, document, key, baseline), bytes.size)
     }
     fun readable(key: String): Resource? = readableResource { read(key) }
-    fun sharedTranslations(): Map<String, String> {
+    fun sharedTranslations(progress: (Int, Int) -> Unit = { _, _ -> }): Map<String, String> {
         val prepared = base ?: return emptyMap()
         val wanted = hashSetOf<String>(); var bytes = 0L
-        resources.filterNot(NoticeTexts::isResource).forEach { key ->
+        val originals = resources.filterNot(NoticeTexts::isResource)
+        val paired = resources.filter { it in entries && !NoticeTexts.isResource(it) }
+        val total = originals.size + paired.size
+        var done = 0
+        progress(done, total)
+        originals.forEach { key ->
             checkCancelled()
             readable(key)?.let { r ->
                 bytes += r.raw.length * 2L
                 r.fields.filter { !it.covered && it.excludedReason == null }.forEach { wanted += it.text }
             }
             require(bytes <= 256L * 1024 * 1024) { "本地文本总量超出检查范围" }
+            progress(++done, total)
         }
         if (wanted.isEmpty()) return emptyMap()
         val compiler = TranslationIndexCompiler()
-        resources.filter { it in entries && !NoticeTexts.isResource(it) }.forEach { key ->
+        paired.forEach { key ->
             checkCancelled()
             readableResource {
                 val bytes = requireNotNull(storage.read(storage.rootPath().trimEnd('/') + "/$key"))
@@ -54,6 +60,7 @@ internal class TranslationInspection(private val storage: GameStorage, private v
                 TranslationJsonPairer.pair("Localize/$key", raw, String(Files.readAllBytes(file), Charsets.UTF_8)).records
                     .filter { it.source in wanted }.forEach(compiler::add)
             }
+            progress(++done, total)
         }
         return compiler.compile("coverage", "0".repeat(64)).uniqueEntries.filterKeys { it in wanted }
     }

@@ -41,7 +41,7 @@ internal fun AiBaseUpdatePane(state: LauncherUiState, actions: TranslationAction
                 Text("同步原包译文",Modifier.weight(1f),style=MaterialTheme.typography.titleSmall)
                 ActionIconButton(Glyph.Refresh,"检查原包更新",{update.sourceId?.let(actions.inspectBaseUpdate)},enabled=!state.busy,busy=update.loading)
             }
-            if(update.loading) OperationProgress(state)
+            if(state.busy && state.taskPage == "ai-base-update") OperationProgress(state)
             report?.let{
                 Text("新增 ${it.added} 条 · 改写 ${it.replaced} 条",style=MaterialTheme.typography.bodyMedium)
                 if(!it.historical)Text("无法读取生成时的原包，下面对比最新原包与当前译文。",style=MaterialTheme.typography.bodySmall,color=C.Muted)
@@ -50,7 +50,7 @@ internal fun AiBaseUpdatePane(state: LauncherUiState, actions: TranslationAction
             update.error?.let{Text(it,color=C.Error,style=MaterialTheme.typography.bodyMedium)}
             update.message?.let{Text(it,style=MaterialTheme.typography.bodyMedium)}
         }
-        if(report!=null){
+        if(report!=null && !state.busy){
             DetailCard{
                 SourceTabs(listOf(null,AiBaseChangeKind.Added,AiBaseChangeKind.Replaced),kind,{it?.label?:"全部"},"原包变动",{kind=it})
                 Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){

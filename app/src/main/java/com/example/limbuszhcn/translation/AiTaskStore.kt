@@ -89,7 +89,7 @@ internal class AiTaskStore(private val cache: Path) {
     }
 
     fun createForSelection(config: AiConfig, sources: TranslationSources, base: PreparedTranslation?, reference: PreparedTranslation?,
-        independentInput: TranslationSource?, storage: GameStorage, cancelled: () -> Boolean = { false }): AiTaskSnapshot {
+        independentInput: TranslationSource?, storage: GameStorage, cancelled: () -> Boolean = { false }, explicitPlan: AiTaskPlan? = null): AiTaskSnapshot {
         val source = sources.read().selected
         val language = requireNotNull(storage.textLanguage()).language.code
         val previous = (if (config.missingOnly) source.takeIf { it.kind == "ai" } else independentInput)
@@ -100,7 +100,7 @@ internal class AiTaskStore(private val cache: Path) {
         }.orEmpty()
         val target = previous?.takeIf { !config.missingOnly && (it.independent || it.id != source.id) }?.id?.removePrefix("ai-")
         return create(config, source, base, reference, identityOverride = target, committed = prior,
-            language = language)
+            language = language, explicitPlan = explicitPlan)
     }
 
     /** Build 109 froze a premerged archive for an upstream job. Upgrade it only when the stored
