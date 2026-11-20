@@ -73,6 +73,102 @@ class AiTaskStoreTest {
         assertEquals(26, result.progress.limit)
     }
 
+    @Test fun oneInvalidAnswerSavesItsValidSiblingsAndRecoveryRequestsOnlyUnfinishedEntries() {
+        val (source, base) = fixture()
+        val config = AiConfig(includeMissing = false, includeReview = true, limit = 26)
+        val tasks = AiTaskStore(cache); val task = tasks.create(config, source, base, base)
+        var rejectedId = ""
+        val broken = client(config, mutableListOf(), wrap = { body ->
+            val data = JSONObject(body)
+            val row = data.getJSONArray("translations").getJSONObject(4)
+            rejectedId = row.getString("id")
+            row.put("text", row.getString("text") + "新增999点")
+            data.toString()
+        })
+        val before = TranslationSources(cache).read()
+        val error = assertThrows(AiBatchValidationException::class.java) {
+            AiTranslationJob(cache, ContainerWorkspaceStorage(localize), config, broken)
+                .run(source.id, tasks.prepared("base"), task.outputIdentity, session = tasks)
+        }
+        assertEquals(23, tasks.read()!!.progress.completed)
+        assertEquals(1, tasks.read()!!.progress.requests)
+        assertEquals(rejectedId, error.rejected.single().id)
+        assertTrue(error.message!!.contains("已保存 23 条"))
+        assertEquals(before, TranslationSources(cache).read())
+        assertFalse(Files.exists(tasks.work.resolve("ai-jobs/${task.outputIdentity}/generated.zip")))
+        Files.walk(tasks.work).use { files -> files.filter { Files.isRegularFile(it) }.forEach {
+            assertFalse(String(Files.readAllBytes(it)).contains("新增999"))
+        } }
+        val recovered = AiTaskStore(cache)
+        assertEquals(AiTaskPhase.Paused, recovered.recover(before)!!.phase)
+        val requested = mutableListOf<String>()
+        val result = AiTranslationJob(cache, ContainerWorkspaceStorage(localize), config, client(config, requested))
+            .run(source.id, recovered.prepared("base"), task.outputIdentity, session = recovered)
+        assertEquals(3, requested.size)
+        assertEquals(23, result.progress.reused); assertEquals(3, result.progress.completed)
+        assertEquals(26, result.aiEntryCount)
+        assertEquals(2, result.progress.requests) // No automatic retry, one request per explicit run.
+        assertTrue(Files.isRegularFile(result.archive))
+    }
+
+    @Test fun missingAnswerIsRetriedAloneAndMalformedEnvelopeCannotCacheAnySibling() {
+        val (source, base) = fixture()
+        val config = AiConfig(includeMissing = false, includeReview = true, limit = 4)
+        val tasks = AiTaskStore(cache); val task = tasks.create(config, source, base, base)
+        val malformed = client(config, mutableListOf(), wrap = { body ->
+            val data = JSONObject(body); data.getJSONArray("translations").getJSONObject(3).put("id", "unknown")
+            data.toString()
+        })
+        assertThrows(AiTranslationException::class.java) {
+            AiTranslationJob(cache, ContainerWorkspaceStorage(localize), config, malformed)
+                .run(source.id, tasks.prepared("base"), task.outputIdentity, session = tasks)
+        }
+        assertEquals(0, tasks.read()!!.progress.completed)
+        val missing = client(config, mutableListOf(), wrap = { body ->
+            val data = JSONObject(body); data.getJSONArray("translations").remove(1); data.toString()
+        })
+        assertThrows(AiBatchValidationException::class.java) {
+            AiTranslationJob(cache, ContainerWorkspaceStorage(localize), config, missing)
+                .run(source.id, tasks.prepared("base"), task.outputIdentity, session = tasks)
+        }
+        assertEquals(3, tasks.read()!!.progress.completed)
+        val requested = mutableListOf<String>()
+        val result = AiTranslationJob(cache, ContainerWorkspaceStorage(localize), config, client(config, requested))
+            .run(source.id, tasks.prepared("base"), task.outputIdentity, session = tasks)
+        assertEquals(1, requested.size); assertEquals(3, result.progress.reused)
+        assertEquals(4, result.aiEntryCount)
+    }
+
+    @Test fun unreadablePaidAnswersStopRecoveryBeforeAnotherRequest() {
+        val (source, base) = fixture()
+        val config = AiConfig(includeMissing = false, includeReview = true, limit = 26)
+        val tasks = AiTaskStore(cache); val task = tasks.create(config, source, base, base)
+        var paused = false
+        assertThrows(CancellationException::class.java) {
+            AiTranslationJob(cache, ContainerWorkspaceStorage(localize), config, client(config, mutableListOf()) { paused = true }, { paused })
+                .run(source.id, tasks.prepared("base"), task.outputIdentity, session = tasks)
+        }
+        val file = Files.list(tasks.work.resolve("ai-jobs/${task.outputIdentity}/cache")).use { it.findFirst().get() }
+        val valid = Files.readAllBytes(file)
+        for (bad in listOf("private-corrupt-body", "{} trailing", "{\"key\":42}")) {
+            Files.write(file, bad.toByteArray())
+            val seen = mutableListOf<String>()
+            val error = assertThrows(AiTranslationException::class.java) {
+                AiTranslationJob(cache, ContainerWorkspaceStorage(localize), config, client(config, seen))
+                    .run(source.id, tasks.prepared("base"), task.outputIdentity, session = tasks)
+            }
+            assertTrue(seen.isEmpty()); assertFalse(error.message!!.contains(bad))
+            assertEquals(bad, String(Files.readAllBytes(file)))
+        }
+        java.io.RandomAccessFile(file.toFile(), "rw").use { it.setLength(8L * 1024 * 1024 + 1) }
+        assertThrows(AiTranslationException::class.java) { readAiResponseCache(file) }
+        Files.write(file, valid)
+        assertEquals(24, readAiResponseCache(file).length())
+        val large = JSONObject().put("entry", "a".repeat(300_000)).toString()
+        Files.write(file, large.toByteArray())
+        assertEquals(300_000, readAiResponseCache(file).getString("entry").length)
+    }
+
     @Test fun timeoutThenProcessRecoveryKeepsExactReviewScopeAndDoesNotRebillCompletedBatch() {
         val (source, base) = fixture()
         val config = AiConfig(includeMissing = false, includeReview = true, limit = 26)

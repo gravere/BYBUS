@@ -154,8 +154,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
             // Coverage is recomputed above. A new base release must not rebill unchanged missing text.
             val cacheKey = digest("${c.endpoint}|${c.model}|$key|${digest(raw)}|${c.missingOnly}|${digest(c.prompt)}")
             val savedFile = root.resolve("cache/$cacheKey.json")
-            val saved = if (Files.isRegularFile(savedFile) && Files.size(savedFile) <= 8 * 1024 * 1024)
-                runCatching { JSONObject(String(Files.readAllBytes(savedFile), Charsets.UTF_8)) }.getOrDefault(JSONObject()) else JSONObject()
+            val saved = readAiResponseCache(savedFile)
             val pending = mutableListOf<TranslationField>()
             val applied = hashSetOf<String>()
             var reusedChanged = carriedInFile.isNotEmpty()
@@ -196,22 +195,23 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
                         .sortedBy { kotlin.math.abs(it.index - position) }.take(3).sortedBy { it.index }
                         .map { it.value.text to it.value.translated.orEmpty() }
                     AiText(leaf.id, leaf.text, leaf.context, terminology.forText(leaf.text, leaf.context), neighbors)
-                }, onUsage = { usage ->
+                }, allowPartial = true, onUsage = { usage ->
                     input += usage.input; tokens += usage.output; cached += usage.cached; requests++; unknown = unknown || !usage.known
                     emit(AiProgress(done, progressLimit, reused, message = "正在校验本批译文"))
                 })
                 for (leaf in batch) {
-                    val value = result.translations.getValue(leaf.id)
+                    val value = result.translations[leaf.id] ?: continue
                     changes.record(key, leaf.text, leaf.translated, value)
                     leaf.apply(value)
                     applied += leaf.id
                     // Store the protected form so reading cache applies the same validator.
                     val savedId = responseKey(leaf)
-                    saved.put(savedId, protectTranslated(leaf.text, value))
+                    saved.put(savedId, result.protectedTranslations.getValue(leaf.id))
                 }
                 TranslationSources.writeAtomic(savedFile, saved.toString())
-                done += batch.size
+                done += result.translations.size
                 emit(AiProgress(done, progressLimit, reused, input, tokens, "已完成 ${done + reused}/$progressLimit 条"))
+                if (result.rejected.isNotEmpty()) throw AiBatchValidationException(result.rejected, result.translations.size)
             }
             remaining += pending.size - cursor
             val target = output.resolve(key); Files.createDirectories(target.parent)
@@ -253,12 +253,22 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
         fun digest(text: String): String = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it.toInt() and 255) }
         fun resourceKey(target: String): String = com.example.limbuszhcn.gamefs.GameTextLanguage.Japanese.resourceKey(target)
-        private fun protectTranslated(original: String, translated: String): String {
-            // Re-mask the original token identities, including valid Chinese word-order changes.
-            val expected = ProtectedTranslation(original)
-            val masked = expected.maskTranslated(translated)
-            require(expected.restore(masked) == translated) { "译文缓存格式校验失败" }
-            return masked
-        }
+    }
+}
+
+/** An unreadable paid answer is not an empty cache. Keep it and stop rather than silently rebill it. */
+internal fun readAiResponseCache(file: Path): JSONObject {
+    if (!Files.exists(file)) return JSONObject()
+    try {
+        if (!Files.isRegularFile(file) || Files.size(file) > 8 * 1024 * 1024)
+            throw AiTranslationException("已保存的译文文件超出读取范围，已停止；没有重新请求这些条目。")
+        val data = parseAiResponseObject(String(Files.readAllBytes(file), Charsets.UTF_8), maxCharacters = 8 * 1024 * 1024)
+        if (data.keys().asSequence().any { data.opt(it) !is String })
+            throw AiTranslationException("已保存的译文记录损坏，已停止；没有重新请求这些条目。")
+        return data
+    } catch (_: java.io.IOException) {
+        throw AiTranslationException("无法读取已保存的译文，已停止；请检查设备存储后再继续。")
+    } catch (_: AiResponseFormatException) {
+        throw AiTranslationException("已保存的译文记录损坏，已停止；没有重新请求这些条目。")
     }
 }

@@ -13,6 +13,69 @@ import org.junit.runner.RunWith
 /** Exercises Android ICU and org.json, with an in-memory API response and no network request. */
 @RunWith(AndroidJUnit4::class)
 class AiPlatformTest {
+    @Test fun androidRestartReusesGoodAnswersFromAPartiallyRejectedBatch() {
+        val parent = InstrumentationRegistry.getInstrumentation().targetContext.cacheDir.toPath()
+        val root = java.nio.file.Files.createTempDirectory(parent, "ai-partial-test-")
+        try {
+            val localize = java.nio.file.Files.createDirectories(root.resolve("Localize/jp"))
+            val raw = """{"dataList":[{"id":1,"content":"First"},{"id":2,"content":"Second"},{"id":3,"content":"Third"}]}"""
+            java.nio.file.Files.write(localize.resolve("JP_MainUIText.json"), raw.toByteArray())
+            val storage = com.example.limbuszhcn.container.ContainerWorkspaceStorage(localize.parent)
+            val tasks = AiTaskStore(root); val config = AiConfig(missingOnly = false, limit = 3)
+            val task = tasks.create(config, TranslationSource("global", "全局 AI 翻译", independent = true), null, null)
+            var calls = 0; val counts = mutableListOf<Int>()
+            val client = AiTranslationClient(config, "non-secret-fixture", AiHttpTransport { _, _, body ->
+                calls++
+                val input = JSONArray(JSONObject(body).getJSONArray("messages").getJSONObject(1).getString("content"))
+                counts += input.length()
+                val output = JSONArray()
+                repeat(input.length()) { i -> output.put(JSONObject().put("id", input.getJSONObject(i).getString("id"))
+                    .put("text", if (calls == 1 && i == 1) "错误999" else "中文译文")) }
+                JSONObject().put("choices", JSONArray().put(JSONObject().put("finish_reason", "stop").put("message",
+                    JSONObject().put("content", JSONObject().put("translations", output).toString())))).toString()
+            })
+            assertTrue(runCatching {
+                AiTranslationJob(root, storage, config, client).run(task.baseId, null, task.outputIdentity, session = tasks)
+            }.exceptionOrNull() is AiBatchValidationException)
+            assertEquals(2, tasks.read()!!.progress.completed)
+            val fresh = AiTaskStore(root)
+            assertEquals(AiTaskPhase.Paused, fresh.recover(TranslationSources(root).read())!!.phase)
+            assertEquals(1, calls)
+            val result = AiTranslationJob(root, storage, config, client)
+                .run(task.baseId, null, task.outputIdentity, session = fresh)
+            assertEquals(listOf(3, 1), counts)
+            assertEquals(2, result.progress.reused); assertEquals(1, result.progress.completed)
+            assertEquals(3, result.aiEntryCount)
+            assertTrue(java.nio.file.Files.isRegularFile(result.archive))
+        } finally { com.example.limbuszhcn.storage.AtomicFiles.deleteOwnedTree(parent, root) }
+    }
+
+    @Test fun androidPartialValidationKeepsGoodRowsAndNormalizesOnlyNewWhitespace() {
+        val source = "<b>Burn</b> {0}\n2%\\nNext"
+        val protected = ProtectedTranslation(source)
+        val text = protected.masked.replace("Burn", "烧伤\n效果")
+        val rows = JSONArray().put(JSONObject().put("id", "good").put("text", text))
+            .put(JSONObject().put("id", "bad").put("text", "错误9"))
+        var calls = 0
+        val result = AiTranslationClient(AiConfig(), "non-secret-fixture", AiHttpTransport { _, _, _ ->
+            calls++
+            JSONObject().put("choices", JSONArray().put(JSONObject().put("finish_reason", "stop")
+                .put("message", JSONObject().put("content", JSONObject().put("translations", rows).toString())))).toString()
+        }).translate(listOf(AiText("good", source), AiText("bad", "Wrong"), AiText("missing", "Wait")), allowPartial = true)
+        assertEquals(1, calls)
+        assertEquals(mapOf("good" to source.replace("Burn", "烧伤 效果")), result.translations)
+        assertEquals(result.translations["good"], protected.restore(result.protectedTranslations.getValue("good")))
+        assertEquals(listOf(AiValidationReason.AddedNumber, AiValidationReason.Missing), result.rejected.map { it.reason })
+    }
+
+    @Test fun androidJsonCannotSilentlyOverwriteDuplicateKeysOrAcceptDeepOrLenientData() {
+        for (text in listOf("{\"a\":1,\"a\":2}", "{\"a\":1,\"\\u0061\":2}",
+            "{unquoted:1}", "{'a':1}", "{\"a\":1,}", "{\"a\":[1,]}", "{\"a\":NaN}",
+            "[".repeat(40) + "0" + "]".repeat(40))) {
+            assertTrue(text, runCatching { parseAiResponseObject(text) }.exceptionOrNull() is AiResponseFormatException)
+        }
+    }
+
     @Test fun androidFencedResponsesPreserveGameDataAndRejectIncompleteObjects() {
         val source = "<b>攻撃 {0}</b>\n[Burn] 12%"
         val masked = ProtectedTranslation(source).masked.replace("攻撃", "攻击")
