@@ -37,10 +37,6 @@ BYBUS 让你在安卓手机和平板上使用中文游玩《边狱巴士》。�
 
 [![BYBUS 宣传片封面，点击下载完整视频](docs/assets/bybus-promo-cover.jpg)](https://github.com/gravere/BYBUS/raw/refs/heads/main/docs/assets/BYBUS-promo-1080p.mp4)
 
-[下载宣传片](https://github.com/gravere/BYBUS/raw/refs/heads/main/docs/assets/BYBUS-promo-1080p.mp4) · 4 分钟 · 1080p · 字幕与轻音乐
-
-从首次使用到汉化源管理、AI 翻译、公告翻译和手机平板体验，一起看看 BYBUS 能做什么。公告翻译展示在 **02:38–03:04**。
-
 ## 界面预览
 
 <p align="center">
