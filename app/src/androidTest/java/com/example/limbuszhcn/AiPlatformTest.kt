@@ -13,6 +13,22 @@ import org.junit.runner.RunWith
 /** Exercises Android ICU and org.json, with an in-memory API response and no network request. */
 @RunWith(AndroidJUnit4::class)
 class AiPlatformTest {
+    @Test fun androidFencedResponsesPreserveGameDataAndRejectIncompleteObjects() {
+        val source = "<b>攻撃 {0}</b>\n[Burn] 12%"
+        val masked = ProtectedTranslation(source).masked.replace("攻撃", "攻击")
+        val json = JSONObject().put("translations", JSONArray().put(JSONObject()
+            .put("id", "entry").put("text", masked))).toString()
+        fun run(content: String) = AiTranslationClient(AiConfig(), "non-secret-fixture", AiHttpTransport { _, _, _ ->
+            JSONObject().put("choices", JSONArray().put(JSONObject().put("finish_reason", "stop")
+                .put("message", JSONObject().put("content", content)))).toString()
+        }).translate(listOf(AiText("entry", source)))
+        for (content in listOf(json, "```json\n$json\n```", "```\r\n$json\r\n```"))
+            assertEquals(source.replace("攻撃", "攻击"), run(content).translations["entry"])
+        for (content in listOf("```json\n$json", "$json trailing", "$json$json"))
+            assertTrue(runCatching { run(content) }.exceptionOrNull() is AiResponseFormatException)
+        assertTrue(runCatching { run("```json\n${json.replace("⟦P0⟧", "")}\n```") }.isFailure)
+    }
+
     @Test fun keysPersistIndependentlyOfModelsAndStayWithTheirService() {
         val context = object : ContextWrapper(InstrumentationRegistry.getInstrumentation().targetContext) {
             override fun getSharedPreferences(name: String, mode: Int) = super.getSharedPreferences("keyring-probe-$name", mode)

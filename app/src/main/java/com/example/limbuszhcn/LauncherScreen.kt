@@ -343,7 +343,7 @@ internal fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefre
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         LaunchButton(action, enabled = state.busy || state.container != null || state.failed,
             step = state.launchStep, animated = animated, feedback = feedback,
-            status = if (state.busy) state.stage else feedback.orEmpty(), progressFraction = state.workProgress.fraction,
+            status = if (state.busy) state.stage else feedback?.title.orEmpty(), progressFraction = state.workProgress.fraction,
             progressText = if (!state.busy) "" else (if (state.workProgress.total > 0)
                 "${state.workProgress.done}/${state.workProgress.total} · ${((state.workProgress.fraction ?: 0f) * 100).toInt()}%"
                 else if (state.launchStep in 0..2) "第 ${state.launchStep + 1}/3 步" else "处理中") + " · ${seconds}秒",
@@ -362,8 +362,8 @@ internal fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefre
 }
 
 @Composable
-private fun rememberOperationFeedback(state: LauncherUiState): String? {
-    var feedback by remember { mutableStateOf<String?>(null) }
+private fun rememberOperationFeedback(state: LauncherUiState): OperationFeedback? {
+    var feedback by remember { mutableStateOf<OperationFeedback?>(null) }
     var wasBusy by remember { mutableStateOf(false) }
     val accessibility = LocalAccessibilityManager.current
     LaunchedEffect(state.busy, state.failed) {

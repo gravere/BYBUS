@@ -548,6 +548,7 @@ private fun shortStack(): String =
         .joinToString(" <- ") { "${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}" }
 
 internal fun Throwable.userMessage(): String {
+    if (this is com.example.limbuszhcn.translation.AiResponseFormatException) return message.orEmpty()
     val chain = generateSequence(this) { it.cause }.toList()
     return chain.joinToString(separator = "\n") { error ->
         val message = error.message?.takeIf { it.isNotBlank() }

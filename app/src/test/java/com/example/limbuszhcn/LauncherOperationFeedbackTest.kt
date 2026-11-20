@@ -41,8 +41,12 @@ class LauncherOperationFeedbackTest {
         DiagnosticExportState(directory).begin(archive)
         DiagnosticExportState(directory).selected(null)
         val pending = DiagnosticExportState(directory).read()!!
-        assertEquals("已取消导出", completedOperationFeedback(diagnosticExportStage(pending.cancelled)))
-        assertEquals("诊断包已保存", completedOperationFeedback(diagnosticExportStage(false)))
+        val cancelled = completedOperationFeedback(diagnosticExportStage(pending.cancelled))!!
+        assertEquals("已取消导出", cancelled.title)
+        assertEquals(LaunchSymbol.Cancelled, cancelled.symbol)
+        val saved = completedOperationFeedback(diagnosticExportStage(false))!!
+        assertEquals("诊断包已保存", saved.title)
+        assertEquals(LaunchSymbol.Complete, saved.symbol)
     }
 
     @Test fun everyUpdateNavigationCanUseTheSameMonotonicIdPolicy() {
