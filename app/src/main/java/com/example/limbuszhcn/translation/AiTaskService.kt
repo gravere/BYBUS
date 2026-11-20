@@ -13,6 +13,8 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
+import android.widget.RemoteViews
 import com.example.limbuszhcn.MainActivity
 import com.example.limbuszhcn.PersistentDiagnosticLog
 import com.example.limbuszhcn.R
@@ -26,6 +28,12 @@ class AiTaskService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private val main = Handler(Looper.getMainLooper())
     private var lastNoticeAt = 0L
+    private val flushNotice = Runnable {
+        if (session?.closed?.get() == false) {
+            lastNoticeAt = SystemClock.elapsedRealtime()
+            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification())
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -72,7 +80,7 @@ class AiTaskService : Service() {
         }
         if (intent?.action == PAUSE && intent.getStringExtra("session") == current.id) {
             current.pause()
-            current.update("正在暂停，等待当前请求保存", 0, 0)
+            current.update("正在停止，保留已完成进度", current.progress.done, current.progress.total)
         }
         return START_NOT_STICKY
     }
@@ -108,10 +116,9 @@ class AiTaskService : Service() {
     private fun refresh() {
         main.post {
             if (session?.closed?.get() != false) return@post
-            val now = android.os.SystemClock.elapsedRealtime()
-            if (now - lastNoticeAt < 1000) return@post
-            lastNoticeAt = now
-            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification())
+            // Coalesce bursts, but always deliver the final update even if no next batch arrives.
+            main.removeCallbacks(flushNotice)
+            main.postDelayed(flushNotice, (1000 - (SystemClock.elapsedRealtime() - lastNoticeAt)).coerceAtLeast(0))
         }
     }
 
@@ -124,17 +131,27 @@ class AiTaskService : Service() {
         val builder = Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_notification_bus)
             .setContentTitle("AI 翻译").setContentText(if (progress.total > 0) "${progress.label} · ${progress.done}/${progress.total}" else progress.label)
             .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).setShowWhen(false)
+            .setWhen(System.currentTimeMillis() - (SystemClock.elapsedRealtime() - progress.clockBase))
+            .setUsesChronometer(true)
             .setCategory(Notification.CATEGORY_PROGRESS)
             .setProgress(progress.total, progress.done, progress.total <= 0)
         if (current != null && !current.paused.get()) {
             val pause = PendingIntent.getService(this, current.id.hashCode(), Intent(this, AiTaskService::class.java)
                 .setAction(PAUSE).putExtra("session", current.id), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            builder.addAction(Notification.Action.Builder(null, "暂停", pause).build())
+            builder.addAction(Notification.Action.Builder(R.drawable.ic_ai_stop, "停止", pause).build())
+            val view = RemoteViews(packageName, R.layout.ai_task_notification).apply {
+                setTextViewText(R.id.ai_notice_label, if (progress.total > 0) "${progress.done}/${progress.total} · ${progress.label}" else progress.label)
+                setChronometer(R.id.ai_notice_time, progress.clockBase, "%s", true)
+                setProgressBar(R.id.ai_notice_progress, progress.total, progress.done, progress.total <= 0)
+                setOnClickPendingIntent(R.id.ai_notice_stop, pause)
+            }
+            builder.setStyle(Notification.DecoratedCustomViewStyle()).setCustomContentView(view).setCustomBigContentView(view)
         }
         return builder.build()
     }
 
-    internal data class Progress(val label: String, val done: Int, val total: Int)
+    internal data class Progress(val label: String, val done: Int, val total: Int,
+        val clockBase: Long = SystemClock.elapsedRealtime())
 
     internal class Session(private val context: Context, private val onPause: () -> Unit) : AutoCloseable {
         val id: String = java.util.UUID.randomUUID().toString()
@@ -156,7 +173,12 @@ class AiTaskService : Service() {
 
         fun update(label: String, done: Int, total: Int) {
             if (closed.get()) return
-            value = Progress(label, done.coerceIn(0, total.coerceAtLeast(0)), total.coerceAtLeast(0))
+            value = value.copy(label = label, done = done.coerceIn(0, total.coerceAtLeast(0)), total = total.coerceAtLeast(0))
+            service?.refresh()
+        }
+
+        fun elapsed(elapsedMillis: Long) {
+            value = value.copy(clockBase = SystemClock.elapsedRealtime() - elapsedMillis.coerceAtLeast(0))
             service?.refresh()
         }
 
@@ -204,5 +226,6 @@ class AiTaskService : Service() {
         }
 
         internal fun update(label: String, done: Int = 0, total: Int = 0) { active?.update(label, done, total) }
+        internal fun elapsed(elapsedMillis: Long) { active?.elapsed(elapsedMillis) }
     }
 }

@@ -106,17 +106,22 @@ class MainActivity : ComponentActivity() {
                 if (id != null && uri != null) model.translationIcon(id, uri)
             }
             val resumed = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
-            val taskNotificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
-            androidx.compose.runtime.LaunchedEffect(state.ai.running, resumed.value) {
-                if (android.os.Build.VERSION.SDK_INT >= 33 && resumed.value && state.ai.running &&
+            val askingNotification = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+            val taskNotificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { askingNotification.value = false }
+            androidx.compose.runtime.LaunchedEffect(state.ai.running, resumed.value, askingNotification.value) {
+                if (resumed.value && state.ai.running && !askingNotification.value &&
                     com.example.limbuszhcn.translation.AiTaskService.hasActiveTask()) {
                     val permission = android.Manifest.permission.POST_NOTIFICATIONS
                     val preferences = getSharedPreferences("ai-task-notification", MODE_PRIVATE)
-                    if (checkSelfPermission(permission) != android.content.pm.PackageManager.PERMISSION_GRANTED &&
+                    if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission(permission) != android.content.pm.PackageManager.PERMISSION_GRANTED &&
                         !preferences.getBoolean("asked", false)) {
                         preferences.edit().putBoolean("asked", true).apply()
-                        // Optional visibility of progress/pause controls. Denial does not stop the task.
+                        askingNotification.value = true
                         taskNotificationPermission.launch(permission)
+                    } else if (!com.example.limbuszhcn.translation.AiBackgroundAccess.allowed(this@MainActivity) &&
+                        !preferences.getBoolean("backgroundAsked", false)) {
+                        preferences.edit().putBoolean("backgroundAsked", true).apply()
+                        com.example.limbuszhcn.translation.AiBackgroundAccess.open(this@MainActivity)
                     }
                 }
             }

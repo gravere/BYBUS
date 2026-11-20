@@ -37,16 +37,22 @@ internal class AiTerminology(private val values: Map<String, String>, private va
             "グレゴール" to "格里高尔", "ダンテ" to "但丁", "ヴェルギリウス" to "维吉里乌斯", "カロン" to "卡戎")
         val DEFAULT = AiTerminology(DEFAULT_NAMES, DEFAULT_NAMES.keys)
         fun build(storage: GameStorage, base: PreparedTranslation?, cancelled: () -> Boolean = { false },
-            language: com.example.limbuszhcn.gamefs.GameTextLanguage? = null): AiTerminology {
+            language: com.example.limbuszhcn.gamefs.GameTextLanguage? = null, progress: (Int, Int) -> Unit = { _, _ -> }): AiTerminology {
             if (base == null) return DEFAULT
             val inspection = TranslationInspection(storage, base, cancelled, language)
             val terms = linkedMapOf<String, String>(); val names = mutableSetOf<String>(); val conflicts = mutableSetOf<String>()
             var bytes = 0L
-            for (key in inspection.resources) {
+            val resources = inspection.resources.filter { key ->
+                val name = com.example.limbuszhcn.container.sourceTableName(key)
+                listOf("Characters", "ScenarioModelCodes", "BattleKeywords", "Bufs", "Egos", "EGOgift", "Personalities", "Personality", "Items").any(name::startsWith)
+            }
+            progress(0, resources.size)
+            for ((index, key) in resources.withIndex()) {
                 val filename = com.example.limbuszhcn.container.sourceTableName(key)
                 val character = filename.startsWith("Characters") || filename.startsWith("ScenarioModelCodes")
                 if (!character && listOf("BattleKeywords", "Bufs", "Egos", "EGOgift", "Personalities", "Personality", "Items").none(filename::startsWith)) continue
-                val resource = inspection.readable(key) ?: continue
+                val resource = inspection.readable(key)
+                if (resource == null) { progress(index + 1, resources.size); continue }
                 bytes += resource.raw.length * 2L
                 require(bytes <= 64L * 1024 * 1024) { "术语文本超出检查范围" }
                 resource.fields.filter { it.covered && it.canTranslate && !it.needsReview &&
@@ -57,6 +63,7 @@ internal class AiTerminology(private val values: Map<String, String>, private va
                     if (character) names += from
                 }
                 require(terms.size <= 12000) { "术语数量超出检查范围" }
+                progress(index + 1, resources.size)
             }
             conflicts.forEach(terms::remove)
             return AiTerminology(DEFAULT_NAMES + terms, DEFAULT_NAMES.keys + (names - conflicts))

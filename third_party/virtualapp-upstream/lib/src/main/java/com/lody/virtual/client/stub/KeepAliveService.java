@@ -5,9 +5,13 @@ import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 
 import com.lody.virtual.client.core.VirtualCore;
 import com.lody.virtual.helper.utils.VLog;
+import com.lody.virtual.server.am.VActivityManagerService;
 
 
 /**
@@ -15,11 +19,31 @@ import com.lody.virtual.helper.utils.VLog;
  */
 public class KeepAliveService extends Service {
     private boolean foregroundRejected;
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private long launchDeadline;
+    private boolean guestSeen;
+    private static final String LAUNCH = "com.lody.virtual.action.USER_GUEST_LAUNCH";
+    private final Runnable checkGuest = new Runnable() {
+        @Override public void run() {
+            String guest = VirtualCore.getConfig().getForegroundServiceGuestPackage();
+            if (guest == null || foregroundRejected) return;
+            boolean running = VActivityManagerService.get().getRunningAppProcesses(guest, 0)
+                    .stream().anyMatch(process -> process.pid > 0);
+            guestSeen |= running;
+            if (!running && (guestSeen || SystemClock.elapsedRealtime() >= launchDeadline)) {
+                // Stop only this optional service, never the server, Google components or saved data.
+                HiddenForeNotification.hideForeground(KeepAliveService.this);
+                stopSelf();
+                return;
+            }
+            main.postDelayed(this, 3000);
+        }
+    };
 
     /** One request from a user-initiated launch; never schedule background retry loops. */
     public static void requestStart(Context context) {
         try {
-            Intent intent = new Intent(context, KeepAliveService.class);
+            Intent intent = new Intent(context, KeepAliveService.class).setAction(LAUNCH);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent);
             else context.startService(intent);
         } catch (RuntimeException error) {
@@ -70,6 +94,7 @@ public class KeepAliveService extends Service {
 
     @Override
     public void onDestroy() {
+        main.removeCallbacks(checkGuest);
         if (foregroundRejected) {
             super.onDestroy();
             return;
@@ -88,6 +113,15 @@ public class KeepAliveService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (foregroundRejected) {
             stopSelf(startId);
+            return START_NOT_STICKY;
+        }
+        if (VirtualCore.getConfig().getForegroundServiceGuestPackage() != null) {
+            if (intent != null && LAUNCH.equals(intent.getAction())) {
+                launchDeadline = SystemClock.elapsedRealtime() + 60_000;
+                guestSeen = false;
+            }
+            main.removeCallbacks(checkGuest);
+            checkGuest.run();
             return START_NOT_STICKY;
         }
         return START_STICKY;

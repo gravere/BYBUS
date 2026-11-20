@@ -79,12 +79,19 @@ internal fun AiPricingCard(endpoint: String, model: String, ai: AiUiState, actio
 }
 
 @Composable
-internal fun AiUsageSummary(progress: AiProgress) {
-    if (progress.requests <= 0 && progress.inputTokens + progress.outputTokens == 0L) return
-    val seconds = progress.elapsedMillis / 1000
+internal fun AiUsageSummary(progress: AiProgress, running: Boolean = false) {
+    val elapsed by produceState(progress.elapsedMillis, progress, running) {
+        do {
+            value = progress.elapsedAt(android.os.SystemClock.elapsedRealtime(), running)
+            if (running) delay(1000)
+        } while (running)
+    }
+    val seconds = elapsed / 1000
     val duration = if (seconds < 60) "${seconds}秒" else "${seconds / 60}分${seconds % 60}秒"
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("${progress.inputTokens} 输入 · ${progress.outputTokens} 输出 Token · $duration", style = MaterialTheme.typography.bodySmall, color = C.Muted)
+        Text("用时 $duration", style = MaterialTheme.typography.bodySmall, color = C.Muted)
+        if (progress.requests <= 0 && progress.inputTokens + progress.outputTokens == 0L) return@Column
+        Text("${progress.inputTokens} 输入 · ${progress.outputTokens} 输出 Token", style = MaterialTheme.typography.bodySmall, color = C.Muted)
         val price = progress.price
         Text(if (progress.unknownUsage && progress.inputTokens + progress.outputTokens == 0L) "接口未返回用量，费用未知" else if (price == null) "任务开始时未设置价格，费用未知" else {
             val cost = price.cost(progress.inputTokens, progress.outputTokens, progress.cachedTokens)

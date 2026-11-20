@@ -92,6 +92,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
     private val aiCancelled = java.util.concurrent.atomic.AtomicBoolean()
     private val aiDiscarded = java.util.concurrent.atomic.AtomicBoolean()
     private val aiControl = Any()
+    private var aiRequestControl: AiRequestControl? = null
     private var aiCommitting = false
     private val aiTaskStore by lazy { AiTaskStore(translationCache) }
     private val modelsWorker = Executors.newSingleThreadExecutor { task -> Thread(task, "bybus-models") }
@@ -123,19 +124,21 @@ internal class LaunchCoordinator private constructor(application: Application) {
 
     init {
         worker.execute {
-            runCatching { translationSources.read() }.getOrNull()?.let { sources ->
-                val saved = restoreCoverage(sources)
-                publish { it.copy(sources = sources, coverage = saved) }
-            }
-            publish { it.copy(ai = it.ai.copy(progress = AiUsageStore(translationCache).read())) }
             runCatching { aiTaskStore.recover(translationSources.read()) }
-                .onSuccess { task -> if (task != null) publish { it.copy(ai = it.ai.copy(task = task,
-                    progress = task.progress, message = task.error ?: "翻译任务已暂停，可继续或取消")) } }
+                .onSuccess { task ->
+                    if (task != null) publish { it.copy(ai = it.ai.copy(task = task,
+                        progress = task.progress, message = task.error ?: "翻译任务已暂停，可继续或取消")) }
+                    else { val usage = AiUsageStore(translationCache).read(); publish { it.copy(ai = it.ai.copy(progress = usage)) } }
+                }
                 .onFailure { error ->
                     val pending = aiTaskStore.exists()
                     publish { it.copy(ai = it.ai.copy(failed = true, recoveryIssue = pending,
                         message = "翻译任务读取失败，可取消后重新生成：${error.userMessage()}")) }
                 }
+            runCatching { translationSources.read() }.getOrNull()?.let { sources ->
+                val saved = restoreCoverage(sources)
+                publish { it.copy(sources = sources, coverage = saved) }
+            }
             runCatching { com.example.limbuszhcn.storage.OperationLock.run(app.filesDir.toPath()) { packageUpdates.recover() } }
                 .onSuccess { pending -> publish { it.copy(gameInstallPending = pending) } }
                 .onFailure { PersistentDiagnosticLog.error(TAG, "Recover package update", it) }
@@ -171,12 +174,13 @@ internal class LaunchCoordinator private constructor(application: Application) {
         }
         state = state.beginOperation(label, preserveFailure, android.os.SystemClock.elapsedRealtime()).copy(taskPage = page)
         val foreground = if (foregroundAi) {
-            synchronized(aiControl) { aiCancelled.set(false); aiDiscarded.set(false); aiCommitting = false }
+            synchronized(aiControl) { aiCancelled.set(false); aiDiscarded.set(false); aiCommitting = false; aiRequestControl = AiRequestControl() }
             try { AiTaskService.start(app) {
                 synchronized(aiControl) {
                     if (!aiCommitting) {
                         aiCancelled.set(true)
-                        state = state.copy(ai = state.ai.copy(stopping = true, message = "正在暂停，当前请求结束后保存进度"))
+                        aiRequestControl?.stop()
+                        state = state.copy(ai = state.ai.copy(stopping = true, message = "正在停止，保留已完成进度"))
                     }
                 }
             } } catch (error: Exception) {
@@ -194,7 +198,10 @@ internal class LaunchCoordinator private constructor(application: Application) {
                     "旧数据迁移尚未完成，请先继续导入"
                 }
                 task()
-            } } finally { foreground?.close() } }
+            } } finally {
+                foreground?.close()
+                if (foregroundAi) synchronized(aiControl) { aiRequestControl = null }
+            } }
             result.exceptionOrNull()?.let { PersistentDiagnosticLog.error(TAG, label, it) }
             refreshCoverageFreshness()
             PersistentDiagnosticLog.info(TAG, "Task finished stage=$label elapsedMs=${(System.nanoTime() - start) / 1_000_000} success=${result.isSuccess}")
@@ -614,13 +621,16 @@ internal class LaunchCoordinator private constructor(application: Application) {
     fun pauseAi() = synchronized(aiControl) {
         if (!state.ai.running || aiCommitting) return@synchronized
         aiCancelled.set(true)
-        state = state.copy(ai = state.ai.copy(stopping = true, message = "正在暂停，当前请求结束后保存进度"))
+        aiRequestControl?.stop()
+        state = state.copy(ai = state.ai.copy(stopping = true, message = "正在停止，保留已完成进度"))
+        AiTaskService.update("正在停止，保留已完成进度")
     }
 
     fun cancelAi() = synchronized(aiControl) {
         if (aiCommitting) return@synchronized
         if (state.ai.running) {
             aiDiscarded.set(true); aiCancelled.set(true)
+            aiRequestControl?.stop()
             runCatching { aiTaskStore.requestDiscard() }.onFailure { PersistentDiagnosticLog.error(TAG, "Save AI cancellation", it) }
             state = state.copy(ai = state.ai.copy(stopping = true, message = "正在取消并删除本次译文"))
         } else perform("取消翻译任务", preserveFailure = true, page = "ai-translation") {
@@ -756,20 +766,49 @@ internal class LaunchCoordinator private constructor(application: Application) {
 
     private data class AiRunResult(val completed: Boolean, val message: String)
     private fun runAiTask(prepare: () -> AiTaskSnapshot): AiRunResult {
-        publish { it.copy(ai = it.ai.copy(running = true, stopping = false, failed = false, message = "正在读取已保存的任务")) }
+        val clock = android.os.SystemClock::elapsedRealtime
+        val started = clock()
+        var lastProgress = (aiTaskStore.latest()?.progress ?: AiProgress()).copy(sampledAt = started)
+        AiTaskService.elapsed(lastProgress.elapsedMillis)
+        publish { it.copy(ai = it.ai.copy(running = true, stopping = false, failed = false,
+            progress = lastProgress, message = "正在读取已保存的任务")) }
+        val control = synchronized(aiControl) { requireNotNull(aiRequestControl) }
+        val network = AiNetworkGuard(app)
         try {
             if (aiCancelled.get()) throw java.util.concurrent.CancellationException()
-            val task = aiTaskStore.write(prepare().copy(phase = AiTaskPhase.Running, error = null))
+            var task = prepare().copy(phase = AiTaskPhase.Running, error = null)
+            task = aiTaskStore.write(task.copy(progress = task.progress.copy(
+                elapsedMillis = lastProgress.elapsedAt(clock()), sampledAt = clock())))
             PersistentDiagnosticLog.info(TAG, "AI task scope=${task.scopeLabel} limit=${task.config.limit} resumed=${task.plan != null}")
             require(aiSettings.config().endpoint == task.config.endpoint) { "请把连接设置改回此任务使用的服务地址，再继续翻译" }
             publish { it.copy(ai = it.ai.copy(task = task, progress = task.progress)) }
-            val (prepared, reference) = aiTaskStore.inputs(task)
+            var lastInputProgress = 0L
+            val (prepared, reference) = aiTaskStore.inputs(task, { done, total ->
+                val now = clock()
+                if (done == 0 || done == total || now - lastInputProgress >= 200) {
+                    lastInputProgress = now
+                    val message = "读取已保存的汉化 $done/$total"
+                    workProgress("读取已保存的汉化", done, total)
+                    publish { it.copy(ai = it.ai.copy(message = if (it.ai.stopping) it.ai.message else message)) }
+                }
+            }, aiCancelled::get)
             val reusable = aiTaskStore.committed()
+            task = aiTaskStore.write(task.copy(progress = task.progress.freezeAt(clock())))
+            val client = AiTranslationClient(task.config, aiSettings.key(task.config.endpoint), AiHttpTransport { url, key, body ->
+                network.post(url, key, body, control) { waiting ->
+                    val message = waiting ?: "等待翻译结果"
+                    val total = task.plan?.total ?: lastProgress.limit
+                    workProgress(message, lastProgress.completed + lastProgress.reused, total)
+                    publish { it.copy(ai = it.ai.copy(message = if (it.ai.stopping) it.ai.message else message)) }
+                }
+            })
             val result = AiTranslationJob(translationCache, translationStorage(), task.config,
-                AiTranslationClient(task.config, aiSettings.key(task.config.endpoint)), aiCancelled::get) { progress ->
-                val saved = aiTaskStore.read()
+                client, aiCancelled::get, clock) { progress ->
+                lastProgress = progress
+                val saved = aiTaskStore.latest()
                 val plan = saved?.plan
-                if (plan != null) workProgress("正在翻译所选文本", (progress.completed + progress.reused).coerceAtMost(plan.total), plan.total)
+                AiTaskService.elapsed(progress.elapsedMillis)
+                if (plan != null) workProgress(progress.message, (progress.completed + progress.reused).coerceAtMost(plan.total), plan.total)
                 else if (progress.totalFiles > 0) workProgress("核对翻译范围", progress.scannedFiles, progress.totalFiles)
                 publish { it.copy(ai = it.ai.copy(task = saved, progress = progress,
                     message = if (it.ai.stopping) it.ai.message else progress.message)) }
@@ -805,8 +844,10 @@ internal class LaunchCoordinator private constructor(application: Application) {
             val paused = e is java.util.concurrent.CancellationException
             if (!paused) PersistentDiagnosticLog.error(TAG, "AI task paused", e)
             val discarded = aiDiscarded.get()
-            val saved = if (discarded) { aiTaskStore.discard(); null } else runCatching { aiTaskStore.read()?.let {
-                aiTaskStore.write(it.copy(phase = AiTaskPhase.Paused, error = if (paused) null else e.userMessage()))
+            val saved = if (discarded) { aiTaskStore.discard(); null } else runCatching { (aiTaskStore.latest() ?: aiTaskStore.read())?.let {
+                val progress = it.progress.takeIf { p -> p.sampledAt > 0 } ?: lastProgress
+                aiTaskStore.write(it.copy(phase = AiTaskPhase.Paused, progress = progress.freezeAt(clock()),
+                    error = if (paused) null else e.userMessage()))
             } }.getOrNull()
             val message = if (discarded) "任务已取消，本次未完成的译文已删除" else if (paused) "已暂停，可随时继续" else "翻译已暂停：${e.userMessage()}"
             publish { it.copy(ai = it.ai.copy(running = false,
@@ -814,6 +855,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
                 progress = saved?.progress ?: AiProgress(), failed = !paused && !discarded, message = message)) }
             return AiRunResult(false, message)
         } finally {
+            network.close()
             synchronized(aiControl) { aiCommitting = false }
             publish { it.copy(ai = it.ai.copy(running = false, stopping = false)) }
         }
@@ -926,7 +968,8 @@ internal class LaunchCoordinator private constructor(application: Application) {
                 return outcome.message
             }
             val result = AiTranslationJob(translationCache, translationStorage(), config,
-                AiTranslationClient(config, if (supplement) aiSettings.key(config.endpoint) else ""), aiCancelled::get) { progress ->
+                AiTranslationClient(config, if (supplement) aiSettings.key(config.endpoint) else ""), aiCancelled::get,
+                android.os.SystemClock::elapsedRealtime) { progress ->
                 publish { it.copy(ai = it.ai.copy(progress = progress, message = progress.message)) }
             }.run("zero", base, identity, reusable, reuseOnly = !supplement)
             if (aiCancelled.get()) throw java.util.concurrent.CancellationException("已取消本次启动")

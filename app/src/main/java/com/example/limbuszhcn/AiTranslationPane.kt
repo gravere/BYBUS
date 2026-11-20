@@ -334,6 +334,17 @@ internal fun AiTaskCard(state: LauncherUiState, onPause: () -> Unit, onResume: (
     val task = ai.task
     val progress = ai.progress
     val saving = task?.phase == com.example.limbuszhcn.translation.AiTaskPhase.Applying
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val lifecycle = androidx.compose.ui.platform.LocalLifecycleOwner.current.lifecycle
+    var backgroundAllowed by remember { mutableStateOf(com.example.limbuszhcn.translation.AiBackgroundAccess.allowed(context)) }
+    DisposableEffect(lifecycle) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME)
+                backgroundAllowed = com.example.limbuszhcn.translation.AiBackgroundAccess.allowed(context)
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
     DetailCard {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             IconTile(Glyph.Ai)
@@ -354,10 +365,13 @@ internal fun AiTaskCard(state: LauncherUiState, onPause: () -> Unit, onResume: (
             Text(if (progress.totalFiles > 0) "核对文件 ${progress.scannedFiles}/${progress.totalFiles}，尚未开始新一批翻译"
                 else "正在核对所选范围，翻译条数将在核对后显示", style = MaterialTheme.typography.bodyMedium)
         }
-        AiUsageSummary(progress)
+        AiUsageSummary(progress, ai.running)
         ai.message?.let { Text(it, color = if (ai.failed) C.Error else C.Muted, style = MaterialTheme.typography.bodySmall) }
+        if (!backgroundAllowed) TextButton({ com.example.limbuszhcn.translation.AiBackgroundAccess.open(context) }) {
+            Text("允许锁屏后继续翻译")
+        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (ai.running) FilledTonalButton(onPause, enabled = !ai.stopping && !saving, modifier = Modifier.weight(1f)) { Text("暂停") }
+            if (ai.running) FilledTonalButton(onPause, enabled = !ai.stopping && !saving, modifier = Modifier.weight(1f)) { Text("停止并保存") }
             else Button(onResume, enabled = !state.busy && !ai.settingsBusy && ai.hasKey && task != null && !ai.recoveryIssue, modifier = Modifier.weight(1f)) { Text("继续翻译") }
             OutlinedButton(onCancel, enabled = !saving && (ai.running || !state.busy), modifier = Modifier.weight(1f)) { Text("取消任务") }
         }
