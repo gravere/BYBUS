@@ -69,6 +69,25 @@ class AiBatchLifecycleTest {
     }
     private fun finish(result: AiJobResult) = publishAiResult(store, jobs, jobs.read()!!, result).also { jobs.discard() }
 
+    @Test fun gatewayFailureAfterOneCompletedFileKeepsItsCacheAndResumeOnlySubmitsTheRemainingFile() {
+        originals("接続中")
+        Files.write(jp.resolve("JP_BattleHint.json"), rows(listOf("お知らせ")).toByteArray())
+        start(independent)
+        var calls = 0
+        assertThrows(AiHttpException::class.java) { execute { if (++calls == 2) throw AiHttpException(524); "提示" } }
+        assertEquals(2, sent.size)
+        val successful = sent.first(); val incomplete = sent.last()
+        // Recreate the store and reload the task, as after an app restart.
+        assertNotNull(AiTaskStore(cache).read())
+        sent.clear()
+        val resumed = execute { "连接中" }
+        assertEquals(listOf(incomplete), sent)
+        assertFalse(sent.contains(successful))
+        assertEquals(1, resumed.progress.completed)
+        assertEquals(1, resumed.progress.reused)
+        finish(resumed)
+    }
+
     @Test fun independentBatchesKeepPriorFieldsAndPayOnlyForTheRemainingOriginal() {
         val text = (0..100).map { "お知らせ" + (0x4e00 + it).toChar() }; originals(*text.toTypedArray())
         start(independent); finish(execute { "已译" })

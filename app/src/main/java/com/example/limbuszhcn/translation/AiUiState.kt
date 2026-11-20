@@ -6,7 +6,7 @@ internal data class AiUiState(val config: AiConfig = AiConfig(), val hasKey: Boo
     val task: AiTaskSnapshot? = null, val stopping: Boolean = false, val recoveryIssue: Boolean = false,
     val keys: List<AiKeyChoice> = emptyList(), val activeKeyId: String? = null, val savedKeyRevision: Long = 0,
     val library: AiLibraryState = AiLibraryState(), val pricing: AiPricingState = AiPricingState(), val baseUpdate: AiBaseState = AiBaseState(),
-    val testResult: AiTestResult? = null) {
+    val testResult: AiTestResult? = null, val settingsMessage: String? = null, val settingsFailed: Boolean = false) {
     val hasPendingTask get() = task != null || recoveryIssue
 }
 
@@ -16,7 +16,7 @@ internal data class AiTestResult(val inputFingerprint: String, val model: String
     companion object {
         const val ORIGINAL = "接続中…"
         fun fingerprint(config: AiConfig, key: String): String = config.validated().let {
-            AiTranslationJob.digest("${it.endpoint}|${it.model}|${it.prompt}|${AiTranslationJob.digest(key)}")
+            AiTranslationJob.digest("${it.endpoint}|${it.model}|${it.prompt}|${it.stream}|${AiTranslationJob.digest(key)}")
         }
     }
 }

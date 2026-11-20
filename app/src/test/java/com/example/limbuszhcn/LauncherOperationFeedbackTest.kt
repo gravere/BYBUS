@@ -10,13 +10,27 @@ class LauncherOperationFeedbackTest {
             val testing = initial.beginAiSettings("正在测试翻译")
             assertEquals(initial, testing.copy(ai = initial.ai))
             val failed = testing.finishAiSettings(Result.failure(IllegalArgumentException("API 授权失败")))
-            assertTrue(failed.ai.failed); assertFalse(failed.ai.settingsBusy)
-            assertEquals("API 授权失败", failed.ai.message)
+            assertTrue(failed.ai.settingsFailed); assertFalse(failed.ai.settingsBusy)
+            assertEquals("API 授权失败", failed.ai.settingsMessage)
             assertEquals(initial, failed.copy(ai = initial.ai))
             val success = failed.beginAiSettings("重试").finishAiSettings(Result.success("测试成功"))
-            assertFalse(success.ai.failed)
+            assertFalse(success.ai.settingsFailed)
             assertEquals(initial, success.copy(ai = initial.ai))
         }
+    }
+    @Test fun settingsProbesPreservePausedTaskFailureAndProgress() {
+        val original = LauncherUiState(ai = com.example.limbuszhcn.translation.AiUiState(
+            failed = true, message = "原任务连接中断", progress = com.example.limbuszhcn.translation.AiProgress(completed = 1, limit = 49)))
+        val started = original.beginAiSettings("正在测试翻译")
+        val completed = started.finishAiSettings(Result.success("测试通过"))
+        assertEquals(original.ai.message, completed.ai.message)
+        assertTrue(completed.ai.failed)
+        assertEquals(original.ai.progress, completed.ai.progress)
+        assertEquals("测试通过", completed.ai.settingsMessage)
+        val failed = completed.beginAiSettings("正在测试翻译").finishAiSettings(Result.failure(IllegalArgumentException("测试失败")))
+        assertEquals(original.ai.message, failed.ai.message)
+        assertEquals(original.ai.progress, failed.ai.progress)
+        assertEquals("测试失败", failed.ai.settingsMessage)
     }
     @Test fun resumeRefreshRetainsFailureUntilAnExplicitOperation() {
         val failure = LauncherUiState(failed = true, message = "资源校验失败", stage = "准备启动")

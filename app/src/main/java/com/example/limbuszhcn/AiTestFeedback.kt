@@ -7,8 +7,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.example.limbuszhcn.translation.AiTestResult
+import com.example.limbuszhcn.translation.AiConfig
+import com.example.limbuszhcn.translation.AiUiState
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 import java.util.Locale
+
+@Composable
+internal fun AiSettingsFeedback(ai: AiUiState, config: AiConfig, key: String) {
+    val result = ai.testResult
+    if (result != null) {
+        if (result.matches(config, key)) AiTestFeedback(result)
+        else Text("连接设置已改变，请重新测试", color = C.Muted, style = MaterialTheme.typography.bodySmall)
+    } else ai.settingsMessage?.let {
+        Text(it, color = if (ai.settingsFailed) C.Error else C.Accent, style = MaterialTheme.typography.bodyMedium)
+    }
+}
 
 @Composable
 internal fun AiTestFeedback(result: AiTestResult) {

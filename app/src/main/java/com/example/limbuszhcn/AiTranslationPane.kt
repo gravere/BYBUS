@@ -69,6 +69,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
     var clear by remember { mutableStateOf<AiKeyChoice?>(null) }
     var undo by remember { mutableStateOf<com.example.limbuszhcn.translation.AiUndoPoint?>(null) }
     var prompt by remember(ai.config.prompt) { mutableStateOf(ai.config.prompt) }
+    var stream by remember(ai.config.stream) { mutableStateOf(ai.config.stream) }
     var editPrompt by remember { mutableStateOf(false) }
     var resetPrompt by remember { mutableStateOf(false) }
     var restoreDefault by remember { mutableStateOf(false) }
@@ -78,7 +79,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     fun finishEditing() { focus.clearFocus(); keyboard?.hide() }
-    fun config() = AiConfig(endpoint.trim(), model.trim(), missing, limit, scope.missing, scope.review, prompt)
+    fun config() = AiConfig(endpoint.trim(), model.trim(), missing, limit, scope.missing, scope.review, prompt, stream)
     var category by remember(state.coverage.report?.entryIndex) { mutableStateOf<String?>(null) }
     val coverageFilter = CoverageFilter(when (scope) { AiScope.Missing -> CoverageKind.Missing; AiScope.Review -> CoverageKind.Review; else -> null }, category)
     val coverageRequest = if (requestedEntries == null && missing) requestedCoverage ?: coverageSelection(state.coverage, coverageFilter, null, actions.coverageCount) else null
@@ -103,6 +104,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
             TextButton({ showConfiguration = !showConfiguration }, modifier = Modifier.fillMaxWidth()) {
                 Text(if (showConfiguration) "收起翻译设置" else "查看翻译设置")
             }
+            if (!showConfiguration) AiSettingsFeedback(ai, config(), key)
         }
         if (!pending || showConfiguration) {
         if (requestedEntries != null) DetailCard {
@@ -178,17 +180,20 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
                     }
                 }
             }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("流式接收", style = MaterialTheme.typography.bodyMedium)
+                    Text("持续接收回复；服务不支持时可关闭", color = C.Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                Switch(stream, { stream = it }, enabled = enabled)
+            }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 FilledTonalButton({ finishEditing(); reveal = false; actions.saveAi(config(), key, false) },
                     enabled = enabled, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("保存设置") }
                 TextButton({ finishEditing(); reveal = false; actions.saveAi(config(), key, true) },
                     enabled = enabled && hasCredential, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text(if (ai.settingsBusy) "处理中" else "测试翻译") }
             }
-            if (!pending && ai.testResult != null) {
-                ai.testResult.takeIf { it.matches(config(), key) }?.let { AiTestFeedback(it) }
-            } else ai.message?.takeUnless { pending }?.let {
-                Text(it, color = if (ai.failed) C.Error else C.Accent, style = MaterialTheme.typography.bodySmall)
-            }
+            AiSettingsFeedback(ai, config(), key)
         }
         DetailCard {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -303,7 +308,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
             enabled = enabled && key.isNotBlank()) { Text("保存") } },
         dismissButton = { TextButton({ namingKey = false }) { Text("取消") } })
     if (selectingKey) AiKeyPicker(ai.keys, ai.activeKeyId, enabled, actions,
-        onRemove = { selectingKey = false; clear = it }, onDismiss = { selectingKey = false }, error = ai.message.takeIf { ai.failed })
+        onRemove = { selectingKey = false; clear = it }, onDismiss = { selectingKey = false }, error = ai.settingsMessage.takeIf { ai.settingsFailed })
     clear?.let { item -> BybusDialog(destructive = true, onDismissRequest = { clear = null }, title = { Text("移除「${item.name}」？") },
         text = { Text("此密钥将从本机删除。") },
         confirmButton = { TextButton({ clear = null; actions.clearModels(); actions.clearKey(item.id) }, enabled = enabled) { Text("移除") } },
