@@ -115,6 +115,7 @@ internal class AiBaseUpdate(private val cache: Path) {
         require(selected.values.sumOf { it.size }==request.count && (request.count>0 || r.total==0))
         selected.forEach { (key,_) -> require(AiTranslationJob.digest(inspection.read(key).raw)==hashes[key]) { "游戏文本已变化，请重新检查" } }
         val archive=root.resolve("merged.zip")
+        val changes = AiChangeCollector(AiChangeKind.BaseUpdate)
         try {
             open(r).use { db -> ZipOutputStream(Files.newOutputStream(archive)).use { zip ->
                 val resources = (entries.keys+selected.keys).toList()
@@ -129,7 +130,7 @@ internal class AiBaseUpdate(private val cache: Path) {
                         var changed=0
                         resource.fields.forEach { field ->
                             val value=values[field.id]
-                            if(value!=null){field.apply(value);changed++} else if(!field.covered)field.clear()
+                            if(value!=null){changes.record(key, field.text, field.translated, value);field.apply(value);changed++} else if(!field.covered)field.clear()
                         };require(changed==values.size)
                         TranslationSnapshot.encode(resource.raw,resource.document).toByteArray(Charsets.UTF_8)
                     }
@@ -146,7 +147,7 @@ internal class AiBaseUpdate(private val cache: Path) {
             sources.addGenerated(archive,source.baseId?:"zero",source.id.removePrefix("ai-"),source.name,
                 if(all && (source.baseId==null || source.baseId=="zero")) r.version.toLongOrNull() else source.officialVersion,
                 activate=sources.read().selectedId==source.id,independent=source.independent,language=r.language.code,
-                aiEntryCount=proof.keys.count { it !in chosen },baseName=source.baseName)
+                aiEntryCount=proof.keys.count { it !in chosen },baseName=source.baseName,summary=changes.snapshot())
         } finally { Files.deleteIfExists(archive) }
     }
 }

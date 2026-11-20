@@ -26,7 +26,7 @@ internal fun diagnosticExportStage(cancelled: Boolean): String =
 
 /** Settings probes cannot overwrite a game operation, error or launch readiness. */
 internal fun LauncherUiState.beginAiSettings(label: String): LauncherUiState =
-    copy(ai = ai.copy(settingsBusy = true, failed = false, message = label))
+    copy(ai = ai.copy(settingsBusy = true, failed = false, message = label, testResult = null))
 
 internal fun LauncherUiState.finishAiSettings(result: Result<String>): LauncherUiState = copy(ai = ai.copy(
     settingsBusy = false, failed = result.isFailure, message = result.getOrElse { error ->

@@ -17,7 +17,7 @@ internal data class AiProgress(val completed: Int = 0, val limit: Int = 0, val r
     val scannedFiles: Int = 0, val totalFiles: Int = 0, val cachedTokens: Long = 0,
     val elapsedMillis: Long = 0, val requests: Int = 0, val unknownUsage: Boolean = false, val price: AiPrice? = null)
 internal data class AiJobResult(val archive: Path, val identity: String, val progress: AiProgress, val remaining: Int,
-    val carried: Int = 0, val aiEntryCount: Int? = null)
+    val carried: Int = 0, val aiEntryCount: Int? = null, val changes: AiChangeSummary? = null)
 
 /** Batch translation stays outside game processes. Validated responses survive pauses until explicit task cancellation. */
 internal class AiTranslationJob(private val cache: Path, private val storage: GameStorage,
@@ -51,6 +51,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
         fun checkCancelled() { if (cancelled() || Thread.currentThread().isInterrupted) throw CancellationException("翻译已暂停，已完成内容会在下次继续时复用") }
         var snapshot = pendingTask
         val upstream = snapshot?.upstream == true
+        val changes = AiChangeCollector(if (upstream) AiChangeKind.Upstream else AiChangeKind.Translation)
         val explicit = snapshot?.explicitEntries == true
         val requestedIds = if (explicit) snapshot?.plan?.selected?.values?.flatten()?.toSet().orEmpty() else emptySet()
         fun selected(field: TranslationField) = if (explicit) field.canTranslate && field.id in requestedIds else AiTextSelection.includes(field, c, shared)
@@ -172,6 +173,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
                         AiTerminology.validate(it, terminology.forText(leaf.text, leaf.context))
                     } }.getOrNull()
                     if (validated != null) {
+                        changes.record(key, leaf.text, leaf.translated, validated)
                         leaf.apply(validated); applied += leaf.id; reused++; saved.put(savedId, old); reusedChanged = true; continue
                     }
                 }
@@ -200,6 +202,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
                 })
                 for (leaf in batch) {
                     val value = result.translations.getValue(leaf.id)
+                    changes.record(key, leaf.text, leaf.translated, value)
                     leaf.apply(value)
                     applied += leaf.id
                     // Store the protected form so reading cache applies the same validator.
@@ -243,7 +246,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
             else if (done + reused == 0) "所选范围没有需要 AI 处理的文本"
             else if (remaining > 0) "本批完成，还有 $remaining 条可继续翻译" else "翻译完成，下次启动时加载"))
         emit(result)
-        return AiJobResult(archive, identity, result, remaining, carried, aiIds.size)
+        return AiJobResult(archive, identity, result, remaining, carried, aiIds.size, changes.snapshot())
     }
 
     companion object {

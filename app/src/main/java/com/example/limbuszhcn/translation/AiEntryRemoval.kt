@@ -20,12 +20,13 @@ internal object AiEntryRemoval {
         require(proof.keys.containsAll(plan.selected.values.flatten())) { "所选条目不再是此包的 AI 译文，请重新读取" }
         val inspection = TranslationInspection(storage, prepared, requestedLanguage = request.report.language)
         val rewritten = mutableMapOf<String, ByteArray>()
+        val changes = AiChangeCollector(AiChangeKind.Removal)
         for ((key, ids) in plan.selected) {
             val r = inspection.read(key)
             require(AiTranslationJob.digest(r.raw) == plan.hashes[key]) { "原文已变化，请重新读取条目" }
             val fields = r.fields.filter { it.id in ids && it.covered }
             require(fields.size == ids.size) { "译文已变化，请重新读取条目" }
-            fields.forEach { it.clear() }
+            fields.forEach { changes.record(key, it.text, it.translated, null); it.clear() }
             // Keep absent translations absent; otherwise untouched original text could become a fake translation.
             r.fields.filter { !it.covered }.forEach { it.clear() }
             rewritten[key] = TranslationSnapshot.encode(r.raw, r.document).toByteArray(Charsets.UTF_8)
@@ -56,7 +57,7 @@ internal object AiEntryRemoval {
             AiBaseSnapshots(cache).previous(source)?.let { AiBaseSnapshots(cache).remember(source.id, revision, it) }
             sources.addGenerated(output, source.baseId ?: "global", source.id.removePrefix("ai-"), source.name, source.officialVersion,
                 activate = sources.read().selectedId == source.id, independent = source.independent, language = request.report.language.code,
-                aiEntryCount = request.report.aiCount - plan.total, baseName = source.baseName)
+                aiEntryCount = request.report.aiCount - plan.total, baseName = source.baseName, summary = changes.snapshot())
             return false
         } finally { Files.deleteIfExists(output) }
     }

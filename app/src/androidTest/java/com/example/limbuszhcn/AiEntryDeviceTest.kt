@@ -50,6 +50,10 @@ class AiEntryDeviceTest {
             val row = store.entries(index, AiEntryFilter(AiEntryKind.Ai), 0).rows.first()
             val remove = AiEntryRequest(index, ids = setOf(row.id), count = 1)
             assertFalse(AiEntryRemoval.remove(root, sources, storage, remove))
+            val change = sources.read().undo!!.summary!!
+            assertEquals(AiChangeKind.Removal, change.kind); assertEquals(1, change.removed)
+            assertEquals(row.original, change.examples.single().original)
+            assertNull(change.examples.single().after)
             val after = store.inspect(sources, storage, source.id)
             assertEquals(1, after.aiCount); assertEquals(2, after.counts[AiEntryKind.Pending])
             assertTrue(store.entries(after, AiEntryFilter(AiEntryKind.Pending), 0).rows.any { it.id == row.id })

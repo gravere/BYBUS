@@ -41,7 +41,7 @@ internal data class SourceState(val sources: List<TranslationSource> = listOf(Tr
 }
 
 internal data class AiUndoPoint(val sourceId: String, val generatedRevision: String,
-    val previous: TranslationSource?, val previousSelectedId: String)
+    val previous: TranslationSource?, val previousSelectedId: String, val summary: AiChangeSummary? = null)
 
 internal data class PreparedTranslation(val directory: Path, val manifest: PatchManifest)
 
@@ -90,7 +90,8 @@ internal class TranslationSources(val cache: Path) {
                     if (old.has("aiEntryCount") && !old.isNull("aiEntryCount")) old.optInt("aiEntryCount").coerceAtLeast(0) else null,
                     old.optString("baseName").takeIf(String::isNotBlank))
             }
-            AiUndoPoint(id, revision, previous, point.getString("previousSelectedId"))
+            AiUndoPoint(id, revision, previous, point.getString("previousSelectedId"),
+                point.optJSONObject("summary")?.let { runCatching { AiChangeSummary.read(it) }.getOrNull() })
         }.getOrNull() }
         return SourceState(all, selected, undo = undo, officialDownloadTimes = times)
     }
@@ -101,6 +102,7 @@ internal class TranslationSources(val cache: Path) {
             .put("officialIcon", state.sources.first().icon.orEmpty())
             .put("aiUndo", state.undo?.let { point -> JSONObject().put("sourceId", point.sourceId)
                 .put("generatedRevision", point.generatedRevision).put("previousSelectedId", point.previousSelectedId)
+                .put("summary", point.summary?.json())
                 .put("previous", point.previous?.let(::sourceJson)) })
             .put("sources", JSONArray().apply { state.sources.filterNot { it.isOfficial }.forEach { s ->
                 put(sourceJson(s))
@@ -161,7 +163,7 @@ internal class TranslationSources(val cache: Path) {
     private fun importArchive(input: InputStream, name: String, replaceId: String? = null,
                               generatedId: String? = null, baseId: String? = null, officialVersion: Long? = null,
                               activate: Boolean = true, independent: Boolean = false, language: String? = null,
-                              aiEntryCount: Int? = null, baseName: String? = null): TranslationSource {
+                              aiEntryCount: Int? = null, baseName: String? = null, summary: AiChangeSummary? = null): TranslationSource {
         require(generatedId == null || validId(generatedId))
         val state = read()
         val previous = replaceId?.let { id -> requireNotNull(state.sources.find { it.id == id && !it.isOfficial }) }
@@ -185,7 +187,8 @@ internal class TranslationSources(val cache: Path) {
                 aiEntryCount = aiEntryCount, baseName = baseName)
             val sources = if (previous == null) state.sources + source
                 else state.sources.map { if (it.id == source.id) source else it }
-            val undo = if (generatedId != null) AiUndoPoint(source.id, source.revision, previous, state.selectedId)
+            val undo = if (generatedId != null) AiUndoPoint(source.id, source.revision, previous, state.selectedId,
+                summary?.copy(atMillis = source.updatedAtMillis)?.validated())
                 else state.undo?.takeUnless { it.sourceId == source.id }
             save(state.copy(sources = sources, selectedId = if (activate) source.id else state.selectedId, undo = undo))
             if (generatedId == null && previous?.kind == "ai") deleteAiCache(previous.id)
@@ -202,17 +205,18 @@ internal class TranslationSources(val cache: Path) {
 
     @JvmOverloads fun addGenerated(archive: Path, baseId: String, identity: String, name: String, officialVersion: Long? = null,
         activate: Boolean = true, independent: Boolean = false, language: String? = null,
-        aiEntryCount: Int? = null, baseName: String? = null): TranslationSource {
+        aiEntryCount: Int? = null, baseName: String? = null, summary: AiChangeSummary? = null): TranslationSource {
         val state = read()
         val id = "ai-$identity"
         val previous = state.sources.find { it.id == id }
         require(previous == null || previous.kind == "ai") { "目标已替换为本地汉化文件，已保留原文件" }
         return Files.newInputStream(archive).use { importArchive(it, name, previous?.id, id, baseId, officialVersion, activate,
-            independent, language, aiEntryCount, baseName) }
+            independent, language, aiEntryCount, baseName, summary) }
     }
 
-    fun undoGenerated(): SourceState {
+    fun undoGenerated(expected: AiUndoPoint? = null): SourceState {
         val state = read(); val point = requireNotNull(state.undo) { "没有可撤回的 AI 生成" }
+        require(expected == null || expected == point) { "可撤回的改动已变化，请重新查看后确认" }
         val current = state.sources.first { it.id == point.sourceId }
         val restored = point.previous?.let { old ->
             prepare(old) // Validate the retained archive before changing the live registry.

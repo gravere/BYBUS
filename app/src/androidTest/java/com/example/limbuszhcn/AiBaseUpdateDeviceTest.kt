@@ -51,12 +51,16 @@ class AiBaseUpdateDeviceTest {
             val added=changes.page(report,AiBaseChangeKind.Added,0,android.os.CancellationSignal()).rows.single()
             assertEquals(added.current,added.updated)
             changes.apply(sources,storage,AiBaseRequest(report,AiBaseChangeKind.Added,count=1))
+            assertEquals(AiChangeKind.BaseUpdate, sources.read().undo!!.summary!!.kind)
+            assertEquals(1, sources.read().undo!!.summary!!.unchanged)
             val partial=sources.read().selected
             assertEquals(1,AiTranslationReuse.collect(root,partial,sources.prepare(partial),storage).size)
             val remaining=changes.inspect(sources,partial,latest,storage)
             assertEquals(1,remaining.total);assertEquals(1,remaining.replaced)
             changes.apply(sources,storage,AiBaseRequest(remaining,count=1))
             val finished=sources.read().selected
+            assertEquals(1, sources.read().undo!!.summary!!.replaced)
+            assertEquals(finished.updatedAtMillis, sources.read().undo!!.summary!!.atMillis)
             val fields=TranslationInspection(storage,sources.prepare(finished)).read("jp/JP_MainUIText.json").fields
             assertEquals(listOf("新的底包","AI 译文","AI 译文","不变的底包"),fields.map { it.translated })
             assertEquals(0,changes.inspect(sources,finished,latest,storage).total)

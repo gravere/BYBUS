@@ -112,7 +112,7 @@ internal class AiSettingsStore(context: Context) {
     fun test(config: AiConfig, replacement: String, transport: AiHttpTransport = AiHttpTransport(AiTranslationClient::post)): AiResult {
         val settings = config.validated()
         val credential = requestKey(settings.endpoint, replacement)
-        return AiTranslationClient(settings, credential, transport).translate(listOf(AiText("connection", "接続中…")))
+        return AiTranslationClient(settings, credential, transport).translate(listOf(AiText("connection", AiTestResult.ORIGINAL)))
     }
     fun save(config: AiConfig, replacement: String) = synchronized(lock) {
         val c = config.validated()

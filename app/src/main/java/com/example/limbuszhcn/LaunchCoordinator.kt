@@ -515,19 +515,21 @@ internal class LaunchCoordinator private constructor(application: Application) {
     private val priceRequest = java.util.concurrent.atomic.AtomicLong()
     fun loadAiPrice(endpoint: String, model: String, refresh: Boolean = false) {
         val request = priceRequest.incrementAndGet()
-        state = state.copy(ai = state.ai.copy(pricing = AiPricingState(endpoint, model, loading = true)))
+        state = state.copy(ai = state.ai.copy(pricing = (state.ai.pricing.takeIf { it.endpoint == endpoint && it.model == model }
+            ?: AiPricingState(endpoint, model)).copy(loading = true, message = null)))
         priceWorker.execute {
-            val result = runCatching { pricing.find(endpoint, model, refresh) }
-            publish { if (request != priceRequest.get()) it else it.copy(ai = it.ai.copy(pricing = AiPricingState(endpoint, model,
-                result.getOrNull(), message = if (result.isFailure) "价格读取失败，可手动填写" else null))) }
+            val result = runCatching { pricing.lookup(endpoint, model, refresh) }
+            publish { current -> if (request != priceRequest.get()) current else current.copy(ai = current.ai.copy(pricing = result.getOrElse {
+                current.ai.pricing.copy(loading = false, message = "价格读取失败，可重试或手动填写")
+            })) }
         }
     }
     fun saveAiPrice(endpoint: String, model: String, price: AiPrice?) = aiSettingsOperation("正在保存价格") {
-        priceRequest.incrementAndGet()
-        AiPricing(translationCache).save(endpoint, model, price)
-        val current = AiPricing(translationCache).find(endpoint, model)
-        publish { it.copy(ai = it.ai.copy(pricing = AiPricingState(endpoint, model, current))) }
-        if (price == null) "已恢复自动价格" else "手动价格已保存"
+        val request = priceRequest.incrementAndGet()
+        pricing.save(endpoint, model, price)
+        val current = pricing.lookup(endpoint, model)
+        publish { if (request != priceRequest.get()) it else it.copy(ai = it.ai.copy(pricing = current)) }
+        if (price == null) "已恢复自动价格" else "参考价格已保存"
     }
 
     fun clearAiModels() {
@@ -548,8 +550,12 @@ internal class LaunchCoordinator private constructor(application: Application) {
     fun saveAi(config: AiConfig, key: String, test: Boolean = false) = aiSettingsOperation(if (test) "正在测试翻译" else "正在保存设置") {
         val settings = config.validated()
         if (test) {
+            val started = android.os.SystemClock.elapsedRealtime()
             val result = aiSettings.test(settings, key)
-            "测试成功：${result.translations.getValue("connection")}。配置尚未保存，游戏汉化未改变。"
+            val report = AiTestResult(AiTestResult.fingerprint(settings, key), settings.model,
+                result.translations.getValue("connection"), android.os.SystemClock.elapsedRealtime() - started)
+            publish { it.copy(ai = it.ai.copy(testResult = report)) }
+            "测试通过"
         } else {
             aiSettings.save(settings, key); publishAiSettings(keySaved = key.isNotBlank()); "API 设置已保存"
         }
@@ -811,10 +817,11 @@ internal class LaunchCoordinator private constructor(application: Application) {
         return result.getOrNull()?.report
     }
 
-    fun undoAi() = perform("撤回 AI 翻译", page = "ai-translation") {
+    fun undoAi(point: AiUndoPoint) = perform("撤回 AI 翻译", page = "ai-translation") {
         require(!state.ai.running) { "请先暂停翻译" }
+        require(translationSources.read().undo == point) { "可撤回的改动已变化，请重新查看后确认" }
         stopGame()
-        translationSources.undoGenerated()
+        translationSources.undoGenerated(point)
         preparationPreferences.edit().remove("pending").apply()
         publish { it.copy(translation = null, resourcePreparation = null,
             ai = it.ai.copy(progress = AiProgress(), failed = false, message = "已撤回上次译文改动，下次启动使用恢复的汉化")) }
@@ -897,7 +904,8 @@ internal class LaunchCoordinator private constructor(application: Application) {
             if (result.progress.completed + result.progress.reused > 0) {
                 AiBaseSnapshots(translationCache).remember("ai-$identity", result.archive.sha256(), base)
                 translationSources.addGenerated(result.archive, "zero", identity, "都市零协会 · AI 补全", offer.version,
-                    language = requireNotNull(translationStorage().textLanguage()).language.code, aiEntryCount = result.aiEntryCount)
+                    language = requireNotNull(translationStorage().textLanguage()).language.code, aiEntryCount = result.aiEntryCount,
+                    summary = result.changes?.copy(kind = AiChangeKind.Upstream))
             } else translationSources.select("zero")
             val message = "零协已更新 · 复用 ${result.progress.reused} 条 · 新译 ${result.progress.completed} 条 · 未覆盖 ${result.remaining} 条"
             publish { it.copy(translation = null, resourcePreparation = null,
