@@ -13,6 +13,19 @@ import org.junit.runner.RunWith
 /** Exercises Android ICU and org.json, with an in-memory API response and no network request. */
 @RunWith(AndroidJUnit4::class)
 class AiPlatformTest {
+    @Test fun androidEquivalentNumericWordsPreserveTokensAndCache() {
+        for ((source, output, expected) in listOf(
+            Triple("Attack two enemies {0}\n", "攻击2个敌人⟦P0⟧⟦P1⟧", "攻击2个敌人{0}\n"),
+            Triple("第十二回", "第12回", "第12回"),
+            Triple("두 명", "2人", "2人"))) {
+            val p = ProtectedTranslation(source)
+            val actual = p.restore(output)
+            assertEquals(expected, actual)
+            assertEquals(actual, p.restore(p.maskTranslated(actual)))
+        }
+        assertTrue(runCatching { ProtectedTranslation("Attack two enemies").restore("攻击3个敌人") }.exceptionOrNull() is AiTextValidationException)
+    }
+
     @Test fun androidRestartReusesGoodAnswersFromAPartiallyRejectedBatch() {
         val parent = InstrumentationRegistry.getInstrumentation().targetContext.cacheDir.toPath()
         val root = java.nio.file.Files.createTempDirectory(parent, "ai-partial-test-")
