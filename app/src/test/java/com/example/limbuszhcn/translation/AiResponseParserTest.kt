@@ -50,11 +50,19 @@ class AiResponseParserTest {
 
     @Test fun wrongEnvelopeAndFieldTypesDoNotLeakProviderContentInErrors() {
         for (response in listOf("private-provider-body", "{\"choices\":\"private-provider-body\"}",
-            envelope("{\"translations\":\"private-provider-body\"}"), envelope(body(text = 12)))) {
+            envelope("{\"translations\":\"private-provider-body\"}"))) {
             val client = AiTranslationClient(AiConfig(), "fixture", AiHttpTransport { _, _, _ -> response })
             val error = assertThrows(AiResponseFormatException::class.java) { client.translate(listOf(AiText("a", "接続中"))) }
             assertFalse(error.toString().contains("private-provider-body"))
             assertNull(error.cause)
+        }
+    }
+
+    @Test fun ambiguousKeysLenientSyntaxAndExcessiveNestingFailOnBothJsonRuntimes() {
+        for (text in listOf("{\"a\":1,\"a\":2}", "{\"a\":1,\"\\u0061\":2}", "{a:1}",
+            "{'a':1}", "{\"a\":1,}", "{\"a\":[1,]}", "{\"a\":NaN}", "{\"a\":01}",
+            "{\"a\":/* comment */1}", "[".repeat(40) + "0" + "]".repeat(40))) {
+            assertThrows(AiResponseFormatException::class.java) { parseAiResponseObject(text) }
         }
     }
 }

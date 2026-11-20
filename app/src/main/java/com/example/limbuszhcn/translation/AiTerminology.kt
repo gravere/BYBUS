@@ -62,9 +62,8 @@ internal class AiTerminology(private val values: Map<String, String>, private va
             return AiTerminology(DEFAULT_NAMES + terms, DEFAULT_NAMES.keys + (names - conflicts))
         }
         fun validate(text: String, terms: AiTerms) {
-            require(terms.required.all { source -> terms.values[source]?.let(text::contains) == true }) {
-                "AI 译名与参考术语不一致，未写入本批译文"
-            }
+            if (!terms.required.all { source -> terms.values[source]?.let(text::contains) == true })
+                throw AiTextValidationException(AiValidationReason.Terminology)
         }
     }
 }
