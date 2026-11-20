@@ -35,7 +35,7 @@ BYBUS 让你在安卓手机和平板上使用中文游玩《边狱巴士》。�
 
 ## 宣传视频
 
-[![BYBUS 宣传片封面，点击下载完整视频](docs/assets/bybus-promo-cover.jpg)](https://github.com/gravere/BYBUS/raw/refs/heads/main/docs/assets/BYBUS-promo-1080p.mp4)
+https://github.com/user-attachments/assets/7949c668-7c05-4589-a17f-4e6bccf5cb2f
 
 ## 界面预览
 
