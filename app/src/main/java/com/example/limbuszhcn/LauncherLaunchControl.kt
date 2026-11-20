@@ -133,8 +133,7 @@ internal fun LaunchButton(action: LaunchAction, enabled: Boolean, step: Int,
                     highlight.reset()
                     if (progressFraction != null) measure.getSegment(0f, measure.length * fraction.coerceIn(0f, 1f), highlight)
                     else {
-                        val start = phase.value * measure.length
-                        measure.getSegment(start, minOf(start + measure.length * .25f, measure.length), highlight)
+                        wrappedProgressArc(measure, phase.value, .25f, highlight)
                     }
                     drawPath(highlight, accent, style = stroke)
                 }
@@ -167,14 +166,26 @@ internal fun LaunchButton(action: LaunchAction, enabled: Boolean, step: Int,
                         if (item.symbol != LaunchSymbol.Cancelled && (enabled || busy)) accent else C.Muted, Modifier.size(22.dp))
                     Spacer(Modifier.width(10.dp))
                     Text(item.title, Modifier.weight(1f, fill = false), textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.labelLarge)
+                        style = MaterialTheme.typography.labelLarge, maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 }
             }
             if (busy && progressText.isNotBlank()) Text(progressText, style = MaterialTheme.typography.labelMedium,
-                color = C.Muted, textAlign = TextAlign.Center)
+                color = C.Muted, textAlign = TextAlign.Center, maxLines = 1)
             }
         }
     }
+}
+
+/** Keep one continuous arc when its tail passes the closed path's origin. */
+internal fun wrappedProgressArc(measure: PathMeasure, phase: Float, fraction: Float, output: Path) {
+    output.reset()
+    val length = measure.length
+    if (length <= 0f) return
+    val start = ((phase % 1f + 1f) % 1f) * length
+    val end = start + length * fraction.coerceIn(0f, 1f)
+    measure.getSegment(start, minOf(end, length), output, true)
+    if (end > length) measure.getSegment(0f, end - length, output, false)
 }
 
 /** Clockwise from the top centre; the same measured capsule defines all three stages. */

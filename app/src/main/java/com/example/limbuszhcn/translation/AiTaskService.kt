@@ -42,8 +42,7 @@ class AiTaskService : Service() {
         try {
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(NotificationChannel(CHANNEL, "AI 翻译任务", NotificationManager.IMPORTANCE_LOW))
-            if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIFICATION_ID, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-            else startForeground(NOTIFICATION_ID, notification())
+            enterForeground()
             if (current == null || current.closed.get()) { stopSelf(); return }
             wakeLock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "BYBUS:AiTranslation")
                 .apply { setReferenceCounted(false); acquire(TimeUnit.HOURS.toMillis(6)) }
@@ -61,6 +60,14 @@ class AiTaskService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val current = synchronized(lock) { active }
+        // A fresh start can reach the existing instance after stop/start raced. Each
+        // startForegroundService request must be acknowledged, even if already cancelled.
+        if (intent?.action != PAUSE) try { enterForeground() } catch (error: Exception) {
+            PersistentDiagnosticLog.warn("AiTaskService", "Cannot renew foreground translation", error)
+            current?.failure = "无法保持后台翻译，请返回 BYBUS 后继续"
+            current?.ready?.countDown(); current?.pause(); current?.close(); stopSelf()
+            return START_NOT_STICKY
+        }
         if (current == null || current.closed.get()) { stopSelf(); return START_NOT_STICKY }
         if (current !== session) {
             try {
@@ -86,6 +93,11 @@ class AiTaskService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun enterForeground() {
+        if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIFICATION_ID, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        else startForeground(NOTIFICATION_ID, notification())
+    }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
         // Android 15 gives only a few seconds to stop the foreground service after its quota expires.
@@ -125,27 +137,35 @@ class AiTaskService : Service() {
     private fun notification(): Notification {
         val current = session
         val progress = current?.progress ?: Progress("正在准备翻译", 0, 0)
+        val label = compactAiTaskLabel(progress.label)
+        val caption = if (progress.total > 0) "${progress.done}/${progress.total} · $label" else label
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java).setAction(OPEN_TASK)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val builder = Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_notification_bus)
-            .setContentTitle("AI 翻译").setContentText(if (progress.total > 0) "${progress.label} · ${progress.done}/${progress.total}" else progress.label)
+            .setContentTitle("AI 翻译").setContentText(caption)
             .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).setShowWhen(false)
-            .setWhen(System.currentTimeMillis() - (SystemClock.elapsedRealtime() - progress.clockBase))
-            .setUsesChronometer(true)
             .setCategory(Notification.CATEGORY_PROGRESS)
-            .setProgress(progress.total, progress.done, progress.total <= 0)
         if (current != null && !current.paused.get()) {
             val pause = PendingIntent.getService(this, current.id.hashCode(), Intent(this, AiTaskService::class.java)
                 .setAction(PAUSE).putExtra("session", current.id), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            builder.addAction(Notification.Action.Builder(R.drawable.ic_ai_stop, "停止", pause).build())
-            val view = RemoteViews(packageName, R.layout.ai_task_notification).apply {
-                setTextViewText(R.id.ai_notice_label, if (progress.total > 0) "${progress.done}/${progress.total} · ${progress.label}" else progress.label)
+            val cancel = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java).setAction(OPEN_TASK)
+                .setData(android.net.Uri.parse("bybus-task://cancel/${current.id}"))
+                .putExtra(CANCEL_SESSION, current.id)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            // The system decorates the custom view. Native progress/clock/actions would be drawn again.
+            fun layout(expanded: Boolean) = RemoteViews(packageName, R.layout.ai_task_notification).apply {
+                val count = "${progress.done}/${progress.total}"
+                val compact = if (count.length <= 7) count else "${progress.done * 100L / progress.total.coerceAtLeast(1)}%"
+                setTextViewText(R.id.ai_notice_label, if (!expanded && progress.total > 0) compact else caption)
+                setContentDescription(R.id.ai_notice_label, caption)
                 setChronometer(R.id.ai_notice_time, progress.clockBase, "%s", true)
                 setProgressBar(R.id.ai_notice_progress, progress.total, progress.done, progress.total <= 0)
                 setOnClickPendingIntent(R.id.ai_notice_stop, pause)
+                setOnClickPendingIntent(R.id.ai_notice_cancel, cancel)
             }
-            builder.setStyle(Notification.DecoratedCustomViewStyle()).setCustomContentView(view).setCustomBigContentView(view)
+            builder.setStyle(Notification.DecoratedCustomViewStyle()).setCustomContentView(layout(false)).setCustomBigContentView(layout(true))
         }
         return builder.build()
     }
@@ -195,7 +215,9 @@ class AiTaskService : Service() {
                 if (active === this) {
                     active = null
                     // Clear/stop under the same lock: an old operation cannot stop a newly started service.
-                    context.stopService(Intent(context, AiTaskService::class.java))
+                    // If creation is still queued, onCreate must first satisfy the
+                    // foreground contract before stopping, otherwise Android kills the app.
+                    if (service != null) context.stopService(Intent(context, AiTaskService::class.java))
                 }
             }
         }
@@ -203,12 +225,14 @@ class AiTaskService : Service() {
 
     companion object {
         const val OPEN_TASK = "io.github.gravere.bybus.OPEN_AI_TASK"
+        const val CANCEL_SESSION = "confirm_cancel_session"
         private const val PAUSE = "io.github.gravere.bybus.PAUSE_AI_TASK"
         private const val CHANNEL = "bybus-ai-translation"
         private const val NOTIFICATION_ID = 4107
         private val lock = Any()
         @Volatile private var active: Session? = null
         internal fun hasActiveTask(): Boolean = active?.closed?.get() == false
+        internal fun activeSessionId(): String? = active?.takeUnless { it.closed.get() }?.id
 
         internal fun start(context: Context, onPause: () -> Unit): Session = synchronized(lock) {
             check(active == null) { "已有翻译任务正在运行" }

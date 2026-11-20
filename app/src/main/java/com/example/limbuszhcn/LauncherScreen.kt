@@ -59,7 +59,9 @@ internal fun LauncherScreen(
     onOpenLink: (String) -> Unit,
     translationActions: TranslationActions = TranslationActions(),
     homeProjectSourceId: String? = null,
-    onHomeProjectSource: (String?) -> Unit = {}
+    onHomeProjectSource: (String?) -> Unit = {},
+    onDismissAiCancellation: () -> Unit = {},
+    onConfirmAiCancellation: () -> Unit = {}
 ) {
     var sheet by rememberSaveable { mutableStateOf<String?>(null) }
     var parentSheets by rememberSaveable { mutableStateOf(emptyList<String>()) }
@@ -258,6 +260,13 @@ internal fun LauncherScreen(
         AiUpstreamDialog(offer, state.ai.hasKey, !state.busy && !state.ai.settingsBusy,
             translationActions.chooseAiUpdate, { translationActions.chooseAiUpdate(null); requestedAiScope = null; open("ai-translation") })
     }
+    state.aiCancelPrompt?.let { request ->
+        LaunchedEffect(request, state.ai.running, state.ai.task?.id) {
+            if (!request.matches(com.example.limbuszhcn.translation.AiTaskService.activeSessionId(), state.ai.task?.id)) onDismissAiCancellation()
+        }
+        AiTaskCancelDialog(onDismissAiCancellation, onConfirmAiCancellation,
+            state.ai.task?.phase != com.example.limbuszhcn.translation.AiTaskPhase.Applying)
+    }
     if (state.aiPreparingLaunch && !hideAiLaunchProgress) AiLaunchProgressDialog(state, translationActions.pauseAi) {
         hideAiLaunchProgress = true
         openTask()
@@ -330,6 +339,8 @@ private fun InstallationRow(icon: Glyph, title: String, value: String, status: S
 @Composable
 internal fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefresh: () -> Unit, onDetails: () -> Unit, animated: Boolean) {
     val seconds = operationSeconds(state)
+    val aiOperation = state.ai.running || state.taskPage == "ai-translation"
+    val aiElapsed = aiElapsedMillis(state.ai.progress, state.ai.running)
     val feedback = rememberOperationFeedback(state)
     val missing = state.container != null && state.installedVersion == null
     val canLaunch = state.container?.available == true && state.installedVersion != null &&
@@ -352,8 +363,12 @@ internal fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefre
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         LaunchButton(action, enabled = state.busy || state.container != null || state.failed,
             step = state.launchStep, animated = animated, feedback = feedback,
-            status = if (state.busy) state.stage else feedback?.title.orEmpty(), progressFraction = state.workProgress.fraction,
-            progressText = if (!state.busy) "" else (if (state.workProgress.total > 0)
+            status = if (state.busy && aiOperation) com.example.limbuszhcn.translation.compactAiTaskLabel(state.stage)
+                else if (state.busy) state.stage else feedback?.title.orEmpty(), progressFraction = state.workProgress.fraction,
+            progressText = if (!state.busy) "" else if (aiOperation) {
+                val duration = com.example.limbuszhcn.translation.formatTaskDuration(if (state.ai.running) aiElapsed else seconds * 1000)
+                if (state.workProgress.total > 0) "${state.workProgress.done}/${state.workProgress.total} · $duration" else duration
+            } else (if (state.workProgress.total > 0)
                 "${state.workProgress.done}/${state.workProgress.total} · ${((state.workProgress.fraction ?: 0f) * 100).toInt()}%"
                 else if (state.launchStep in 0..2) "第 ${state.launchStep + 1}/3 步" else "处理中") + " · ${seconds}秒",
             onClick = { when { state.busy -> onDetails(); state.canResumeGame -> onLaunch(); needsDetection -> onRefresh(); canLaunch -> onLaunch(); else -> onDetails() } })

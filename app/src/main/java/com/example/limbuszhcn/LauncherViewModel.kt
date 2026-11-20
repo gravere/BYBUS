@@ -37,7 +37,9 @@ internal class LauncherViewModel(application: Application) : AndroidViewModel(ap
     }
     val state: LauncherUiState get() = coordinator.state.withMigrationTask(com.example.limbuszhcn.migration.MigrationModel.currentState())
     fun launch() = coordinator.launch()
-    fun requestAiTask() = coordinator.requestAiTask()
+    fun requestAiTask(cancelSession: String? = null) = coordinator.requestAiTask(cancelSession)
+    fun dismissAiCancellation() = coordinator.dismissAiCancellation()
+    fun confirmAiCancellation() = coordinator.confirmAiCancellation()
     fun refresh() {
         refreshStatus(preserveFailure = false)
     }

@@ -42,29 +42,57 @@ class AiTaskServiceTest {
                 screen.moveToState(Lifecycle.State.CREATED)
                 waitFor { running()?.foreground == true }
                 val manager = context.getSystemService(NotificationManager::class.java)
-                waitFor { manager.activeNotifications.any { it.notification.channelId == "bybus-ai-translation" &&
-                    it.notification.extras.getInt(android.app.Notification.EXTRA_PROGRESS_MAX) == 37 } }
+                waitFor { manager.activeNotifications.any { it.id == 4107 &&
+                    it.notification.extras.getString(android.app.Notification.EXTRA_TEXT).orEmpty().contains("1/37") } }
                 val notice = manager.activeNotifications.first { it.id == 4107 }.notification
-                assertEquals(1, notice.extras.getInt(android.app.Notification.EXTRA_PROGRESS))
+                assertFalse(notice.extras.containsKey(android.app.Notification.EXTRA_PROGRESS_MAX))
+                assertFalse(notice.extras.getBoolean(android.app.Notification.EXTRA_SHOW_CHRONOMETER))
+                assertTrue(notice.actions.isNullOrEmpty())
                 // Two updates inside the throttle interval must still deliver the trailing value.
                 session.update("正在翻译所选文本", 2, 37)
                 session.update("正在翻译所选文本", 3, 37)
-                waitFor { manager.activeNotifications.any { it.notification.extras.getInt(android.app.Notification.EXTRA_PROGRESS) == 3 } }
+                waitFor { manager.activeNotifications.any { it.id == 4107 && it.notification.extras.getString(android.app.Notification.EXTRA_TEXT).orEmpty().contains("3/37") } }
                 assertNotNull(notice.contentView)
                 screen.onActivity { activity ->
-                    val view = notice.contentView.apply(activity, android.widget.FrameLayout(activity))
-                    assertEquals("停止", view.findViewById<android.widget.TextView>(R.id.ai_notice_stop).text.toString())
-                    assertTrue(view.findViewById<android.widget.Chronometer>(R.id.ai_notice_time).base <= android.os.SystemClock.elapsedRealtime())
+                    val compact = notice.contentView.apply(activity, android.widget.FrameLayout(activity))
+                    assertEquals("1/37", compact.findViewById<android.widget.TextView>(R.id.ai_notice_label).text.toString())
+                    for (layout in listOf(notice.contentView, notice.bigContentView)) {
+                        val view = layout.apply(activity, android.widget.FrameLayout(activity))
+                        assertEquals("暂停", view.findViewById<android.widget.TextView>(R.id.ai_notice_stop).text.toString())
+                        assertEquals("取消", view.findViewById<android.widget.TextView>(R.id.ai_notice_cancel).text.toString())
+                        assertEquals(1, view.findViewById<android.widget.ProgressBar>(R.id.ai_notice_progress).progress)
+                        assertTrue(view.findViewById<android.widget.Chronometer>(R.id.ai_notice_time).base <= android.os.SystemClock.elapsedRealtime())
+                    }
                 }
                 notice.contentIntent.send()
                 screen.moveToState(Lifecycle.State.RESUMED)
                 screen.onActivity { assertTrue(LaunchCoordinator.get(it.application).state.aiTaskRequest > previousRequest) }
-                notice.actions.single { it.title == "停止" }.actionIntent.send()
+                screen.onActivity { activity ->
+                    val view = notice.contentView.apply(activity, android.widget.FrameLayout(activity))
+                    assertTrue(view.findViewById<android.view.View>(R.id.ai_notice_cancel).performClick())
+                }
+                waitFor { LaunchCoordinator.get(context.applicationContext as android.app.Application).state.aiCancelPrompt != null }
+                assertEquals(0, pauses.get()) // Opening confirmation cannot cancel or pause a request.
+                screen.onActivity { activity ->
+                    val model = LaunchCoordinator.get(activity.application)
+                    assertEquals(session.id, model.state.aiCancelPrompt?.sessionId)
+                    model.dismissAiCancellation()
+                    val view = notice.contentView.apply(activity, android.widget.FrameLayout(activity))
+                    assertTrue(view.findViewById<android.view.View>(R.id.ai_notice_stop).performClick())
+                }
                 waitFor { pauses.get() == 1 }
                 assertTrue(session.paused.get())
             } finally { session.close() }
             waitFor { running() == null }
             waitFor { context.getSystemService(NotificationManager::class.java).activeNotifications.none { it.id == 4107 } }
+            screen.onActivity { activity ->
+                val model = LaunchCoordinator.get(activity.application)
+                model.requestAiTask(session.id)
+                assertNull(model.state.aiCancelPrompt)
+                // ActivityScenario matches lifecycle events by the original Intent filter.
+                // The unique notification URI is intentional; restore only the fixture Intent for cleanup.
+                activity.intent = Intent(context, MainActivity::class.java).setAction(AiTaskService.OPEN_TASK)
+            }
             assertEquals(1, pauses.get())
         }
     }
@@ -85,6 +113,20 @@ class AiTaskServiceTest {
                 Thread.sleep(750)
                 waitFor { manager.activeNotifications.none { it.id == 2781 || it.id == 4107 } }
             } finally { context.stopService(Intent(context, com.lody.virtual.client.stub.KeepAliveService::class.java)) }
+        }
+    }
+
+    @Test fun cancellationBeforeServiceCreationDoesNotCrashOrLeaveANotification() {
+        check(Build.HARDWARE in setOf("ranchu", "goldfish"))
+        ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).setAction(AiTaskService.OPEN_TASK)).use { screen ->
+            screen.onActivity { activity ->
+                // All three requests are queued before the main thread can create the service.
+                repeat(3) { AiTaskService.start(activity) { fail("Cancelled session must not resume") }.close() }
+            }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            waitFor { running() == null }
+            waitFor { context.getSystemService(NotificationManager::class.java).activeNotifications.none { it.id == 4107 } }
+            screen.onActivity { assertFalse(it.isFinishing) }
         }
     }
 

@@ -64,6 +64,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
     var selectingKey by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf(false) }
     var cancelTask by remember { mutableStateOf(false) }
+    LaunchedEffect(state.aiCancelPrompt) { if (state.aiCancelPrompt != null) cancelTask = false }
     var showConfiguration by remember { mutableStateOf(false) }
     var clear by remember { mutableStateOf<AiKeyChoice?>(null) }
     var undo by remember { mutableStateOf<com.example.limbuszhcn.translation.AiUndoPoint?>(null) }
@@ -285,11 +286,8 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
             }
         }
     }
-    if (cancelTask) BybusDialog(destructive = true, onDismissRequest = { cancelTask = false }, title = { Text("取消翻译任务？") },
-        text = { Text("删除本次任务及尚未发布的译文，之后不能继续。此前生成的汉化包会保留，已产生的 API 费用不会返还。") },
-        confirmButton = { TextButton({ cancelTask = false; actions.cancelAi() },
-            enabled = ai.task?.phase != com.example.limbuszhcn.translation.AiTaskPhase.Applying) { Text("取消并删除") } },
-        dismissButton = { TextButton({ cancelTask = false }) { Text("保留任务") } })
+    if (cancelTask) AiTaskCancelDialog({ cancelTask = false }, { cancelTask = false; actions.cancelAi() },
+        ai.task?.phase != com.example.limbuszhcn.translation.AiTaskPhase.Applying)
     if (confirm) BybusDialog(onDismissRequest = { confirm = false }, title = { Text("开始 AI 翻译？") },
         text = { val count = requestedEntries?.count ?: coverageRequest?.count ?: 0
             Text("${if (requestedEntries != null) "所选文本" else if (missing) scope.label else "尚未完成的可译文本"}共 $count 条，本次最多 ${minOf(limit, count)} 条。将关闭游戏，使用你的 API 翻译并计费。${if (requestedEntries != null) "仅翻译所选条目，其余译文保留。" else "已完成的译文保留。"}") },
@@ -328,12 +326,16 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
         dismissButton = { TextButton({ deleteAi = null }) { Text("取消") } }) }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun AiTaskCard(state: LauncherUiState, onPause: () -> Unit, onResume: () -> Unit, onCancel: () -> Unit) {
     val ai = state.ai
     val task = ai.task
     val progress = ai.progress
     val saving = task?.phase == com.example.limbuszhcn.translation.AiTaskPhase.Applying
+    val elapsed = aiElapsedMillis(progress, ai.running)
+    var expanded by androidx.compose.runtime.saveable.rememberSaveable(task?.id) { mutableStateOf(false) }
+    val angle by androidx.compose.animation.core.animateFloatAsState(if (expanded) 270f else 90f, tween(160), label = "task details")
     val context = androidx.compose.ui.platform.LocalContext.current
     val lifecycle = androidx.compose.ui.platform.LocalLifecycleOwner.current.lifecycle
     var backgroundAllowed by remember { mutableStateOf(com.example.limbuszhcn.translation.AiBackgroundAccess.allowed(context)) }
@@ -346,37 +348,75 @@ internal fun AiTaskCard(state: LauncherUiState, onPause: () -> Unit, onResume: (
         onDispose { lifecycle.removeObserver(observer) }
     }
     DetailCard {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            IconTile(Glyph.Ai)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(if (saving) "正在保存汉化" else if (ai.running) "正在翻译" else "翻译已暂停", style = MaterialTheme.typography.titleMedium)
-                task?.let { Text("${it.scopeLabel} · ${it.sourceName}", color = C.Muted, style = MaterialTheme.typography.bodySmall) }
-            }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LauncherGlyph(Glyph.Ai, C.Accent, Modifier.size(20.dp))
+            Text(if (saving) "保存译文" else if (ai.stopping) "正在暂停" else if (ai.running) "正在翻译" else "已暂停",
+                style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+            Text(com.example.limbuszhcn.translation.formatTaskDuration(elapsed), color = C.Muted,
+                style = MaterialTheme.typography.bodySmall, modifier = Modifier.semantics { contentDescription = "翻译用时" })
         }
         if (task?.plan != null) {
             val total = task.plan.total
             val done = (progress.completed + progress.reused).coerceAtMost(total)
-            Text("已完成 $done / $total 条", style = MaterialTheme.typography.titleSmall)
-            LinearProgressIndicator(progress = { if (total == 0) 1f else done.toFloat() / total },
-                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "翻译任务进度" })
-            if (task.plan.available > total) Text("所选范围共 ${task.plan.available} 条，本次处理 $total 条", color = C.Muted, style = MaterialTheme.typography.bodySmall)
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(Modifier.align(Alignment.Bottom).padding(end = 12.dp), verticalAlignment = Alignment.Bottom,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("$done", style = MaterialTheme.typography.headlineSmall)
+                        Text("/ $total 条", color = C.Muted, style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(bottom = 2.dp))
+                    }
+                    Text(if (!ai.running) "进度已保存" else com.example.limbuszhcn.translation.compactAiTaskLabel(ai.message.orEmpty()),
+                        color = C.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.align(Alignment.Bottom).padding(bottom = 2.dp))
+                }
+                LinearProgressIndicator(progress = { if (total == 0) 1f else done.toFloat() / total },
+                    modifier = Modifier.fillMaxWidth().semantics { contentDescription = "翻译任务进度" })
+            }
         } else {
             if (ai.running) LinearProgressIndicator(Modifier.fillMaxWidth())
-            Text(if (progress.totalFiles > 0) "核对文件 ${progress.scannedFiles}/${progress.totalFiles}，尚未开始新一批翻译"
-                else "正在核对所选范围，翻译条数将在核对后显示", style = MaterialTheme.typography.bodyMedium)
+            Text(if (progress.totalFiles > 0) "准备文本 ${progress.scannedFiles}/${progress.totalFiles}" else "正在准备文本",
+                style = MaterialTheme.typography.bodySmall, color = C.Muted)
         }
-        AiUsageSummary(progress, ai.running)
-        ai.message?.let { Text(it, color = if (ai.failed) C.Error else C.Muted, style = MaterialTheme.typography.bodySmall) }
+        if (ai.failed) ai.message?.let { Text(it, color = C.Error, style = MaterialTheme.typography.bodySmall) }
         if (!backgroundAllowed) TextButton({ com.example.limbuszhcn.translation.AiBackgroundAccess.open(context) }) {
             Text("允许锁屏后继续翻译")
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (ai.running) FilledTonalButton(onPause, enabled = !ai.stopping && !saving, modifier = Modifier.weight(1f)) { Text("停止并保存") }
+            if (ai.running) FilledTonalButton(onPause, enabled = !ai.stopping && !saving, modifier = Modifier.weight(1f)) { Text("暂停") }
             else Button(onResume, enabled = !state.busy && !ai.settingsBusy && ai.hasKey && task != null && !ai.recoveryIssue, modifier = Modifier.weight(1f)) { Text("继续翻译") }
-            OutlinedButton(onCancel, enabled = !saving && (ai.running || !state.busy), modifier = Modifier.weight(1f)) { Text("取消任务") }
+            TextButton(onCancel, enabled = !saving && (ai.running || !state.busy), modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.textButtonColors(contentColor = C.Error)) { Text("取消任务") }
         }
-        if (!ai.running) Text("进度已保存，关闭应用后也能继续。", color = C.Muted, style = MaterialTheme.typography.bodySmall)
+        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+            .clickable(role = androidx.compose.ui.semantics.Role.Button) { expanded = !expanded }
+            .semantics { stateDescription = if (expanded) "已展开" else "已收起" }.heightIn(min = 36.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Text("任务详情", color = C.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+            LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(14.dp).rotate(angle))
+        }
+        ExpandableDetails(expanded) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                task?.let {
+                    AiTaskMetaRow("汉化源", it.sourceName)
+                    AiTaskMetaRow("翻译范围", it.scopeLabel)
+                    if (it.plan != null && it.plan.available > it.plan.total) AiTaskMetaRow("本次选择", "${it.plan.total} / ${it.plan.available} 条")
+                }
+                AiUsageSummary(progress, showElapsed = false)
+                if (!ai.failed) ai.message?.takeIf(String::isNotBlank)?.let {
+                    Text(it, color = C.Muted, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
     }
+}
+
+@Composable
+internal fun AiTaskCancelDialog(onDismiss: () -> Unit, onConfirm: () -> Unit, enabled: Boolean = true) {
+    BybusDialog(destructive = true, onDismissRequest = onDismiss, title = { Text("取消翻译任务？") },
+        text = { Text("删除这次任务及未发布译文，已生成的汉化包不受影响。已产生的 API 费用不会返还。") },
+        confirmButton = { TextButton(onConfirm, enabled = enabled) { Text("删除任务") } },
+        dismissButton = { TextButton(onDismiss) { Text("保留任务") } })
 }
 
 @Composable
