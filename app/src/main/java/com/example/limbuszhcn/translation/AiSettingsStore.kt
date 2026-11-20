@@ -16,6 +16,9 @@ import javax.crypto.spec.GCMParameterSpec
 
 internal data class AiKeyChoice(val id: String, val name: String, val endpoint: String, val model: String)
 
+/** Memory-only request credentials; intentionally not a data class with a generated secret-bearing toString. */
+internal class AiSavedConnection(val config: AiConfig, val key: String)
+
 /** Only non-secret names and connection settings leave the credential store. */
 internal class AiSettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences("ai-translation-private", Context.MODE_PRIVATE)
@@ -138,6 +141,11 @@ internal class AiSettingsStore(context: Context) {
         val chosen = entries().firstOrNull { it.choice.id == activeId() && it.choice.endpoint == address }
             ?: error("请先选择此服务的密钥")
         decrypt(chosen)
+    }
+
+    fun connection(): AiSavedConnection = synchronized(lock) {
+        val current = config().validated()
+        AiSavedConnection(current, key(current.endpoint))
     }
 
     private fun encrypt(choice: AiKeyChoice, value: String): String {

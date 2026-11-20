@@ -106,11 +106,12 @@ internal fun AiUsageSummary(progress: AiProgress, running: Boolean = false, show
         if (progress.requests <= 0 && progress.inputTokens + progress.outputTokens == 0L) return@Column
         AiTaskMetaRow("输入 Token", String.format(Locale.ROOT, "%,d", progress.inputTokens))
         AiTaskMetaRow("输出 Token", String.format(Locale.ROOT, "%,d", progress.outputTokens))
-        val price = progress.price
-        AiTaskMetaRow("预估费用", if (progress.unknownUsage && progress.inputTokens + progress.outputTokens == 0L) "用量未知" else if (price == null) "未设置单价" else {
-            val cost = price.cost(progress.inputTokens, progress.outputTokens, progress.cachedTokens)
-            "${if (cost > 0.0 && cost < .0001) "< 0.0001" else String.format(Locale.ROOT, "%.4f", cost)} ${price.currency}"
-        })
+        val costs = progress.knownCosts()
+        AiTaskMetaRow("预估费用", if (progress.unknownUsage && progress.inputTokens + progress.outputTokens == 0L) "用量未知" else if (costs.isEmpty()) "未设置单价" else
+            costs.entries.joinToString("\n") { (currency, cost) ->
+                "${if (cost > 0.0 && cost < .0001) "< 0.0001" else String.format(Locale.ROOT, "%.4f", cost)} $currency"
+            })
         if (progress.unknownUsage) Text("部分用量未返回，费用未计全。", color = C.Muted, style = MaterialTheme.typography.bodySmall)
+        if (progress.hasUnknownPrice() && costs.isNotEmpty()) Text("部分请求未设置单价，费用未计全。", color = C.Muted, style = MaterialTheme.typography.bodySmall)
     }
 }

@@ -44,7 +44,7 @@ class AiSettingsFeedbackUiTest {
                 AiTranslationPane(state, actions)
             }
         } }
-        compose.onNodeWithText("查看翻译设置").performScrollTo().performClick()
+        compose.onNodeWithText("连接与翻译设置").performScrollTo().performClick()
         compose.onNodeWithText("测试翻译").performScrollTo().performClick()
         compose.onNodeWithText("测试通过").performScrollTo().assertIsDisplayed()
         capture("expanded-success")

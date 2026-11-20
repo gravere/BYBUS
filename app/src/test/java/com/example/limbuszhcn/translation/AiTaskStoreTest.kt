@@ -81,6 +81,74 @@ class AiTaskStoreTest {
                 .put("message", JSONObject().put("content", wrap(JSONObject().put("translations", result).toString()))))).toString()
         })
 
+    @Test fun legacyTaskChangesProvidersTwiceWithoutRebillingCompletedAnswersOrExpandingItsPlan() {
+        val (source, base) = fixture()
+        val original = AiConfig(endpoint = "https://first.example/v1", model = "first-model", includeMissing = false, includeReview = true, limit = 26)
+        val tasks = AiTaskStore(cache); val task = tasks.create(original, source, base, base)
+        var calls = 0
+        val firstSeen = mutableListOf<String>()
+        val firstIds = mutableSetOf<String>()
+        assertThrows(AiTranslationException::class.java) {
+            AiTranslationJob(cache, ContainerWorkspaceStorage(localize), original,
+                client(original, firstSeen, wrap = { text ->
+                    val rows = JSONObject(text).getJSONArray("translations")
+                    repeat(rows.length()) { firstIds += rows.getJSONObject(it).getString("id") }
+                    text
+                }, before = { if (++calls == 2) throw SocketTimeoutException() }))
+                .run(source.id, tasks.prepared("base"), task.outputIdentity, session = tasks)
+        }
+        assertEquals(24, firstSeen.size)
+        assertFalse(JSONObject(String(Files.readAllBytes(tasks.root.resolve("task.json")), Charsets.UTF_8)).has("cacheConnection")) // Existing build 138 task.
+        val sources = TranslationSources(cache)
+        val priorSources = sources.read()
+        val fresh = AiTaskStore(cache)
+        val recovered = fresh.recover(sources.read())!!
+        val selected = AiConfig(endpoint = "https://second.example/v1", model = "second-model", missingOnly = false,
+            limit = MAX_AI_TASK_ENTRIES, prompt = "Do not use this new-task prompt", stream = false)
+        val switched = fresh.write(recovered.withConnection(selected, AiPrice(3.0, 9.0)))
+        assertEquals(recovered.plan, switched.plan); assertEquals(task.outputIdentity, switched.outputIdentity)
+        assertEquals(recovered.binding, switched.binding)
+        assertEquals(original.copy(endpoint = selected.endpoint, model = selected.model, stream = false), switched.config)
+        assertEquals(AiCacheConnection(original.endpoint, original.model), switched.cacheConnection)
+        val sent = mutableListOf<String>()
+        fun via(config: AiConfig, wrongLast: Boolean) = AiTranslationClient(config, "fixture-${config.model}", AiHttpTransport { url, key, raw ->
+            assertEquals(config.endpoint + "/chat/completions", url)
+            assertEquals("fixture-${config.model}", key)
+            val request = JSONObject(raw); assertEquals(config.model, request.getString("model"))
+            assertTrue(request.getJSONArray("messages").getJSONObject(0).getString("content").endsWith(original.prompt))
+            val rows = JSONArray(request.getJSONArray("messages").getJSONObject(1).getString("content"))
+            val result = JSONArray()
+            repeat(rows.length()) { i ->
+                val row = rows.getJSONObject(i); sent += row.getString("id")
+                result.put(JSONObject().put("id", row.getString("id"))
+                    .put("text", if (wrongLast && i == rows.length() - 1) "错误999" else row.getString("text").replace("確認する", "确认")))
+            }
+            JSONObject().put("choices", JSONArray().put(JSONObject().put("finish_reason", "stop")
+                .put("message", JSONObject().put("content", JSONObject().put("translations", result).toString())))).toString()
+        })
+        assertThrows(AiBatchValidationException::class.java) {
+            AiTranslationJob(cache, ContainerWorkspaceStorage(localize), switched.config, via(switched.config, true))
+                .run(source.id, fresh.prepared("base"), task.outputIdentity, session = fresh)
+        }
+        assertEquals(2, sent.size)
+        assertTrue(sent.none { it in firstIds })
+        val restarted = AiTaskStore(cache)
+        val next = restarted.recover(sources.read())!!.withConnection(selected.copy(model = "third-model"), AiPrice(5.0, 10.0))
+        restarted.write(next)
+        assertEquals(switched.cacheConnection, restarted.read()!!.cacheConnection)
+        sent.clear()
+        val result = AiTranslationJob(cache, ContainerWorkspaceStorage(localize), next.config, via(next.config, false))
+            .run(source.id, restarted.prepared("base"), task.outputIdentity, session = restarted)
+        assertEquals(1, sent.size)
+        assertEquals(25, result.progress.reused); assertEquals(1, result.progress.completed)
+        assertEquals(26, result.progress.limit); assertEquals(26, result.aiEntryCount)
+        java.util.zip.ZipFile(result.archive.toFile()).use { zip ->
+            val rows = JSONObject(zip.getInputStream(zip.getEntry("jp/JP_MainUIText.json")).bufferedReader().readText()).getJSONArray("dataList")
+            repeat(26) { assertEquals("确认 $it", rows.getJSONObject(it).getString("content")) }
+        }
+        assertEquals(priorSources, TranslationSources(cache).read()) // The result is still pending publication.
+    }
+
     @Test fun formatFailureThenFencedResponseResumeDoesNotResendTheCompletedBatch() {
         val (source, base) = fixture()
         val config = AiConfig(includeMissing = false, includeReview = true, limit = 26)
