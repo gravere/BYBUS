@@ -14,7 +14,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import kotlin.math.PI
 import kotlin.math.sin
 
-internal enum class LaunchSymbol { Ready, Resume, Scan, Prepare, Translate, Depart, Working, Attention, Info, Retry, Complete }
+internal enum class LaunchSymbol { Ready, Resume, Scan, Prepare, Translate, Depart, Working, Attention, Info, Retry, Complete, Cancelled }
 
 /** One rounded-line family. Read the shared clock only while drawing an active stage. */
 @Composable
@@ -116,6 +116,11 @@ internal fun LaunchPhaseGlyph(symbol: LaunchSymbol, phase: State<Float>, moving:
                     drawCircle(color, .9f, Offset(12f, 7f))
                 }
                 LaunchSymbol.Complete -> path(4.5f, 12f, 9.5f, 17f, 19.5f, 6.5f)
+                LaunchSymbol.Cancelled -> {
+                    drawCircle(color, 8.5f, Offset(12f, 12f), style = stroke)
+                    line(8.5f, 8.5f, 15.5f, 15.5f)
+                    line(15.5f, 8.5f, 8.5f, 15.5f)
+                }
             }
         }
     }

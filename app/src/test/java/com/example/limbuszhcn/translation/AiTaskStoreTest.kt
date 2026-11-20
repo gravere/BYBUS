@@ -34,7 +34,7 @@ class AiTaskStoreTest {
         val source = Files.newInputStream(zip).use { sources.import(it, "fixture.zip") }
         return source to sources.prepare(source)
     }
-    private fun client(config: AiConfig, seen: MutableList<String>, before: () -> Unit = {}) =
+    private fun client(config: AiConfig, seen: MutableList<String>, wrap: (String) -> String = { it }, before: () -> Unit = {}) =
         AiTranslationClient(config, "non-secret-fixture", AiHttpTransport { _, _, request ->
             before()
             val input = JSONArray(JSONObject(request).getJSONArray("messages").getJSONObject(1).getString("content"))
@@ -44,8 +44,34 @@ class AiTaskStoreTest {
                 result.put(JSONObject().put("id", row.getString("id")).put("text", text.replace("確認する", "确认").replace("待機する", "等待")))
             }
             JSONObject().put("choices", JSONArray().put(JSONObject().put("finish_reason", "stop")
-                .put("message", JSONObject().put("content", JSONObject().put("translations", result).toString())))).toString()
+                .put("message", JSONObject().put("content", wrap(JSONObject().put("translations", result).toString()))))).toString()
         })
+
+    @Test fun formatFailureThenFencedResponseResumeDoesNotResendTheCompletedBatch() {
+        val (source, base) = fixture()
+        val config = AiConfig(includeMissing = false, includeReview = true, limit = 26)
+        val tasks = AiTaskStore(cache); val task = tasks.create(config, source, base, base)
+        var calls = 0
+        val broken = client(config, mutableListOf(), wrap = { text ->
+            if (++calls == 2) "```json\n{truncated" else text
+        })
+        assertThrows(AiResponseFormatException::class.java) {
+            AiTranslationJob(cache, ContainerWorkspaceStorage(localize), config, broken)
+                .run(source.id, tasks.prepared("base"), task.outputIdentity, session = tasks)
+        }
+        assertEquals(24, tasks.read()!!.progress.completed)
+        assertEquals(26, tasks.read()!!.plan!!.total)
+        val recovered = AiTaskStore(cache)
+        assertEquals(AiTaskPhase.Paused, recovered.recover(TranslationSources(cache).read())!!.phase)
+        val resumedRequests = mutableListOf<String>()
+        val result = AiTranslationJob(cache, ContainerWorkspaceStorage(localize), config,
+            client(config, resumedRequests, wrap = { "```json\n$it\n```" }))
+            .run(source.id, recovered.prepared("base"), task.outputIdentity, session = recovered)
+        assertEquals(24, result.progress.reused)
+        assertEquals(2, result.progress.completed)
+        assertEquals(2, resumedRequests.size)
+        assertEquals(26, result.progress.limit)
+    }
 
     @Test fun timeoutThenProcessRecoveryKeepsExactReviewScopeAndDoesNotRebillCompletedBatch() {
         val (source, base) = fixture()

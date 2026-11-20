@@ -48,7 +48,7 @@ private data class LaunchContent(val title: String, val symbol: LaunchSymbol, va
 
 @Composable
 internal fun LaunchButton(action: LaunchAction, enabled: Boolean, step: Int,
-    animated: Boolean, feedback: String? = null, status: String = "", progressText: String = "", progressFraction: Float? = null, onClick: () -> Unit) {
+    animated: Boolean, feedback: OperationFeedback? = null, status: String = "", progressText: String = "", progressFraction: Float? = null, onClick: () -> Unit) {
     val busy = action.busy
     val fraction by animateFloatAsState(progressFraction ?: 0f, tween(200), label = "launch phase progress")
     val confirmed = feedback != null
@@ -67,7 +67,7 @@ internal fun LaunchButton(action: LaunchAction, enabled: Boolean, step: Int,
     val soft = C.AccentSoft
     val line = C.Line
     val haptic = LocalHapticFeedback.current
-    val buttonColor by animateColorAsState(if (confirmed) soft else C.Panel, tween(180), label = "launch surface")
+    val buttonColor by animateColorAsState(if (feedback?.symbol == LaunchSymbol.Complete) soft else C.Panel, tween(180), label = "launch surface")
     Box(Modifier.fillMaxWidth().heightIn(min = 120.dp)
         .graphicsLayer { scaleX = scale.value; scaleY = scale.value }, contentAlignment = Alignment.Center) {
         Box(Modifier.matchParentSize().semantics {
@@ -156,7 +156,7 @@ internal fun LaunchButton(action: LaunchAction, enabled: Boolean, step: Int,
             colors = ButtonDefaults.buttonColors(containerColor = buttonColor, contentColor = C.Ink,
                 disabledContainerColor = C.Panel, disabledContentColor = if (busy) C.Ink else C.Muted)) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            val content = LaunchContent(feedback ?: if (busy && status.isNotBlank()) status else action.title, if (confirmed) LaunchSymbol.Complete else action.symbol, busy)
+            val content = LaunchContent(feedback?.title ?: if (busy && status.isNotBlank()) status else action.title, feedback?.symbol ?: action.symbol, busy)
             AnimatedContent(content, Modifier.fillMaxWidth(), contentAlignment = Alignment.Center,
                 transitionSpec = {
                 (fadeIn(tween(180)) togetherWith fadeOut(tween(90))).using(SizeTransform(clip = false))
@@ -164,7 +164,7 @@ internal fun LaunchButton(action: LaunchAction, enabled: Boolean, step: Int,
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically) {
                     LaunchPhaseGlyph(item.symbol, phase, animated && item.busy,
-                        if (enabled || busy) accent else C.Muted, Modifier.size(22.dp))
+                        if (item.symbol != LaunchSymbol.Cancelled && (enabled || busy)) accent else C.Muted, Modifier.size(22.dp))
                     Spacer(Modifier.width(10.dp))
                     Text(item.title, Modifier.weight(1f, fill = false), textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.labelLarge)

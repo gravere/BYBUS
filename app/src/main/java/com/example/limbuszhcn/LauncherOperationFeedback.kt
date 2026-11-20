@@ -39,11 +39,13 @@ internal fun LauncherUiState.finishAiSettings(result: Result<String>): LauncherU
         }
     }))
 
-internal fun completedOperationFeedback(stage: String): String? = when (stage) {
-    "检查零协更新并校验汉化文件" -> "汉化检查完成"
-    "重新同步游戏", "同步游戏，保留已有数据" -> "游戏已同步"
-    "正在清除游戏资源" -> "游戏资源清理完成"
-    "正在保存诊断包" -> "诊断包已保存"
-    "取消导出" -> "已取消导出"
+internal data class OperationFeedback(val title: String, val symbol: LaunchSymbol = LaunchSymbol.Complete)
+
+internal fun completedOperationFeedback(stage: String): OperationFeedback? = when (stage) {
+    "检查零协更新并校验汉化文件" -> OperationFeedback("汉化检查完成")
+    "重新同步游戏", "同步游戏，保留已有数据" -> OperationFeedback("游戏已同步")
+    "正在清除游戏资源" -> OperationFeedback("游戏资源清理完成")
+    "正在保存诊断包" -> OperationFeedback("诊断包已保存")
+    "取消导出" -> OperationFeedback("已取消导出", LaunchSymbol.Cancelled)
     else -> null
 }
