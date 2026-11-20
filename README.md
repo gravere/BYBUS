@@ -20,6 +20,8 @@
   &nbsp;·&nbsp;
   <a href="#开始使用">开始使用</a>
   &nbsp;·&nbsp;
+  <a href="#宣传视频">宣传视频</a>
+  &nbsp;·&nbsp;
   <a href="https://github.com/gravere/BYBUS/releases/latest">发行说明</a>
   &nbsp;·&nbsp;
   <a href="https://github.com/gravere/BYBUS/issues/new/choose">问题反馈</a>
@@ -30,6 +32,14 @@
 BYBUS 让你在安卓手机和平板上使用中文游玩《边狱巴士》。默认使用[都市零协会](https://github.com/LocalizeLimbusCompany/LocalizeLimbusCompany)汉化，也支持导入自己的汉化包，或接入自己的 API 按需翻译。
 
 **先安装官方《边狱巴士》，不用打开原版，直接打开 BYBUS 跟着提示操作即可。** 汉化准备、游戏登录和首次资源下载都从 BYBUS 完成，以后也从 BYBUS 启动游戏。
+
+## 宣传视频
+
+[![BYBUS 宣传片封面，点击下载完整视频](docs/assets/bybus-promo-cover.jpg)](https://github.com/gravere/BYBUS/raw/refs/heads/main/docs/assets/BYBUS-promo-1080p.mp4)
+
+[下载宣传片](https://github.com/gravere/BYBUS/raw/refs/heads/main/docs/assets/BYBUS-promo-1080p.mp4) · 4 分钟 · 1080p · 字幕与轻音乐
+
+从首次使用到汉化源管理、AI 翻译、公告翻译和手机平板体验，一起看看 BYBUS 能做什么。公告翻译展示在 **02:38–03:04**。
 
 ## 界面预览
 
