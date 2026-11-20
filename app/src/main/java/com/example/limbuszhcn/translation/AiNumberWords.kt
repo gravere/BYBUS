@@ -1,7 +1,7 @@
 package com.example.limbuszhcn.translation
 
 /** Limited lexical equivalence, not a claim of semantic translation quality. Never changes protected values. */
-internal class AiNumberWords(source: String) {
+internal class AiNumberWords(source: String, calendarSource: String = source) {
     private val available: Map<Int, Int> = buildList {
         ENGLISH.findAll(source).forEach { match ->
             // Signed or larger unsupported expressions must not donate a smaller positive number.
@@ -15,21 +15,32 @@ internal class AiNumberWords(source: String) {
         MULTIPLICITY.findAll(source).filterNot { signedBefore(source, it) }.forEach {
             add(when (it.value.lowercase(java.util.Locale.ROOT)) { "once", "single" -> 1; "twice", "double" -> 2; else -> 3 })
         }
+        ROMAN_CONTEXT.findAll(source).forEach { match -> romanValue(match.groupValues[1])?.let(::add) }
     }.groupingBy { it }.eachCount()
+    private val months = MONTH.findAll(calendarSource).filter { match ->
+        DATE_AFTER.containsMatchIn(calendarSource.substring(match.range.last + 1)) ||
+            DATE_BEFORE.containsMatchIn(calendarSource.substring(0, match.range.first))
+    }.map { monthValues.getValue(it.value.trimEnd('.').lowercase(java.util.Locale.ROOT)) }.groupingBy { it }.eachCount()
     // Older tasks can contain unmasked full-width numbers. Preserve exact original spellings, including percent signs.
     private val literals = NUMBER.findAll(source).map { it.value }.groupingBy { it }.eachCount()
 
-    fun validate(text: String, protectedRanges: List<IntRange>) {
+    fun validate(text: String, protectedRanges: List<IntRange>, rendered: String = text) {
         val remaining = available.toMutableMap()
         val literalRemaining = literals.toMutableMap()
+        // Inspect rendered month units: cache re-masking can assign an identical day token to the month.
+        // This still conserves the total value/count and requires both a source date and target month.
+        val targetMonths = TARGET_MONTH.findAll(rendered).mapNotNull { decimalValue(it.groupValues[1]) }.groupingBy { it }.eachCount()
+        val monthRemaining = months.mapValues { (value, count) -> minOf(count, targetMonths[value] ?: 0) }.toMutableMap()
         NUMBER.findAll(text).forEach { match ->
             if (protectedRanges.any { match.range.first <= it.last && match.range.last >= it.first }) return@forEach
             val literalCount = literalRemaining[match.value] ?: 0
             if (literalCount > 0) { literalRemaining[match.value] = literalCount - 1; return@forEach }
             val value = decimalValue(match.value)
             val count = value?.let { remaining[it] } ?: 0
-            if (value == null || count == 0) throw AiTextValidationException(AiValidationReason.AddedNumber)
-            remaining[value] = count - 1
+            if (value != null && count > 0) remaining[value] = count - 1
+            else if (value != null && (monthRemaining[value] ?: 0) > 0)
+                monthRemaining[value] = monthRemaining.getValue(value) - 1
+            else throw AiTextValidationException(AiValidationReason.AddedNumber, numericDetail(match.value))
         }
     }
 
@@ -57,6 +68,27 @@ internal class AiNumberWords(source: String) {
             "넷" to 4, "네" to 4, "다섯" to 5, "여섯" to 6, "일곱" to 7, "여덟" to 8, "아홉" to 9, "열" to 10)
         private val KOREAN = Regex("(?<![가-힣])(?:${korean.keys.sortedByDescending { it.length }.joinToString("|")})(?=$|[\\s.,!?，。]|(?:개|명|번|회|턴|번째|개의))")
         private val NUMBER = Regex("[-+−]?[\\p{Nd}]+(?:[.,．][\\p{Nd}]+)*(?:[%％‰])?")
+        private val monthNames = listOf("january jan", "february feb", "march mar", "april apr", "may", "june jun",
+            "july jul", "august aug", "september sept sep", "october oct", "november nov", "december dec")
+        private val monthValues = monthNames.flatMapIndexed { index, names -> names.split(' ').map { it to index + 1 } }.toMap()
+        private val MONTH = Regex("(?i)(?<![a-z])(?:${monthValues.keys.sortedByDescending { it.length }.joinToString("|")})\\.?(?![a-z])")
+        private val DATE_AFTER = Regex("^\\s+[0-9]{1,4}(?:st|nd|rd|th)?(?![a-z0-9])", RegexOption.IGNORE_CASE)
+        private val DATE_BEFORE = Regex("(?i)(?<![a-z0-9])[0-9]{1,2}(?:st|nd|rd|th)?[\\s,]+$")
+        private val TARGET_MONTH = Regex("(?<![\\p{Nd}+−-])([\\p{Nd}]{1,2})\\s*月")
+        private val ROMAN_CONTEXT = Regex("(?i)(?<![a-z])(?:chapter|canto|part|volume|episode|act|walpurgisnacht)[ -]+([ivxlcdm]+)(?![a-z])")
+        private val CANONICAL_ROMAN = Regex("M{0,3}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})")
+
+        private fun romanValue(word: String): Int? {
+            val roman = word.uppercase(java.util.Locale.ROOT)
+            if (roman.isEmpty() || !CANONICAL_ROMAN.matches(roman)) return null
+            val values = mapOf('I' to 1, 'V' to 5, 'X' to 10, 'L' to 50, 'C' to 100, 'D' to 500, 'M' to 1000)
+            var total = 0; var previous = 0
+            roman.reversed().forEach { char -> val value = values.getValue(char); total += if (value < previous) -value else value; previous = value }
+            return total
+        }
+
+        private fun numericDetail(text: String): String = if (text.length <= 8 && text.count { Character.isDigit(it) } <= 6)
+            "无法对应的数值：$text" else "无法对应的数值过长"
 
         private fun signedBefore(source: String, match: MatchResult) =
             SIGNED_WORD.containsMatchIn(source.substring(0, match.range.first).takeLast(16))

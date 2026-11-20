@@ -69,6 +69,7 @@ internal fun LauncherScreen(
     var requestedAiEntries by remember { mutableStateOf<com.example.limbuszhcn.translation.AiEntryRequest?>(null) }
     var requestedCoverage by remember { mutableStateOf<com.example.limbuszhcn.translation.CoverageRequest?>(null) }
     var handledUpdatesRequest by rememberSaveable { mutableLongStateOf(0L) }
+    var handledAiTaskRequest by rememberSaveable { mutableLongStateOf(0L) }
     var handledPreparationRequest by rememberSaveable { mutableLongStateOf(0L) }
     var hideAiLaunchProgress by remember { mutableStateOf(false) }
     LaunchedEffect(state.aiPreparingLaunch) { if (!state.aiPreparingLaunch) hideAiLaunchProgress = false }
@@ -87,6 +88,14 @@ internal fun LauncherScreen(
         }
     }
     val haptic = LocalHapticFeedback.current
+    LaunchedEffect(state.aiTaskRequest) {
+        if (state.aiTaskRequest > 0 && state.aiTaskRequest != handledAiTaskRequest) {
+            handledAiTaskRequest = state.aiTaskRequest
+            requestedAiScope = null; requestedAiEntries = null; requestedCoverage = null
+            parentSheets = emptyList()
+            sheet = "ai-translation"
+        }
+    }
     fun open(page: String) {
         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         parentSheets = emptyList()
