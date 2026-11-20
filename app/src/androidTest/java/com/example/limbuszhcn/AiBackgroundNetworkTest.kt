@@ -30,6 +30,41 @@ class AiBackgroundNetworkTest {
     }
     private fun received(name: String): Int = java.net.URL("http://10.0.2.2:18765/count/$name").readText().trim().toInt()
 
+    @Test fun streamedReplyContinuesInBackgroundDozeAndPassesTranslationValidation() {
+        val name = "stream-${System.nanoTime()}"
+        val executor = Executors.newSingleThreadExecutor()
+        ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).setAction(AiTaskService.OPEN_TASK)).use { screen ->
+            val control = AiRequestControl()
+            lateinit var session: AiTaskService.Session
+            screen.onActivity { session = AiTaskService.start(it) { control.stop() } }
+            session.awaitStarted()
+            AiNetworkGuard(context).use { network ->
+                try {
+                    shell("dumpsys deviceidle whitelist +${context.packageName}")
+                    val stages = java.util.concurrent.CopyOnWriteArrayList<String?>()
+                    val client = AiTranslationClient(AiConfig(), "fixture", AiHttpTransport { _, key, body ->
+                        network.post("http://10.0.2.2:18765/stream/$name", key, body, control) { stages += it }
+                    })
+                    val future = executor.submit<AiResult> { client.translate(listOf(AiText("x", "接続中"))) }
+                    waitFor { received(name) == 1 }
+                    screen.moveToState(Lifecycle.State.CREATED)
+                    shell("dumpsys battery unplug"); shell("input keyevent 223"); shell("dumpsys deviceidle force-idle")
+                    assertFalse(context.getSystemService(PowerManager::class.java).isInteractive)
+                    val result = future.get(25, TimeUnit.SECONDS)
+                    assertEquals("连接中", result.translations["x"])
+                    assertEquals(20L, result.inputTokens)
+                    assertTrue(stages.contains("模型正在思考")); assertTrue(stages.contains("正在接收译文"))
+                    assertEquals(1, received(name))
+                    assertFalse(context.getSystemService(PowerManager::class.java).isInteractive)
+                } finally {
+                    control.stop(); session.close(); executor.shutdownNow()
+                    shell("dumpsys deviceidle unforce"); shell("dumpsys battery reset"); shell("input keyevent 224")
+                    shell("dumpsys deviceidle whitelist -${context.packageName}")
+                }
+            }
+        }
+    }
+
     @Test fun responseCompletesWhileScreenOffInDozeWhenBackgroundAccessIsAllowed() {
         val name = "doze-${System.nanoTime()}"
         val executor = Executors.newSingleThreadExecutor()
@@ -73,11 +108,14 @@ class AiBackgroundNetworkTest {
             session.awaitStarted()
             AiNetworkGuard(context).use { network ->
                 try {
+                    val receiving = java.util.concurrent.atomic.AtomicBoolean()
                     val future = executor.submit<Boolean> {
-                        try { network.post("http://10.0.2.2:18765/delay/$name?seconds=30", "fixture", "{}", control) {}; false }
+                        try { network.post("http://10.0.2.2:18765/stream/$name", "fixture", "{\"stream\":true}", control) {
+                            if (it == "模型正在思考") receiving.set(true)
+                        }; false }
                         catch (error: AiRequestCancelled) { error.sent }
                     }
-                    waitFor { received(name) == 1 }
+                    waitFor { received(name) == 1 && receiving.get() }
                     val manager = context.getSystemService(android.app.NotificationManager::class.java)
                     // Android may add a group-summary notification on the same channel; it has no controls.
                     waitFor { manager.activeNotifications.any { it.id == 4107 && it.notification.contentView != null } }

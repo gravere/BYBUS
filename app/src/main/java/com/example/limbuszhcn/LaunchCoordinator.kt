@@ -777,7 +777,8 @@ internal class LaunchCoordinator private constructor(application: Application) {
         val network = AiNetworkGuard(app)
         try {
             if (aiCancelled.get()) throw java.util.concurrent.CancellationException()
-            var task = prepare().copy(phase = AiTaskPhase.Running, error = null)
+            var task = prepare().let { it.copy(phase = AiTaskPhase.Running, error = null,
+                config = it.config.copy(stream = aiSettings.config().stream)) }
             task = aiTaskStore.write(task.copy(progress = task.progress.copy(
                 elapsedMillis = lastProgress.elapsedAt(clock()), sampledAt = clock())))
             PersistentDiagnosticLog.info(TAG, "AI task scope=${task.scopeLabel} limit=${task.config.limit} resumed=${task.plan != null}")

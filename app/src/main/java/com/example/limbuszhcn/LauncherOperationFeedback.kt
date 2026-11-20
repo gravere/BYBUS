@@ -26,14 +26,14 @@ internal fun diagnosticExportStage(cancelled: Boolean): String =
 
 /** Settings probes cannot overwrite a game operation, error or launch readiness. */
 internal fun LauncherUiState.beginAiSettings(label: String): LauncherUiState =
-    copy(ai = ai.copy(settingsBusy = true, failed = false, message = label, testResult = null))
+    copy(ai = ai.copy(settingsBusy = true, settingsFailed = false, settingsMessage = label, testResult = null))
 
 internal fun LauncherUiState.finishAiSettings(result: Result<String>): LauncherUiState = copy(ai = ai.copy(
-    settingsBusy = false, failed = result.isFailure, message = result.getOrElse { error ->
+    settingsBusy = false, settingsFailed = result.isFailure, settingsMessage = result.getOrElse { error ->
         when (error) {
             is java.util.regex.PatternSyntaxException, is LinkageError -> "文本处理失败，请更新应用后重试"
-            is java.net.SocketTimeoutException -> "请求超时，请检查网络后重试"
-            is java.io.IOException -> "无法连接翻译服务，请检查网络和服务地址"
+            is java.net.SocketTimeoutException -> "翻译服务响应超时，请稍后重试"
+            is java.io.IOException -> "未能完成与翻译服务的连接，请稍后重试"
             is IllegalArgumentException, is IllegalStateException -> error.message ?: "测试未完成，请检查设置"
             else -> "测试未完成，请检查服务设置或导出诊断"
         }

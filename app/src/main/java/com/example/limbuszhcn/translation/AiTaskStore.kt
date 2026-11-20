@@ -53,7 +53,7 @@ internal class AiTaskStore(private val cache: Path) {
         require(j.getInt("schema") == 1)
         val c = j.getJSONObject("config")
         val config = AiConfig(c.getString("endpoint"), c.getString("model"), c.getBoolean("missingOnly"),
-            c.getInt("limit"), c.getBoolean("includeMissing"), c.getBoolean("includeReview"), c.getString("prompt")).validated()
+            c.getInt("limit"), c.getBoolean("includeMissing"), c.getBoolean("includeReview"), c.getString("prompt"), c.optBoolean("stream", true)).validated()
         val p = j.getJSONObject("progress")
         val planHash = j.optString("planSha256").takeIf(String::isNotEmpty)
         val plan = if (planHash != null && planHash == cachedPlanHash && cachedPlan != null) cachedPlan else
@@ -179,7 +179,7 @@ internal class AiTaskStore(private val cache: Path) {
             .put("explicitEntries", task.explicitEntries).put("baseName", task.baseName)
             .put("resultHash", task.resultHash).put("config", JSONObject().put("endpoint", c.endpoint).put("model", c.model)
                 .put("missingOnly", c.missingOnly).put("limit", c.limit).put("includeMissing", c.includeMissing)
-                .put("includeReview", c.includeReview).put("prompt", c.prompt))
+                .put("includeReview", c.includeReview).put("prompt", c.prompt).put("stream", c.stream))
             .put("progress", JSONObject().put("completed", p.completed).put("limit", p.limit).put("reused", p.reused)
                 .put("inputTokens", p.inputTokens).put("outputTokens", p.outputTokens).put("message", p.message)
                 .put("scannedFiles", p.scannedFiles).put("totalFiles", p.totalFiles).put("cachedTokens", p.cachedTokens)

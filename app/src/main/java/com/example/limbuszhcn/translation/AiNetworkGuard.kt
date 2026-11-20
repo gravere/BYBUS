@@ -58,10 +58,25 @@ internal class AiNetworkGuard(private val context: Context) : AutoCloseable {
 
     fun post(url: String, key: String, body: String, control: AiRequestControl, status: (String?) -> Unit): String {
         val started = SystemClock.elapsedRealtime()
-        try { return AiTranslationClient.post(url, key, body, control) { awaitReady(control, status) } }
+        var last = AiResponseProgress(AiResponseStage.Sending)
+        var previousStage: AiResponseStage? = null
+        try { return AiTranslationClient.post(url, key, body, control, progress = { current ->
+            last = current
+            if (previousStage != current.stage) {
+                previousStage = current.stage
+                status(when (current.stage) {
+                    AiResponseStage.Sending -> "正在发送请求"
+                    AiResponseStage.Waiting -> "等待翻译结果"
+                    AiResponseStage.Receiving -> "正在接收译文"
+                    AiResponseStage.Thinking -> "模型正在思考"
+                })
+            }
+        }) { awaitReady(control, status) }.also {
+            log("request-complete stage=${last.stage} bytes=${last.bytes} events=${last.events} elapsedMs=${SystemClock.elapsedRealtime() - started}")
+        } }
         catch (error: Exception) {
             // Types and system state only: provider URLs, keys and response bodies must stay private.
-            log("request-ended type=${error.javaClass.simpleName} cause=${error.cause?.javaClass?.simpleName} elapsedMs=${SystemClock.elapsedRealtime() - started}")
+            log("request-ended type=${error.javaClass.simpleName} status=${(error as? AiHttpException)?.status ?: 0} stage=${last.stage} bytes=${last.bytes} events=${last.events} elapsedMs=${SystemClock.elapsedRealtime() - started}")
             throw error
         }
     }
@@ -69,7 +84,8 @@ internal class AiNetworkGuard(private val context: Context) : AutoCloseable {
     private fun log(event: String) {
         val active = connectivity.activeNetwork
         val caps = active?.let(connectivity::getNetworkCapabilities)
-        PersistentDiagnosticLog.info("AiNetwork", "$event idle=${power.isDeviceIdleMode} exempt=${AiBackgroundAccess.allowed(context)} connected=${active != null} vpn=${caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN)} validated=${caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)}")
+        val restricted = Build.VERSION.SDK_INT >= 28 && context.getSystemService(android.app.ActivityManager::class.java).isBackgroundRestricted
+        PersistentDiagnosticLog.info("AiNetwork", "$event idle=${power.isDeviceIdleMode} interactive=${power.isInteractive} restricted=$restricted exempt=${AiBackgroundAccess.allowed(context)} connected=${active != null} blocked=${active?.let(blocked::get)} vpn=${caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN)} validated=${caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)}")
     }
 
     override fun close() {

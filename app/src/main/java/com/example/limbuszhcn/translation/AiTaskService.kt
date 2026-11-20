@@ -146,6 +146,7 @@ class AiTaskService : Service() {
             .setContentTitle("AI 翻译").setContentText(caption)
             .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).setShowWhen(false)
             .setCategory(Notification.CATEGORY_PROGRESS)
+        if (Build.VERSION.SDK_INT >= 31) builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
         if (current != null && !current.paused.get()) {
             val pause = PendingIntent.getService(this, current.id.hashCode(), Intent(this, AiTaskService::class.java)
                 .setAction(PAUSE).putExtra("session", current.id), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)

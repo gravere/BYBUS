@@ -22,7 +22,7 @@ internal class AiSettingsStore(context: Context) {
     fun config() = AiConfig(prefs.getString("endpoint", null) ?: AiConfig().endpoint,
         prefs.getString("model", null) ?: AiConfig().model, prefs.getBoolean("missingOnly", true), prefs.getInt("limit", 100),
         prefs.getBoolean("includeMissing", true), prefs.getBoolean("includeReview", false),
-        prefs.getString("prompt", null) ?: AiTranslationPrompt.DEFAULT)
+        prefs.getString("prompt", null) ?: AiTranslationPrompt.DEFAULT, prefs.getBoolean("stream", true))
     private class Entry(val choice: AiKeyChoice, val encrypted: String)
 
     private fun entries(): MutableList<Entry> {
@@ -119,6 +119,7 @@ internal class AiSettingsStore(context: Context) {
         val edit = prefs.edit()
             .putBoolean("missingOnly", c.missingOnly).putInt("limit", c.limit)
             .putBoolean("includeMissing", c.includeMissing).putBoolean("includeReview", c.includeReview).putString("prompt", c.prompt)
+            .putBoolean("stream", c.stream)
         storeConnection(edit, c.endpoint, c.model, replacement.trim(), "")
     }
     fun clearKey(id: String? = activeId()) = synchronized(lock) {
