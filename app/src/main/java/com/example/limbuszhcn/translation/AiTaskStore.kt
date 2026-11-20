@@ -40,11 +40,14 @@ internal class AiTaskStore(private val cache: Path) {
     private val marker get() = root.resolve("task.json")
     private var cachedPlanHash: String? = null
     private var cachedPlan: AiTaskPlan? = null
+    private var latestSnapshot: AiTaskSnapshot? = null
+    /** UI progress only. Recovery/resume still reads and validates the durable checkpoint. */
+    fun latest(): AiTaskSnapshot? = latestSnapshot
     private val planFile get() = root.resolve("plan.json")
     fun exists() = Files.isRegularFile(marker)
 
     fun read(): AiTaskSnapshot? {
-        if (!exists()) return null
+        if (!exists()) { latestSnapshot = null; return null }
         require(Files.size(marker) <= 2 * 1024 * 1024) { "翻译任务记录损坏，请取消后重新生成" }
         val j = JSONObject(String(Files.readAllBytes(marker), Charsets.UTF_8))
         require(j.getInt("schema") == 1)
@@ -85,6 +88,7 @@ internal class AiTaskStore(private val cache: Path) {
             j.optString("resultTarget").takeIf(String::isNotEmpty), j.optBoolean("explicitEntries"),
             j.optString("baseName").takeIf(String::isNotEmpty)).also {
             require(it.id.matches(ID) && it.outputIdentity.matches(ID))
+            latestSnapshot = it
         }
     }
 
@@ -182,6 +186,7 @@ internal class AiTaskStore(private val cache: Path) {
                 .put("elapsedMillis", p.elapsedMillis).put("requests", p.requests).put("unknownUsage", p.unknownUsage).put("price", p.price?.json()))
             .put("planSha256", planHash)
         TranslationSources.writeAtomic(marker, j.toString())
+        latestSnapshot = task
         return task
     }
 
@@ -206,23 +211,26 @@ internal class AiTaskStore(private val cache: Path) {
             officialVersion = value.optLong("officialVersion").takeIf { it > 0 })
     }
 
-    fun prepared(name: String): PreparedTranslation? {
+    fun prepared(name: String, progress: (Int, Int) -> Unit = { _, _ -> }, cancelled: () -> Boolean = { false }): PreparedTranslation? {
         require(name == "base" || name == "reference")
         val directory = root.resolve(name); val file = directory.resolve("manifest.json")
         if (!Files.isRegularFile(file)) return null
         require(Files.size(file) <= 2 * 1024 * 1024)
         val manifest = PatchManifest.fromJson(String(Files.readAllBytes(file), Charsets.UTF_8))
-        manifest.entries.forEach { entry ->
+        progress(0, manifest.entries.size)
+        manifest.entries.forEachIndexed { index, entry ->
+            if (cancelled()) throw java.util.concurrent.CancellationException()
             val source = ownedFile(directory, entry.cachePath)
             require(Files.size(source) == entry.size && source.sha256() == entry.sha256) { "已保存的汉化快照损坏，请取消任务后重新生成" }
+            progress(index + 1, manifest.entries.size)
         }
         return PreparedTranslation(directory, manifest)
     }
 
     /** Legacy upstream tasks stored a premerged base plus a separate official reference. */
-    fun inputs(task: AiTaskSnapshot): Pair<PreparedTranslation?, PreparedTranslation?> {
-        val reference = prepared("reference")
-        val base = if (task.upstream && reference != null) reference else prepared("base")
+    fun inputs(task: AiTaskSnapshot, progress: (Int, Int) -> Unit = { _, _ -> }, cancelled: () -> Boolean = { false }): Pair<PreparedTranslation?, PreparedTranslation?> {
+        val reference = prepared("reference", progress, cancelled)
+        val base = if (task.upstream && reference != null) reference else prepared("base", progress, cancelled)
         return base to (reference ?: base)
     }
 
@@ -304,7 +312,7 @@ internal class AiTaskStore(private val cache: Path) {
         TranslationSources.writeAtomic(adopted, "1")
     }
 
-    fun discard() { if (Files.exists(root)) AtomicFiles.deleteOwnedTree(cache, root) }
+    fun discard() { if (Files.exists(root)) AtomicFiles.deleteOwnedTree(cache, root); latestSnapshot = null }
     fun requestDiscard() { TranslationSources.writeAtomic(root.resolve("discard"), "cancelled") }
 
     companion object {

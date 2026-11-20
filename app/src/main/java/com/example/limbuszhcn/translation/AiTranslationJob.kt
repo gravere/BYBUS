@@ -15,17 +15,20 @@ import java.util.zip.ZipOutputStream
 internal data class AiProgress(val completed: Int = 0, val limit: Int = 0, val reused: Int = 0,
     val inputTokens: Long = 0, val outputTokens: Long = 0, val message: String = "",
     val scannedFiles: Int = 0, val totalFiles: Int = 0, val cachedTokens: Long = 0,
-    val elapsedMillis: Long = 0, val requests: Int = 0, val unknownUsage: Boolean = false, val price: AiPrice? = null)
+    val elapsedMillis: Long = 0, val requests: Int = 0, val unknownUsage: Boolean = false, val price: AiPrice? = null,
+    val sampledAt: Long = 0)
 internal data class AiJobResult(val archive: Path, val identity: String, val progress: AiProgress, val remaining: Int,
     val carried: Int = 0, val aiEntryCount: Int? = null, val changes: AiChangeSummary? = null)
 
 /** Batch translation stays outside game processes. Validated responses survive pauses until explicit task cancellation. */
 internal class AiTranslationJob(private val cache: Path, private val storage: GameStorage,
     private val config: AiConfig, private val client: AiTranslationClient,
-    private val cancelled: () -> Boolean = { false }, private val progress: (AiProgress) -> Unit = {}) {
+    private val cancelled: () -> Boolean = { false }, private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
+    private val progress: (AiProgress) -> Unit = {}) {
     fun run(baseId: String, base: PreparedTranslation?, identityOverride: String? = null,
         reuse: Map<String, String> = emptyMap(), reuseOnly: Boolean = false,
         reference: PreparedTranslation? = base, session: AiTaskStore? = null, price: AiPrice? = null): AiJobResult {
+        val started = clock()
         val c = config.validated()
         val pendingTask = session?.read()
         val preserveBase = c.missingOnly || pendingTask?.explicitEntries == true
@@ -45,15 +48,15 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
         if (Files.exists(output)) AtomicFiles.deleteOwnedTree(root, output)
         Files.createDirectories(output)
         val originals = base?.manifest?.entries?.associateBy { inspection.language.resourceKey(it.targetPath) }.orEmpty()
-        val terminology = AiTerminology.build(storage, reference, cancelled, inspection.language)
         val contextReference = reference?.takeUnless { it === base }?.let { TranslationInspection(storage, it, cancelled, inspection.language) }
-        val shared = if (c.missingOnly) inspection.sharedTranslations() else emptyMap()
         fun checkCancelled() { if (cancelled() || Thread.currentThread().isInterrupted) throw CancellationException("翻译已暂停，已完成内容会在下次继续时复用") }
         var snapshot = pendingTask
         val upstream = snapshot?.upstream == true
         val changes = AiChangeCollector(if (upstream) AiChangeKind.Upstream else AiChangeKind.Translation)
         val explicit = snapshot?.explicitEntries == true
         val requestedIds = if (explicit) snapshot?.plan?.selected?.values?.flatten()?.toSet().orEmpty() else emptySet()
+        var shared: Map<String, String> = emptyMap()
+        lateinit var terminology: AiTerminology
         fun selected(field: TranslationField) = if (explicit) field.canTranslate && field.id in requestedIds else AiTextSelection.includes(field, c, shared)
         // A completed entry is carried outside the new batch. For upstream sync only a genuine
         // gap can be carried, even when the new official wording happens to equal our previous AI.
@@ -66,19 +69,29 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
             } }.getOrNull()
         }
         fun candidate(field: TranslationField) = selected(field) && carriedText(field) == null
-        val started = System.nanoTime()
         val previous = snapshot?.progress ?: AiProgress()
         var input = previous.inputTokens; var tokens = previous.outputTokens; var cached = previous.cachedTokens
         var requests = previous.requests; var unknown = previous.unknownUsage
         val rate = previous.price ?: price
-        fun measured(value: AiProgress) = value.copy(inputTokens = input, outputTokens = tokens,
+        fun measured(value: AiProgress): AiProgress { val now = clock(); return value.copy(inputTokens = input, outputTokens = tokens,
             cachedTokens = cached, requests = requests, unknownUsage = unknown, price = rate,
-            elapsedMillis = previous.elapsedMillis + (System.nanoTime() - started) / 1_000_000)
+            elapsedMillis = previous.elapsedMillis + (now - started).coerceAtLeast(0), sampledAt = now) }
+        var lastPreparationAt = 0L
         fun emit(value: AiProgress) {
             val current = measured(value)
             snapshot = snapshot?.let { session!!.write(it.copy(progress = current)) }
             progress(current)
         }
+        fun preparing(label: String, done: Int, total: Int) {
+            val now = clock()
+            if (done != 0 && done != total && now - lastPreparationAt < 200) return
+            lastPreparationAt = now
+            emit(previous.copy(message = "$label $done/$total", scannedFiles = done, totalFiles = total))
+        }
+        terminology = AiTerminology.build(storage, reference, cancelled, inspection.language) { done, total ->
+            preparing("读取参考术语", done, total)
+        }
+        if (c.missingOnly) shared = inspection.sharedTranslations { done, total -> preparing("读取参考译文", done, total) }
         val plan = if (session == null) null else snapshot?.plan ?: run {
             val selected = linkedMapOf<String, Set<String>>(); val hashes = linkedMapOf<String, String>()
             var available = 0; var chosen = 0
@@ -99,12 +112,13 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
         require(plan == null || resources.containsAll(plan.selected.keys)) { "本次任务的游戏原文已变化，请取消任务后重新检查范围" }
         if (plan != null && plan.total > 0) requireNotNull(snapshot).writableOutput(TranslationSources(cache))
         // Validate every selected resource before any paid request, including a changed file later in the list.
-        plan?.hashes?.forEach { (key, hash) ->
+        plan?.hashes?.entries?.forEachIndexed { index, (key, hash) ->
             checkCancelled()
             val current = inspection.readable(key)
             require(current != null && digest(current.raw) == hash) { "本次任务的游戏原文已变化，请取消任务后重新检查范围" }
             val eligible = current.fields.filter(::candidate).map { it.id }.toSet()
             require(eligible.containsAll(plan.selected.getValue(key))) { "本次任务的翻译范围已变化，请取消任务后重新检查" }
+            preparing("核对所选文本", index + 1, plan.hashes.size)
         }
         if (preserveBase && base != null) for ((key, entry) in originals) {
             val target = output.resolve(key); Files.createDirectories(target.parent)
@@ -188,7 +202,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
                     if (characters + leaf.text.length > AI_REQUEST_CHARACTERS && batch.isNotEmpty()) break
                     batch += leaf; characters += leaf.text.length; cursor++
                 }
-                emit(AiProgress(done, progressLimit, reused, input, tokens, "正在翻译 · 已完成 ${done + reused}/$progressLimit 条"))
+                emit(AiProgress(done, progressLimit, reused, input, tokens, "等待翻译结果 · 本批 ${batch.size} 条"))
                 val result = client.translate(batch.map { leaf ->
                     val position = referencePositions[leaf.id]
                     val neighbors = if (position == null) emptyList() else examples.filter { it.index != position }

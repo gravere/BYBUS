@@ -81,7 +81,8 @@ public final class BinderProvider extends ContentProvider {
                 NotificationChannelCompat.checkOrCreateChannel(context, NotificationChannelCompat.DEFAULT_ID, "default");
                 NotificationChannelCompat.checkOrCreateChannel(context, NotificationChannelCompat.LIGHT_ID, "light");
             }
-            try {
+            // A status/package query alone must not leave a permanent foreground notification.
+            if (VirtualCore.getConfig().getForegroundServiceGuestPackage() == null) try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                         && VirtualCore.get().getTargetSdkVersion() >= Build.VERSION_CODES.O
                         && !VirtualCore.getConfig().isHideForegroundNotification()) {

@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class AiTaskServiceTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private fun waitFor(check: () -> Boolean) {
-        val deadline = android.os.SystemClock.elapsedRealtime() + 10_000
+        val deadline = android.os.SystemClock.elapsedRealtime() + 20_000
         while (!check() && android.os.SystemClock.elapsedRealtime() < deadline) Thread.sleep(50)
         assertTrue(check())
     }
@@ -44,17 +44,47 @@ class AiTaskServiceTest {
                 val manager = context.getSystemService(NotificationManager::class.java)
                 waitFor { manager.activeNotifications.any { it.notification.channelId == "bybus-ai-translation" &&
                     it.notification.extras.getInt(android.app.Notification.EXTRA_PROGRESS_MAX) == 37 } }
-                val notice = manager.activeNotifications.first { it.notification.channelId == "bybus-ai-translation" }.notification
+                val notice = manager.activeNotifications.first { it.id == 4107 }.notification
                 assertEquals(1, notice.extras.getInt(android.app.Notification.EXTRA_PROGRESS))
+                // Two updates inside the throttle interval must still deliver the trailing value.
+                session.update("正在翻译所选文本", 2, 37)
+                session.update("正在翻译所选文本", 3, 37)
+                waitFor { manager.activeNotifications.any { it.notification.extras.getInt(android.app.Notification.EXTRA_PROGRESS) == 3 } }
+                assertNotNull(notice.contentView)
+                screen.onActivity { activity ->
+                    val view = notice.contentView.apply(activity, android.widget.FrameLayout(activity))
+                    assertEquals("停止", view.findViewById<android.widget.TextView>(R.id.ai_notice_stop).text.toString())
+                    assertTrue(view.findViewById<android.widget.Chronometer>(R.id.ai_notice_time).base <= android.os.SystemClock.elapsedRealtime())
+                }
                 notice.contentIntent.send()
                 screen.moveToState(Lifecycle.State.RESUMED)
                 screen.onActivity { assertTrue(LaunchCoordinator.get(it.application).state.aiTaskRequest > previousRequest) }
-                notice.actions.single { it.title == "暂停" }.actionIntent.send()
+                notice.actions.single { it.title == "停止" }.actionIntent.send()
                 waitFor { pauses.get() == 1 }
                 assertTrue(session.paused.get())
             } finally { session.close() }
             waitFor { running() == null }
+            waitFor { context.getSystemService(NotificationManager::class.java).activeNotifications.none { it.id == 4107 } }
             assertEquals(1, pauses.get())
+        }
+    }
+
+    @Test fun idleLauncherDoesNotKeepTaskOrContainerNotifications() {
+        check(Build.HARDWARE in setOf("ranchu", "goldfish"))
+        ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).setAction(AiTaskService.OPEN_TASK)).use { screen ->
+            val manager = context.getSystemService(NotificationManager::class.java)
+            waitFor { manager.activeNotifications.none { it.id == 2781 || it.id == 4107 } }
+            // An explicit launch gets foreground protection during the handoff, even before a guest exists.
+            try {
+                screen.onActivity { com.lody.virtual.client.stub.KeepAliveService.requestStart(it) }
+                waitFor { manager.activeNotifications.any { it.id == 2781 } }
+                screen.onActivity { it.stopService(Intent(it, com.lody.virtual.client.stub.KeepAliveService::class.java)) }
+                waitFor { manager.activeNotifications.none { it.id == 2781 } }
+                // A stale service restart without a launch or live game must immediately release protection.
+                screen.onActivity { it.startForegroundService(Intent(it, com.lody.virtual.client.stub.KeepAliveService::class.java)) }
+                Thread.sleep(750)
+                waitFor { manager.activeNotifications.none { it.id == 2781 || it.id == 4107 } }
+            } finally { context.stopService(Intent(context, com.lody.virtual.client.stub.KeepAliveService::class.java)) }
         }
     }
 

@@ -1,0 +1,15 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="48dp" android:orientation="vertical">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="40dp" android:gravity="center_vertical">
+        <TextView android:id="@+id/ai_notice_label" android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1" android:maxLines="1" android:ellipsize="end"
+            android:textAppearance="@android:style/TextAppearance.Material.Notification" />
+        <Chronometer android:id="@+id/ai_notice_time" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_marginStart="8dp" android:textAppearance="@android:style/TextAppearance.Material.Notification.Time" />
+        <TextView android:id="@+id/ai_notice_stop" android:layout_width="64dp" android:layout_height="match_parent" android:maxLines="1" android:textSize="14sp"
+            android:gravity="center" android:text="停止" android:contentDescription="停止翻译并保存进度"
+            android:textAppearance="@android:style/TextAppearance.Material.Notification.Title" />
+    </LinearLayout>
+    <ProgressBar android:id="@+id/ai_notice_progress" style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent" android:layout_height="4dp" />
+</LinearLayout>

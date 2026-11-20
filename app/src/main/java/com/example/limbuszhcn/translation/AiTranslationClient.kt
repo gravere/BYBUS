@@ -34,7 +34,7 @@ internal fun interface AiHttpTransport { fun post(url: String, key: String, json
 
 /** No provider responses or credentials are logged; authenticated redirects are never followed. */
 internal class AiTranslationClient(private val config: AiConfig, private val key: String,
-    private val transport: AiHttpTransport = AiHttpTransport(::post)) {
+    private val transport: AiHttpTransport = AiHttpTransport { url, key, body -> post(url, key, body) }) {
     fun translate(texts: List<AiText>, allowPartial: Boolean = false, onUsage: (AiUsage) -> Unit = {}): AiResult {
         val settings = config.validated()
         require(key.isNotBlank() && key.length <= 1024 && key.none(Char::isWhitespace)) { "请填写有效的 API Key" }
@@ -72,7 +72,7 @@ internal class AiTranslationClient(private val config: AiConfig, private val key
                 .put(JSONObject().put("role", "user").put("content", content.toString())))
         val response = try { parseAiResponseObject(transport.post(settings.endpoint + "/chat/completions", key, request.toString())) }
             catch (e: Exception) {
-                onUsage(AiUsage())
+                if (e !is AiRequestCancelled || e.sent) onUsage(AiUsage())
                 if (e is java.net.SocketTimeoutException)
                     throw AiTranslationException("等待翻译服务响应超时，已保存的译文保留。请稍后继续，只重试未完成内容。")
                 if (e is java.io.IOException)
@@ -132,8 +132,14 @@ internal class AiTranslationClient(private val config: AiConfig, private val key
     }
 
     companion object {
-        internal fun post(url: String, key: String, json: String): String {
+        internal fun post(url: String, key: String, json: String, control: AiRequestControl? = null,
+            beforeRequest: () -> Unit = {}): String {
+            control?.check()
+            beforeRequest()
+            control?.check()
             val c = URI(url).toURL().openConnection() as HttpURLConnection
+            var sent = false
+            val lease = control?.attach { c.disconnect() }
             try {
                 c.instanceFollowRedirects = false; c.useCaches = false
                 c.connectTimeout = 15_000; c.readTimeout = 180_000
@@ -142,6 +148,8 @@ internal class AiTranslationClient(private val config: AiConfig, private val key
                 c.setRequestProperty("Content-Type", "application/json; charset=utf-8")
                 c.setRequestProperty("User-Agent", "BYBUS-Translation")
                 val bytes = json.toByteArray(Charsets.UTF_8); c.setFixedLengthStreamingMode(bytes.size)
+                control?.check()
+                sent = true
                 c.outputStream.use { it.write(bytes) }
                 val status = c.responseCode
                 require(status == 200) { when (status) {
@@ -153,7 +161,10 @@ internal class AiTranslationClient(private val config: AiConfig, private val key
                 val output = java.io.ByteArrayOutputStream()
                 c.inputStream.use { TranslationSources.copyBounded(it, output, 256 * 1024) }
                 return output.toString("UTF-8")
-            } finally { c.disconnect() }
+            } catch (error: Exception) {
+                if (control?.isStopped == true) throw AiRequestCancelled(sent)
+                throw error
+            } finally { lease?.close(); c.disconnect() }
         }
     }
 }

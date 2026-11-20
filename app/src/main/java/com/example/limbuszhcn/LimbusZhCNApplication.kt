@@ -115,6 +115,8 @@ class LimbusZhCNApplication : Application() {
 
         override fun isHideForegroundNotification(): Boolean = true
 
+        override fun getForegroundServiceGuestPackage(): String = "com.ProjectMoon.LimbusCompany"
+
         override fun onLimbusPackageQueries(summary: String) {
             PersistentDiagnosticLog.warn("PackageQueries", summary)
         }

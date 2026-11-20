@@ -155,7 +155,11 @@ class VirtualAppContainerRuntime(
         }
         // Retry a prior background-policy rejection only for this explicit game launch.
         com.lody.virtual.client.stub.KeepAliveService.requestStart(context)
-        measureStartup("activity_handoff") { bridge.launch(LocalContainerRuntime.GAME_PACKAGE) }
+        try { measureStartup("activity_handoff") { bridge.launch(LocalContainerRuntime.GAME_PACKAGE) } }
+        catch (error: Exception) {
+            context.stopService(Intent(context, com.lody.virtual.client.stub.KeepAliveService::class.java))
+            throw error
+        }
     }
 
     private fun ensureGameInstalledInVirtualApp() {

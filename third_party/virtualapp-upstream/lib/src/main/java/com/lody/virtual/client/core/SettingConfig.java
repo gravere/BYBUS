@@ -104,6 +104,9 @@ public abstract class SettingConfig {
         return false;
     }
 
+    /** Null preserves the general container daemon. A package scopes foreground lifetime to that guest. */
+    public String getForegroundServiceGuestPackage() { return null; }
+
     public Notification getForegroundNotification(){
         Notification.Builder builder = NotificationChannelCompat.createBuilder(VirtualCore.get().getContext(),
                 NotificationChannelCompat.DAEMON_ID);
