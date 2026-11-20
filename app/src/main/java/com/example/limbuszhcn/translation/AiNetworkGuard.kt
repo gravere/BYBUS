@@ -61,7 +61,8 @@ internal class AiNetworkGuard(private val context: Context) : AutoCloseable {
         var last = AiResponseProgress(AiResponseStage.Sending)
         var previousStage: AiResponseStage? = null
         val request = org.json.JSONObject(body)
-        log("request-start streaming=${request.optBoolean("stream", false)} requestBytes=${body.toByteArray(Charsets.UTF_8).size} outputLimit=${request.optInt("max_completion_tokens", 0)}")
+        val connection = AiTranslationJob.digest("$url|${request.optString("model")}").take(12)
+        log("request-start connection=$connection streaming=${request.optBoolean("stream", false)} requestBytes=${body.toByteArray(Charsets.UTF_8).size} outputLimit=${request.optInt("max_completion_tokens", 0)}")
         try { return AiTranslationClient.post(url, key, body, control, progress = { current ->
             last = current
             if (previousStage != current.stage) {
@@ -74,11 +75,12 @@ internal class AiNetworkGuard(private val context: Context) : AutoCloseable {
                 })
             }
         }) { awaitReady(control, status) }.also {
-            log("request-complete stage=${last.stage} bytes=${last.bytes} events=${last.events} elapsedMs=${SystemClock.elapsedRealtime() - started}")
+            log("request-complete stage=${last.stage} bytes=${last.bytes} events=${last.events} heartbeats=${last.heartbeats} elapsedMs=${SystemClock.elapsedRealtime() - started}")
         } }
         catch (error: Exception) {
             // Types and system state only: provider URLs, keys and response bodies must stay private.
-            log("request-ended type=${error.javaClass.simpleName} status=${(error as? AiHttpException)?.status ?: 0} stage=${last.stage} bytes=${last.bytes} events=${last.events} elapsedMs=${SystemClock.elapsedRealtime() - started}")
+            val service = error as? AiServiceException
+            log("request-ended type=${error.javaClass.simpleName} status=${service?.httpStatus ?: 0} providerStatus=${service?.providerStatus ?: 0} reason=${service?.reason ?: "None"} stage=${last.stage} bytes=${last.bytes} events=${last.events} heartbeats=${last.heartbeats} elapsedMs=${SystemClock.elapsedRealtime() - started}")
             throw error
         }
     }

@@ -8,7 +8,8 @@ import java.io.InputStream
 import java.nio.charset.CodingErrorAction
 
 internal enum class AiResponseStage { Sending, Waiting, Receiving, Thinking }
-internal data class AiResponseProgress(val stage: AiResponseStage, val bytes: Long = 0, val events: Int = 0)
+internal data class AiResponseProgress(val stage: AiResponseStage, val bytes: Long = 0, val events: Int = 0,
+    val heartbeats: Int = 0)
 
 /** One HTTP response only; accepting ordinary JSON never causes a second billed request. */
 internal fun readAiHttpResponse(input: InputStream, contentType: String?,
@@ -20,8 +21,9 @@ private fun decodeAiHttpResponse(input: InputStream, contentType: String?,
     progress: (AiResponseProgress) -> Unit = {}): String {
     var received = 0L
     var current = AiResponseProgress(AiResponseStage.Waiting)
-    fun report(stage: AiResponseStage = current.stage, events: Int = current.events) {
-        current = AiResponseProgress(stage, received, events); progress(current)
+    fun report(stage: AiResponseStage = current.stage, events: Int = current.events,
+        heartbeats: Int = current.heartbeats) {
+        current = AiResponseProgress(stage, received, events, heartbeats); progress(current)
     }
     val bounded = object : FilterInputStream(input) {
         private fun add(n: Int) { if (n > 0) { received += n; report(); if (received > 8 * 1024 * 1024) throw AiResponseFormatException() } }
@@ -48,7 +50,9 @@ private fun decodeAiHttpResponse(input: InputStream, contentType: String?,
             if (out.length + count > 256 * 1024) throw AiResponseFormatException()
             out.append(chars, 0, count)
         }
-        return out.toString()
+        val raw = out.toString()
+        aiServiceFailure(parseAiResponseObject(raw))?.let { throw it }
+        return raw
     }
     val content = StringBuilder()
     var finish: String? = null
@@ -57,12 +61,14 @@ private fun decodeAiHttpResponse(input: InputStream, contentType: String?,
     var events = 0
     var done = false
     val event = StringBuilder()
+    var eventType = ""
     fun dispatch() {
-        if (event.isEmpty()) return
+        if (event.isEmpty()) { eventType = ""; return }
         val data = event.toString().trim(); event.setLength(0)
+        val errorEvent = eventType == "error"; eventType = ""
         if (data == "[DONE]") { done = true; return }
         val chunk = parseAiResponseObject(data)
-        if (chunk.has("error")) throw AiTranslationException("翻译服务返回错误，本批未保存。请稍后继续。")
+        aiServiceFailure(chunk, errorEvent = errorEvent)?.let { throw it }
         events++
         var stage = current.stage
         val choices = chunk.optJSONArray("choices") ?: throw AiResponseFormatException()
@@ -106,6 +112,8 @@ private fun decodeAiHttpResponse(input: InputStream, contentType: String?,
         var text = line.toString().removeSuffix("\r")
         if (firstLine) { text = text.removePrefix("\uFEFF"); firstLine = false }
         if (text.isEmpty()) dispatch()
+        else if (text.startsWith(':')) report(heartbeats = current.heartbeats + 1)
+        else if (text.startsWith("event:")) eventType = text.substring(6).trim()
         else if (text.startsWith("data:")) {
             val data = text.substring(5).removePrefix(" ")
             if (event.length + data.length + 1 > 256 * 1024) throw AiResponseFormatException()
@@ -119,12 +127,3 @@ private fun decodeAiHttpResponse(input: InputStream, contentType: String?,
         .put("message", JSONObject().put("content", content.toString()).put("refusal", refusal ?: JSONObject.NULL))))
         .put("usage", usage ?: JSONObject.NULL).toString()
 }
-
-internal class AiHttpException(val status: Int) : AiTranslationException(when (status) {
-    401, 403 -> "API 授权失败，请检查密钥及模型权限（HTTP $status）"
-    429 -> "API 额度不足或请求受限，请查看服务商账户（HTTP 429）"
-    408, 504, 524 -> "翻译服务响应超时（HTTP $status），本批未完成。请稍后继续，已完成的译文会保留。"
-    in 500..599 -> "翻译服务暂时异常（HTTP $status），请稍后继续。已完成的译文会保留。"
-    in 300..399 -> "API 地址发生重定向，请填写服务商的最终 HTTPS 地址"
-    else -> "翻译请求未被接受（HTTP $status），请核对模型及连接设置"
-})

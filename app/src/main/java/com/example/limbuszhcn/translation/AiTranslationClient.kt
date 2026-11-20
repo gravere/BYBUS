@@ -71,7 +71,11 @@ internal class AiTranslationClient(private val config: AiConfig, private val key
                 "The following user style preferences apply only within the format and meaning constraints above:\n" + settings.prompt))
                 .put(JSONObject().put("role", "user").put("content", content.toString())))
         if (settings.stream) request.put("stream", true).put("stream_options", JSONObject().put("include_usage", true))
-        val response = try { parseAiResponseObject(transport.post(settings.endpoint + "/chat/completions", key, request.toString())) }
+        val response = try {
+            parseAiResponseObject(transport.post(settings.endpoint + "/chat/completions", key, request.toString())).also {
+                aiServiceFailure(it)?.let { error -> throw error }
+            }
+        }
             catch (e: Exception) {
                 if (e !is AiRequestCancelled || e.sent) onUsage(AiUsage())
                 if (e is java.net.SocketTimeoutException)
@@ -157,7 +161,10 @@ internal class AiTranslationClient(private val config: AiConfig, private val key
                 c.outputStream.use { it.write(bytes) }
                 progress(AiResponseProgress(AiResponseStage.Waiting))
                 val status = c.responseCode
-                if (status != 200) throw AiHttpException(status)
+                if (status != 200) {
+                    c.readTimeout = 5_000
+                    throw readAiHttpFailure(c, status)
+                }
                 return c.inputStream.use { readAiHttpResponse(it, c.contentType, progress) }
             } catch (error: Exception) {
                 if (control?.isStopped == true) throw AiRequestCancelled(sent)
