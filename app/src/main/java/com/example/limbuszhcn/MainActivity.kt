@@ -81,6 +81,8 @@ class MainActivity : ComponentActivity() {
         // Saved Compose state already knows whether this request was handled or dismissed.
         if (savedInstanceState == null && intent?.action == com.example.limbuszhcn.update.GameStores.UPDATE_ACTION)
             model.requestGameUpdates()
+        if (savedInstanceState == null && intent?.action == com.example.limbuszhcn.translation.AiTaskService.OPEN_TASK)
+            model.requestAiTask()
         launchContainerGameFromDebugIntent(intent)
         setContent {
             val state = model.state
@@ -104,6 +106,20 @@ class MainActivity : ComponentActivity() {
                 if (id != null && uri != null) model.translationIcon(id, uri)
             }
             val resumed = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+            val taskNotificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+            androidx.compose.runtime.LaunchedEffect(state.ai.running, resumed.value) {
+                if (android.os.Build.VERSION.SDK_INT >= 33 && resumed.value && state.ai.running &&
+                    com.example.limbuszhcn.translation.AiTaskService.hasActiveTask()) {
+                    val permission = android.Manifest.permission.POST_NOTIFICATIONS
+                    val preferences = getSharedPreferences("ai-task-notification", MODE_PRIVATE)
+                    if (checkSelfPermission(permission) != android.content.pm.PackageManager.PERMISSION_GRANTED &&
+                        !preferences.getBoolean("asked", false)) {
+                        preferences.edit().putBoolean("asked", true).apply()
+                        // Optional visibility of progress/pause controls. Denial does not stop the task.
+                        taskNotificationPermission.launch(permission)
+                    }
+                }
+            }
             androidx.compose.runtime.DisposableEffect(lifecycle) {
                 val observer = androidx.lifecycle.LifecycleEventObserver { _, _ ->
                     resumed.value = lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
@@ -383,6 +399,8 @@ class MainActivity : ComponentActivity() {
         launchContainerGameFromDebugIntent(intent)
         if (intent.action == com.example.limbuszhcn.update.GameStores.UPDATE_ACTION)
             androidx.lifecycle.ViewModelProvider(this)[LauncherViewModel::class.java].requestGameUpdates()
+        if (intent.action == com.example.limbuszhcn.translation.AiTaskService.OPEN_TASK)
+            androidx.lifecycle.ViewModelProvider(this)[LauncherViewModel::class.java].requestAiTask()
     }
 
     /**

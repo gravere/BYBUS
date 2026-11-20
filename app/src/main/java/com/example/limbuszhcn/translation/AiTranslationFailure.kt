@@ -10,14 +10,16 @@ internal enum class AiValidationReason(val label: String) {
     Terminology("译名与参考术语不一致"), Cache("格式无法原样保存")
 }
 
-internal class AiTextValidationException(val reason: AiValidationReason) : AiTranslationException(reason.label)
-internal data class AiRejectedText(val id: String, val position: Int, val reason: AiValidationReason, val context: String = "")
+internal class AiTextValidationException(val reason: AiValidationReason, val detail: String = "") :
+    AiTranslationException(reason.label + detail.takeIf { it.isNotBlank() }?.let { "（$it）" }.orEmpty())
+internal data class AiRejectedText(val id: String, val position: Int, val reason: AiValidationReason, val context: String = "", val detail: String = "")
 
 internal class AiBatchValidationException(val rejected: List<AiRejectedText>, savedCount: Int? = null) :
     AiTranslationException(buildString {
         if (savedCount != null && savedCount > 0) append("本批已保存 $savedCount 条；")
         append("${rejected.size} 条未通过检查")
         append(rejected.take(3).joinToString("；", "（", "）") { "本批第 ${it.position} 条：${it.reason.label}" })
+        rejected.firstOrNull()?.detail?.takeIf { it.isNotBlank() }?.let { append("；$it") }
         if (savedCount != null) append("。继续时只处理未完成内容。")
         rejected.firstOrNull()?.context?.takeIf { it.isNotBlank() }?.let { append("\n位置：$it") }
     })

@@ -42,6 +42,7 @@ internal data class LauncherUiState(
     val installSource: GameInstallSource = GameInstallSource(),
     val preferredGameSource: GameUpdateSource? = null,
     val updatesRequest: Long = 0,
+    val aiTaskRequest: Long = 0,
     val gameInstallReview: GameInstallReview? = null,
     val gameInstallPending: Boolean = false,
     val gameInstallConfirmation: Intent? = null,
@@ -147,38 +148,64 @@ internal class LaunchCoordinator private constructor(application: Application) {
         main.post { state = change(state) }
     }
 
-    private fun stage(label: String, step: Int = -1) = publish { it.copy(stage = label, launchStep = step,
-        workProgress = it.workProgress.copy(done = 0, total = 0)) }
+    private fun stage(label: String, step: Int = -1) {
+        AiTaskService.update(label)
+        publish { it.copy(stage = label, launchStep = step, workProgress = it.workProgress.copy(done = 0, total = 0)) }
+    }
     private var lastProgressAt = 0L
     private var lastProgressLabel = ""
     private fun workProgress(label: String, done: Int, total: Int) {
         val now = android.os.SystemClock.elapsedRealtime()
         if (label == lastProgressLabel && done != 0 && done != total && now - lastProgressAt < 80) return
         lastProgressAt = now; lastProgressLabel = label
+        AiTaskService.update(label, done, total)
         publish { it.copy(stage = label, workProgress = it.workProgress.copy(done = done.coerceAtLeast(0), total = total.coerceAtLeast(0))) }
     }
 
     private fun perform(label: String, allowPackageUpdate: Boolean = false,
-        preserveFailure: Boolean = false, page: String = "status", task: () -> String) {
+        preserveFailure: Boolean = false, page: String = "status", foregroundAi: Boolean = false, task: () -> String) {
         if (state.busy || exportSaveQueued || com.example.limbuszhcn.migration.MigrationModel.currentState()?.busy == true) return
         if (!allowPackageUpdate && (state.gameInstallPending || state.gameInstallReview != null)) {
             state = state.copy(updatesRequest = nextUpdatesRequest(state))
             return
         }
         state = state.beginOperation(label, preserveFailure, android.os.SystemClock.elapsedRealtime()).copy(taskPage = page)
+        val foreground = if (foregroundAi) {
+            synchronized(aiControl) { aiCancelled.set(false); aiDiscarded.set(false); aiCommitting = false }
+            try { AiTaskService.start(app) {
+                synchronized(aiControl) {
+                    if (!aiCommitting) {
+                        aiCancelled.set(true)
+                        state = state.copy(ai = state.ai.copy(stopping = true, message = "正在暂停，当前请求结束后保存进度"))
+                    }
+                }
+            } } catch (error: Exception) {
+                state = state.finishOperation(error.userMessage(), failed = !preserveFailure, preserveFailure = preserveFailure)
+                    .copy(ai = state.ai.copy(running = false, stopping = false, failed = true, message = error.userMessage()))
+                return
+            }
+        } else null
         worker.execute {
             val start = System.nanoTime()
-            val result = runCatching { com.example.limbuszhcn.storage.OperationLock.run(app.filesDir.toPath()) {
+            val result = runCatching { try {
+                foreground?.awaitStarted()
+                com.example.limbuszhcn.storage.OperationLock.run(app.filesDir.toPath()) {
                 check(!com.example.limbuszhcn.migration.MigrationAccess.preferences(app).getBoolean("pending", false)) {
                     "旧数据迁移尚未完成，请先继续导入"
                 }
                 task()
-            } }
+            } } finally { foreground?.close() } }
             result.exceptionOrNull()?.let { PersistentDiagnosticLog.error(TAG, label, it) }
             refreshCoverageFreshness()
             PersistentDiagnosticLog.info(TAG, "Task finished stage=$label elapsedMs=${(System.nanoTime() - start) / 1_000_000} success=${result.isSuccess}")
-            publish { it.finishOperation(result.getOrElse { error -> error.userMessage() },
-                failed = result.isFailure && result.exceptionOrNull() !is java.util.concurrent.CancellationException, preserveFailure = preserveFailure) }
+            publish {
+                val error = result.exceptionOrNull()
+                val cancelled = error is java.util.concurrent.CancellationException
+                val finished = it.finishOperation(result.getOrElse { failure -> failure.userMessage() },
+                    failed = result.isFailure && !cancelled && !(foregroundAi && preserveFailure), preserveFailure = preserveFailure)
+                if (foregroundAi && error != null) finished.copy(ai = it.ai.copy(running = false, stopping = false,
+                    failed = !cancelled, message = if (cancelled) "翻译已停止，已保存的进度保留" else error.userMessage())) else finished
+            }
         }
     }
 
@@ -617,7 +644,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
             return
         }
         synchronized(aiControl) { aiCancelled.set(false); aiDiscarded.set(false); aiCommitting = false }
-        perform("生成 AI 汉化", preserveFailure = true, page = "ai-translation") {
+        perform("生成 AI 汉化", preserveFailure = true, page = "ai-translation", foregroundAi = true) {
             runAiTask {
                 check(!aiTaskStore.exists()) { "请先继续或取消已有翻译任务" }
                 val source = translationSources.read().selected
@@ -686,7 +713,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
     fun generateAiEntries(config: AiConfig, key: String, request: AiEntryRequest) {
         if (state.busy || state.ai.settingsBusy || state.ai.hasPendingTask) return
         synchronized(aiControl) { aiCancelled.set(false); aiDiscarded.set(false); aiCommitting = false }
-        perform("生成 AI 汉化", preserveFailure = true, page = "ai-translation") {
+        perform("生成 AI 汉化", preserveFailure = true, page = "ai-translation", foregroundAi = true) {
             runAiTask {
                 check(!aiTaskStore.exists()) { "请先继续或取消已有翻译任务" }
                 val storage = translationStorage(); val library = AiEntryStore(translationCache)
@@ -722,7 +749,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
     fun resumeAi() {
         if (state.busy || state.ai.task == null) return
         synchronized(aiControl) { aiCancelled.set(false); aiDiscarded.set(false); aiCommitting = false }
-        perform("继续 AI 翻译", preserveFailure = true, page = "ai-translation") {
+        perform("继续 AI 翻译", preserveFailure = true, page = "ai-translation", foregroundAi = true) {
             runAiTask { stopGame(); aiTaskStore.forResume(translationSources, translationStorage(), aiCancelled::get) }.message
         }
     }
@@ -731,6 +758,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
     private fun runAiTask(prepare: () -> AiTaskSnapshot): AiRunResult {
         publish { it.copy(ai = it.ai.copy(running = true, stopping = false, failed = false, message = "正在读取已保存的任务")) }
         try {
+            if (aiCancelled.get()) throw java.util.concurrent.CancellationException()
             val task = aiTaskStore.write(prepare().copy(phase = AiTaskPhase.Running, error = null))
             PersistentDiagnosticLog.info(TAG, "AI task scope=${task.scopeLabel} limit=${task.config.limit} resumed=${task.plan != null}")
             require(aiSettings.config().endpoint == task.config.endpoint) { "请把连接设置改回此任务使用的服务地址，再继续翻译" }
@@ -847,7 +875,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
         if (choice == null) return
         val decision = AiUpstreamDecision(offer, choice)
         if (offer.launchAfter) launch(update = decision)
-        else if (choice != AiUpdateChoice.Current) perform("更新汉化资源", page = "translation") {
+        else if (choice != AiUpdateChoice.Current) perform("更新汉化资源", page = "translation", foregroundAi = choice == AiUpdateChoice.Supplement) {
             stopGame()
             val message = applyAiUpdate(decision)
             val summary = prepareTranslation(installer({ offer.metadata }))
@@ -878,8 +906,9 @@ internal class LaunchCoordinator private constructor(application: Application) {
             publishSources("已更新都市零协会，旧 AI 包保留")
             return "已更新都市零协会"
         }
-        synchronized(aiControl) { aiCancelled.set(false); aiDiscarded.set(false); aiCommitting = false }
         val supplement = decision.choice == AiUpdateChoice.Supplement
+        if (!supplement) synchronized(aiControl) { aiCancelled.set(false); aiDiscarded.set(false); aiCommitting = false }
+        if (aiCancelled.get()) throw java.util.concurrent.CancellationException()
         val config = if (supplement) AiUpstreamUpdate.supplementConfig(offer.config) else AiConfig()
         publish { it.copy(aiPreparingLaunch = supplement,
             ai = it.ai.copy(running = true, failed = false, progress = AiProgress(), message = "正在核对已有 AI 译文")) }
@@ -1102,7 +1131,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
     fun launch(prepareResources: Boolean = false, update: AiUpstreamDecision? = null) {
         // A Play/DNS outage must not stall the existing translation/launch path.
         checkGameUpdate(force = true)
-        perform("准备启动") {
+        perform("准备启动", foregroundAi = update?.choice == AiUpdateChoice.Supplement) {
             stage("返回游戏", 2)
             if ((update == null || update.choice == AiUpdateChoice.Current) && runtime.resumeGameIfRunning()) {
                 publish { it.copy(canResumeGame = true) }
@@ -1307,6 +1336,10 @@ internal class LaunchCoordinator private constructor(application: Application) {
     }
 
     fun showError(error: Throwable) { state = state.copy(failed = true, message = error.userMessage()) }
+
+    fun requestAiTask() {
+        state = state.copy(aiTaskRequest = nextUiRequestId(state.aiTaskRequest, android.os.SystemClock.elapsedRealtimeNanos()))
+    }
 
     companion object {
         @Volatile private var instance: LaunchCoordinator? = null

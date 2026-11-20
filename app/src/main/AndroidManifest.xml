@@ -29,6 +29,10 @@
     </queries>
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="com.example.limbuszhcn.permission.BYBUS_MIGRATION" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
@@ -52,6 +56,8 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.LimbusZhCN"
         tools:targetApi="31">
+        <service android:name=".translation.AiTaskService" android:exported="false"
+            android:foregroundServiceType="dataSync" android:stopWithTask="false" />
         <receiver android:name=".update.GameInstallReceiver" android:exported="false" />
         <activity android:name=".migration.MigrationActivity" android:exported="false" />
         <provider
