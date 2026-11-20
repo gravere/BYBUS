@@ -176,6 +176,9 @@ internal fun LauncherScreen(
             }
             sheet?.let { page ->
                 LauncherDetailSurface(layout, page, onDismiss = ::close,
+                    compactContent = (page == "project" && projectState.loading && (if (projectState.source == com.example.limbuszhcn.tracking.ProjectSource.GitHub) projectState.github.snapshot == null else projectState.paratranz.snapshot == null)) ||
+                        (page == "ai-entries" && state.ai.library.loading && state.ai.library.report == null) ||
+                        (page == "coverage" && state.coverage.loading && state.coverage.report == null),
                     onBack = parentSheets.lastOrNull()?.let { parent -> { sheet = parent; parentSheets = parentSheets.dropLast(1) } },
                     footer = { active -> when (active) {
                         "app-update" -> AppUpdateControls(appUpdateState, state, onDownloadAppUpdate, onInstallAppUpdate, onCancelAppUpdate, layout.detailPadding.dp)
@@ -208,14 +211,17 @@ internal fun LauncherScreen(
                     } else if (active == "app-update") {
                         AppUpdatesPane(appUpdateState, onCheckAppUpdate, onOpenAppRelease)
                     } else if (active == "translation") {
-                        TranslationSourcesPane(state, translationActions, onProject = { openChild("project") }, onCoverage = ::openCoverage) {
+                        TranslationSourcesPane(state, translationActions, onProject = { openChild("project") }, onCoverage = ::openCoverage,
+                            onBaseUpdate = { id -> translationActions.inspectBaseUpdate(id); openChild("ai-base-update") }) {
                             requestedAiScope = null; requestedAiEntries = null; openChild("ai-translation")
                         }
                     } else if (active == "ai-translation") {
                         AiTranslationPane(state, translationActions, onCoverage = ::openCoverage, requestedScope = requestedAiScope,
                             requestedEntries = requestedAiEntries, onEntries = ::openAiEntries)
+                    } else if (active == "ai-base-update") {
+                        AiBaseUpdatePane(state, translationActions)
                     } else if (active == "ai-entries") {
-                        AiEntriesPane(state, translationActions) { request ->
+                        AiEntriesPane(state, translationActions, onBaseUpdate = { id -> translationActions.inspectBaseUpdate(id); openChild("ai-base-update") }) { request ->
                             requestedAiScope = null; requestedAiEntries = request; openChild("ai-translation")
                         }
                     } else {
@@ -223,6 +229,8 @@ internal fun LauncherScreen(
                             appUpdateAvailable = appUpdateState.updateAvailable,
                             onAppUpdate = { openChild("app-update"); onCheckAppUpdate() },
                             onTranslation = { openChild("translation") },
+                            onAi = { requestedAiScope = null; requestedAiEntries = null; openChild("ai-translation") },
+                            onCoverage = ::openCoverage, onProject = { openChild("project") },
                             onMigration = onMigration, onRepair = { openChild("repair") },
                             onClearData = { openChild("clear-data") },
                             onExport = { close(); onExport() }, onSettings = { close(); onSettings() },
@@ -330,7 +338,10 @@ internal fun PrimaryAction(state: LauncherUiState, onLaunch: () -> Unit, onRefre
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         LaunchButton(action, enabled = state.busy || state.container != null || state.failed,
             step = state.launchStep, animated = animated, feedback = feedback,
-            status = if (state.busy) state.stage else feedback.orEmpty(),
+            status = if (state.busy) state.stage else feedback.orEmpty(), progressFraction = state.workProgress.fraction,
+            progressText = if (!state.busy) "" else if (state.workProgress.total > 0)
+                "${state.workProgress.done}/${state.workProgress.total} · ${((state.workProgress.fraction ?: 0f) * 100).toInt()}%"
+                else if (state.launchStep in 0..2) "第 ${state.launchStep + 1}/3 步" else "正在处理",
             onClick = { when { state.busy -> onDetails(); state.canResumeGame -> onLaunch(); needsDetection -> onRefresh(); canLaunch -> onLaunch(); else -> onDetails() } })
         if (!state.busy && state.ai.hasPendingTask) TextButton(onClick = onDetails) {
             Text("翻译已暂停 · 查看任务", style = MaterialTheme.typography.bodySmall)

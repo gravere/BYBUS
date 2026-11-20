@@ -47,7 +47,7 @@ internal fun ZeroProjectSummary(tracking: ProjectTrackingState) {
                 HorizontalDivider(Modifier.padding(vertical = 12.dp), color = C.Line)
                 Text("发布于 ${time(release.publishedAtMillis, full = true)}",
                     color = C.Muted, style = MaterialTheme.typography.bodySmall)
-                if (github.issue != null) Text("上次同步记录 · 暂未刷新", color = C.Muted,
+                if (github.issue != null) Text("上次获取的版本", color = C.Muted,
                     style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
             } ?: Text(if (github.loading) "正在读取最新发布…" else "暂时无法连接 GitHub",
                 color = C.Muted, style = MaterialTheme.typography.bodySmall)
@@ -94,6 +94,18 @@ internal fun ProjectDetails(tracking: ProjectTrackingState, onRefresh: () -> Uni
         if (value) delay((retryAt!! - System.currentTimeMillis()).coerceAtLeast(0))
         value = false
     }
+    val initialLoading = if (tracking.source == ProjectSource.GitHub)
+        tracking.github.loading && tracking.github.snapshot == null
+    else tracking.paratranz.loading && tracking.paratranz.snapshot == null
+    if (initialLoading) {
+        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            SourceTabs(ProjectSource.entries, tracking.source, { it.title }, "项目来源", onSelectSource)
+            Text(if (tracking.source == ProjectSource.GitHub) "正在读取发布记录" else "正在读取翻译进度",
+                style = MaterialTheme.typography.bodyMedium)
+            LinearProgressIndicator(Modifier.fillMaxWidth(), color = C.Accent, trackColor = C.AccentSoft)
+        }
+        return
+    }
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             ZeroAssociationIcon()
@@ -114,6 +126,10 @@ internal fun ProjectDetails(tracking: ProjectTrackingState, onRefresh: () -> Uni
 
 @Composable
 private fun ParaTranzDetails(state: ProjectTrackerState, onOpenLink: (String) -> Unit) {
+    if (state.loading && state.snapshot == null) {
+        DetailCard { Text("正在读取翻译进度", style = MaterialTheme.typography.titleSmall); LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        return
+    }
     state.snapshot?.let { snapshot ->
         DetailCard {
             Text(percent(snapshot.translatedFraction), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Medium)
@@ -155,19 +171,23 @@ private fun ParaTranzDetails(state: ProjectTrackerState, onOpenLink: (String) ->
     DetailActionSection("项目链接") {
         SheetAction(Glyph.Globe, "打开 ParaTranz", external = true) { onOpenLink(ZeroProject.URL) }
         DetailActionDivider()
-        SheetAction(Glyph.BookOpen, "原文对照快照", subtitle = "2026/08/04 冻结记录", external = true) {
+        SheetAction(Glyph.BookOpen, "原文对照记录", external = true) {
             onOpenLink(ZeroProject.SNAPSHOT_URL)
         }
     }
     DetailDisclosure("这些统计代表什么？") {
         Text("总词条是项目收录的文本条目数，一条可能是名称，也可能是一整段对白。", style = MaterialTheme.typography.bodyMedium)
-        Text("已翻译表示已有译文；已校对表示完成一次检查；已审核表示经过第二位成员复核。这些是翻译流程的不同阶段，不要将数字相加。", style = MaterialTheme.typography.bodyMedium)
-        Text("想知道新译文能否在游戏里使用，请看 GitHub 的正式发布。BYBUS 在启动前获取正式汉化包，ParaTranz 上刚修改的内容可能尚未发布。", style = MaterialTheme.typography.bodyMedium)
+        Text("已翻译、已校对、已审核表示逐步检查的阶段，数量不能相加。", style = MaterialTheme.typography.bodyMedium)
+        Text("游戏里能用到的内容以 GitHub 已发布的汉化包为准。", style = MaterialTheme.typography.bodyMedium)
     }
 }
 
 @Composable
 private fun GitHubDetails(state: GitHubTrackerState, onOpenLink: (String) -> Unit) {
+    if (state.loading && state.snapshot == null) {
+        DetailCard { Text("正在读取发布记录", style = MaterialTheme.typography.titleSmall); LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        return
+    }
     state.snapshot?.let { release ->
         DetailCard {
             Text(if (state.issue == null) "最新正式发布" else "上次同步的正式发布", color = C.Muted, style = MaterialTheme.typography.labelMedium)

@@ -16,8 +16,7 @@ import com.example.limbuszhcn.ui.theme.LauncherColors as C
 internal fun RuntimeStatusPane(state: LauncherUiState, onGameUpdates: () -> Unit, onTranslation: () -> Unit, onRefresh: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         if (state.busy) DetailCard {
-            Text(state.stage, style = MaterialTheme.typography.titleSmall)
-            LinearProgressIndicator(Modifier.fillMaxWidth())
+            OperationProgress(state)
         }
         DetailSection("游戏与汉化", contentPadding = PaddingValues(0.dp)) {
             Row(Modifier.fillMaxWidth()

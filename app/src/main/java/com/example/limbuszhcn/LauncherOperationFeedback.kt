@@ -8,8 +8,8 @@ internal fun LauncherUiState.taskDestination(): String =
     if (ai.running) "ai-translation" else taskPage ?: if (ai.hasPendingTask) "ai-translation" else "status"
 
 /** Lifecycle refreshes update device facts without erasing an actionable failure. */
-internal fun LauncherUiState.beginOperation(label: String, preserveFailure: Boolean): LauncherUiState =
-    copy(busy = true, launchStep = -1,
+internal fun LauncherUiState.beginOperation(label: String, preserveFailure: Boolean, startedAt: Long = 0): LauncherUiState =
+    copy(busy = true, launchStep = -1, workProgress = WorkProgress(startedAt = startedAt),
         stage = if (preserveFailure && failed) stage else label,
         message = if (preserveFailure && failed) message else label,
         failed = preserveFailure && failed)

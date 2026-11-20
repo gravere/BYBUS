@@ -19,17 +19,21 @@ internal data class GameBuildIdentity(val version: Long, val updated: Long, val 
 
 /** Host worker only. PackageManager is read again after expensive preparation. */
 internal class GameLaunchCompatibility(private val context: Context) {
-    fun requireApproved(): GameBuildIdentity {
+    fun requireApproved(onProgress: (String, Int, Int) -> Unit = { _, _, _ -> }): GameBuildIdentity {
+        onProgress("检查游戏兼容性", 0, 3)
         val device = com.example.limbuszhcn.DeviceCompatibility(context).report()
         require(device.isSupported) { requireNotNull(device.blockingReason) }
+        onProgress("检查游戏兼容性", 1, 3)
         val info = installedInfo()
         val identity = identity(info)
+        onProgress("核验游戏安装文件", 2, 3)
         val profile = LimbusNativeProfile.inspect(context, info, requireNotNull(info.applicationInfo))
         require(profile.approved()) {
             profile.failureReason.ifBlank {
                 "游戏 ${info.versionName ?: identity.version} 的签名或安装文件未通过检查。请确认已完整安装官方游戏。"
             }
         }
+        onProgress("游戏兼容检查完成", 3, 3)
         return identity
     }
 

@@ -64,7 +64,7 @@ internal object TranslationCoverage {
                 if (field.excludedReason != null) continue
                 total++
                 if (field.canTranslate && field.id !in committedAi) independent++
-                if (!field.covered && field.text in shared) sharedCount++
+                if (!field.covered && field.sharedTranslation(shared) != null) sharedCount++
                 val kind = if (AiTextSelection.missing(field, shared)) {
                     missing++; fileMissing++
                     if (field.canTranslate) eligible++
@@ -76,7 +76,7 @@ internal object TranslationCoverage {
                     if (field.canTranslate) reviewEligible++
                     CoverageKind.Review
                 }
-                val translated = field.translated ?: shared[field.text]
+                val translated = field.translated ?: field.sharedTranslation(shared)
                 if (onEntry != null) {
                     onEntry(CoverageEntry(missing + review, kind, category, key, field.text, translated, field.recordId, field.pointer))
                 } else if (if (kind == CoverageKind.Review) fileReview <= 2 else fileMissing <= 2) {

@@ -151,7 +151,7 @@ class MainActivity : ComponentActivity() {
             }
             LimbusZhCNTheme {
                 pendingPack.value?.let { selectedUri ->
-                    androidx.compose.material3.AlertDialog(onDismissRequest = { pendingPack.value = null },
+                    BybusDialog(onDismissRequest = { pendingPack.value = null },
                         title = { androidx.compose.material3.Text("导入并使用汉化包？") },
                         text = { androidx.compose.material3.Text("将关闭游戏并校验所选文本包。账号和游戏资源会保留。") },
                         confirmButton = { androidx.compose.material3.TextButton(onClick = {
@@ -241,7 +241,7 @@ class MainActivity : ComponentActivity() {
                         removeAi = model::removeAiTranslation, chooseAiUpdate = model::chooseAiUpdate,
                         savePrompt = model::saveAiPrompt, renameKey = model::renameAiKey, reorderKeys = model::reorderAiKeys,
                         inspectAiEntries = model::inspectAiEntries, aiEntries = model::aiEntries, downloadAiOriginals = model::downloadAiOriginals,
-                        generateEntries = model::generateAiEntries, deleteEntries = model::deleteAiEntries)
+                        generateEntries = model::generateAiEntries, deleteEntries = model::deleteAiEntries, loadPrice = model::loadAiPrice, savePrice = model::saveAiPrice, inspectBaseUpdate = model::inspectAiBaseUpdate, applyBaseUpdate = model::applyAiBaseUpdate, baseChanges = model::aiBaseChanges)
                 )
             }
         }

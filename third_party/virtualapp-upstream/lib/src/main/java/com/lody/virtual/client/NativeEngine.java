@@ -294,6 +294,12 @@ public class NativeEngine {
     }
 
     @Keep
+    public static String translateLimbusNotice(String language, String original) {
+        if (!"com.ProjectMoon.LimbusCompany".equals(VClient.get().getCurrentPackage())) return null;
+        return VirtualCore.getConfig().translateLimbusNotice(language, original);
+    }
+
+    @Keep
     public static void observeLimbusTextLanguage(String language) {
         if ("com.ProjectMoon.LimbusCompany".equals(VClient.get().getCurrentPackage()))
             VirtualCore.getConfig().onLimbusTextLanguage(language);

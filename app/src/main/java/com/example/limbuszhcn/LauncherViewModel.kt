@@ -115,6 +115,11 @@ internal class LauncherViewModel(application: Application) : AndroidViewModel(ap
         page: Int, cancel: android.os.CancellationSignal) = coordinator.aiEntries(report, filter, page, cancel)
     fun generateAiEntries(config: com.example.limbuszhcn.translation.AiConfig, key: String, request: com.example.limbuszhcn.translation.AiEntryRequest) =
         coordinator.generateAiEntries(config, key, request)
+    fun inspectAiBaseUpdate(id: String) = coordinator.inspectAiBaseUpdate(id)
+    fun applyAiBaseUpdate(request: com.example.limbuszhcn.translation.AiBaseRequest) = coordinator.applyAiBaseUpdate(request)
+    fun aiBaseChanges(report: com.example.limbuszhcn.translation.AiBaseReport, kind: com.example.limbuszhcn.translation.AiBaseChangeKind?, page: Int, signal: android.os.CancellationSignal) = coordinator.aiBaseChanges(report, kind, page, signal)
+    fun loadAiPrice(endpoint: String, model: String, refresh: Boolean) = coordinator.loadAiPrice(endpoint, model, refresh)
+    fun saveAiPrice(endpoint: String, model: String, price: com.example.limbuszhcn.translation.AiPrice?) = coordinator.saveAiPrice(endpoint, model, price)
     fun deleteAiEntries(request: com.example.limbuszhcn.translation.AiEntryRequest) = coordinator.deleteAiEntries(request)
     fun checkGameUpdate() = coordinator.checkGameUpdate(force = true)
     fun requestGameUpdates() = coordinator.requestGameUpdates()

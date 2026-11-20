@@ -22,9 +22,12 @@ for signature in ("bool utf8_to_utf16(", "bool is_usable_display_text(", "bool i
 start = source.index("bool read_flow_text(")
 end = source.index("\n// Observation only:", start)
 (output / "runtime-flow-under-test.inc").write_text(source[start:end], encoding="utf-8")
-start = source.index("void prepare_notice_body(")
-end = source.index("\nvoid replacement_tmp_parse_input(", start)
-(output / "runtime-notice-under-test.inc").write_text(source[start:end], encoding="utf-8")
+notice = []
+for signature in ("bool is_notice_text(", "void prepare_notice_body(void *target) {", "void replacement_notice_set_data("):
+    start = source.index(signature)
+    end = source.index("\n}", start) + 2
+    notice.append(source[start:end])
+(output / "runtime-notice-under-test.inc").write_text("\n\n".join(notice), encoding="utf-8")
 start = source.index("bool retain_tmp_material(")
 end = source.index("\nvoid replacement_tmp_set_shared_material(", start)
 (output / "runtime-material-under-test.inc").write_text(source[start:end], encoding="utf-8")

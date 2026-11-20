@@ -39,11 +39,12 @@ internal fun CoverageSummary(state: LauncherUiState, onOpen: () -> Unit, onCheck
                 Text(when {
                     coverage.loading -> "正在对照本地文本"
                     coverage.error != null -> "本次检查未完成"
-                    coverage.stale -> "游戏语言或汉化已变化，请重新检查"
+                    coverage.stale -> "游戏文本或汉化包已变化，请重新检查"
                     report != null && report.unreadable > 0 -> "${report.unreadable} 个文件未能检查"
                     report != null && report.total == 0 -> "已读文件中没有可检查的文本"
                     report != null && report.missing == 0 && report.review == 0 -> "${report.total} 条本地文本已覆盖"
                     report != null -> "${report.missing} 条未覆盖 · ${report.review} 条待核对"
+                    coverage.language == null -> "首次启动游戏后可检查"
                     else -> "还未检查本地游戏文本"
                 }, color = C.Muted, style = MaterialTheme.typography.bodySmall)
             }

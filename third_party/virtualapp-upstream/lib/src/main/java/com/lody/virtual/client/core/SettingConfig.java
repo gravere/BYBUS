@@ -26,6 +26,8 @@ import com.lody.virtual.helper.compat.NotificationChannelCompat;
 public abstract class SettingConfig {
     public boolean prepareLimbusTranslationResources() { return false; }
 
+    public String translateLimbusNotice(String language, String original) { return null; }
+
     public String translateLimbusResource(String resource, String original) { return null; }
 
     public void onLimbusTextLanguage(String language) { }

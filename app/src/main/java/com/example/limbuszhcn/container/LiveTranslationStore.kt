@@ -1,6 +1,7 @@
 package com.example.limbuszhcn.container
 
 import com.example.limbuszhcn.storage.AtomicFiles
+import com.example.limbuszhcn.translation.NoticeTexts
 import com.example.limbuszhcn.update.PatchManifest
 import com.example.limbuszhcn.update.sha256
 import com.example.limbuszhcn.update.toLowerHex
@@ -20,6 +21,7 @@ internal class LiveTranslationStore(private val cache: Path) {
     private val fonts = root.resolve("live-fonts.bin")
 
     fun prepare(directory: Path, manifest: PatchManifest, forceRebuild: Boolean = false,
+                progress: (Int, Int) -> Unit = { _, _ -> },
                 resourceKey: (String) -> String): Snapshot {
         // Android can expose the same private directory through /data/user/0 and
         // /data/data. Resolve both operands before creating persistent relative paths.
@@ -39,9 +41,11 @@ internal class LiveTranslationStore(private val cache: Path) {
 
         val labels = sortedSetOf<String>()
         val models = ReleasedModelFields()
-        entries.forEach { entry ->
+        entries.forEachIndexed { index, entry ->
+            if (index % 16 == 0) progress(index, entries.size)
             val file = cache.resolve(entry.path)
             require(file.sha256() == entry.hash) { "汉化资源校验失败" }
+            if (NoticeTexts.isResource(entry.key)) return@forEachIndexed
             val json = file.readText(Charsets.UTF_8)
             // Font provenance uses released display fields; pairing ambiguity
             // must not discard their font coverage. Runtime merging stays strict.
@@ -52,7 +56,8 @@ internal class LiveTranslationStore(private val cache: Path) {
             }
             models.add(entry.key, json)
         }
-        require(labels.isNotEmpty() && labels.size <= 1_000_000) { "汉化包没有有效中文显示文本" }
+        progress(entries.size, entries.size)
+        require((labels.isNotEmpty() || entries.any { NoticeTexts.isResource(it.key) }) && labels.size <= 1_000_000) { "汉化包没有有效中文显示文本" }
         Files.createDirectories(root)
         val pendingFonts = root.resolve(".live-fonts.tmp")
         DataOutputStream(BufferedOutputStream(Files.newOutputStream(pendingFonts))).use { out ->
@@ -94,7 +99,7 @@ internal class LiveTranslationStore(private val cache: Path) {
         require(entries.map { it.key }.toSet().size == entries.size)
         val result = Snapshot(json.getString("version"), json.getString("archive"), entries,
             json.getString("fontHash"), json.getInt("labels"))
-        require(result.version.isNotBlank() && SHA.matches(result.archive) && SHA.matches(result.fontHash) && result.labels > 0)
+        require(result.version.isNotBlank() && SHA.matches(result.archive) && SHA.matches(result.fontHash) && result.labels >= 0 && (result.labels > 0 || entries.any { NoticeTexts.isResource(it.key) }))
         result
     }.getOrNull()
 
@@ -107,7 +112,7 @@ internal class LiveTranslationStore(private val cache: Path) {
     data class Snapshot(val version: String, val archive: String, val entries: List<Entry>, val fontHash: String, val labels: Int)
 
     companion object {
-        private const val SCHEMA = 5
+        private const val SCHEMA = 6
         const val MAX_JSON_BYTES = 16L * 1024 * 1024
         private val SHA = Regex("[0-9a-f]{64}")
         private fun validKey(key: String): Boolean = key.startsWith("jp/") && key.length <= 512 &&
@@ -142,8 +147,8 @@ internal class ReleasedModelFields {
 
 /** Per-process snapshot with a bounded content-addressed cache; no polling or game-file access. */
 internal class LiveResourceTranslator(private val cache: Path, snapshot: LiveTranslationStore.Snapshot) {
-    private val entries = snapshot.entries.associateBy { it.key }
-    private val uniqueNames = snapshot.entries.groupBy { it.key.substringAfterLast('/').removeSuffix(".json") }
+    private val entries = snapshot.entries.filterNot { NoticeTexts.isResource(it.key) }.associateBy { it.key }
+    private val uniqueNames = entries.values.groupBy { it.key.substringAfterLast('/').removeSuffix(".json") }
         .mapNotNull { (name, rows) -> rows.singleOrNull()?.let { name to it } }.toMap()
     private data class Cached(val sourceHash: String, val merged: String?, val bytes: Int)
     private val results = LinkedHashMap<String, Cached>(16, .75f, true)

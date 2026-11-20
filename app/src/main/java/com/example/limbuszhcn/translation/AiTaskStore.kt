@@ -18,7 +18,7 @@ internal data class AiTaskBinding(val selected: String, val revision: String, va
             state.sources.find { it.id == target }.let { it?.revision == targetRevision && (it == null || it.kind == "ai") }
 }
 internal data class AiTaskPlan(val selected: Map<String, Set<String>>, val hashes: Map<String, String>, val available: Int) {
-    val total get() = selected.values.sumOf { it.size }
+    val total = selected.values.sumOf { it.size }
 }
 internal data class AiTaskSnapshot(val id: String, val config: AiConfig, val baseId: String,
     val sourceName: String, val outputIdentity: String, val outputName: String, val officialVersion: Long?,
@@ -38,6 +38,9 @@ internal class AiTaskStore(private val cache: Path) {
     val root: Path = cache.resolve("ai-task")
     val work: Path get() = root.resolve("work")
     private val marker get() = root.resolve("task.json")
+    private var cachedPlanHash: String? = null
+    private var cachedPlan: AiTaskPlan? = null
+    private val planFile get() = root.resolve("plan.json")
     fun exists() = Files.isRegularFile(marker)
 
     fun read(): AiTaskSnapshot? {
@@ -49,22 +52,33 @@ internal class AiTaskStore(private val cache: Path) {
         val config = AiConfig(c.getString("endpoint"), c.getString("model"), c.getBoolean("missingOnly"),
             c.getInt("limit"), c.getBoolean("includeMissing"), c.getBoolean("includeReview"), c.getString("prompt")).validated()
         val p = j.getJSONObject("progress")
-        val plan = j.optJSONObject("plan")?.let { value ->
-            val rows = value.getJSONArray("resources"); require(rows.length() <= 1000)
+        val planHash = j.optString("planSha256").takeIf(String::isNotEmpty)
+        val plan = if (planHash != null && planHash == cachedPlanHash && cachedPlan != null) cachedPlan else
+            (if (planHash == null) j.optJSONObject("plan") else {
+                require(planHash.matches(HASH) && Files.size(planFile) <= 64L * 1024 * 1024)
+                val bytes = Files.readAllBytes(planFile)
+                require(AiTranslationJob.digest(String(bytes, Charsets.UTF_8)) == planHash) { "翻译范围记录损坏，请重新选择" }
+                JSONObject(String(bytes, Charsets.UTF_8))
+            })?.let { value ->
+            val rows = value.getJSONArray("resources"); require(rows.length() <= MAX_AI_TASK_ENTRIES)
             val selected = linkedMapOf<String, Set<String>>(); val hashes = linkedMapOf<String, String>()
             for (i in 0 until rows.length()) {
                 val row = rows.getJSONObject(i); val key = row.getString("key"); validateRelative(key)
-                val ids = row.getJSONArray("ids"); require(ids.length() in 1..1000)
+                val ids = row.getJSONArray("ids"); require(ids.length() in 1..MAX_AI_TASK_ENTRIES)
                 selected[key] = (0 until ids.length()).map { ids.getString(it).also { id -> require(id.matches(HASH)) } }.toSet()
                 hashes[key] = row.getString("hash").also { require(it.matches(HASH)) }
             }
-            AiTaskPlan(selected, hashes, value.getInt("available")).also { require(it.total <= config.limit && it.available >= it.total) }
+            AiTaskPlan(selected, hashes, value.getInt("available")).also {
+                require(it.total <= config.limit && it.available in it.total..MAX_AI_TASK_ENTRIES)
+                cachedPlan = it; cachedPlanHash = planHash
+            }
         }
         return AiTaskSnapshot(j.getString("id"), config, j.getString("baseId"), j.getString("sourceName"),
             j.getString("outputIdentity"), j.getString("outputName"), j.optLong("officialVersion").takeIf { it > 0 },
             AiTaskPhase.valueOf(j.getString("phase")), AiProgress(p.getInt("completed"), p.getInt("limit"),
                 p.getInt("reused"), p.getLong("inputTokens"), p.getLong("outputTokens"), p.getString("message"),
-                p.optInt("scannedFiles"), p.optInt("totalFiles")),
+                p.optInt("scannedFiles"), p.optInt("totalFiles"), p.optLong("cachedTokens"), p.optLong("elapsedMillis"),
+                p.optInt("requests"), p.optBoolean("unknownUsage"), p.optJSONObject("price")?.let(AiPrice::read)),
             plan, j.optString("error").takeIf { it.isNotBlank() }, j.optString("resultHash").takeIf { it.isNotBlank() },
             j.optJSONObject("binding")?.let { b -> AiTaskBinding(b.getString("selected"), b.getString("revision"),
                 b.optString("targetRevision").takeIf(String::isNotEmpty), b.optString("selectedKind"), b.optString("language", "jp")) }, j.optBoolean("upstream"),
@@ -112,6 +126,9 @@ internal class AiTaskStore(private val cache: Path) {
         check(!exists()) { "请先继续或取消已有翻译任务" }
         if (Files.exists(root)) AtomicFiles.deleteOwnedTree(cache, root)
         Files.createDirectories(root)
+        TranslationSources.writeAtomic(root.resolve("input-source.json"), JSONObject()
+            .put("id", source.id).put("name", source.name).put("kind", source.kind).put("revision", source.revision)
+            .put("baseId", source.baseId).put("officialVersion", source.officialVersion).toString())
         snapshot("base", base)
         if (reference != null && (base == null || reference.manifest.archiveSha256 != base.manifest.archiveSha256)) snapshot("reference", reference)
         val preferred = identityOverride ?: source.id.takeIf { source.kind == "ai" && (source.language == null || source.language == language) && (config.missingOnly || source.independent) }?.removePrefix("ai-")
@@ -138,6 +155,18 @@ internal class AiTaskStore(private val cache: Path) {
 
     fun write(task: AiTaskSnapshot): AiTaskSnapshot {
         val c = task.config; val p = task.progress
+        val planHash = task.plan?.let { plan ->
+            if (cachedPlan === plan && cachedPlanHash != null && Files.isRegularFile(planFile)) cachedPlanHash else {
+                require(plan.total <= c.limit && plan.available in plan.total..MAX_AI_TASK_ENTRIES)
+                val raw = JSONObject().put("available", plan.available).put("resources", JSONArray().apply {
+                    plan.selected.forEach { (key, ids) -> put(JSONObject().put("key", key).put("hash", plan.hashes.getValue(key))
+                        .put("ids", JSONArray(ids.toList()))) }
+                }).toString()
+                require(raw.toByteArray(Charsets.UTF_8).size <= 64 * 1024 * 1024)
+                TranslationSources.writeAtomic(planFile, raw)
+                AiTranslationJob.digest(raw).also { cachedPlan = plan; cachedPlanHash = it }
+            }
+        }
         val j = JSONObject().put("schema", 1).put("id", task.id).put("baseId", task.baseId)
             .put("sourceName", task.sourceName).put("outputIdentity", task.outputIdentity).put("outputName", task.outputName)
             .put("officialVersion", task.officialVersion).put("phase", task.phase.name).put("error", task.error)
@@ -149,11 +178,9 @@ internal class AiTaskStore(private val cache: Path) {
                 .put("includeReview", c.includeReview).put("prompt", c.prompt))
             .put("progress", JSONObject().put("completed", p.completed).put("limit", p.limit).put("reused", p.reused)
                 .put("inputTokens", p.inputTokens).put("outputTokens", p.outputTokens).put("message", p.message)
-                .put("scannedFiles", p.scannedFiles).put("totalFiles", p.totalFiles))
-            .put("plan", task.plan?.let { plan -> JSONObject().put("available", plan.available).put("resources", JSONArray().apply {
-                plan.selected.forEach { (key, ids) -> put(JSONObject().put("key", key).put("hash", plan.hashes.getValue(key))
-                    .put("ids", JSONArray(ids.toList()))) }
-            }) })
+                .put("scannedFiles", p.scannedFiles).put("totalFiles", p.totalFiles).put("cachedTokens", p.cachedTokens)
+                .put("elapsedMillis", p.elapsedMillis).put("requests", p.requests).put("unknownUsage", p.unknownUsage).put("price", p.price?.json()))
+            .put("planSha256", planHash)
         TranslationSources.writeAtomic(marker, j.toString())
         return task
     }
@@ -167,6 +194,16 @@ internal class AiTaskStore(private val cache: Path) {
             discard(); return null
         }
         return write(task.copy(phase = AiTaskPhase.Paused, progress = task.progress.copy(message = "任务已保存，可继续或取消")))
+    }
+
+    fun hasFrozenSource() = Files.isRegularFile(root.resolve("input-source.json"))
+    fun frozenSource(): TranslationSource {
+        val file = root.resolve("input-source.json")
+        require(Files.size(file) <= 16 * 1024)
+        val value = JSONObject(String(Files.readAllBytes(file), Charsets.UTF_8))
+        return TranslationSource(value.getString("id"), value.getString("name"), value.getString("kind"),
+            value.getString("revision"), baseId = value.optString("baseId").takeIf(String::isNotEmpty),
+            officialVersion = value.optLong("officialVersion").takeIf { it > 0 })
     }
 
     fun prepared(name: String): PreparedTranslation? {

@@ -45,7 +45,7 @@ internal object AiEntryScan {
             val hash = AiTranslationJob.digest(r.raw)
             for (field in r.fields.filter { it.canTranslate }) {
                 val owned = proof[field.id]?.let { runCatching { ProtectedTranslation(field.text).restore(it) == field.translated }.getOrDefault(false) } == true && field.covered
-                val translated = field.translated ?: shared[field.text]
+                val translated = field.translated ?: field.sharedTranslation(shared)
                 val kind = if (owned) AiEntryKind.Ai else if (translated != null) AiEntryKind.Base else AiEntryKind.Pending
                 counts[kind] = counts.getValue(kind) + 1
                 require(++number <= 500_000) { "游戏文本条目超出本地处理上限" }

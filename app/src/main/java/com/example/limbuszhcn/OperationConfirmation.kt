@@ -19,7 +19,7 @@ internal enum class ConfirmedOperation(val title: String, val message: String, v
 @Composable
 internal fun OperationConfirmation(operation: ConfirmedOperation, enabled: Boolean,
                                    onDismiss: () -> Unit, onConfirm: () -> Unit) {
-    AlertDialog(onDismissRequest = onDismiss, shape = RoundedCornerShape(24.dp), containerColor = C.Panel,
+    BybusDialog(onDismissRequest = onDismiss, shape = RoundedCornerShape(24.dp), containerColor = C.Panel,
         title = { Text(operation.title) }, text = { Text(operation.message) },
         confirmButton = {
             TextButton(onClick = onConfirm, enabled = enabled,

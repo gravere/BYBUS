@@ -194,8 +194,12 @@ bool utf16_to_utf8(const uint16_t *s, int32_t length, std::string *out) {
     return true;
 }
 bool ensure_tmp_font() { return true; }
+void *notice_target = nullptr, *notice_translation = nullptr;
+int generic_passes = 0;
+bool is_notice_text(void *target, void *text = nullptr, bool proof = false) { return target == notice_target && (!proof || text == notice_translation); }
+void prepare_notice_body(void *) {}
 bool is_choice_text(void *, void *) { return false; }
-void *translate_managed_string(void *text) { return text; }
+void *translate_managed_string(void *text) { ++generic_passes; return text; }
 void *new_managed_string(const std::string &value) {
     property_name = value;
     return &property_name;
@@ -318,6 +322,16 @@ int main() {
     fail_retain = false;
     forget(first);
     assert(retained == released);
+    Component notice{299, &japanese_font};
+    notice.material = &preset; notice_target = &notice;
+    auto notice_text = codec.from_bytes("经验"); // A word in the global font catalogue is not a translated notice.
+    auto passes = generic_passes;
+    prepare_tmp_text(&notice, &notice_text);
+    assert(notice.font == &japanese_font && generic_passes == passes);
+    notice_translation = &notice_text;
+    prepare_tmp_text(&notice, &notice_text);
+    assert(notice.font == &chinese_font && generic_passes == passes);
+    forget(notice); notice_target = nullptr; notice_translation = nullptr;
     Component rendered{300, &japanese_font};
     Preset normal{10}, selected{20};
     normal.outline_width = .15f; normal.underlay_x = .1f;

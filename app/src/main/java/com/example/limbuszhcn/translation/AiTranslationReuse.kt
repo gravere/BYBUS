@@ -67,6 +67,7 @@ internal object AiTranslationReuse {
                 if (candidate != null) reusable[leaf.id] = candidate
             }
         }
-        return reusable
+        val excluded = AiProvenanceExclusions.read(cache, source)
+        return reusable.filterKeys { it !in excluded }
     }
 }

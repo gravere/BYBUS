@@ -20,7 +20,9 @@ class LauncherOperationFeedbackTest {
     }
     @Test fun resumeRefreshRetainsFailureUntilAnExplicitOperation() {
         val failure = LauncherUiState(failed = true, message = "资源校验失败", stage = "准备启动")
-        val refreshed = failure.beginOperation("正在检测游戏", true)
+        val started = failure.beginOperation("正在检测游戏", true, startedAt = 1500)
+        assertEquals(1500L, started.workProgress.startedAt)
+        val refreshed = started
             .finishOperation("已匹配当前安装版本", false, true)
         assertTrue(refreshed.failed)
         assertEquals(failure.message, refreshed.message)

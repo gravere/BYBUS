@@ -27,23 +27,31 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
     onExport: () -> Unit, onSettings: () -> Unit,
     onMigration: () -> Unit, onRepair: () -> Unit, onClearData: () -> Unit,
     onGoogleSettings: () -> Unit,
-    onRefresh: () -> Unit, onAbout: () -> Unit) {
+    onRefresh: () -> Unit, onAbout: () -> Unit, onAi: () -> Unit = {}, onCoverage: () -> Unit = {}, onProject: () -> Unit = {}) {
     val enabled = !state.busy
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         when (page) {
             "tools" -> {
-                DetailActionSection("版本与资源") {
-                    SheetAction(Glyph.Upgrade, "应用更新", showUpdate = appUpdateAvailable, navigation = true, onClick = onAppUpdate)
+                DetailActionSection("汉化") {
+                    SheetAction(Glyph.Translation, "汉化源与更新", navigation = true, onClick = onTranslation)
                     DetailActionDivider()
-                    SheetAction(Glyph.Gamepad, "游戏更新", navigation = true, onClick = onGameStore)
+                    SheetAction(Glyph.Ai, "AI 翻译", navigation = true, onClick = onAi)
+                    DetailActionDivider()
+                    SheetAction(Glyph.Search, "汉化覆盖", navigation = true, onClick = onCoverage)
+                    DetailActionDivider()
+                    SheetAction(Glyph.Globe, "翻译项目", navigation = true, onClick = onProject)
                 }
-                DetailActionSection("管理") {
-                    SheetAction(Glyph.Import, "数据迁移", navigation = true, onClick = onMigration)
+                DetailActionSection("游戏与账号") {
+                    SheetAction(Glyph.Gamepad, "游戏更新", navigation = true, onClick = onGameStore)
+                    DetailActionDivider()
+                    SheetAction(Glyph.Account, "Google 账号与付款", enabled, navigation = true, onClick = onGoogleSettings)
                     DetailActionDivider()
                     SheetAction(Glyph.Battery, "后台运行", enabled, navigation = true, onClick = onSettings)
                     DetailActionDivider()
-                    SheetAction(Glyph.Account, "Google 账号与付款", enabled, navigation = true,
-                        onClick = onGoogleSettings)
+                    SheetAction(Glyph.Import, "数据迁移", navigation = true, onClick = onMigration)
+                }
+                DetailActionSection("应用与维护") {
+                    SheetAction(Glyph.Upgrade, "应用更新", showUpdate = appUpdateAvailable, navigation = true, onClick = onAppUpdate)
                     DetailActionDivider()
                     SheetAction(Glyph.Repair, "修复", navigation = true, onClick = onRepair)
                     DetailActionDivider()
@@ -52,9 +60,6 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
                     SheetAction(Glyph.File, "导出诊断", enabled, onClick = onExport)
                     DetailActionDivider()
                     SheetAction(Glyph.Info, "使用说明与版本", navigation = true, onClick = onAbout)
-                }
-                DetailActionSection("汉化设置") {
-                    SheetAction(Glyph.Translation, "汉化源与更新", navigation = true, onClick = onTranslation)
                 }
             }
             "status" -> RuntimeStatusPane(state, onGameStore, onTranslation, onRefresh)
@@ -136,7 +141,7 @@ private fun AboutPane() {
     }
     DetailSection("开始使用") {
         Column(Modifier.padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            listOf("安装官方游戏，回到 BYBUS 点击启动。", "汉化包准备好后进入游戏，登录并下载资源，汉化会随资源加载生效。", "以后从 BYBUS 启动。默认汉化源自动检查更新，也可在汉化设置中导入本地包或生成 AI 译文。").forEachIndexed { index, text ->
+            listOf("安装官方游戏，回到 BYBUS 点击启动。", "汉化包准备好后进入游戏，登录并下载资源，汉化会随资源加载生效。", "以后从 BYBUS 启动。默认汉化源自动检查更新，也可在设置的「汉化」分组导入本地包或使用 AI 翻译。").forEachIndexed { index, text ->
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
                     Text("0${index + 1}", color = C.Accent, style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.padding(top = 3.dp))

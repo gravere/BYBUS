@@ -10,6 +10,8 @@ internal data class TranslationField(val id: String, val text: String, val conte
     val covered: Boolean, val translated: String?, val clear: () -> Unit, val apply: (String) -> Unit,
     val excludedReason: String? = null, val pointer: String = "", val recordId: String? = null) {
     val canTranslate get() = excludedReason == null && text.length <= 6000 && !text.contains(Regex("⟦P[0-9]+⟧"))
+    fun sharedTranslation(shared: Map<String, String>): String? =
+        if (NoticeTexts.isResource(context.substringBefore(' '))) null else shared[text]
     val needsReview get() = covered && excludedReason == null && TranslationFields.hasResidualLanguage(translated.orEmpty())
 }
 

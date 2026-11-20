@@ -27,7 +27,7 @@ int main(int argc, char **argv) {
     const std::string input = argv[1];
     std::ifstream stream(input, std::ios::binary);
     std::vector<char> bytes((std::istreambuf_iterator<char>(stream)), {});
-    assert(bytes.size() > 14);
+    assert(bytes.size() >= 14);
     g_active_pointer = "catalogue-roundtrip-active.json";
     // Keep corruption tests in the test working directory; never alter the source.
     auto write = [&](size_t count) {

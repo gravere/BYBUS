@@ -64,7 +64,7 @@ class AiLibraryUiTest {
         var requested: AiEntryRequest? = null; var removed: AiEntryRequest? = null
         compose.setContent { LimbusZhCNTheme {
             Panel("ai-entries") {
-                AiEntriesPane(state, TranslationActions(aiEntries = { _, _, _, _ -> AiEntryPage(rows, 2, 0) }, deleteEntries = { removed = it }), { requested = it })
+                AiEntriesPane(state, TranslationActions(aiEntries = { _, _, _, _ -> AiEntryPage(rows, 2, 0) }, deleteEntries = { removed = it }), onTranslate = { requested = it })
             }
         } }
         compose.waitUntil { compose.onAllNodesWithText("已翻译的对白 1").fetchSemanticsNodes().isNotEmpty() }

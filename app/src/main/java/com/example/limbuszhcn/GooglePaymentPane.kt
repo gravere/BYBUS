@@ -24,7 +24,7 @@ internal fun GooglePaymentPane(state: LauncherUiState, onRefresh: () -> Unit,
         }
         state.googlePaymentIssue?.let { Text(it, color = C.Error, style = MaterialTheme.typography.bodyMedium) }
         if (payment != null && (!payment.billingEnabled || !payment.registrationEnabled)) {
-            Text("启用容器内的付款服务与 Google 设备注册；账号和支付方式仍由你在结算页确认。",
+            Text("启用商品价格与付款。账号和付款方式请在 Google 结算页确认。",
                 color = C.Muted, style = MaterialTheme.typography.bodyMedium)
             Button(onClick = onEnable, enabled = !state.busy, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
                 Text("启用付款服务")

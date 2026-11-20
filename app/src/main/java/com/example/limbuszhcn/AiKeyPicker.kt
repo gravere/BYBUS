@@ -42,7 +42,7 @@ internal fun AiKeyPicker(keys: List<AiKeyChoice>, active: String?, enabled: Bool
         order = order.toMutableList().apply { add(to, removeAt(from)) }
     }
     fun commit() { dragging = null; delta = 0f; if (order.map { it.id } != keys.map { it.id }) actions.reorderKeys(order.map { it.id }) }
-    AlertDialog(onDismissRequest = { if (dragging == null) onDismiss() }, title = { Text("已保存的密钥") }, text = {
+    BybusDialog(onDismissRequest = { if (dragging == null) onDismiss() }, title = { Text("已保存的密钥") }, text = {
         Column {
             error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = C.Error) }
             Text("长按右侧手柄拖动排序", style = MaterialTheme.typography.bodySmall, color = C.Muted)
@@ -101,7 +101,7 @@ internal fun AiKeyPicker(keys: List<AiKeyChoice>, active: String?, enabled: Bool
     }, confirmButton = { TextButton(onDismiss, enabled = dragging == null) { Text("关闭") } })
     renaming?.let { choice ->
         val invalid = runCatching { com.example.limbuszhcn.translation.AiKeyOrder.name(name, choice.id, keys) }.exceptionOrNull()?.message
-        AlertDialog(onDismissRequest = { renaming = null }, title = { Text("修改密钥名称") }, text = {
+        BybusDialog(onDismissRequest = { renaming = null }, title = { Text("修改密钥名称") }, text = {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         OutlinedTextField(name, { name = it.take(48) }, singleLine = true, textStyle = MaterialTheme.typography.bodyMedium)
         if (name.isNotBlank() && invalid != null) Text(invalid, color = C.Error, style = MaterialTheme.typography.bodySmall)
