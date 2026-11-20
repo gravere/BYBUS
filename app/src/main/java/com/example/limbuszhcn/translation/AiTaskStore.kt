@@ -25,7 +25,7 @@ internal data class AiTaskSnapshot(val id: String, val config: AiConfig, val bas
     val phase: AiTaskPhase = AiTaskPhase.Running, val progress: AiProgress = AiProgress(),
     val plan: AiTaskPlan? = null, val error: String? = null, val resultHash: String? = null,
     val binding: AiTaskBinding? = null, val upstream: Boolean = false, val resultTarget: String? = null,
-    val explicitEntries: Boolean = false, val baseName: String? = null) {
+    val explicitEntries: Boolean = false, val baseName: String? = null, val cacheConnection: AiCacheConnection? = null) {
     val scopeLabel get() = if (explicitEntries) "所选条目" else if (!config.missingOnly) "全部文本" else when {
         config.includeMissing && config.includeReview -> "未覆盖与待核对"
         config.includeReview -> "待核对"
@@ -81,12 +81,13 @@ internal class AiTaskStore(private val cache: Path) {
             AiTaskPhase.valueOf(j.getString("phase")), AiProgress(p.getInt("completed"), p.getInt("limit"),
                 p.getInt("reused"), p.getLong("inputTokens"), p.getLong("outputTokens"), p.getString("message"),
                 p.optInt("scannedFiles"), p.optInt("totalFiles"), p.optLong("cachedTokens"), p.optLong("elapsedMillis"),
-                p.optInt("requests"), p.optBoolean("unknownUsage"), p.optJSONObject("price")?.let(AiPrice::read)),
+                p.optInt("requests"), p.optBoolean("unknownUsage"), p.optJSONObject("price")?.let(AiPrice::read),
+                billing = p.optJSONObject("billing")?.let(AiBillingCheckpoint::read)).also { it.billing?.validate(it) },
             plan, j.optString("error").takeIf { it.isNotBlank() }, j.optString("resultHash").takeIf { it.isNotBlank() },
             j.optJSONObject("binding")?.let { b -> AiTaskBinding(b.getString("selected"), b.getString("revision"),
                 b.optString("targetRevision").takeIf(String::isNotEmpty), b.optString("selectedKind"), b.optString("language", "jp")) }, j.optBoolean("upstream"),
             j.optString("resultTarget").takeIf(String::isNotEmpty), j.optBoolean("explicitEntries"),
-            j.optString("baseName").takeIf(String::isNotEmpty)).also {
+            j.optString("baseName").takeIf(String::isNotEmpty), j.optJSONObject("cacheConnection")?.let(AiCacheConnection::read)).also {
             require(it.id.matches(ID) && it.outputIdentity.matches(ID))
             latestSnapshot = it
         }
@@ -176,14 +177,15 @@ internal class AiTaskStore(private val cache: Path) {
             .put("officialVersion", task.officialVersion).put("phase", task.phase.name).put("error", task.error)
             .put("binding", task.binding?.let { JSONObject().put("selected", it.selected).put("revision", it.revision).put("targetRevision", it.targetRevision).put("selectedKind", it.selectedKind).put("language", it.language) })
             .put("upstream", task.upstream).put("resultTarget", task.resultTarget)
-            .put("explicitEntries", task.explicitEntries).put("baseName", task.baseName)
+            .put("explicitEntries", task.explicitEntries).put("baseName", task.baseName).put("cacheConnection", task.cacheConnection?.json())
             .put("resultHash", task.resultHash).put("config", JSONObject().put("endpoint", c.endpoint).put("model", c.model)
                 .put("missingOnly", c.missingOnly).put("limit", c.limit).put("includeMissing", c.includeMissing)
                 .put("includeReview", c.includeReview).put("prompt", c.prompt).put("stream", c.stream))
             .put("progress", JSONObject().put("completed", p.completed).put("limit", p.limit).put("reused", p.reused)
                 .put("inputTokens", p.inputTokens).put("outputTokens", p.outputTokens).put("message", p.message)
                 .put("scannedFiles", p.scannedFiles).put("totalFiles", p.totalFiles).put("cachedTokens", p.cachedTokens)
-                .put("elapsedMillis", p.elapsedMillis).put("requests", p.requests).put("unknownUsage", p.unknownUsage).put("price", p.price?.json()))
+                .put("elapsedMillis", p.elapsedMillis).put("requests", p.requests).put("unknownUsage", p.unknownUsage).put("price", p.price?.json())
+                .put("billing", p.billing?.validate(p)?.json()))
             .put("planSha256", planHash)
         TranslationSources.writeAtomic(marker, j.toString())
         latestSnapshot = task

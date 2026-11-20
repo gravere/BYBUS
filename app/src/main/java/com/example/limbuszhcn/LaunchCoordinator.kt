@@ -762,7 +762,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
     }
 
     fun resumeAi() {
-        if (state.busy || state.ai.task == null) return
+        if (state.busy || state.ai.settingsBusy || state.ai.running || state.ai.task == null) return
         synchronized(aiControl) { aiCancelled.set(false); aiDiscarded.set(false); aiCommitting = false }
         perform("继续 AI 翻译", preserveFailure = true, page = "ai-translation", foregroundAi = true) {
             runAiTask { stopGame(); aiTaskStore.forResume(translationSources, translationStorage(), aiCancelled::get) }.message
@@ -781,12 +781,13 @@ internal class LaunchCoordinator private constructor(application: Application) {
         val network = AiNetworkGuard(app)
         try {
             if (aiCancelled.get()) throw java.util.concurrent.CancellationException()
-            var task = prepare().let { it.copy(phase = AiTaskPhase.Running, error = null,
-                config = it.config.copy(stream = aiSettings.config().stream)) }
+            val preparedTask = prepare()
+            val connection = aiSettings.connection()
+            val nextPrice = runCatching { pricing.find(connection.config.endpoint, connection.config.model) }.getOrNull()
+            var task = preparedTask.withConnection(connection.config, nextPrice).copy(phase = AiTaskPhase.Running, error = null)
             task = aiTaskStore.write(task.copy(progress = task.progress.copy(
                 elapsedMillis = lastProgress.elapsedAt(clock()), sampledAt = clock())))
             PersistentDiagnosticLog.info(TAG, "AI task scope=${task.scopeLabel} limit=${task.config.limit} resumed=${task.plan != null}")
-            require(aiSettings.config().endpoint == task.config.endpoint) { "请把连接设置改回此任务使用的服务地址，再继续翻译" }
             publish { it.copy(ai = it.ai.copy(task = task, progress = task.progress)) }
             var lastInputProgress = 0L
             val (prepared, reference) = aiTaskStore.inputs(task, { done, total ->
@@ -800,7 +801,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
             }, aiCancelled::get)
             val reusable = aiTaskStore.committed()
             task = aiTaskStore.write(task.copy(progress = task.progress.freezeAt(clock())))
-            val client = AiTranslationClient(task.config, aiSettings.key(task.config.endpoint), AiHttpTransport { url, key, body ->
+            val client = AiTranslationClient(task.config, connection.key, AiHttpTransport { url, key, body ->
                 network.post(url, key, body, control) { waiting ->
                     val message = waiting ?: "等待翻译结果"
                     val total = task.plan?.total ?: lastProgress.limit
@@ -819,7 +820,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
                 publish { it.copy(ai = it.ai.copy(task = saved, progress = progress,
                     message = if (it.ai.stopping) it.ai.message else progress.message)) }
             }.run(task.baseId, prepared, task.outputIdentity, reuse = reusable, reference = reference, session = aiTaskStore,
-                price = runCatching { pricing.find(task.config.endpoint, task.config.model) }.getOrNull())
+                price = nextPrice)
             synchronized(aiControl) {
                 if (aiCancelled.get()) throw java.util.concurrent.CancellationException()
                 aiCommitting = true

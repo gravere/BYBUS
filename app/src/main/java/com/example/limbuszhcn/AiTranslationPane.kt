@@ -89,6 +89,8 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
         normalizedAiEndpoint(endpoint) == normalizedAiEndpoint(ai.config.endpoint)
     }.getOrDefault(false)
     val hasCredential = key.isNotBlank() || savedKeyAvailable
+    val connectionSaved = key.isBlank() && runCatching { normalizedAiEndpoint(endpoint) == normalizedAiEndpoint(ai.config.endpoint) }
+        .getOrDefault(false) && model.trim() == ai.config.model && stream == ai.config.stream
     val coverageReady = if (requestedEntries == null) state.coverage.current && coverageRequest != null && coverageRequest.count > 0 &&
         coverageRequest.fingerprint == state.coverage.fingerprint && coverageRequest.report.entryIndex == state.coverage.report?.entryIndex else
         !ai.library.stale && ai.library.report?.key == requestedEntries.report.key &&
@@ -100,9 +102,12 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
     DisposableEffect(Unit) { onDispose { actions.clearModels() } }
     Column(Modifier.imePadding(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         if (pending) {
-            AiTaskCard(state, actions.pauseAi, actions.resumeAi) { cancelTask = true }
+            AiTaskCard(state, actions.pauseAi, actions.resumeAi, { cancelTask = true }, onChangeApi = {
+                finishEditing()
+                if (ai.keys.isNotEmpty()) selectingKey = true else showConfiguration = true
+            }, connectionSaved = connectionSaved)
             TextButton({ showConfiguration = !showConfiguration }, modifier = Modifier.fillMaxWidth()) {
-                Text(if (showConfiguration) "收起翻译设置" else "查看翻译设置")
+                Text(if (showConfiguration) "收起翻译设置" else "连接与翻译设置")
             }
             if (!showConfiguration) AiSettingsFeedback(ai, config(), key)
         }
@@ -333,7 +338,8 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun AiTaskCard(state: LauncherUiState, onPause: () -> Unit, onResume: () -> Unit, onCancel: () -> Unit) {
+internal fun AiTaskCard(state: LauncherUiState, onPause: () -> Unit, onResume: () -> Unit, onCancel: () -> Unit,
+    onChangeApi: () -> Unit = {}, connectionSaved: Boolean = true) {
     val ai = state.ai
     val task = ai.task
     val progress = ai.progress
@@ -387,9 +393,22 @@ internal fun AiTaskCard(state: LauncherUiState, onPause: () -> Unit, onResume: (
         if (!backgroundAllowed) TextButton({ com.example.limbuszhcn.translation.AiBackgroundAccess.open(context) }) {
             Text("允许锁屏后继续翻译")
         }
+        if (!ai.running && !saving && task != null) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("续译 API", style = MaterialTheme.typography.labelSmall, color = C.Muted)
+                    Text(ai.keys.find { it.id == ai.activeKeyId }?.name ?: "未选择密钥", style = MaterialTheme.typography.bodyMedium)
+                    Text(ai.config.model, style = MaterialTheme.typography.bodySmall, color = C.Muted,
+                        maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                }
+                TextButton(onChangeApi, enabled = !state.busy && !ai.settingsBusy) { Text("更换 API", style = MaterialTheme.typography.labelMedium) }
+            }
+            if (!connectionSaved) Text("请先保存连接设置，再继续任务。", style = MaterialTheme.typography.bodySmall, color = C.Muted)
+        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (ai.running) FilledTonalButton(onPause, enabled = !ai.stopping && !saving, modifier = Modifier.weight(1f)) { Text("暂停") }
-            else Button(onResume, enabled = !state.busy && !ai.settingsBusy && ai.hasKey && task != null && !ai.recoveryIssue, modifier = Modifier.weight(1f)) { Text("继续") }
+            else Button(onResume, enabled = connectionSaved && !state.busy && !ai.settingsBusy && ai.hasKey && task != null && !ai.recoveryIssue, modifier = Modifier.weight(1f)) { Text("继续") }
             TextButton(onCancel, enabled = !saving && (ai.running || !state.busy), modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.textButtonColors(contentColor = C.Error)) { Text("取消任务") }
         }
@@ -405,7 +424,7 @@ internal fun AiTaskCard(state: LauncherUiState, onPause: () -> Unit, onResume: (
                 task?.let {
                     AiTaskMetaRow("汉化源", it.sourceName)
                     AiTaskMetaRow("翻译范围", it.scopeLabel)
-                    AiTaskMetaRow("任务模型", it.config.model)
+                    AiTaskMetaRow(if (ai.running) "任务模型" else "上次模型", it.config.model)
                     if (it.plan != null && it.plan.available > it.plan.total) AiTaskMetaRow("本次选择", "${it.plan.total} / ${it.plan.available} 条")
                 }
                 AiUsageSummary(progress, showElapsed = false)

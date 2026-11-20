@@ -16,7 +16,7 @@ internal data class AiProgress(val completed: Int = 0, val limit: Int = 0, val r
     val inputTokens: Long = 0, val outputTokens: Long = 0, val message: String = "",
     val scannedFiles: Int = 0, val totalFiles: Int = 0, val cachedTokens: Long = 0,
     val elapsedMillis: Long = 0, val requests: Int = 0, val unknownUsage: Boolean = false, val price: AiPrice? = null,
-    val sampledAt: Long = 0)
+    val sampledAt: Long = 0, val billing: AiBillingCheckpoint? = null)
 internal data class AiJobResult(val archive: Path, val identity: String, val progress: AiProgress, val remaining: Int,
     val carried: Int = 0, val aiEntryCount: Int? = null, val changes: AiChangeSummary? = null)
 
@@ -72,9 +72,9 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
         val previous = snapshot?.progress ?: AiProgress()
         var input = previous.inputTokens; var tokens = previous.outputTokens; var cached = previous.cachedTokens
         var requests = previous.requests; var unknown = previous.unknownUsage
-        val rate = previous.price ?: price
+        val rate = if (previous.requests > 0 || previous.billing != null) previous.price else previous.price ?: price
         fun measured(value: AiProgress): AiProgress { val now = clock(); return value.copy(inputTokens = input, outputTokens = tokens,
-            cachedTokens = cached, requests = requests, unknownUsage = unknown, price = rate,
+            cachedTokens = cached, requests = requests, unknownUsage = unknown, price = rate, billing = previous.billing,
             elapsedMillis = previous.elapsedMillis + (now - started).coerceAtLeast(0), sampledAt = now) }
         var lastPreparationAt = 0L
         fun emit(value: AiProgress) {
@@ -166,7 +166,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
                 "本次任务的翻译范围已变化，请取消任务后重新检查"
             }
             // Coverage is recomputed above. A new base release must not rebill unchanged missing text.
-            val cacheKey = digest("${c.endpoint}|${c.model}|$key|${digest(raw)}|${c.missingOnly}|${digest(c.prompt)}")
+            val cacheKey = aiResponseCacheKey(c, pendingTask?.cacheConnection, key, raw)
             val savedFile = root.resolve("cache/$cacheKey.json")
             val saved = readAiResponseCache(savedFile)
             val pending = mutableListOf<TranslationField>()
