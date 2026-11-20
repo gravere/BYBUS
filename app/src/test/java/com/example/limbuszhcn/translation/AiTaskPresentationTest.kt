@@ -4,6 +4,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AiTaskPresentationTest {
+    @Test fun savedNotificationActionsRequireTheSamePausedTaskAndAnIdleCoordinator() {
+        val task = AiTaskSnapshot("saved-task", AiConfig(), "zero", "来源", "output", "汉化", null, phase = AiTaskPhase.Paused)
+        assertTrue(canActOnPausedTask(task.id, task, false))
+        assertFalse(canActOnPausedTask("old-task", task, false))
+        assertFalse(canActOnPausedTask(task.id, task, true))
+        assertFalse(canActOnPausedTask(task.id, task.copy(phase = AiTaskPhase.Running), false))
+        assertFalse(canActOnPausedTask(task.id, null, false))
+    }
     @Test fun compactSurfacesDoNotReceiveBatchSentencesOrCounters() {
         val examples = mapOf("等待翻译结果 · 本批 1 条" to "等待回复", "正在翻译所选文本" to "正在翻译",
             "读取已保存的汉化 123/5678" to "准备翻译", "系统休眠限制联网，等待恢复" to "等待网络",

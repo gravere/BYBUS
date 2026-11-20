@@ -101,7 +101,7 @@ class AiTaskServiceTest {
         check(Build.HARDWARE in setOf("ranchu", "goldfish"))
         ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).setAction(AiTaskService.OPEN_TASK)).use { screen ->
             val manager = context.getSystemService(NotificationManager::class.java)
-            waitFor { manager.activeNotifications.none { it.id == 2781 || it.id == 4107 } }
+            waitFor { manager.activeNotifications.none { it.id == 2781 || it.id == 4107 || it.id == 4108 } }
             // An explicit launch gets foreground protection during the handoff, even before a guest exists.
             try {
                 screen.onActivity { com.lody.virtual.client.stub.KeepAliveService.requestStart(it) }
@@ -111,7 +111,7 @@ class AiTaskServiceTest {
                 // A stale service restart without a launch or live game must immediately release protection.
                 screen.onActivity { it.startForegroundService(Intent(it, com.lody.virtual.client.stub.KeepAliveService::class.java)) }
                 Thread.sleep(750)
-                waitFor { manager.activeNotifications.none { it.id == 2781 || it.id == 4107 } }
+                waitFor { manager.activeNotifications.none { it.id == 2781 || it.id == 4107 || it.id == 4108 } }
             } finally { context.stopService(Intent(context, com.lody.virtual.client.stub.KeepAliveService::class.java)) }
         }
     }

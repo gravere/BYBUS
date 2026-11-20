@@ -82,7 +82,9 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null && intent?.action == com.example.limbuszhcn.update.GameStores.UPDATE_ACTION)
             model.requestGameUpdates()
         if (savedInstanceState == null && intent?.action == com.example.limbuszhcn.translation.AiTaskService.OPEN_TASK)
-            model.requestAiTask(intent.getStringExtra(com.example.limbuszhcn.translation.AiTaskService.CANCEL_SESSION))
+            model.requestAiTask(intent.getStringExtra(com.example.limbuszhcn.translation.AiTaskService.CANCEL_SESSION),
+                intent.getStringExtra(com.example.limbuszhcn.translation.AiPausedTaskNotification.RESUME_TASK),
+                intent.getStringExtra(com.example.limbuszhcn.translation.AiPausedTaskNotification.CANCEL_TASK))
         launchContainerGameFromDebugIntent(intent)
         setContent {
             val state = model.state
@@ -408,7 +410,9 @@ class MainActivity : ComponentActivity() {
             androidx.lifecycle.ViewModelProvider(this)[LauncherViewModel::class.java].requestGameUpdates()
         if (intent.action == com.example.limbuszhcn.translation.AiTaskService.OPEN_TASK)
             androidx.lifecycle.ViewModelProvider(this)[LauncherViewModel::class.java].requestAiTask(
-                intent.getStringExtra(com.example.limbuszhcn.translation.AiTaskService.CANCEL_SESSION))
+                intent.getStringExtra(com.example.limbuszhcn.translation.AiTaskService.CANCEL_SESSION),
+                intent.getStringExtra(com.example.limbuszhcn.translation.AiPausedTaskNotification.RESUME_TASK),
+                intent.getStringExtra(com.example.limbuszhcn.translation.AiPausedTaskNotification.CANCEL_TASK))
     }
 
     /**

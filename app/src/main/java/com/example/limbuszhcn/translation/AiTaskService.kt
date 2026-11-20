@@ -209,6 +209,11 @@ class AiTaskService : Service() {
             }
         }
 
+        internal fun finish(task: AiTaskSnapshot?) {
+            close()
+            restorePaused(context, task)
+        }
+
         override fun close() {
             if (!closed.compareAndSet(false, true)) return
             ready.countDown()
@@ -228,18 +233,26 @@ class AiTaskService : Service() {
         const val OPEN_TASK = "io.github.gravere.bybus.OPEN_AI_TASK"
         const val CANCEL_SESSION = "confirm_cancel_session"
         private const val PAUSE = "io.github.gravere.bybus.PAUSE_AI_TASK"
-        private const val CHANNEL = "bybus-ai-translation"
+        internal const val CHANNEL = "bybus-ai-translation"
         private const val NOTIFICATION_ID = 4107
         private val lock = Any()
         @Volatile private var active: Session? = null
         internal fun hasActiveTask(): Boolean = active?.closed?.get() == false
         internal fun activeSessionId(): String? = active?.takeUnless { it.closed.get() }?.id
 
+        internal fun restorePaused(context: Context, task: AiTaskSnapshot?) = synchronized(lock) {
+            if (active?.closed?.get() == false) return@synchronized
+            runCatching { AiPausedTaskNotification.update(context, task) }.onFailure {
+                PersistentDiagnosticLog.warn("AiTaskService", "Cannot update saved task notification", it)
+            }
+        }
+
         internal fun start(context: Context, onPause: () -> Unit): Session = synchronized(lock) {
             check(active == null) { "已有翻译任务正在运行" }
             val application = context.applicationContext
             val session = Session(application, onPause)
             active = session
+            runCatching { AiPausedTaskNotification.update(application, null) }
             try { application.startForegroundService(Intent(application, AiTaskService::class.java)) }
             catch (error: Exception) {
                 PersistentDiagnosticLog.warn("AiTaskService", "Foreground launch rejected", error)

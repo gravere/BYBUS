@@ -22,6 +22,9 @@ internal data class AiCancelPrompt(val sessionId: String, val taskId: String?) {
         taskId != null && taskId == savedTaskId
 }
 
+internal fun canActOnPausedTask(requestedId: String, task: AiTaskSnapshot?, busy: Boolean): Boolean =
+    !busy && requestedId.isNotEmpty() && task?.id == requestedId && task.phase == AiTaskPhase.Paused
+
 internal fun formatTaskDuration(elapsedMillis: Long): String {
     val seconds = elapsedMillis.coerceAtLeast(0) / 1000
     return if (seconds < 3600) String.format(Locale.ROOT, "%02d:%02d", seconds / 60, seconds % 60)

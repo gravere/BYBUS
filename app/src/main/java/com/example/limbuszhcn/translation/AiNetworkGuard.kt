@@ -60,6 +60,8 @@ internal class AiNetworkGuard(private val context: Context) : AutoCloseable {
         val started = SystemClock.elapsedRealtime()
         var last = AiResponseProgress(AiResponseStage.Sending)
         var previousStage: AiResponseStage? = null
+        val request = org.json.JSONObject(body)
+        log("request-start streaming=${request.optBoolean("stream", false)} requestBytes=${body.toByteArray(Charsets.UTF_8).size} outputLimit=${request.optInt("max_completion_tokens", 0)}")
         try { return AiTranslationClient.post(url, key, body, control, progress = { current ->
             last = current
             if (previousStage != current.stage) {
