@@ -14,7 +14,8 @@ import java.util.zip.ZipOutputStream
 
 internal data class AiProgress(val completed: Int = 0, val limit: Int = 0, val reused: Int = 0,
     val inputTokens: Long = 0, val outputTokens: Long = 0, val message: String = "",
-    val scannedFiles: Int = 0, val totalFiles: Int = 0)
+    val scannedFiles: Int = 0, val totalFiles: Int = 0, val cachedTokens: Long = 0,
+    val elapsedMillis: Long = 0, val requests: Int = 0, val unknownUsage: Boolean = false, val price: AiPrice? = null)
 internal data class AiJobResult(val archive: Path, val identity: String, val progress: AiProgress, val remaining: Int,
     val carried: Int = 0, val aiEntryCount: Int? = null)
 
@@ -24,7 +25,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
     private val cancelled: () -> Boolean = { false }, private val progress: (AiProgress) -> Unit = {}) {
     fun run(baseId: String, base: PreparedTranslation?, identityOverride: String? = null,
         reuse: Map<String, String> = emptyMap(), reuseOnly: Boolean = false,
-        reference: PreparedTranslation? = base, session: AiTaskStore? = null): AiJobResult {
+        reference: PreparedTranslation? = base, session: AiTaskStore? = null, price: AiPrice? = null): AiJobResult {
         val c = config.validated()
         val pendingTask = session?.read()
         val preserveBase = c.missingOnly || pendingTask?.explicitEntries == true
@@ -64,12 +65,19 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
             } }.getOrNull()
         }
         fun candidate(field: TranslationField) = selected(field) && carriedText(field) == null
+        val started = System.nanoTime()
+        val previous = snapshot?.progress ?: AiProgress()
+        var input = previous.inputTokens; var tokens = previous.outputTokens; var cached = previous.cachedTokens
+        var requests = previous.requests; var unknown = previous.unknownUsage
+        val rate = previous.price ?: price
+        fun measured(value: AiProgress) = value.copy(inputTokens = input, outputTokens = tokens,
+            cachedTokens = cached, requests = requests, unknownUsage = unknown, price = rate,
+            elapsedMillis = previous.elapsedMillis + (System.nanoTime() - started) / 1_000_000)
         fun emit(value: AiProgress) {
-            snapshot = snapshot?.let { session!!.write(it.copy(progress = value)) }
-            progress(value)
+            val current = measured(value)
+            snapshot = snapshot?.let { session!!.write(it.copy(progress = current)) }
+            progress(current)
         }
-        val previousInput = snapshot?.progress?.inputTokens ?: 0L
-        val previousOutput = snapshot?.progress?.outputTokens ?: 0L
         val plan = if (session == null) null else snapshot?.plan ?: run {
             val selected = linkedMapOf<String, Set<String>>(); val hashes = linkedMapOf<String, String>()
             var available = 0; var chosen = 0
@@ -101,7 +109,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
             val target = output.resolve(key); Files.createDirectories(target.parent)
             Files.copy(base.directory.resolve(entry.cachePath), target, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
         }
-        var done = 0; var reused = 0; var carried = 0; var remaining = 0; var input = previousInput; var tokens = previousOutput; var totalBytes = 0L
+        var done = 0; var reused = 0; var carried = 0; var remaining = 0; var totalBytes = 0L
         val aiIds = hashSetOf<String>()
         val progressLimit = plan?.total ?: c.limit
         for (key in resources) {
@@ -134,7 +142,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
                 }
                 val chosen = selected(leaf)
                 if (!leaf.covered) {
-                    val publicText = shared[leaf.text]
+                    val publicText = leaf.sharedTranslation(shared)
                     if (publicText != null) leaf.apply(publicText) else leaf.clear()
                 }
                 chosen && (plan == null || leaf.id in plan.selected[key].orEmpty())
@@ -152,7 +160,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
             var reusedChanged = carriedInFile.isNotEmpty()
             carriedInFile.forEach { (id, value) -> saved.put(id, value) }
             fun responseKey(leaf: TranslationField): String {
-                val prior = leaf.translated ?: shared[leaf.text]?.takeIf { c.includeReview }
+                val prior = leaf.translated ?: leaf.sharedTranslation(shared)?.takeIf { c.includeReview }
                 return if (prior != null) leaf.id + "-" + digest(prior).take(16) else leaf.id
             }
             for (leaf in leaves) {
@@ -174,9 +182,9 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
             while (!reuseOnly && cursor < pending.size && done < c.limit) {
                 checkCancelled()
                 val batch = mutableListOf<TranslationField>(); var characters = 0
-                while (cursor < pending.size && batch.size < 8 && batch.size < c.limit - done) {
+                while (cursor < pending.size && batch.size < AI_REQUEST_ITEMS && batch.size < c.limit - done) {
                     val leaf = pending[cursor]
-                    if (characters + leaf.text.length > 6000 && batch.isNotEmpty()) break
+                    if (characters + leaf.text.length > AI_REQUEST_CHARACTERS && batch.isNotEmpty()) break
                     batch += leaf; characters += leaf.text.length; cursor++
                 }
                 emit(AiProgress(done, progressLimit, reused, input, tokens, "正在翻译 · 已完成 ${done + reused}/$progressLimit 条"))
@@ -186,6 +194,9 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
                         .sortedBy { kotlin.math.abs(it.index - position) }.take(3).sortedBy { it.index }
                         .map { it.value.text to it.value.translated.orEmpty() }
                     AiText(leaf.id, leaf.text, leaf.context, terminology.forText(leaf.text, leaf.context), neighbors)
+                }, onUsage = { usage ->
+                    input += usage.input; tokens += usage.output; cached += usage.cached; requests++; unknown = unknown || !usage.known
+                    emit(AiProgress(done, progressLimit, reused, message = "正在校验本批译文"))
                 })
                 for (leaf in batch) {
                     val value = result.translations.getValue(leaf.id)
@@ -196,7 +207,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
                     saved.put(savedId, protectTranslated(leaf.text, value))
                 }
                 TranslationSources.writeAtomic(savedFile, saved.toString())
-                done += batch.size; input += result.inputTokens; tokens += result.outputTokens
+                done += batch.size
                 emit(AiProgress(done, progressLimit, reused, input, tokens, "已完成 ${done + reused}/$progressLimit 条"))
             }
             remaining += pending.size - cursor
@@ -227,10 +238,10 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
             }
             AtomicFiles.move(pendingArchive, archive, true)
         } finally { Files.deleteIfExists(pendingArchive) }
-        val result = AiProgress(done, progressLimit, reused, input, tokens,
+        val result = measured(AiProgress(done, progressLimit, reused, input, tokens,
             if (reuseOnly) "已复用 $reused 条 AI 译文，另有 $remaining 条未覆盖"
             else if (done + reused == 0) "所选范围没有需要 AI 处理的文本"
-            else if (remaining > 0) "本批完成，还有 $remaining 条可继续翻译" else "翻译完成，下次启动时加载")
+            else if (remaining > 0) "本批完成，还有 $remaining 条可继续翻译" else "翻译完成，下次启动时加载"))
         emit(result)
         return AiJobResult(archive, identity, result, remaining, carried, aiIds.size)
     }

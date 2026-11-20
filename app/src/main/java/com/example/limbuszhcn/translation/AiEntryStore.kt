@@ -109,7 +109,7 @@ internal class AiEntryStore(private val cache: Path) {
         }
     }
     fun plan(request: AiEntryRequest, limit: Int, deletion: Boolean = false): AiTaskPlan {
-        require(limit in 1..1000)
+        require(limit in 1..MAX_AI_TASK_ENTRIES)
         val (where, args) = where(request.filter, request.ids)
         return open(request.report).use { db ->
             val count = db.rawQuery("SELECT count(*) FROM entries$where", args).use { it.moveToFirst(); it.getInt(0) }

@@ -1,0 +1,6 @@
+<resources>
+    <style name="BybusDialogAnimation">
+        <item name="android:windowEnterAnimation">@anim/bybus_dialog_enter</item>
+        <item name="android:windowExitAnimation">@anim/bybus_dialog_exit</item>
+    </style>
+</resources>

@@ -35,6 +35,21 @@ internal fun publishAiResult(sources: TranslationSources, tasks: AiTaskStore, ta
     tasks.write(task.copy(phase = AiTaskPhase.Applying, resultHash = hash, resultTarget = "ai-$id"))
     tasks.retainCommittedCache(result.identity, id)
     val name = if (unchanged) task.outputName else task.outputName.take(55) + " · 另存"
+    // A paused task can outlive replacement/deletion of its source. Inherit the
+    // provenance of the frozen revision, never the currently registered package.
+    val inputSource = if (tasks.hasFrozenSource()) tasks.frozenSource() else task.binding?.let { binding ->
+        TranslationSource(binding.selected, task.sourceName, "ai", binding.revision,
+            baseId = task.baseId, officialVersion = task.officialVersion)
+    }?.takeIf { task.binding?.selectedKind == "ai" }
+    val previousSource = inputSource?.takeIf { it.kind == "ai" }
+    val snapshots = AiBaseSnapshots(sources.cache)
+    val base = if (task.upstream) tasks.prepared("reference") ?: tasks.prepared("base")
+        else if (previousSource != null) snapshots.previous(previousSource) else tasks.prepared("base")
+    base?.let { snapshots.remember("ai-$id", hash, it) }
+    if (previousSource != null) {
+        val replaced = task.plan?.selected?.values?.flatten()?.toSet().orEmpty()
+        AiProvenanceExclusions.write(sources.cache, "ai-$id", hash, AiProvenanceExclusions.read(sources.cache, previousSource) - replaced)
+    }
     sources.addGenerated(result.archive, task.baseId, id, name, task.officialVersion, activate = unchanged, independent = !task.config.missingOnly || task.baseId == "global",
         language = task.binding?.language, aiEntryCount = result.aiEntryCount, baseName = task.baseName)
     return if (unchanged) AiPublication.Generated else AiPublication.SeparateCopy

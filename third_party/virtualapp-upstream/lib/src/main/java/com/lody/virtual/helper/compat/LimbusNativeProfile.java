@@ -77,6 +77,9 @@ public final class LimbusNativeProfile {
                 identity += "|" + path.length() + ":" + path + ":" + file.length() + ":" + file.lastModified();
             }
             if (cacheInstalled && identity.equals(cachedIdentity)) return cachedMatch;
+            String durableIdentity = cacheInstalled ? installedIdentity(host, identity, paths) : null;
+            Match saved = durableIdentity == null ? null : readInstalledMatch(host, durableIdentity);
+            if (saved != null) { cachedIdentity = identity; cachedMatch = saved; return saved; }
             try {
                 requireLibraryAlignment(paths, page, declaresProtection);
             } catch (java.io.IOException invalid) {
@@ -99,9 +102,11 @@ public final class LimbusNativeProfile {
                         "arm64-v8a", page, name -> "libcovault-appsec.so".equals(name) ? protection.sha256 : game.sha256);
                 if (exact.endsWith("-full")) result = new Match(exact, "");
             }
+            if (durableIdentity != null && !durableIdentity.equals(installedIdentity(host, identity, paths))) return NONE;
             if (cacheInstalled) {
                 cachedIdentity = identity;
                 cachedMatch = result;
+                if (durableIdentity != null && result.approved()) saveInstalledMatch(host, durableIdentity, result);
             }
             return result;
         } catch (Exception error) {
@@ -165,6 +170,51 @@ public final class LimbusNativeProfile {
         }
         if (result == null) throw new java.io.IOException("Missing native library");
         return result;
+    }
+
+    // Cache only immutable APKs installed by Android, never user-selected/staging archives.
+    private static String installedIdentity(Context host, String identity, ArrayList<String> paths) {
+        try {
+            StringBuilder value = new StringBuilder("installed-profile-v1|").append(identity)
+                    .append('|').append(Build.FINGERPRINT).append('|').append(host.getApplicationInfo().sourceDir);
+            for (String path : paths) {
+                File file = new File(path);
+                if (!file.getCanonicalPath().equals(path) || !path.startsWith("/data/app/") || file.canWrite()) return null;
+                android.system.StructStat stat = android.system.Os.stat(path);
+                if (stat.st_uid == android.os.Process.myUid()) return null;
+                value.append('|').append(stat.st_dev).append(':').append(stat.st_ino).append(':')
+                    .append(stat.st_ctime).append(':').append(stat.st_mtime).append(':').append(stat.st_size);
+            }
+            return LimbusNativeStructure.hex(MessageDigest.getInstance("SHA-256").digest(value.toString().getBytes("UTF-8")));
+        } catch (Exception unavailable) { return null; }
+    }
+    private static File profileCache(Context host) { return new File(host.getFilesDir(), "installed-native-profile.properties"); }
+    private static String receiptDigest(String key, String id, String layout) throws Exception {
+        return LimbusNativeStructure.hex(MessageDigest.getInstance("SHA-256").digest((key+"|"+id+"|"+layout).getBytes("UTF-8")));
+    }
+    private static Match readInstalledMatch(Context host, String identity) {
+        try {
+            File file = profileCache(host);
+            if (!file.isFile() || file.length() > 16384) return null;
+            Properties values = new Properties();
+            try (InputStream input = new java.io.FileInputStream(file)) { values.load(input); }
+            String id = values.getProperty("id", ""), layout = values.getProperty("layout", "");
+            if (!identity.equals(values.getProperty("identity")) || !id.matches("[a-zA-Z0-9._-]{1,64}") || layout.length() > 8192 ||
+                    !receiptDigest(identity,id,layout).equals(values.getProperty("digest"))) return null;
+            return new Match(id, layout);
+        } catch (Exception invalid) { return null; }
+    }
+    private static void saveInstalledMatch(Context host, String identity, Match match) {
+        File file = profileCache(host), temporary = new File(file.getPath()+".tmp");
+        try {
+            Properties values = new Properties(); values.setProperty("identity", identity);
+            values.setProperty("id", match.id); values.setProperty("layout", match.layout);
+            values.setProperty("digest", receiptDigest(identity,match.id,match.layout));
+            try (java.io.FileOutputStream output = new java.io.FileOutputStream(temporary)) {
+                values.store(output, "Verified installed APK structure"); output.getFD().sync();
+            }
+            if (!temporary.renameTo(file)) temporary.delete();
+        } catch (Exception ignored) { temporary.delete(); }
     }
 
     /* Pure legacy selector retained for regression coverage and independently approved old builds. */

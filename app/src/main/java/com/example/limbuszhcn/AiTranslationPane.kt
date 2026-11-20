@@ -97,7 +97,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
         if (!pending || showConfiguration) {
         if (requestedEntries != null) DetailCard {
             Text("${requestedEntries.report.name} · ${requestedEntries.report.language.displayName}", style = MaterialTheme.typography.titleSmall)
-            Text("已选 ${requestedEntries.count} 条，本批最多 ${minOf(limit, requestedEntries.count)} 条", style = MaterialTheme.typography.bodyMedium)
+            Text("已选 ${requestedEntries.count} 条，本次最多 ${minOf(limit, requestedEntries.count)} 条", style = MaterialTheme.typography.bodyMedium)
             Text("已有译文的所选条目会重新翻译，其他条目保留。", color = C.Muted, style = MaterialTheme.typography.bodySmall)
             if (!coverageReady) TextButton({ onEntries(requestedEntries.report.sourceId) }, enabled = enabled) { Text("重新读取并选择条目") }
         } else if (missing) CoverageSummary(state, onCoverage, actions.inspectCoverage)
@@ -188,7 +188,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
                         minLines = 6, maxLines = 12, shape = RoundedCornerShape(14.dp), textStyle = MaterialTheme.typography.bodyMedium,
                         colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = C.Panel, unfocusedContainerColor = C.Panel,
                             focusedBorderColor = C.Accent, unfocusedBorderColor = C.Line))
-                    Text("影响之后的翻译请求，已有译文不会自动重译。数值、格式和明确译名仍会校验。", style = MaterialTheme.typography.bodySmall)
+                    Text("保存后用于下一次翻译，已有译文保持不变。", style = MaterialTheme.typography.bodySmall)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilledTonalButton({ finishEditing(); actions.savePrompt(prompt) }, enabled = enabled && prompt.isNotBlank(), modifier = Modifier.weight(1f)) { Text("保存提示词") }
                         TextButton({ finishEditing(); resetPrompt = true }, enabled = enabled && prompt != AiTranslationPrompt.DEFAULT, modifier = Modifier.weight(1f)) { Text("恢复默认") }
@@ -196,20 +196,23 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
                 }
             }
         }
+        AiPricingCard(endpoint.trim(), model.trim(), ai, actions, enabled)
+        if (!pending && ai.progress.requests > 0) DetailCard { Text("上次翻译用量", style = MaterialTheme.typography.titleSmall); AiUsageSummary(ai.progress) }
         if (!pending) DetailCard {
             if (requestedEntries == null) {
             Text("翻译方式", style = MaterialTheme.typography.titleSmall)
             SourceTabs(listOf(true, false), missing, { if (it) "补充当前汉化" else "从零全局翻译" }, "翻译方式", { if (enabled) missing = it })
-            if (!missing) Text("不需要现成汉化包。读取已下载的游戏原文后，按类别和条目分批翻译。", style = MaterialTheme.typography.bodySmall, color = C.Muted)
+            if (!missing) Text("无需现成汉化包，可选择全部原文或指定类别。", style = MaterialTheme.typography.bodySmall, color = C.Muted)
             }
             if (missing && requestedEntries == null) {
                 Text("处理范围", style = MaterialTheme.typography.titleSmall)
                 SourceTabs(AiScope.entries.toList(), scope, { it.label }, "处理范围", { if (enabled) scope = it })
-                if (scope.review) Text("待核对不一定是漏译，请先查看原文与现有译文。处理结果另存，原包保留。", style = MaterialTheme.typography.bodySmall, color = C.Muted)
+                if (scope.review) Text("待核对：译文仍含日语或韩语。先查看明细，避免改掉刻意保留的用词。", style = MaterialTheme.typography.bodySmall, color = C.Muted)
             }
-            Text("单次最多翻译", style = MaterialTheme.typography.titleSmall)
-            SourceTabs(listOf(100, 500, 1000), limit, { "$it 条" }, "翻译上限", { if (enabled) limit = it })
-            Text("按已下载的游戏文本分批处理。测试和翻译会使用你的 API 额度，已完成的译文会保留。",
+            Text("本次翻译数量", style = MaterialTheme.typography.titleSmall)
+            SourceTabs(listOf(100, 1000, 10000, com.example.limbuszhcn.translation.MAX_AI_TASK_ENTRIES), limit,
+                { if (it == com.example.limbuszhcn.translation.MAX_AI_TASK_ENTRIES) "全部" else "$it 条" }, "翻译上限", { if (enabled) limit = it })
+            Text("“全部”会连续处理所选范围，可随时暂停。按 API 用量计费。",
                 color = C.Muted, style = MaterialTheme.typography.bodySmall)
         }
         }
@@ -238,20 +241,10 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
             Text("已生成的汉化", style = MaterialTheme.typography.titleSmall)
             SheetAction(Glyph.Translation, "恢复默认汉化", enabled && !state.sources.selected.isOfficial,
                 onClick = { finishEditing(); restoreDefault = true })
-            generated.groupBy { it.baseId ?: if (it.independent) "global" else it.id }.forEach { (baseId, versions) ->
-                val base = state.sources.sources.find { it.id == baseId }
-                val groupName = if (baseId == "global") "全局 AI 翻译" else base?.name ?: versions.first().baseName ?: "原始汉化包"
-                var expanded by androidx.compose.runtime.saveable.rememberSaveable(baseId) { mutableStateOf(false) }
-                val angle by androidx.compose.animation.core.animateFloatAsState(if (expanded) 270f else 90f, tween(160), label = "AI group disclosure")
+            com.example.limbuszhcn.translation.sourceFamilies(state.sources.sources).filter { it.versions.isNotEmpty() }.forEach { family ->
+                val versions = family.versions
                 HorizontalDivider(color = C.Line)
-                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { expanded = !expanded }
-                    .semantics { stateDescription = if (expanded) "已展开" else "已折叠" }.heightIn(min = 56.dp).padding(8.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (base != null) TranslationSourceIcon(base, Modifier.size(28.dp)) else LauncherGlyph(Glyph.Ai, C.Accent, Modifier.size(28.dp))
-                    Text("$groupName · ${versions.size} 个版本", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-                    LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(16.dp).rotate(angle))
-                }
-                AnimatedVisibility(expanded) { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SourceVersionDisclosure(family.id, "${family.name} · ${versions.size} 个版本", family.base) {
                 versions.sortedByDescending { it.updatedAtMillis }.forEach { source ->
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -268,23 +261,23 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
                         { finishEditing(); deleteAi = source }, enabled = enabled)
                 }
                 }
-                } }
+                }
             }
         }
     }
-    if (cancelTask) AlertDialog(onDismissRequest = { cancelTask = false }, title = { Text("取消翻译任务？") },
+    if (cancelTask) BybusDialog(onDismissRequest = { cancelTask = false }, title = { Text("取消翻译任务？") },
         text = { Text("删除本次任务及尚未发布的译文，之后不能继续。此前生成的汉化包会保留，已产生的 API 费用不会返还。") },
         confirmButton = { TextButton({ cancelTask = false; actions.cancelAi() },
             enabled = ai.task?.phase != com.example.limbuszhcn.translation.AiTaskPhase.Applying) { Text("取消并删除") } },
         dismissButton = { TextButton({ cancelTask = false }) { Text("保留任务") } })
-    if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("开始 AI 翻译？") },
+    if (confirm) BybusDialog(onDismissRequest = { confirm = false }, title = { Text("开始 AI 翻译？") },
         text = { val count = requestedEntries?.count ?: state.coverage.eligible(config())
-            Text("${if (requestedEntries != null) "所选文本" else if (missing) scope.label else "尚未完成的可译文本"}共 $count 条，本批最多 ${minOf(limit, count)} 条。将关闭游戏，使用你的 API 翻译并计费。${if (requestedEntries != null) "仅重译本批选中的条目，其余译文保留。" else "已完成的译文保留。"}") },
+            Text("${if (requestedEntries != null) "所选文本" else if (missing) scope.label else "尚未完成的可译文本"}共 $count 条，本次最多 ${minOf(limit, count)} 条。将关闭游戏，使用你的 API 翻译并计费。${if (requestedEntries != null) "仅翻译所选条目，其余译文保留。" else "已完成的译文保留。"}") },
         confirmButton = { TextButton({ confirm = false; reveal = false
             if (requestedEntries == null) actions.generateAi(config(), key) else actions.generateEntries(config(), key, requestedEntries)
         }, enabled = enabled && coverageReady) { Text("开始翻译") } },
         dismissButton = { TextButton({ confirm = false }) { Text("取消") } })
-    if (namingKey) AlertDialog(onDismissRequest = { namingKey = false }, title = { Text("保存密钥") },
+    if (namingKey) BybusDialog(onDismissRequest = { namingKey = false }, title = { Text("保存密钥") },
         text = { AiField("密钥名称", newKeyName, { if (it.length <= 48) newKeyName = it },
             "可选，例如「个人账号」", enabled, KeyboardType.Text) },
         confirmButton = { TextButton({ namingKey = false; actions.saveKey(endpoint, model, key, newKeyName) },
@@ -292,23 +285,23 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
         dismissButton = { TextButton({ namingKey = false }) { Text("取消") } })
     if (selectingKey) AiKeyPicker(ai.keys, ai.activeKeyId, enabled, actions,
         onRemove = { selectingKey = false; clear = it }, onDismiss = { selectingKey = false }, error = ai.message.takeIf { ai.failed })
-    clear?.let { item -> AlertDialog(onDismissRequest = { clear = null }, title = { Text("移除「${item.name}」？") },
+    clear?.let { item -> BybusDialog(onDismissRequest = { clear = null }, title = { Text("移除「${item.name}」？") },
         text = { Text("此密钥将从本机删除。") },
         confirmButton = { TextButton({ clear = null; actions.clearModels(); actions.clearKey(item.id) }, enabled = enabled) { Text("移除") } },
         dismissButton = { TextButton({ clear = null }) { Text("取消") } }) }
-    if (undo) AlertDialog(onDismissRequest = { undo = false }, title = { Text("撤回上次译文改动？") },
+    if (undo) BybusDialog(onDismissRequest = { undo = false }, title = { Text("撤回上次译文改动？") },
         text = { Text("将关闭游戏，恢复上次改动前的汉化和来源选择。游戏资源、账号与 API 设置会保留；已产生的 API 费用不会返还。") },
         confirmButton = { TextButton({ undo = false; actions.undoAi() }, enabled = enabled) { Text("撤回") } },
         dismissButton = { TextButton({ undo = false }) { Text("取消") } })
-    if (resetPrompt) AlertDialog(onDismissRequest = { resetPrompt = false }, title = { Text("恢复默认提示词？") },
+    if (resetPrompt) BybusDialog(onDismissRequest = { resetPrompt = false }, title = { Text("恢复默认提示词？") },
         text = { Text("将替换当前输入的自定义提示词，保存后生效。已有汉化包不会改变。") },
         confirmButton = { TextButton({ resetPrompt = false; prompt = AiTranslationPrompt.DEFAULT }, enabled = enabled) { Text("恢复") } },
         dismissButton = { TextButton({ resetPrompt = false }) { Text("取消") } })
-    if (restoreDefault) AlertDialog(onDismissRequest = { restoreDefault = false }, title = { Text("恢复默认汉化？") },
+    if (restoreDefault) BybusDialog(onDismissRequest = { restoreDefault = false }, title = { Text("恢复默认汉化？") },
         text = { Text("将关闭游戏并切回都市零协会，下次启动检查正式汉化更新。已生成的 AI 汉化会保留，可随时重新选择；游戏数据与账号不变。") },
         confirmButton = { TextButton({ restoreDefault = false; actions.select("zero") }, enabled = enabled) { Text("恢复") } },
         dismissButton = { TextButton({ restoreDefault = false }) { Text("取消") } })
-    deleteAi?.let { source -> AlertDialog(onDismissRequest = { deleteAi = null }, title = { Text("删除 AI 汉化？") },
+    deleteAi?.let { source -> BybusDialog(onDismissRequest = { deleteAi = null }, title = { Text("删除 AI 汉化？") },
         text = { Text("删除“${source.name}”及其生成缓存，不能撤回。${if (source.id == state.sources.selectedId) "将关闭游戏并切回都市零协会。" else "当前使用的汉化不变。"}游戏数据、账号、其他汉化源与 API 设置会保留。") },
         confirmButton = { TextButton({ deleteAi = null; actions.removeAi(source.id) }, enabled = enabled) { Text("删除") } },
         dismissButton = { TextButton({ deleteAi = null }) { Text("取消") } }) }
@@ -334,19 +327,20 @@ internal fun AiTaskCard(state: LauncherUiState, onPause: () -> Unit, onResume: (
             Text("已完成 $done / $total 条", style = MaterialTheme.typography.titleSmall)
             LinearProgressIndicator(progress = { if (total == 0) 1f else done.toFloat() / total },
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = "翻译任务进度" })
-            if (task.plan.available > total) Text("所选范围共 ${task.plan.available} 条，本批处理 $total 条", color = C.Muted, style = MaterialTheme.typography.bodySmall)
+            if (task.plan.available > total) Text("所选范围共 ${task.plan.available} 条，本次处理 $total 条", color = C.Muted, style = MaterialTheme.typography.bodySmall)
         } else {
             if (ai.running) LinearProgressIndicator(Modifier.fillMaxWidth())
             Text(if (progress.totalFiles > 0) "核对文件 ${progress.scannedFiles}/${progress.totalFiles}，尚未开始新一批翻译"
                 else "正在核对所选范围，翻译条数将在核对后显示", style = MaterialTheme.typography.bodyMedium)
         }
+        AiUsageSummary(progress)
         ai.message?.let { Text(it, color = if (ai.failed) C.Error else C.Muted, style = MaterialTheme.typography.bodySmall) }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (ai.running) FilledTonalButton(onPause, enabled = !ai.stopping && !saving, modifier = Modifier.weight(1f)) { Text("暂停") }
             else Button(onResume, enabled = !state.busy && !ai.settingsBusy && ai.hasKey && task != null && !ai.recoveryIssue, modifier = Modifier.weight(1f)) { Text("继续翻译") }
             OutlinedButton(onCancel, enabled = !saving && (ai.running || !state.busy), modifier = Modifier.weight(1f)) { Text("取消任务") }
         }
-        if (!ai.running) Text("已保存进度，关闭应用后也可继续。继续只处理本批剩余内容。", color = C.Muted, style = MaterialTheme.typography.bodySmall)
+        if (!ai.running) Text("进度已保存，关闭应用后也能继续。", color = C.Muted, style = MaterialTheme.typography.bodySmall)
     }
 }
 

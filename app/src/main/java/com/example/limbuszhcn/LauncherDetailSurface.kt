@@ -46,11 +46,13 @@ import com.example.limbuszhcn.ui.theme.LauncherColors as C
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
-    onDismiss: () -> Unit, onBack: (() -> Unit)? = null,
+    onDismiss: () -> Unit, onBack: (() -> Unit)? = null, compactContent: Boolean = false,
     navigation: @Composable (String) -> Unit = {},
     footer: @Composable (String) -> Unit = {}, content: @Composable (String) -> Unit) {
-    // Keep every detail page at the same height; long menus scroll within the panel.
-    val panelHeight = layout.panelHeight.dp
+    // Loaded pages share a stable height; first-load placeholders use a compact bounded panel.
+    val panelHeight by androidx.compose.animation.core.animateDpAsState(
+        if (compactContent) minOf(layout.panelHeight.dp, 240.dp) else layout.panelHeight.dp,
+        tween(240), label = "detail content height")
     val pageStates = rememberSaveableStateHolder()
     val density = LocalDensity.current.density
     val scope = rememberCoroutineScope()
@@ -99,7 +101,7 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
                     Text(when (active) {
                         "tools" -> "设置与工具"; "status" -> "运行状态"; "error" -> "准备未完成"
                         "project" -> "翻译项目"; "coverage" -> "汉化覆盖"; "updates" -> "游戏更新"; "app-update" -> "应用更新"
-                        "translation" -> "汉化源与更新"; "ai-translation" -> "AI 翻译"; "ai-entries" -> "翻译条目"; "clear-data" -> "清除数据"
+                        "translation" -> "汉化源与更新"; "ai-translation" -> "AI 翻译"; "ai-entries" -> "翻译条目"; "ai-base-update" -> "更新原包译文"; "clear-data" -> "清除数据"
                         "repair" -> "修复"; "resource-preparation" -> "准备游戏资源"; "google" -> "Google 账号与付款"; else -> "关于"
                     }, style = MaterialTheme.typography.headlineSmall)
                 }

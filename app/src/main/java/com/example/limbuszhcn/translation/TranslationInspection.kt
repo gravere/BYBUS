@@ -33,7 +33,7 @@ internal class TranslationInspection(private val storage: GameStorage, private v
     fun sharedTranslations(): Map<String, String> {
         val prepared = base ?: return emptyMap()
         val wanted = hashSetOf<String>(); var bytes = 0L
-        resources.forEach { key ->
+        resources.filterNot(NoticeTexts::isResource).forEach { key ->
             checkCancelled()
             readable(key)?.let { r ->
                 bytes += r.raw.length * 2L
@@ -43,7 +43,7 @@ internal class TranslationInspection(private val storage: GameStorage, private v
         }
         if (wanted.isEmpty()) return emptyMap()
         val compiler = TranslationIndexCompiler()
-        resources.filter { it in entries }.forEach { key ->
+        resources.filter { it in entries && !NoticeTexts.isResource(it) }.forEach { key ->
             checkCancelled()
             readableResource {
                 val bytes = requireNotNull(storage.read(storage.rootPath().trimEnd('/') + "/$key"))

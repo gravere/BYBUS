@@ -45,7 +45,11 @@ internal data class TranslationActions(
     val downloadAiOriginals: () -> Unit = {},
     val aiEntries: AiEntryReader = { _, _, _, _ -> error("无法读取明细") },
     val generateEntries: (AiConfig, String, AiEntryRequest) -> Unit = { _, _, _ -> },
-    val deleteEntries: (AiEntryRequest) -> Unit = {}
+    val deleteEntries: (AiEntryRequest) -> Unit = {},
+    val loadPrice: (String, String, Boolean) -> Unit = { _, _, _ -> },
+    val savePrice: (String, String, AiPrice?) -> Unit = { _, _, _ -> },
+    val inspectBaseUpdate: (String) -> Unit = {}, val applyBaseUpdate: (AiBaseRequest) -> Unit = {},
+    val baseChanges: (AiBaseReport, AiBaseChangeKind?, Int, android.os.CancellationSignal) -> AiBasePage = { _, _, _, _ -> error("明细尚未就绪") }
 )
 
 private val packageDateFormat = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm")
@@ -88,7 +92,7 @@ internal fun TranslationSourceIcon(source: TranslationSource, modifier: Modifier
 }
 
 @Composable
-internal fun TranslationSourcesPane(state: LauncherUiState, actions: TranslationActions, onProject: () -> Unit = {}, onCoverage: () -> Unit = {}, onAi: () -> Unit) {
+internal fun TranslationSourcesPane(state: LauncherUiState, actions: TranslationActions, onProject: () -> Unit = {}, onCoverage: () -> Unit = {}, onBaseUpdate: (String) -> Unit = {}, onAi: () -> Unit) {
     val selected = state.sources.selected
     var select by remember { mutableStateOf<String?>(null) }
     var remove by remember(selected.id) { mutableStateOf(false) }
@@ -97,8 +101,7 @@ internal fun TranslationSourcesPane(state: LauncherUiState, actions: Translation
     var name by remember(selected.id) { mutableStateOf(selected.name) }
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         if (state.busy && state.taskPage == "translation") DetailCard {
-            Text(state.stage, style = MaterialTheme.typography.titleSmall)
-            LinearProgressIndicator(Modifier.fillMaxWidth())
+            OperationProgress(state)
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             TranslationSourceIcon(selected)
@@ -109,27 +112,19 @@ internal fun TranslationSourcesPane(state: LauncherUiState, actions: Translation
             }
         }
         CoverageSummary(state, onCoverage, actions.inspectCoverage)
-        DetailActionSection("汉化源") {
-            Column(Modifier.selectableGroup()) {
-            state.sources.sources.forEachIndexed { index, source ->
-                if (index > 0) DetailActionDivider()
-                val action = if (source.isOfficial) Modifier.clickable(role = Role.Button, onClick = onProject)
-                    else Modifier.selectable(selected = selected.id == source.id, enabled = !state.busy,
-                        role = Role.RadioButton, onClick = { if (selected.id != source.id) select = source.id })
-                Row(Modifier.fillMaxWidth().then(action).heightIn(min = 64.dp).padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    TranslationSourceIcon(source)
-                    Column(Modifier.weight(1f)) {
-                        Text(source.name, style = MaterialTheme.typography.titleSmall)
-                        Text(state.packageTimeLabel(source) ?: source.label, color = C.Muted, style = MaterialTheme.typography.bodySmall)
+        sourceFamilies(state.sources.sources).forEach { family ->
+            DetailActionSection(if (family.base == null) family.name else "汉化源") {
+                family.base?.let { source -> SourceSelectionRow(source, state, onProject) {
+                    if (selected.id != source.id) select = source.id
+                } }
+                if (family.versions.isNotEmpty()) {
+                    if (family.base != null) DetailActionDivider()
+                    SourceVersionDisclosure(family.id, "AI 版本 · ${family.versions.size}") {
+                        family.versions.forEach { source ->
+                            SourceSelectionRow(source, state, onProject) { if (selected.id != source.id) select = source.id }
+                        }
                     }
-                    androidx.compose.animation.Crossfade(selected.id == source.id, modifier = Modifier.size(20.dp),
-                        animationSpec = androidx.compose.animation.core.tween(140), label = "source selection") { checked ->
-                        if (checked) LauncherGlyph(Glyph.Check, C.Accent, Modifier.fillMaxSize())
-                    }
-                    if (source.isOfficial) LauncherGlyph(Glyph.Chevron, C.Muted, Modifier.size(17.dp), "查看零协项目状态")
                 }
-            }
             }
         }
         DetailActionSection("添加") {
@@ -152,6 +147,10 @@ internal fun TranslationSourcesPane(state: LauncherUiState, actions: Translation
             if (selected.kind == "ai") {
                 DetailActionDivider()
                 SheetAction(Glyph.Ai, "继续 AI 翻译", navigation = true, onClick = onAi)
+                if (!selected.independent && selected.baseId != "global") {
+                    DetailActionDivider()
+                    SheetAction(Glyph.Sync, "更新原包译文", !state.busy, navigation = true, onClick = { onBaseUpdate(selected.id) })
+                }
             }
             DetailActionDivider()
             SheetAction(Glyph.Export, "导出汉化包", !state.busy && (!selected.isOfficial || state.sources.officialDownloaded),
@@ -169,17 +168,17 @@ internal fun TranslationSourcesPane(state: LauncherUiState, actions: Translation
             select = null; actions.select(source.id)
         }
     }
-    if (remove) AlertDialog(onDismissRequest = { remove = false }, title = { Text(if (selected.isOfficial) "卸载汉化文件？" else "删除此汉化源？") },
+    if (remove) BybusDialog(onDismissRequest = { remove = false }, title = { Text(if (selected.isOfficial) "卸载汉化文件？" else "删除此汉化源？") },
         text = { Text(if (selected.isOfficial) "将关闭游戏并移除零协汉化文件，保留来源入口，下次使用时会重新下载。游戏资源、账号和其他汉化源会保留。"
             else "将关闭游戏并删除“${selected.name}”，切回都市零协会。重新使用需再次导入；游戏资源、账号和其他汉化源会保留。") },
         confirmButton = { TextButton({ remove = false; actions.remove(selected.id) }, enabled = !state.busy,
             colors = ButtonDefaults.textButtonColors(contentColor = C.Error)) { Text(if (selected.isOfficial) "卸载" else "删除") } },
         dismissButton = { TextButton({ remove = false }) { Text("取消") } })
-    if (resetIcon) AlertDialog(onDismissRequest = { resetIcon = false }, title = { Text("恢复默认图标？") },
+    if (resetIcon) BybusDialog(onDismissRequest = { resetIcon = false }, title = { Text("恢复默认图标？") },
         text = { Text("将移除此来源的自定义图标，汉化内容会保留。") },
         confirmButton = { TextButton({ resetIcon = false; actions.resetIcon(selected.id) }, enabled = !state.busy) { Text("恢复") } },
         dismissButton = { TextButton({ resetIcon = false }) { Text("取消") } })
-    if (rename) AlertDialog(onDismissRequest = { rename = false }, title = { Text("汉化名称") },
+    if (rename) BybusDialog(onDismissRequest = { rename = false }, title = { Text("汉化名称") },
         text = { OutlinedTextField(name, { if (it.length <= 64) name = it }, singleLine = true) },
         confirmButton = { TextButton({ rename = false; actions.rename(selected.id, name) }, enabled = !state.busy && name.isNotBlank()) { Text("保存") } },
         dismissButton = { TextButton({ rename = false }) { Text("取消") } })
@@ -188,7 +187,7 @@ internal fun TranslationSourcesPane(state: LauncherUiState, actions: Translation
 @Composable
 internal fun TranslationSourceSwitchDialog(source: TranslationSource, enabled: Boolean,
     onDismiss: () -> Unit, onConfirm: () -> Unit) {
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("切换汉化源？") },
+    BybusDialog(onDismissRequest = onDismiss, title = { Text("切换汉化源？") },
         text = { Text("将关闭游戏，下次启动使用“${source.name}”。游戏资源和账号会保留。") },
         confirmButton = { TextButton(onConfirm, enabled = enabled) { Text("切换") } },
         dismissButton = { TextButton(onDismiss) { Text("取消") } })

@@ -24,10 +24,10 @@ import com.example.limbuszhcn.ui.theme.LauncherColors as C
 internal fun AiUpstreamDialog(offer: AiUpstreamOffer, hasKey: Boolean, enabled: Boolean,
     onChoice: (AiUpdateChoice?) -> Unit, onConfigure: () -> Unit) {
     var choice by remember(offer.sourceId, offer.revision, offer.version) { mutableStateOf(AiUpdateChoice.Reuse) }
-    AlertDialog(onDismissRequest = { if (enabled) onChoice(null) }, containerColor = C.Panel,
+    BybusDialog(onDismissRequest = { if (enabled) onChoice(null) }, containerColor = C.Panel,
         title = { Text(if (offer.baseVersion == null) "更新汉化" else "零协汉化有更新") },
         text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("选择更新后的汉化方式，旧 AI 包会保留。", style = MaterialTheme.typography.bodyMedium)
                 Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(AiUpdateChoice.Official to "只更新零协", AiUpdateChoice.Reuse to "更新零协，保留 AI",
@@ -89,7 +89,7 @@ private fun AiUpdateOption(title: String, detail: String, selected: Boolean, ena
 
 @Composable
 internal fun AiLaunchProgressDialog(state: LauncherUiState, onCancel: () -> Unit, onDetails: () -> Unit = {}) {
-    AlertDialog(onDismissRequest = onDetails, title = { Text("正在准备 AI 汉化") },
+    BybusDialog(onDismissRequest = onDetails, title = { Text("正在准备 AI 汉化") },
         text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             LinearProgressIndicator(Modifier.fillMaxWidth())
             Text(state.ai.message.orEmpty())

@@ -86,16 +86,21 @@ class LimbusZhCNApplication : Application() {
     private class LimbusVirtualConfig(
         private val hostPackageName: String
     ) : SettingConfig() {
+        private var notices: com.example.limbuszhcn.translation.NoticeRuntime? = null
         private var liveTranslation: com.example.limbuszhcn.container.LiveResourceTranslator? = null
 
         override fun prepareLimbusTranslationResources(): Boolean {
             liveTranslation = com.example.limbuszhcn.container.LiveTranslationStore(
                 VirtualCore.get().context.filesDir.toPath().resolve("translation-cache")).open()
+            val cache = VirtualCore.get().context.filesDir.toPath().resolve("translation-cache")
+            notices = com.example.limbuszhcn.translation.NoticeRuntime(cache, com.example.limbuszhcn.container.LiveTranslationStore(cache).read())
             return liveTranslation != null
         }
 
         override fun translateLimbusResource(resource: String, original: String): String? =
             liveTranslation?.translate(resource, original)
+
+        override fun translateLimbusNotice(language: String, original: String): String? = notices?.translate(language, original)
 
         override fun onLimbusTextLanguage(language: String) {
             com.example.limbuszhcn.container.GameLanguageStore(

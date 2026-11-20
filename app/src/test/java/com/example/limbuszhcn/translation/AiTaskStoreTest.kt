@@ -18,7 +18,7 @@ class AiTaskStoreTest {
     @get:Rule val temp = TemporaryFolder()
     private val cache get() = temp.root.toPath().resolve("cache")
     private val localize get() = temp.root.toPath().resolve("Localize")
-    private fun document(text: (Int) -> String, count: Int = 12) = JSONObject().put("dataList", JSONArray().apply {
+    private fun document(text: (Int) -> String, count: Int = 28) = JSONObject().put("dataList", JSONArray().apply {
         repeat(count) { put(JSONObject().put("id", it).put("content", text(it))) }
     }).toString()
     private fun fixture(): Pair<TranslationSource, PreparedTranslation> {
@@ -49,7 +49,7 @@ class AiTaskStoreTest {
 
     @Test fun timeoutThenProcessRecoveryKeepsExactReviewScopeAndDoesNotRebillCompletedBatch() {
         val (source, base) = fixture()
-        val config = AiConfig(includeMissing = false, includeReview = true, limit = 10)
+        val config = AiConfig(includeMissing = false, includeReview = true, limit = 26)
         val tasks = AiTaskStore(cache); val task = tasks.create(config, source, base, base)
         val seen = mutableListOf<String>(); var calls = 0
         val http = client(config, seen) { if (++calls == 2) throw SocketTimeoutException() }
@@ -57,39 +57,39 @@ class AiTaskStoreTest {
             AiTranslationJob(cache, ContainerWorkspaceStorage(localize), config, http)
                 .run(source.id, tasks.prepared("base"), task.outputIdentity, session = tasks)
         }
-        assertEquals(8, tasks.read()!!.progress.completed)
-        assertEquals(10, tasks.read()!!.plan!!.total)
-        assertEquals(12, tasks.read()!!.plan!!.available) // The missing file must never enter a Review task.
+        assertEquals(24, tasks.read()!!.progress.completed)
+        assertEquals(26, tasks.read()!!.plan!!.total)
+        assertEquals(28, tasks.read()!!.plan!!.available) // The missing file must never enter a Review task.
         val recovered = AiTaskStore(cache)
         assertEquals(AiTaskPhase.Paused, recovered.recover(TranslationSources(cache).read())!!.phase)
         assertEquals(2, calls) // Merely loading/recovering a task cannot request anything.
         val resumed = AiTranslationJob(cache, ContainerWorkspaceStorage(localize), recovered.read()!!.config, client(config, seen))
             .run(source.id, recovered.prepared("base"), task.outputIdentity, session = recovered)
-        assertEquals(10, seen.size); assertTrue(seen.all { it.startsWith("確認する") })
-        assertEquals(8, resumed.progress.reused); assertEquals(2, resumed.progress.completed)
+        assertEquals(26, seen.size); assertTrue(seen.all { it.startsWith("確認する") })
+        assertEquals(24, resumed.progress.reused); assertEquals(2, resumed.progress.completed)
         assertEquals(2, resumed.remaining)
         assertFalse(String(Files.readAllBytes(recovered.root.resolve("task.json"))).contains("non-secret-fixture"))
     }
 
     @Test fun pauseAfterAResponsePersistsItAndResumeHonorsTheOriginalLimit() {
-        val (source, base) = fixture(); val config = AiConfig(includeMissing = false, includeReview = true, limit = 10)
+        val (source, base) = fixture(); val config = AiConfig(includeMissing = false, includeReview = true, limit = 26)
         val tasks = AiTaskStore(cache); val task = tasks.create(config, source, base, base)
         var paused = false; val seen = mutableListOf<String>()
         assertThrows(CancellationException::class.java) {
             AiTranslationJob(cache, ContainerWorkspaceStorage(localize), config, client(config, seen) { paused = true }, { paused })
                 .run(source.id, tasks.prepared("base"), task.outputIdentity, session = tasks)
         }
-        assertEquals(8, tasks.read()!!.progress.completed)
+        assertEquals(24, tasks.read()!!.progress.completed)
         paused = false
         val fresh = AiTaskStore(cache); fresh.recover(TranslationSources(cache).read())
         val result = AiTranslationJob(cache, ContainerWorkspaceStorage(localize), fresh.read()!!.config, client(config, seen))
             .run(source.id, fresh.prepared("base"), task.outputIdentity, session = fresh)
-        assertEquals(10, result.progress.completed + result.progress.reused)
-        assertEquals(10, seen.size)
+        assertEquals(26, result.progress.completed + result.progress.reused)
+        assertEquals(26, seen.size)
     }
 
     @Test fun changedOriginalIsRejectedBeforeSendingAnyResumedRequest() {
-        val (source, base) = fixture(); val config = AiConfig(includeMissing = false, includeReview = true, limit = 10)
+        val (source, base) = fixture(); val config = AiConfig(includeMissing = false, includeReview = true, limit = 26)
         val tasks = AiTaskStore(cache); val task = tasks.create(config, source, base, base)
         var paused = false
         assertThrows(CancellationException::class.java) {

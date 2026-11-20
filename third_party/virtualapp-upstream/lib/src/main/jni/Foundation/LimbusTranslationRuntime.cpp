@@ -55,6 +55,7 @@ pthread_mutex_t g_font_state_lock = PTHREAD_MUTEX_INITIALIZER;
 char g_active_pointer[PATH_MAX] = {};
 bool g_live_resources = false;
 jmethodID g_resource_bridge_method = nullptr;
+jmethodID g_notice_bridge_method = nullptr;
 jmethodID g_language_observer_method = nullptr;
 std::unordered_map<int32_t, const char *> g_language_codes;
 std::atomic<int32_t> g_observed_language{INT32_MIN};
@@ -288,6 +289,12 @@ tmp_set_text_fn g_original_choice_set_total = nullptr;
 tmp_set_text_fn g_original_choice_set_text = nullptr;
 tmp_set_text_fn g_original_notice_set_data = nullptr;
 const void *g_notice_body_field = nullptr;
+struct NoticeTextState {
+    int32_t id; std::string translated;
+    NoticeTextState(int32_t value = 0, std::string text = {}) : id(value), translated(std::move(text)) {}
+};
+std::unordered_map<void *, NoticeTextState> g_notice_texts;
+void prepare_notice_body(void *target);
 const void *g_choice_content_field = nullptr;
 tmp_parse_input_fn g_original_choice_clear = nullptr;
 tmp_parse_input_fn g_original_choice_disable = nullptr;
@@ -1983,6 +1990,28 @@ bool is_announcer_description(void *instance) {
     return expected && invoke_int_getter(g_object_get_instance_id_info, instance, &current) && current == expected;
 }
 
+// Only the verified NoticeUI body owns this identity. Never add notice prose to global terms/font catalogues.
+bool is_notice_text(void *instance, void *managed = nullptr, bool require_translation = false) {
+    pthread_mutex_lock(&g_font_state_lock);
+    const bool registered = g_notice_texts.count(instance) != 0;
+    pthread_mutex_unlock(&g_font_state_lock);
+    if (!registered) return false;
+    int32_t id = 0;
+    if (!invoke_int_getter(g_object_get_instance_id_info, instance, &id) || !id) return false;
+    std::string text;
+    if (require_translation) {
+        if (!managed || !g_string_length || !g_string_chars) return false;
+        auto length = g_string_length(managed);
+        if (length < 1 || length > 256 * 1024 || !utf16_to_utf8(g_string_chars(managed), length, &text)) return false;
+    }
+    pthread_mutex_lock(&g_font_state_lock);
+    auto found = g_notice_texts.find(instance);
+    const bool valid = found != g_notice_texts.end() && found->second.id == id &&
+        (!require_translation || (!found->second.translated.empty() && found->second.translated == text));
+    pthread_mutex_unlock(&g_font_state_lock);
+    return valid;
+}
+
 bool read_flow_text(void *managed, std::string *text) {
     if (!managed || !g_string_length || !g_string_chars) return false;
     const auto length = g_string_length(managed);
@@ -3063,9 +3092,11 @@ void *prepare_tmp_text(void *instance, void *managed_text, bool restore_untransl
             if (needs_fallback) ensure_tmp_font();
             // Event typewriter fragments are already translated. Do not run a
             // second glossary pass over an in-progress sentence.
+            const bool notice = is_notice_text(instance);
+            const bool notice_proof = notice && is_notice_text(instance, managed_text, true);
             const bool choice_proof = is_choice_text(instance, managed_text);
-            replacement = choice_proof ? managed_text : translate_managed_string(managed_text);
-            if (replacement == managed_text) {
+            replacement = (notice || choice_proof) ? managed_text : translate_managed_string(managed_text);
+            if (!notice && replacement == managed_text) {
                 const std::string status = limbus_ui_labels::translate_status(source);
                 if (!status.empty() && ensure_tmp_font()) {
                     void *label = new_managed_string(status);
@@ -3079,11 +3110,11 @@ void *prepare_tmp_text(void *instance, void *managed_text, bool restore_untransl
             if (replacement != managed_text && !ensure_tmp_font()) {
                 return managed_text;
             }
-            replacement = apply_tmp_component_layout_markup(instance, replacement);
+            if (!notice) replacement = apply_tmp_component_layout_markup(instance, replacement);
             if (instance == g_language_font_update_target) return replacement;
-            bool translated = is_language_font_target(instance) || choice_proof || is_translated_managed_string(replacement);
+            bool translated = notice ? notice_proof : (is_language_font_target(instance) || choice_proof || is_translated_managed_string(replacement));
             std::vector<void *> font_targets;
-            if (!translated) translated = is_translated_tmp_fragment(instance, replacement, &font_targets);
+            if (!translated && !notice) translated = is_translated_tmp_fragment(instance, replacement, &font_targets);
             if (translated && ensure_tmp_font() && g_tmp_get_font != nullptr &&
                 g_tmp_set_font != nullptr) {
                 if (font_targets.empty()) font_targets.push_back(instance);
@@ -3119,6 +3150,7 @@ void *prepare_tmp_text(void *instance, void *managed_text, bool restore_untransl
             } else if (!translated && restore_untranslated) {
                 restore_tmp_component_state(instance);
             }
+            if (notice) prepare_notice_body(instance);
             if (replacement != managed_text) {
                 uint64_t hits = __atomic_add_fetch(&g_translation_hits, 1, __ATOMIC_RELAXED);
                 if (hits == 1 || hits % 500 == 0) {
@@ -3138,13 +3170,14 @@ void replacement_tmp_set_font(void *instance, void *requested, const void *metho
     if (refreshing || !instance || instance == g_language_font_update_target ||
         !g_font_ready || requested == g_tmp_font_asset) return;
     void *text = invoke_object_getter(g_tmp_get_text_info, instance);
-    if (!text || !(is_language_font_target(instance) || is_translated_managed_string(text) || is_choice_text(instance, text) ||
+    if (!text || !(is_language_font_target(instance) || is_translated_managed_string(text) || is_choice_text(instance, text) || is_notice_text(instance, text, true) ||
                   is_translated_tmp_fragment(instance, text))) return;
     struct Guard { bool &value; Guard(bool &v) : value(v) { value = true; } ~Guard() { value = false; } } guard(refreshing);
     prepare_tmp_text(instance, text, false);
 }
 
 void finalize_tmp_text(void *instance, void *managed_text) {
+    if (is_notice_text(instance)) { prepare_notice_body(instance); return; }
     if (instance == nullptr || instance == g_language_font_update_target || managed_text == nullptr ||
         !(is_translated_managed_string(managed_text) || is_choice_text(instance, managed_text))) {
         return;
@@ -3301,20 +3334,60 @@ void replacement_tmp_set_text(void *instance, void *managed_text, const void *me
 
 void prepare_notice_body(void *target) {
     if (!target) return;
-    // Layout-only: server notices are not in the translation catalogue. This
-    // must never grant font provenance or alter their text, links or colours.
+    // Run before SetData measures preferredHeight, including after TMP restores an original style.
+    // No font size, link, colour or unrelated component is changed.
     invoke_bool_setter(g_tmp_set_word_wrapping_info, target, true);
     int32_t mode = 0;
     if (invoke_int_getter(g_tmp_get_overflow_mode_info, target, &mode) && (mode == 1 || mode == 3))
         invoke_int_setter(g_tmp_set_overflow_mode_info, target, 0);
 }
 
+void *translated_notice_body(void *source) {
+    if (!source || !g_live_resources || !g_notice_bridge_method || !g_string_length || !g_string_chars || !g_string_new_utf16) return source;
+    const auto code = g_language_codes.find(g_observed_language.load());
+    const int32_t length = g_string_length(source);
+    if (code == g_language_codes.end() || length <= 0 || length > 128 * 1024) return source;
+    auto retained = limbus_managed::retain(g_gc, source);
+    if (!retained) return source;
+    LimbusResourceJniScope jni;
+    if (!jni.valid()) return source;
+    auto language = jni.env->NewStringUTF(code->second);
+    auto original = jni.env->NewString(reinterpret_cast<const jchar *>(g_string_chars(retained->get())), length);
+    if (!language || !original || jni.env->ExceptionCheck()) return source;
+    auto result = static_cast<jstring>(jni.env->CallStaticObjectMethod(nativeEngineClass, g_notice_bridge_method, language, original));
+    if (jni.env->ExceptionCheck() || !result) return source;
+    const auto size = jni.env->GetStringLength(result);
+    if (size <= 0 || size > 256 * 1024 || !ensure_tmp_font()) return source;
+    const auto chars = jni.env->GetStringChars(result, nullptr);
+    if (!chars) return source;
+    auto translated = g_string_new_utf16(reinterpret_cast<const uint16_t *>(chars), size);
+    jni.env->ReleaseStringChars(result, chars);
+    return translated ? translated : source;
+}
+
 void replacement_notice_set_data(void *instance, void *source, const void *method) {
     void *target = nullptr;
     if (instance && g_notice_body_field && g_field_get_value)
         g_field_get_value(instance, g_notice_body_field, &target);
+    void *replacement = source;
+    limbus_managed::Ref notice_root;
+    int32_t id = 0;
+    if (target && invoke_int_getter(g_object_get_instance_id_info, target, &id) && id) {
+        replacement = translated_notice_body(source);
+        if (replacement != source) {
+            notice_root = limbus_managed::retain(g_gc, replacement);
+            if (!notice_root) replacement = source;
+        }
+        std::string translated;
+        if (replacement != source && g_string_length && g_string_chars)
+            utf16_to_utf8(g_string_chars(replacement), g_string_length(replacement), &translated);
+        pthread_mutex_lock(&g_font_state_lock);
+        if (g_notice_texts.size() >= 256 && !g_notice_texts.count(target)) g_notice_texts.erase(g_notice_texts.begin());
+        g_notice_texts[target] = {id, translated};
+        pthread_mutex_unlock(&g_font_state_lock);
+    }
     prepare_notice_body(target);
-    g_original_notice_set_data(instance, source, method);
+    g_original_notice_set_data(instance, replacement, method);
     prepare_notice_body(target);
 }
 
@@ -3593,7 +3666,7 @@ bool load_live_font_catalogue() {
     unsigned char magic[sizeof(expected)] = {};
     uint32_t count = 0;
     bool valid = read_exact(file, magic, sizeof(magic)) && memcmp(magic, expected, sizeof(magic)) == 0 &&
-            read_u32(file, &count) && count > 0 && count <= kMaxEntries;
+            read_u32(file, &count) && count <= kMaxEntries;
     std::unordered_map<std::string, std::string> labels;
     size_t bytes = 0;
     for (uint32_t n = 0; valid && n < count; ++n) {
@@ -5352,6 +5425,7 @@ void configure_limbus_translation_runtime(const char *active_index_pointer, bool
     const bool loaded = load_active_index();
     g_live_resources = false;
     g_resource_bridge_method = nullptr;
+    g_notice_bridge_method = nullptr;
     g_language_observer_method = nullptr;
     g_observed_language.store(INT32_MIN);
     if (live_resources) {
@@ -5360,6 +5434,9 @@ void configure_limbus_translation_runtime(const char *active_index_pointer, bool
                 "translateLimbusResource", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;");
         g_live_resources = jni.valid() && g_resource_bridge_method && load_live_font_catalogue();
         if (jni.valid()) {
+            g_notice_bridge_method = jni.env->GetStaticMethodID(nativeEngineClass,
+                    "translateLimbusNotice", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;");
+            if (jni.env->ExceptionCheck()) jni.env->ExceptionClear();
             g_language_observer_method = jni.env->GetStaticMethodID(nativeEngineClass,
                     "observeLimbusTextLanguage", "(Ljava/lang/String;)V");
             if (jni.env->ExceptionCheck()) jni.env->ExceptionClear();

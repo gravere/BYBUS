@@ -48,8 +48,9 @@ private data class LaunchContent(val title: String, val symbol: LaunchSymbol, va
 
 @Composable
 internal fun LaunchButton(action: LaunchAction, enabled: Boolean, step: Int,
-    animated: Boolean, feedback: String? = null, status: String = "", onClick: () -> Unit) {
+    animated: Boolean, feedback: String? = null, status: String = "", progressText: String = "", progressFraction: Float? = null, onClick: () -> Unit) {
     val busy = action.busy
+    val fraction by animateFloatAsState(progressFraction ?: 0f, tween(200), label = "launch phase progress")
     val confirmed = feedback != null
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -114,6 +115,12 @@ internal fun LaunchButton(action: LaunchAction, enabled: Boolean, step: Int,
                         drawPath(path, if (index < activeStep) accent else if (index == activeStep)
                             accent.copy(alpha = .3f) else line, style = stroke)
                     }
+                    if (progressFraction != null) {
+                        highlight.reset()
+                        val start = activeStep * span + gap / 2
+                        measure.getSegment(start, start + (span - gap) * fraction.coerceIn(0f, 1f), highlight)
+                        drawPath(highlight, accent, style = stroke)
+                    }
                     // The highlight loops only within the current real phase, never faking completion.
                     val sweep = (phase.value * 3f) % 1f
                     val length = span - gap
@@ -139,6 +146,7 @@ internal fun LaunchButton(action: LaunchAction, enabled: Boolean, step: Int,
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
             colors = ButtonDefaults.buttonColors(containerColor = buttonColor, contentColor = C.Ink,
                 disabledContainerColor = C.Panel, disabledContentColor = if (busy) C.Ink else C.Muted)) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
             val content = LaunchContent(feedback ?: action.title, if (confirmed) LaunchSymbol.Complete else action.symbol, busy)
             AnimatedContent(content, Modifier.fillMaxWidth(), contentAlignment = Alignment.Center,
                 transitionSpec = {
@@ -152,6 +160,9 @@ internal fun LaunchButton(action: LaunchAction, enabled: Boolean, step: Int,
                     Text(item.title, Modifier.weight(1f, fill = false), textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.labelLarge)
                 }
+            }
+            if (busy && progressText.isNotBlank()) Text(progressText, style = MaterialTheme.typography.labelMedium,
+                color = C.Muted, textAlign = TextAlign.Center)
             }
         }
     }

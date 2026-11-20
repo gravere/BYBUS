@@ -81,13 +81,13 @@ class AiEntryWorkflowTest {
         assertEquals(3, AiTranslationReuse.collect(cache, current, sources.prepare(current), storage).size)
     }
     @Test fun explicitResumeUsesOnlyItsNewResponsesAndKeepsFrozenLimit() {
-        fixture(12); start(selected = plan(limit = 10))
+        fixture(28); start(selected = plan(limit = 26), settings = config.copy(limit = 26))
         assertThrows(CancellationException::class.java) { run(failAfter = 1) }
-        assertEquals(8, tasks.read()!!.progress.completed)
+        assertEquals(24, tasks.read()!!.progress.completed)
         tasks.recover(sources.read())
         val done = run()
-        assertEquals(8, done.progress.reused); assertEquals(2, done.progress.completed); assertEquals(2, done.remaining)
-        assertEquals(10, finish(done).aiEntryCount)
+        assertEquals(24, done.progress.reused); assertEquals(2, done.progress.completed); assertEquals(2, done.remaining)
+        assertEquals(26, finish(done).aiEntryCount)
     }
     @Test fun retranslatingOneEntryPreservesUnprovenArchiveTextWhenOldCacheIsMissing() {
         fixture(); start(); val old = finish(run())
@@ -104,6 +104,27 @@ class AiEntryWorkflowTest {
         fixture(); start(); fixture(4)
         assertThrows(IllegalArgumentException::class.java) { run() }
         assertEquals(0, calls)
+    }
+    @Test fun pausedPublicationKeepsTheInputRevisionWhenItsRegisteredPackageWasReplaced() {
+        fixture(); start(); val old = finish(run())
+        val base = sources.prepare(old)
+        val fields = TranslationInspection(storage, base).read("jp/JP_MainUIText.json").fields
+        val snapshots = AiBaseSnapshots(cache)
+        snapshots.remember(old.id, old.revision, base)
+        AiProvenanceExclusions.write(cache, old.id, old.revision, setOf(fields[0].id))
+        start(old, plan(setOf(fields[2].id)))
+        val result = run("重译")
+        sources.addGenerated(result.archive, old.baseId!!, old.id.removePrefix("ai-"), old.name,
+            old.officialVersion, independent = true, language = old.language)
+        val replaced = sources.read().selected
+        snapshots.remember(replaced.id, replaced.revision, sources.prepare(replaced))
+        AiProvenanceExclusions.write(cache, replaced.id, replaced.revision, setOf(fields[1].id))
+        val resumed = AiTaskStore(cache)
+        assertEquals(AiPublication.SeparateCopy, publishAiResult(sources, resumed, resumed.read()!!, result))
+        val copy = sources.read().sources.single { it.id == resumed.read()!!.resultTarget }
+        assertEquals(base.manifest.archiveSha256, snapshots.previous(copy)!!.manifest.archiveSha256)
+        assertEquals(setOf(fields[0].id), AiProvenanceExclusions.read(cache, copy))
+        assertEquals(replaced.id, sources.read().selectedId)
     }
     @Test fun generatedNamesAndMetadataRemainUniqueAcrossRestart() {
         fixture(); start(); val first = finish(run())

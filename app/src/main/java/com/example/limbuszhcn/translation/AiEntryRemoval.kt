@@ -1,6 +1,7 @@
 package com.example.limbuszhcn.translation
 
 import com.example.limbuszhcn.container.TranslationSnapshot
+import com.example.limbuszhcn.update.sha256
 import com.example.limbuszhcn.gamefs.GameStorage
 import java.nio.file.Files
 import java.nio.file.Path
@@ -50,6 +51,9 @@ internal object AiEntryRemoval {
                 sources.remove(source.id)
                 return true
             }
+            val revision = output.sha256()
+            AiProvenanceExclusions.write(cache, source.id, revision, AiProvenanceExclusions.read(cache, source))
+            AiBaseSnapshots(cache).previous(source)?.let { AiBaseSnapshots(cache).remember(source.id, revision, it) }
             sources.addGenerated(output, source.baseId ?: "global", source.id.removePrefix("ai-"), source.name, source.officialVersion,
                 activate = sources.read().selectedId == source.id, independent = source.independent, language = request.report.language.code,
                 aiEntryCount = request.report.aiCount - plan.total, baseName = source.baseName)

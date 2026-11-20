@@ -25,7 +25,8 @@ class ContainerPatchInstaller(
     private val storage: GameStorage,
     private val installedApkPaths: () -> List<String> = { emptyList() },
     private val releaseMetadata: (() -> String)? = null,
-    private val onProgress: (String) -> Unit = {}
+    private val onProgress: (String) -> Unit = {},
+    private val onCount: (String, Int, Int) -> Unit = { _, _, _ -> }
 ) {
     /**
      * 从指定 GitHub Releases 页面获取最新汉化包并激活完整运行时索引。
@@ -134,7 +135,8 @@ class ContainerPatchInstaller(
             }
         }
         onProgress("准备首次加载汉化")
-        LiveTranslationStore(cacheRoot).prepare(patchDirectory, manifest, forceRebuild) { target ->
+        LiveTranslationStore(cacheRoot).prepare(patchDirectory, manifest, forceRebuild,
+            progress = { done, total -> onCount("读取汉化包", done, total) }) { target ->
             japaneseSourceFor(storage.resolvePatchTarget(target))
                 .removePrefix(storage.rootPath().replace('\\', '/').trimEnd('/') + "/")
         }
@@ -142,7 +144,7 @@ class ContainerPatchInstaller(
         val active = measureStartup("active_index_validation") { store.activeManifest() }
         val buildCache = TranslationBuildCache(indexRoot().resolve("build-receipt.properties"))
         val localizeRoot = storage.rootPath().replace('\\', '/').trimEnd('/')
-        val inputs = manifest.entries.mapNotNull { entry ->
+        val inputs = manifest.entries.filterNot { com.example.limbuszhcn.translation.NoticeTexts.isResource(it.targetPath) }.mapNotNull { entry ->
             val source = patchDirectory.resolve(entry.cachePath).toAbsolutePath().normalize()
             if (!source.isRegularFile() || !source.name.endsWith(".json", ignoreCase = true)) null
             else TranslationBuildCache.Input(source, japaneseSourceFor(storage.resolvePatchTarget(entry.targetPath)))
@@ -188,13 +190,15 @@ class ContainerPatchInstaller(
         onProgress("适配更新后的游戏文本")
         val rebuildStarted = System.nanoTime()
         var activeFiles = 0
-        val candidateFiles = manifest.entries.count { it.cachePath.endsWith(".json", ignoreCase = true) }
+        val candidateFiles = inputs.size
         val availableByLocale = SOURCE_TEXT_LOCALES.associateWith { 0 }.toMutableMap()
         var readableFiles = 0
         var pairedFiles = 0
         val indexCompiler = TranslationIndexCompiler()
         val startupCompiler = TranslationIndexCompiler()
-        inputs.forEach { input ->
+        val pairCache = TranslationPairCache(cacheRoot.resolve("paired-records"), !forceRebuild)
+        inputs.forEachIndexed { inputNumber, input ->
+            if (inputNumber % 8 == 0) onCount("构建汉化", inputNumber, inputs.size)
             val source = input.translation
             val japaneseSource = input.originalPath
             val translation by lazy(LazyThreadSafetyMode.NONE) { source.readText(Charsets.UTF_8) }
@@ -218,20 +222,28 @@ class ContainerPatchInstaller(
                 val original = storage.readAtMost(sourcePath, LiveTranslationStore.MAX_JSON_BYTES.toInt()) ?: continue
                 readableFiles += 1
                 val text = original.toString(Charsets.UTF_8)
-                val pair = runCatching { TranslationJsonPairer.pair(sourcePath, text, translation) }
-                    .getOrNull() ?: continue
+                var sufficientlyPaired = false
+                val records = runCatching { pairCache.records(sourcePath, text, translation) {
+                    val pair = TranslationJsonPairer.pair(sourcePath, text, translation)
+                    val all = pair.records.toMutableList()
+                    if (pair.matchedFields < pair.sourceFields) {
+                        val matched = pair.records.mapTo(hashSetOf()) { it.id to it.field }
+                        TranslationJsonPairer.pair(sourcePath, text, text).records.filter { (it.id to it.field) !in matched }.let(all::addAll)
+                    }
+                    // A marker records pairing coverage without leaking into the runtime index.
+                    all + TranslationIndexRecord("", "", "__pair_quality", if (pair.records.isNotEmpty()) "1" else "0", if (pair.sufficientlyPaired) "1" else "0")
+                } }.getOrNull() ?: continue
                 pairedFiles += 1
-                if (pair.sufficientlyPaired) availableByLocale[locale] = availableByLocale.getValue(locale) + 1
-                addRecords(pair.records)
-                hasRecords = hasRecords || pair.records.isNotEmpty()
-                if (pair.matchedFields < pair.sourceFields) {
-                    val matched = pair.records.mapTo(hashSetOf()) { it.id to it.field }
-                    runCatching { TranslationJsonPairer.pair(sourcePath, text, text) }.getOrNull()?.records
-                        ?.filter { (it.id to it.field) !in matched }?.let(::addRecords)
-                }
+                sufficientlyPaired = records.lastOrNull()?.takeIf { it.field == "__pair_quality" }?.translation == "1"
+                if (sufficientlyPaired) availableByLocale[locale] = availableByLocale.getValue(locale) + 1
+                val actual = records.filterNot { it.field == "__pair_quality" }
+                addRecords(actual)
+                hasRecords = hasRecords || records.lastOrNull()?.source == "1"
             }
             if (hasRecords) activeFiles += 1
         }
+        onCount("构建汉化", inputs.size, inputs.size)
+        onProgress("整理汉化索引")
         // The production path is runtime-only. Stale merged-file redirects must not survive an
         // upgrade from the earlier experiment.
         Files.deleteIfExists(activeRedirectFile())
@@ -274,6 +286,7 @@ class ContainerPatchInstaller(
             patchDirectory.resolve(ACTIVE_MARKER_FILE).writeText("runtime-index-jp-ui\n", Charsets.UTF_8)
             store.activeManifest()?.let { buildCache.save(fingerprint, it) }
             store.clearBootstrap()
+            pairCache.prune()
         } else if (!resourcesReady) {
             runCatching { android.util.Log.w(
                 TAG,
