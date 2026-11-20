@@ -20,6 +20,7 @@ internal fun AiPricingCard(endpoint: String, model: String, ai: AiUiState, actio
     val current = ai.pricing.takeIf { it.endpoint == endpoint && it.model == model }
     val price = current?.price
     var editing by remember(endpoint, model) { mutableStateOf(false) }
+    var choosing by remember(endpoint, model) { mutableStateOf(false) }
     var input by remember(endpoint, model, editing) { mutableStateOf(price?.input?.toString().orEmpty()) }
     var output by remember(endpoint, model, editing) { mutableStateOf(price?.output?.toString().orEmpty()) }
     var cached by remember(endpoint, model, editing) { mutableStateOf(price?.cached?.toString().orEmpty()) }
@@ -32,17 +33,26 @@ internal fun AiPricingCard(endpoint: String, model: String, ai: AiUiState, actio
     DetailCard {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("模型价格", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-            TextButton({ editing = true }, enabled = enabled) { Text(if (price?.manual == true) "修改价格" else "手动填写") }
             ActionIconButton(Glyph.Refresh, "同步模型价格", { actions.loadPrice(endpoint, model, true) }, enabled = enabled, busy = current?.loading == true)
         }
-        if (price == null) Text(if (current?.loading == true) "正在查询价格…" else "价格未知，可手动填写单价", color = C.Muted, style = MaterialTheme.typography.bodyMedium)
+        if (price == null) Text(if (current?.loading == true) "正在查询价格…" else "未自动匹配，可选择目录价格或手动填写", color = C.Muted, style = MaterialTheme.typography.bodySmall)
         else {
             Text("输入 ${price.input} · 输出 ${price.output} ${price.currency} / 百万 Token", style = MaterialTheme.typography.bodyMedium)
             price.cached?.let { Text("缓存输入 $it ${price.currency} / 百万 Token", style = MaterialTheme.typography.bodySmall, color = C.Muted) }
-            Text(if (price.manual) "手动价格" else "Models.dev · ${java.text.SimpleDateFormat("MM-dd HH:mm", Locale.ROOT).format(java.util.Date(price.fetchedAt))} · 参考价格", color = C.Muted, style = MaterialTheme.typography.bodySmall)
+            Text(price.reference?.let { "所选参考：$it" } ?: if (price.manual) "手动填写的参考价" else "Models.dev · ${java.text.SimpleDateFormat("MM-dd HH:mm", Locale.ROOT).format(java.util.Date(price.fetchedAt))} · 参考价格", color = C.Muted, style = MaterialTheme.typography.bodySmall)
         }
         current?.message?.let { Text(it, color = C.Muted, style = MaterialTheme.typography.bodySmall) }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton({ choosing = true }, enabled = enabled, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                Text("选择价格", style = MaterialTheme.typography.labelMedium)
+            }
+            TextButton({ editing = true }, enabled = enabled, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                Text("手动填写", style = MaterialTheme.typography.labelMedium)
+            }
+        }
     }
+    if (choosing) AiPricePicker(model, current, enabled, onRefresh = { actions.loadPrice(endpoint, model, true) },
+        onDismiss = { choosing = false }, onSelect = { actions.savePrice(endpoint, model, it.selectedPrice()); choosing = false })
     if (editing) BybusDialog(onDismissRequest = { editing = false }, title = { Text("自定义模型价格") }, text = {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             val fieldColors = OutlinedTextFieldDefaults.colors(unfocusedBorderColor = C.Line,

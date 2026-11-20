@@ -51,6 +51,6 @@ internal fun publishAiResult(sources: TranslationSources, tasks: AiTaskStore, ta
         AiProvenanceExclusions.write(sources.cache, "ai-$id", hash, AiProvenanceExclusions.read(sources.cache, previousSource) - replaced)
     }
     sources.addGenerated(result.archive, task.baseId, id, name, task.officialVersion, activate = unchanged, independent = !task.config.missingOnly || task.baseId == "global",
-        language = task.binding?.language, aiEntryCount = result.aiEntryCount, baseName = task.baseName)
+        language = task.binding?.language, aiEntryCount = result.aiEntryCount, baseName = task.baseName, summary = result.changes)
     return if (unchanged) AiPublication.Generated else AiPublication.SeparateCopy
 }

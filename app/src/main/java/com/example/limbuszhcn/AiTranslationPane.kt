@@ -66,7 +66,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
     var cancelTask by remember { mutableStateOf(false) }
     var showConfiguration by remember { mutableStateOf(false) }
     var clear by remember { mutableStateOf<AiKeyChoice?>(null) }
-    var undo by remember { mutableStateOf(false) }
+    var undo by remember { mutableStateOf<com.example.limbuszhcn.translation.AiUndoPoint?>(null) }
     var prompt by remember(ai.config.prompt) { mutableStateOf(ai.config.prompt) }
     var editPrompt by remember { mutableStateOf(false) }
     var resetPrompt by remember { mutableStateOf(false) }
@@ -183,7 +183,9 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
                 TextButton({ finishEditing(); reveal = false; actions.saveAi(config(), key, true) },
                     enabled = enabled && hasCredential, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text(if (ai.settingsBusy) "处理中" else "测试翻译") }
             }
-            ai.message?.takeUnless { pending }?.let {
+            if (!pending && ai.testResult != null) {
+                ai.testResult.takeIf { it.matches(config(), key) }?.let { AiTestFeedback(it) }
+            } else ai.message?.takeUnless { pending }?.let {
                 Text(it, color = if (ai.failed) C.Error else C.Accent, style = MaterialTheme.typography.bodySmall)
             }
         }
@@ -253,8 +255,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
                 })
             }
         }
-        if (state.sources.undo != null) OutlinedButton({ finishEditing(); undo = true }, enabled = enabled,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("撤回上次译文改动") }
+        state.sources.undo?.let { point -> AiUndoCard(point, state.sources, enabled) { finishEditing(); undo = point } }
         val generated = state.sources.sources.filter { it.kind == "ai" }
         if (generated.isNotEmpty() && requestedEntries == null) DetailCard {
             Text("已生成的汉化", style = MaterialTheme.typography.titleSmall)
@@ -309,10 +310,10 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
         text = { Text("此密钥将从本机删除。") },
         confirmButton = { TextButton({ clear = null; actions.clearModels(); actions.clearKey(item.id) }, enabled = enabled) { Text("移除") } },
         dismissButton = { TextButton({ clear = null }) { Text("取消") } }) }
-    if (undo) BybusDialog(onDismissRequest = { undo = false }, title = { Text("撤回上次译文改动？") },
-        text = { Text("将关闭游戏，恢复上次改动前的汉化和来源选择。游戏资源、账号与 API 设置会保留；已产生的 API 费用不会返还。") },
-        confirmButton = { TextButton({ undo = false; actions.undoAi() }, enabled = enabled) { Text("撤回") } },
-        dismissButton = { TextButton({ undo = false }) { Text("取消") } })
+    undo?.let { point -> BybusDialog(destructive = true, onDismissRequest = { undo = null }, title = { Text("撤回这次改动？") },
+        text = { AiUndoConfirmation(point, state.sources) },
+        confirmButton = { TextButton({ undo = null; actions.undoAi(point) }, enabled = enabled && state.sources.undo == point) { Text("撤回") } },
+        dismissButton = { TextButton({ undo = null }) { Text("取消") } }) }
     if (resetPrompt) BybusDialog(destructive = true, onDismissRequest = { resetPrompt = false }, title = { Text("恢复默认提示词？") },
         text = { Text("将替换当前输入的自定义提示词，保存后生效。已有汉化包不会改变。") },
         confirmButton = { TextButton({ resetPrompt = false; prompt = AiTranslationPrompt.DEFAULT }, enabled = enabled) { Text("恢复") } },

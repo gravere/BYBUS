@@ -125,6 +125,8 @@ class AiScopeUndoTest {
                     JSONObject().put("content",JSONObject().put("translations",rows).toString())))).toString()
             })
             val result = AiTranslationJob(cache.resolve(scope.name),ContainerWorkspaceStorage(root),config,client).run(base.id,store.prepare(base))
+            assertEquals(expected.size, result.changes!!.total)
+            assertTrue(result.changes.examples.none { it.before == "开始" })
             assertEquals(expected,seen)
             java.util.zip.ZipFile(result.archive.toFile()).use { zip ->
                 val rows = JSONObject(zip.getInputStream(zip.getEntry("jp/JP_MainUIText.json")).bufferedReader().readText()).getJSONArray("dataList")
