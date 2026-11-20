@@ -21,6 +21,14 @@ class AiStreamingResponseTest {
     private fun read(raw: String, type: String? = "text/event-stream", progress: (AiResponseProgress) -> Unit = {}) =
         readAiHttpResponse(ByteArrayInputStream(raw.toByteArray()), type, progress)
 
+    @Test fun heartbeatsAndEmptyRoleChunksDoNotPretendTheTranslationHasArrived() {
+        val states = mutableListOf<AiResponseProgress>()
+        read(": ping\n\n" + chunk("") + ": keep-alive\n\n" + chunk(translated) + chunk(finish = "stop") + "data: [DONE]\n\n") { states += it }
+        assertTrue(states.filter { it.events <= 1 }.all { it.stage == AiResponseStage.Waiting })
+        assertTrue(states.any { it.events >= 2 && it.stage == AiResponseStage.Receiving })
+        assertTrue(states.any { it.bytes > 0 && it.stage == AiResponseStage.Waiting })
+    }
+
     @Test fun streamedChunksPassExistingValidationAndUsageWithEveryLineEnding() {
         for (ending in listOf("\n", "\r\n", "\r")) {
             val stages = mutableListOf<AiResponseStage>()

@@ -19,7 +19,7 @@ internal fun readAiHttpResponse(input: InputStream, contentType: String?,
 private fun decodeAiHttpResponse(input: InputStream, contentType: String?,
     progress: (AiResponseProgress) -> Unit = {}): String {
     var received = 0L
-    var current = AiResponseProgress(AiResponseStage.Receiving)
+    var current = AiResponseProgress(AiResponseStage.Waiting)
     fun report(stage: AiResponseStage = current.stage, events: Int = current.events) {
         current = AiResponseProgress(stage, received, events); progress(current)
     }
@@ -39,6 +39,7 @@ private fun decodeAiHttpResponse(input: InputStream, contentType: String?,
     // InputStreamReader must use the strict decoder, rather than silently replacing malformed bytes.
     val strict = java.io.InputStreamReader(buffered, decoder).buffered()
     if (!stream) {
+        report(AiResponseStage.Receiving)
         val out = StringBuilder()
         val chars = CharArray(4096)
         while (true) {
@@ -63,7 +64,7 @@ private fun decodeAiHttpResponse(input: InputStream, contentType: String?,
         val chunk = parseAiResponseObject(data)
         if (chunk.has("error")) throw AiTranslationException("翻译服务返回错误，本批未保存。请稍后继续。")
         events++
-        var stage = AiResponseStage.Receiving
+        var stage = current.stage
         val choices = chunk.optJSONArray("choices") ?: throw AiResponseFormatException()
         for (i in 0 until choices.length()) {
             val choice = choices.optJSONObject(i) ?: throw AiResponseFormatException()
@@ -73,6 +74,7 @@ private fun decodeAiHttpResponse(input: InputStream, contentType: String?,
             if (value != null && value !== JSONObject.NULL) {
                 if (value !is String || finish != null && value.isNotEmpty() || content.length + value.length > 256 * 1024) throw AiResponseFormatException()
                 content.append(value)
+                if (value.isNotEmpty()) stage = AiResponseStage.Receiving
             }
             if (!delta.isNull("refusal") && delta.optString("refusal").isNotEmpty()) refusal = "refused"
             if (content.isEmpty() && (!delta.isNull("reasoning_content") || !delta.isNull("reasoning"))) stage = AiResponseStage.Thinking

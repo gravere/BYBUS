@@ -389,7 +389,7 @@ internal fun AiTaskCard(state: LauncherUiState, onPause: () -> Unit, onResume: (
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (ai.running) FilledTonalButton(onPause, enabled = !ai.stopping && !saving, modifier = Modifier.weight(1f)) { Text("暂停") }
-            else Button(onResume, enabled = !state.busy && !ai.settingsBusy && ai.hasKey && task != null && !ai.recoveryIssue, modifier = Modifier.weight(1f)) { Text("继续翻译") }
+            else Button(onResume, enabled = !state.busy && !ai.settingsBusy && ai.hasKey && task != null && !ai.recoveryIssue, modifier = Modifier.weight(1f)) { Text("继续") }
             TextButton(onCancel, enabled = !saving && (ai.running || !state.busy), modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.textButtonColors(contentColor = C.Error)) { Text("取消任务") }
         }
@@ -405,6 +405,7 @@ internal fun AiTaskCard(state: LauncherUiState, onPause: () -> Unit, onResume: (
                 task?.let {
                     AiTaskMetaRow("汉化源", it.sourceName)
                     AiTaskMetaRow("翻译范围", it.scopeLabel)
+                    AiTaskMetaRow("任务模型", it.config.model)
                     if (it.plan != null && it.plan.available > it.plan.total) AiTaskMetaRow("本次选择", "${it.plan.total} / ${it.plan.available} 条")
                 }
                 AiUsageSummary(progress, showElapsed = false)

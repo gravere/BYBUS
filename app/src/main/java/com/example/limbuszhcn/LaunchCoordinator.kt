@@ -127,11 +127,13 @@ internal class LaunchCoordinator private constructor(application: Application) {
         worker.execute {
             runCatching { aiTaskStore.recover(translationSources.read()) }
                 .onSuccess { task ->
+                    AiTaskService.restorePaused(app, task)
                     if (task != null) publish { it.copy(ai = it.ai.copy(task = task,
                         progress = task.progress, message = task.error ?: "翻译任务已暂停，可继续或取消")) }
                     else { val usage = AiUsageStore(translationCache).read(); publish { it.copy(ai = it.ai.copy(progress = usage)) } }
                 }
                 .onFailure { error ->
+                    AiTaskService.restorePaused(app, null)
                     val pending = aiTaskStore.exists()
                     publish { it.copy(ai = it.ai.copy(failed = true, recoveryIssue = pending,
                         message = "翻译任务读取失败，可取消后重新生成：${error.userMessage()}")) }
@@ -149,7 +151,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
     }
 
     private fun publish(change: (LauncherUiState) -> LauncherUiState) {
-        main.post { state = change(state) }
+        main.post { state = change(state); deliverPendingAiTaskAction() }
     }
 
     private fun stage(label: String, step: Int = -1) {
@@ -185,6 +187,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
                     }
                 }
             } } catch (error: Exception) {
+                AiTaskService.restorePaused(app, state.ai.task)
                 state = state.finishOperation(error.userMessage(), failed = !preserveFailure, preserveFailure = preserveFailure)
                     .copy(ai = state.ai.copy(running = false, stopping = false, failed = true, message = error.userMessage()))
                 return
@@ -200,7 +203,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
                 }
                 task()
             } } finally {
-                foreground?.close()
+                foreground?.finish(runCatching { aiTaskStore.latest() ?: aiTaskStore.read() }.getOrNull())
                 if (foregroundAi) synchronized(aiControl) { aiRequestControl = null }
             } }
             result.exceptionOrNull()?.let { PersistentDiagnosticLog.error(TAG, label, it) }
@@ -636,6 +639,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
             state = state.copy(ai = state.ai.copy(stopping = true, message = "正在取消并删除本次译文"))
         } else perform("取消翻译任务", preserveFailure = true, page = "ai-translation") {
             aiTaskStore.discard()
+            AiTaskService.restorePaused(app, null)
             publish { it.copy(ai = it.ai.copy(task = null, recoveryIssue = false, progress = AiProgress(), failed = false,
                 stopping = false, message = "任务已取消，本次未完成的译文已删除")) }
             "翻译任务已取消"
@@ -1382,11 +1386,40 @@ internal class LaunchCoordinator private constructor(application: Application) {
 
     fun showError(error: Throwable) { state = state.copy(failed = true, message = error.userMessage()) }
 
-    fun requestAiTask(cancelSession: String? = null) {
+    private class PendingAiTaskAction(val id: String, val resume: Boolean) {
+        var loaded = false
+        var saved: AiTaskSnapshot? = null
+    }
+    private var pendingAiTaskAction: PendingAiTaskAction? = null
+
+    fun requestAiTask(cancelSession: String? = null, resumeTaskId: String? = null, cancelTaskId: String? = null) {
         val prompt = cancelSession?.takeIf { it == AiTaskService.activeSessionId() && !aiCommitting }
             ?.let { AiCancelPrompt(it, state.ai.task?.id) }
         state = state.copy(aiTaskRequest = nextUiRequestId(state.aiTaskRequest, android.os.SystemClock.elapsedRealtimeNanos()),
             aiCancelPrompt = prompt)
+        val savedId = resumeTaskId ?: cancelTaskId ?: return
+        if (state.ai.running || AiTaskService.hasActiveTask()) return
+        val action = PendingAiTaskAction(savedId, resumeTaskId != null)
+        pendingAiTaskAction = action
+        // Runs after startup recovery; a cold Activity must not race the durable task read.
+        worker.execute {
+            val saved = runCatching { aiTaskStore.latest() ?: aiTaskStore.read() }.getOrNull()
+            main.post {
+                if (pendingAiTaskAction !== action) return@post
+                action.saved = saved; action.loaded = true
+                deliverPendingAiTaskAction()
+            }
+        }
+    }
+
+    private fun deliverPendingAiTaskAction() {
+        val action = pendingAiTaskAction ?: return
+        if (!action.loaded || state.busy || state.ai.settingsBusy) return
+        pendingAiTaskAction = null
+        val busy = state.ai.running || AiTaskService.hasActiveTask()
+        if (!canActOnPausedTask(action.id, action.saved, busy) || !canActOnPausedTask(action.id, state.ai.task, busy)) return
+        if (action.resume) resumeAi()
+        else state = state.copy(aiCancelPrompt = AiCancelPrompt("", action.id))
     }
 
     fun dismissAiCancellation() { state = state.copy(aiCancelPrompt = null) }
