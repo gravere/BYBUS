@@ -43,6 +43,7 @@ internal data class LauncherUiState(
     val preferredGameSource: GameUpdateSource? = null,
     val updatesRequest: Long = 0,
     val aiTaskRequest: Long = 0,
+    val aiCancelPrompt: AiCancelPrompt? = null,
     val gameInstallReview: GameInstallReview? = null,
     val gameInstallPending: Boolean = false,
     val gameInstallConfirmation: Intent? = null,
@@ -1380,8 +1381,18 @@ internal class LaunchCoordinator private constructor(application: Application) {
 
     fun showError(error: Throwable) { state = state.copy(failed = true, message = error.userMessage()) }
 
-    fun requestAiTask() {
-        state = state.copy(aiTaskRequest = nextUiRequestId(state.aiTaskRequest, android.os.SystemClock.elapsedRealtimeNanos()))
+    fun requestAiTask(cancelSession: String? = null) {
+        val prompt = cancelSession?.takeIf { it == AiTaskService.activeSessionId() && !aiCommitting }
+            ?.let { AiCancelPrompt(it, state.ai.task?.id) }
+        state = state.copy(aiTaskRequest = nextUiRequestId(state.aiTaskRequest, android.os.SystemClock.elapsedRealtimeNanos()),
+            aiCancelPrompt = prompt)
+    }
+
+    fun dismissAiCancellation() { state = state.copy(aiCancelPrompt = null) }
+    fun confirmAiCancellation() = synchronized(aiControl) {
+        val prompt = state.aiCancelPrompt ?: return@synchronized
+        dismissAiCancellation()
+        if (prompt.matches(AiTaskService.activeSessionId(), state.ai.task?.id)) cancelAi()
     }
 
     companion object {

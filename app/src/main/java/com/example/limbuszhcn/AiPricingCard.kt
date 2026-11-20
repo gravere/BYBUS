@@ -79,24 +79,38 @@ internal fun AiPricingCard(endpoint: String, model: String, ai: AiUiState, actio
 }
 
 @Composable
-internal fun AiUsageSummary(progress: AiProgress, running: Boolean = false) {
+internal fun aiElapsedMillis(progress: AiProgress, running: Boolean): Long {
     val elapsed by produceState(progress.elapsedMillis, progress, running) {
         do {
             value = progress.elapsedAt(android.os.SystemClock.elapsedRealtime(), running)
             if (running) delay(1000)
         } while (running)
     }
-    val seconds = elapsed / 1000
-    val duration = if (seconds < 60) "${seconds}秒" else "${seconds / 60}分${seconds % 60}秒"
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("用时 $duration", style = MaterialTheme.typography.bodySmall, color = C.Muted)
+    return elapsed
+}
+
+@Composable
+internal fun AiTaskMetaRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text(label, style = MaterialTheme.typography.bodySmall, color = C.Muted)
+        Text(value, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+            textAlign = androidx.compose.ui.text.style.TextAlign.End)
+    }
+}
+
+@Composable
+internal fun AiUsageSummary(progress: AiProgress, running: Boolean = false, showElapsed: Boolean = true) {
+    val elapsed = aiElapsedMillis(progress, running)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (showElapsed) AiTaskMetaRow("用时", formatTaskDuration(elapsed))
         if (progress.requests <= 0 && progress.inputTokens + progress.outputTokens == 0L) return@Column
-        Text("${progress.inputTokens} 输入 · ${progress.outputTokens} 输出 Token", style = MaterialTheme.typography.bodySmall, color = C.Muted)
+        AiTaskMetaRow("输入 Token", String.format(Locale.ROOT, "%,d", progress.inputTokens))
+        AiTaskMetaRow("输出 Token", String.format(Locale.ROOT, "%,d", progress.outputTokens))
         val price = progress.price
-        Text(if (progress.unknownUsage && progress.inputTokens + progress.outputTokens == 0L) "接口未返回用量，费用未知" else if (price == null) "任务开始时未设置价格，费用未知" else {
+        AiTaskMetaRow("预估费用", if (progress.unknownUsage && progress.inputTokens + progress.outputTokens == 0L) "用量未知" else if (price == null) "未设置单价" else {
             val cost = price.cost(progress.inputTokens, progress.outputTokens, progress.cachedTokens)
-            "${if (progress.unknownUsage) "已知用量估算" else "估算费用"} ${String.format(Locale.ROOT, "%.6f", cost)} ${price.currency}"
-        }, style = MaterialTheme.typography.bodyMedium)
-        if (progress.unknownUsage) Text("部分请求未返回用量，费用可能不完整。", color = C.Muted, style = MaterialTheme.typography.bodySmall)
+            "${if (cost > 0.0 && cost < .0001) "< 0.0001" else String.format(Locale.ROOT, "%.4f", cost)} ${price.currency}"
+        })
+        if (progress.unknownUsage) Text("部分用量未返回，费用未计全。", color = C.Muted, style = MaterialTheme.typography.bodySmall)
     }
 }

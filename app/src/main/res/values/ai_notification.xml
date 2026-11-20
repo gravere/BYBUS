@@ -1,0 +1,5 @@
+<resources>
+    <color name="ai_notice_accent">#315A4C</color>
+    <color name="ai_notice_track">#DDE3DC</color>
+    <color name="ai_notice_cancel">#A2483E</color>
+</resources>
