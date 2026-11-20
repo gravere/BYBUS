@@ -23,7 +23,11 @@ start = source.index("bool read_flow_text(")
 end = source.index("\n// Observation only:", start)
 (output / "runtime-flow-under-test.inc").write_text(source[start:end], encoding="utf-8")
 notice = []
-for signature in ("bool is_notice_text(", "void prepare_notice_body(void *target) {", "void replacement_notice_set_data("):
+start = source.index("struct NoticeTextState {")
+end = source.index("void prepare_notice_body(void *target);", start)
+(output / "runtime-notice-state.inc").write_text(source[start:end], encoding="utf-8")
+for signature in ("bool is_notice_text(", "void prepare_notice_body(void *target) {", "void reflow_notice_body(",
+                  "void *translate_notice_component(void *target, void *source) {", "template<size_t Slot>\nvoid replacement_notice_extra(", "void replacement_notice_set_data("):
     start = source.index(signature)
     end = source.index("\n}", start) + 2
     notice.append(source[start:end])

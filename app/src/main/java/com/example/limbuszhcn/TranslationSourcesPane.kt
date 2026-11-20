@@ -41,6 +41,8 @@ internal data class TranslationActions(
     val chooseAiUpdate: (com.example.limbuszhcn.translation.AiUpdateChoice?) -> Unit = {},
     val savePrompt: (String) -> Unit = {},
     val coverageEntries: CoveragePageReader = { _, _, _, _ -> error("无法读取明细") },
+    val coverageCount: CoverageCountReader = { _, _, _, _ -> 0 },
+    val generateCoverage: (AiConfig, String, CoverageRequest) -> Unit = { _, _, _ -> },
     val inspectAiEntries: (String?, Boolean) -> Unit = { _, _ -> },
     val downloadAiOriginals: () -> Unit = {},
     val aiEntries: AiEntryReader = { _, _, _, _ -> error("无法读取明细") },
@@ -158,7 +160,7 @@ internal fun TranslationSourcesPane(state: LauncherUiState, actions: Translation
             DetailActionDivider()
             SheetAction(Glyph.Delete, if (selected.isOfficial) "卸载汉化文件" else "删除此汉化源",
                 !state.busy && (!selected.isOfficial || state.sources.officialDownloaded || state.translation != null),
-                onClick = { remove = true })
+                destructive = true, onClick = { remove = true })
         }
         state.sources.message?.let { Text(it, color = C.Muted, style = MaterialTheme.typography.bodySmall) }
         if (state.failed && !state.busy) Text(state.message, color = C.Error, style = MaterialTheme.typography.bodyMedium)
@@ -168,7 +170,7 @@ internal fun TranslationSourcesPane(state: LauncherUiState, actions: Translation
             select = null; actions.select(source.id)
         }
     }
-    if (remove) BybusDialog(onDismissRequest = { remove = false }, title = { Text(if (selected.isOfficial) "卸载汉化文件？" else "删除此汉化源？") },
+    if (remove) BybusDialog(destructive = true, onDismissRequest = { remove = false }, title = { Text(if (selected.isOfficial) "卸载汉化文件？" else "删除此汉化源？") },
         text = { Text(if (selected.isOfficial) "将关闭游戏并移除零协汉化文件，保留来源入口，下次使用时会重新下载。游戏资源、账号和其他汉化源会保留。"
             else "将关闭游戏并删除“${selected.name}”，切回都市零协会。重新使用需再次导入；游戏资源、账号和其他汉化源会保留。") },
         confirmButton = { TextButton({ remove = false; actions.remove(selected.id) }, enabled = !state.busy,

@@ -61,7 +61,7 @@ internal fun AiEntriesPane(state: LauncherUiState, actions: TranslationActions, 
                     { actions.inspectAiEntries(library.sourceId, true) }, enabled = !state.busy)
             }
             if (report?.sourceId == null) Text("从游戏原文开始翻译，无需现成汉化包。可按类别或一次选择全部生成。", style = MaterialTheme.typography.bodySmall, color = C.Muted)
-            if (library.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (library.loading) OperationProgress(state)
             library.error?.let { Text(it, color = C.Error, style = MaterialTheme.typography.bodySmall) }
             if (report == null && library.sourceId == null && !library.loading) FilledTonalButton({ downloadOriginals = true },
                 enabled = !state.busy && !state.ai.hasPendingTask) { Text("下载游戏原文") }
@@ -98,9 +98,10 @@ internal fun AiEntriesPane(state: LauncherUiState, actions: TranslationActions, 
                         else AiEntryRequest(report, filter, count = requireNotNull(visible).total)
                     onTranslate(request)
                 }, enabled = enabled && !reading && current && (selected.isNotEmpty() || (visible?.total ?: 0) > 0), modifier = Modifier.weight(1f)) {
-                    Text(if (selected.isEmpty()) "翻译筛选全部" else "翻译所选", style = MaterialTheme.typography.labelLarge)
+                    Text(if (selected.isEmpty()) "翻译全部已筛选条目" else "翻译所选", style = MaterialTheme.typography.labelMedium)
                 }
                 if (selected.isNotEmpty()) OutlinedButton({ deleting = AiEntryRequest(report, ids = selected.keys.toSet(), count = selected.size) },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = C.Error),
                     enabled = enabled && selected.values.all { it == AiEntryKind.Ai }) { Text("删除", style = MaterialTheme.typography.labelLarge) }
             }
             readError?.let { Text(it, color = C.Error, style = MaterialTheme.typography.bodySmall) }
@@ -145,7 +146,7 @@ internal fun AiEntriesPane(state: LauncherUiState, actions: TranslationActions, 
             } }
         }
     }
-    deleting?.let { request -> BybusDialog(onDismissRequest = { deleting = null }, title = { Text("删除 ${request.count} 条 AI 译文？") },
+    deleting?.let { request -> BybusDialog(destructive = true, onDismissRequest = { deleting = null }, title = { Text("删除 ${request.count} 条 AI 译文？") },
         text = { Text("只移除所选 AI 译文，未有其他译文时将显示游戏原文。若包内不再有中文译文，会移除此包。API 费用不会返还。") },
         confirmButton = { TextButton({ deleting = null; actions.deleteEntries(request) }, enabled = enabled) { Text("删除") } },
         dismissButton = { TextButton({ deleting = null }) { Text("取消") } }) }

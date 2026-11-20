@@ -128,6 +128,15 @@ internal fun LaunchButton(action: LaunchAction, enabled: Boolean, step: Int,
                     highlight.reset()
                     measure.getSegment(start, start + length * .34f, highlight)
                     drawPath(highlight, accent, alpha = sin(PI * sweep).toFloat(), style = stroke)
+                } else if (busy) {
+                    drawPath(ring, line, style = stroke)
+                    highlight.reset()
+                    if (progressFraction != null) measure.getSegment(0f, measure.length * fraction.coerceIn(0f, 1f), highlight)
+                    else {
+                        val start = phase.value * measure.length
+                        measure.getSegment(start, minOf(start + measure.length * .25f, measure.length), highlight)
+                    }
+                    drawPath(highlight, accent, style = stroke)
                 }
             }
         })
@@ -147,7 +156,7 @@ internal fun LaunchButton(action: LaunchAction, enabled: Boolean, step: Int,
             colors = ButtonDefaults.buttonColors(containerColor = buttonColor, contentColor = C.Ink,
                 disabledContainerColor = C.Panel, disabledContentColor = if (busy) C.Ink else C.Muted)) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            val content = LaunchContent(feedback ?: action.title, if (confirmed) LaunchSymbol.Complete else action.symbol, busy)
+            val content = LaunchContent(feedback ?: if (busy && status.isNotBlank()) status else action.title, if (confirmed) LaunchSymbol.Complete else action.symbol, busy)
             AnimatedContent(content, Modifier.fillMaxWidth(), contentAlignment = Alignment.Center,
                 transitionSpec = {
                 (fadeIn(tween(180)) togetherWith fadeOut(tween(90))).using(SizeTransform(clip = false))

@@ -56,7 +56,7 @@ internal fun CoverageSummary(state: LauncherUiState, onOpen: () -> Unit, onCheck
                 }
             }
         }
-        if (coverage.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+        if (coverage.loading) OperationProgress(state)
         coverage.error?.let { Text(it, color = C.Error, style = MaterialTheme.typography.bodySmall) }
     }
 }
@@ -64,7 +64,8 @@ internal fun CoverageSummary(state: LauncherUiState, onOpen: () -> Unit, onCheck
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun TranslationCoveragePane(state: LauncherUiState, onCheck: () -> Unit,
-    readEntries: CoveragePageReader, onTranslate: (AiScope) -> Unit = {}) {
+    readEntries: CoveragePageReader, onTranslate: (AiScope) -> Unit = {},
+    readCount: CoverageCountReader = { _, _, _, _ -> 0 }, onSelected: (CoverageRequest) -> Unit = {}) {
     val coverage = state.coverage; val report = coverage.report
     var kind by rememberSaveable(report?.checkedAt, report?.entryIndex) { mutableStateOf<CoverageKind?>(null) }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -79,7 +80,7 @@ internal fun TranslationCoveragePane(state: LauncherUiState, onCheck: () -> Unit
                 ActionIconButton(Glyph.Refresh, "重新检查", onCheck, enabled = !state.busy, busy = coverage.loading)
             }
             coverage.error?.let { Text(it, color = C.Error, style = MaterialTheme.typography.bodyMedium) }
-            if (coverage.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (coverage.loading) OperationProgress(state)
             if (report != null) {
                 Text("${report.sourceName} · ${report.language.displayName}原文", style = MaterialTheme.typography.bodyMedium)
                 Row(Modifier.fillMaxWidth()) {
@@ -99,7 +100,8 @@ internal fun TranslationCoveragePane(state: LauncherUiState, onCheck: () -> Unit
         }
         if (report != null) {
             if (report.missing + report.review > 0) {
-                CoverageEntryBrowser(report, kind, { kind = it }, readEntries)
+                CoverageEntryBrowser(report, kind, { kind = it }, readEntries, coverage, readCount,
+                    !state.busy && !state.ai.hasPendingTask, onSelected)
             } else DetailCard {
                 Text(when {
                     report.files == 0 && report.unreadable > 0 -> "本次没有读到游戏文本，暂时无法判断汉化覆盖情况。"

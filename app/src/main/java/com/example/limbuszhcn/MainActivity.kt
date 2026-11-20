@@ -238,6 +238,7 @@ class MainActivity : ComponentActivity() {
                         cancelAi = model::cancelAi, pauseAi = model::pauseAi, resumeAi = model::resumeAi, clearKey = model::clearAiKey,
                         loadModels = model::loadAiModels, clearModels = model::clearAiModels,
                         inspectCoverage = model::inspectCoverage, coverageEntries = model::coverageEntries, undoAi = model::undoAi,
+                        coverageCount = model::coverageCount, generateCoverage = model::generateCoverage,
                         removeAi = model::removeAiTranslation, chooseAiUpdate = model::chooseAiUpdate,
                         savePrompt = model::saveAiPrompt, renameKey = model::renameAiKey, reorderKeys = model::reorderAiKeys,
                         inspectAiEntries = model::inspectAiEntries, aiEntries = model::aiEntries, downloadAiOriginals = model::downloadAiOriginals,

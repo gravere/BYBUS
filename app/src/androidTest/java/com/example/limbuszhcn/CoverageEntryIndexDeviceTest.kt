@@ -53,6 +53,17 @@ class CoverageEntryIndexDeviceTest {
             assertEquals(0, find(CoverageKind.Review, query = "#${story.number}").total)
             assertEquals(0, find(query = "' OR 1=1 --").total)
             assertEquals(0, find(query = "story-20", page = 9999).page)
+            val storyFilter = CoverageFilter(CoverageKind.Missing, "剧情与对话")
+            assertEquals(1, CoverageEntryIndex.count(ref.file(root), storyFilter, null))
+            val request = CoverageRequest(first, input.fingerprint, storyFilter, count = 1)
+            val plan = CoverageEntryIndex.plan(ref.file(root), request, storage, 100)
+            assertEquals(1, plan.total)
+            assertEquals(setOf(story.resource), plan.selected.keys)
+            val reviewRows = find(CoverageKind.Review).rows
+            val one = CoverageRequest(first, input.fingerprint, CoverageFilter(CoverageKind.Review), setOf(reviewRows.first().number), 1)
+            assertEquals(1, CoverageEntryIndex.plan(ref.file(root), one, storage, 100).total)
+            assertTrue(runCatching { CoverageEntryIndex.plan(ref.file(root), request.copy(count = 2), storage, 100) }.isFailure)
+            assertTrue(runCatching { CoverageEntryIndex.plan(ref.file(root), request.copy(numbers = setOf(reviewRows.first().number)), storage, 100) }.isFailure)
             val rejected = runCatching { store.indexedCheck(input, store.beginCheck(input)) { error("interrupted") } }
             assertTrue(rejected.isFailure)
             assertEquals(ref, CoverageStore(root).read(input)!!.report.entryIndex)

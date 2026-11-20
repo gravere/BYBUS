@@ -80,8 +80,12 @@ hook 已启用推断奖励事件也受覆盖。父类与该确切派生类分别
 
 公告正文使用 `MainUI.NoticeUI.NoticeUIContentText.SetData(String)` 的确切 `tmp_main`
 字段，在原函数测量前及 TMP 恢复样式后启用换行，随后复核。公告不参与通用短词替换。
-只收录用户打开的公告正文，按语言和全文 SHA 保存有界原文，供覆盖检查及显式 AI 任务使用。
+只收录用户打开的公告标题、正文与链接显示文本，按语言和全文 SHA 保存有界原文，供覆盖检查及显式 AI 任务使用。
 正文可按完整段落切成至多 32 段，每段保留格式/数值；整篇所有显示段都已有对应译文才替换。
-译文只授权同一 Unity instance ID 的公告正文组件，不登记为全局字符串/术语/模型字段，
-链接、标题、图片及其他页面不受影响。替换发生在原 SetData 测量之前，保留原字号和滚动容器。
+译文只授权同一 Unity instance ID 的对应公告组件，不登记为全局字符串/术语/模型字段，
+链接地址、日期、图片及其他页面不受影响。替换发生在原 SetData 测量之前，保留原字号和滚动容器。
 没有已生成译文时保留原文，不在游戏线程请求 AI。测试覆盖原函数测量前的换行和组件隔离。
+
+公告标题、正文、超链接显示块须分别按确切公告组件注册作用域。标题不能落入游戏通用术语替换；日期、活动/系统导航标签和其他页面仍保留原行为。公告自带的 textFormat 格式包裹也须在同一组件内识别，不能因此遗失正文归属或扩散到全局词条。长正文尺寸需在文本解析完成后按已确定宽度重新测量，再交还原滚动布局；不通过全局缩小字号或裁切正文掩盖溢出。
+
+两种标题控件均在 SetData 前启用换行，TMP 样式恢复后也维持该约束，让原列表按换行后的首选高度排布。正文使用 [TMP GetPreferredValues](https://docs.unity3d.com/Packages/com.unity.textmeshpro@3.0/api/TMPro.TMP_Text.GetPreferredValues.html) 按既定宽度计算高度，再通过 [RectTransform.SetSizeWithCurrentAnchors](https://docs.unity.com/en-us/engine/6000.6/script-reference/unityengine/recttransform/setsizewithcurrentanchors) 更新正文尺寸；仅核对过方法签名的实例可进入这条路径。

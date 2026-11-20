@@ -94,6 +94,9 @@ internal class LauncherViewModel(application: Application) : AndroidViewModel(ap
     fun exportTranslation(id: String, destination: Uri) = coordinator.exportTranslation(id, destination)
     fun saveAi(config: com.example.limbuszhcn.translation.AiConfig, key: String, test: Boolean) = coordinator.saveAi(config, key, test)
     fun generateAi(config: com.example.limbuszhcn.translation.AiConfig, key: String) = coordinator.generateAi(config, key)
+    fun generateCoverage(config: com.example.limbuszhcn.translation.AiConfig, key: String, request: com.example.limbuszhcn.translation.CoverageRequest) = coordinator.generateAi(config, key, request)
+    fun coverageCount(ref: com.example.limbuszhcn.translation.CoverageIndexRef,
+        filter: com.example.limbuszhcn.translation.CoverageFilter, numbers: Set<Int>?, cancel: android.os.CancellationSignal) = coordinator.coverageCount(ref, filter, numbers, cancel)
     fun pauseAi() = coordinator.pauseAi()
     fun resumeAi() = coordinator.resumeAi()
     fun cancelAi() = coordinator.cancelAi()

@@ -50,11 +50,12 @@ internal fun AiPricingCard(endpoint: String, model: String, ai: AiUiState, actio
             Text("按每百万 Token 填写。留空缓存单价时，按普通输入计费。")
             listOf(Triple("输入单价", input, { s: String -> input = s }), Triple("输出单价", output, { s: String -> output = s }),
                 Triple("缓存输入（可选）", cached, { s: String -> cached = s })).forEach { (label, value, change) ->
-                OutlinedTextField(value, { if (it.length <= 20) change(it) }, Modifier.fillMaxWidth(), label = { Text(label) },
+                OutlinedTextField(value, { if (it.length <= 20) change(it) }, Modifier.fillMaxWidth(), label = { Text(label, style = MaterialTheme.typography.labelMedium) },
                     shape = RoundedCornerShape(12.dp), colors = fieldColors,
                     singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next), textStyle = MaterialTheme.typography.bodyMedium)
             }
-            OutlinedTextField(currency, { currency = it.take(3).uppercase(Locale.ROOT) }, Modifier.fillMaxWidth(), label = { Text("币种，例如 USD / CNY") }, singleLine = true,
+            OutlinedTextField(currency, { currency = it.take(3).uppercase(Locale.ROOT) }, Modifier.fillMaxWidth(), label = { Text("币种，例如 USD / CNY", style = MaterialTheme.typography.labelMedium) }, singleLine = true,
+                textStyle = MaterialTheme.typography.bodyMedium,
                 shape = RoundedCornerShape(12.dp), colors = fieldColors,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Done))
             error?.let { Text(it, color = C.Error) }

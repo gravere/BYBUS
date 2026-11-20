@@ -19,6 +19,7 @@ void *invoke_object_getter(const void *,void *i) {return static_cast<Component *
 bool is_translated_managed_string(void *s) {return static_cast<Text *>(s)->translated;}
 bool is_notice_text(void *, void * = nullptr, bool = false) { return false; }
 void prepare_notice_body(void *) {}
+void *translate_notice_component(void *, void *source) { return source; }
 bool is_choice_text(void *,void *s) {return static_cast<Text *>(s)->stream;}
 bool is_translated_tmp_fragment(void *,void *s) {return static_cast<Text *>(s)->fragment;}
 bool is_language_font_target(void *) {return false;}
