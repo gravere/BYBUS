@@ -18,6 +18,40 @@ class AiTaskStoreTest {
     @get:Rule val temp = TemporaryFolder()
     private val cache get() = temp.root.toPath().resolve("cache")
     private val localize get() = temp.root.toPath().resolve("Localize")
+    @Test fun equivalentEnglishNumbersSurvivePartialFailureAndProcessRecoveryWithoutRebilling() {
+        Files.createDirectories(localize.resolve("en"))
+        Files.write(localize.resolve("en/EN_MainUIText.json"), document({ "Attack two enemies" }, 3).toByteArray())
+        val storage = ContainerWorkspaceStorage(localize, language = {
+            com.example.limbuszhcn.gamefs.GameTextLanguageState(com.example.limbuszhcn.gamefs.GameTextLanguage.English, "en")
+        })
+        val config = AiConfig(missingOnly = false, limit = 3)
+        val tasks = AiTaskStore(cache)
+        val task = tasks.create(config, TranslationSource("global", "全局 AI 翻译", independent = true), null, null, language = "en")
+        val counts = mutableListOf<Int>()
+        val client = AiTranslationClient(config, "non-secret-fixture", AiHttpTransport { _, _, body ->
+            val rows = JSONArray(JSONObject(body).getJSONArray("messages").getJSONObject(1).getString("content"))
+            counts += rows.length()
+            val answer = JSONArray()
+            repeat(rows.length()) { i -> answer.put(JSONObject().put("id", rows.getJSONObject(i).getString("id"))
+                .put("text", if (counts.size == 1 && i == 2) "攻击999个敌人" else "攻击2个敌人")) }
+            JSONObject().put("choices", JSONArray().put(JSONObject().put("finish_reason", "stop").put("message",
+                JSONObject().put("content", JSONObject().put("translations", answer).toString())))).toString()
+        })
+        val error = assertThrows(AiBatchValidationException::class.java) {
+            AiTranslationJob(cache, storage, config, client).run(task.baseId, null, task.outputIdentity, session = tasks)
+        }
+        assertEquals(2, tasks.read()!!.progress.completed)
+        assertTrue(error.message!!.contains("en/EN_MainUIText.json /dataList/2/content"))
+        val fresh = AiTaskStore(cache)
+        fresh.recover(TranslationSources(cache).read())
+        val result = AiTranslationJob(cache, storage, config, client).run(task.baseId, null, task.outputIdentity, session = fresh)
+        assertEquals(listOf(3, 1), counts)
+        assertEquals(2, result.progress.reused); assertEquals(1, result.progress.completed)
+        java.util.zip.ZipFile(result.archive.toFile()).use { zip ->
+            val rows = JSONObject(zip.getInputStream(zip.getEntry("en/EN_MainUIText.json")).bufferedReader().readText()).getJSONArray("dataList")
+            repeat(3) { assertEquals("攻击2个敌人", rows.getJSONObject(it).getString("content")) }
+        }
+    }
     private fun document(text: (Int) -> String, count: Int = 28) = JSONObject().put("dataList", JSONArray().apply {
         repeat(count) { put(JSONObject().put("id", it).put("content", text(it))) }
     }).toString()
@@ -175,10 +209,11 @@ class AiTaskStoreTest {
         val tasks = AiTaskStore(cache); val task = tasks.create(config, source, base, base)
         val seen = mutableListOf<String>(); var calls = 0
         val http = client(config, seen) { if (++calls == 2) throw SocketTimeoutException() }
-        assertThrows(SocketTimeoutException::class.java) {
+        val failure = assertThrows(AiTranslationException::class.java) {
             AiTranslationJob(cache, ContainerWorkspaceStorage(localize), config, http)
                 .run(source.id, tasks.prepared("base"), task.outputIdentity, session = tasks)
         }
+        assertTrue(failure.message!!.contains("响应超时"))
         assertEquals(24, tasks.read()!!.progress.completed)
         assertEquals(26, tasks.read()!!.plan!!.total)
         assertEquals(28, tasks.read()!!.plan!!.available) // The missing file must never enter a Review task.
