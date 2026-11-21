@@ -14,7 +14,7 @@ void *target(void *p) { return p; }
 void release(void *) {}
 limbus_managed::GcApi g_gc{keep,keep,target,release};
 #include "runtime-notice-state.inc"
-struct Object { int32_t id; bool wrap=false; int overflow=1; Object *body=nullptr; float width=400,height=100; Object *parent=nullptr; };
+struct Object { int32_t id; int wrap=0; int overflow=1; Object *body=nullptr; float width=400,height=100; Object *parent=nullptr; };
 std::mutex g_font_state_lock;
 void pthread_mutex_lock(std::mutex *m) { m->lock(); }
 void pthread_mutex_unlock(std::mutex *m) { m->unlock(); }
@@ -24,12 +24,15 @@ const void *g_object_get_instance_id_info=&id_property,*g_tmp_set_word_wrapping_
     *g_notice_format_field=&format_field,*g_notice_extra_fields[]={&body_field,&body_field,&body_field},
     *g_tmp_get_rect_transform_info=&rect_property,*g_transform_get_parent_info=&parent_property,*g_component_get_transform_info=&rect_property,
     *g_notice_preferred_info=&preferred_method,*g_notice_set_extent_info=&extent_method;
+const void *g_tmp_get_word_wrapping_info=&wrap_property,*g_tmp_get_wrapping_mode_info=&wrap_property,*g_tmp_set_wrapping_mode_info=&wrap_property;
 void *g_notice_rect_class=&rect_class;
 bool invoke_int_getter(const void *property,void *object,int32_t *out) {
-    *out=property==&id_property?static_cast<Object *>(object)->id:static_cast<Object *>(object)->overflow;return true;
+    *out=property==&id_property?static_cast<Object *>(object)->id:property==&wrap_property?static_cast<Object *>(object)->wrap:static_cast<Object *>(object)->overflow;return true;
 }
-bool invoke_int_setter(const void *,void *object,int32_t value) {static_cast<Object *>(object)->overflow=value;return true;}
+bool invoke_int_setter(const void *property,void *object,int32_t value) {if(property==&wrap_property)static_cast<Object *>(object)->wrap=value;else static_cast<Object *>(object)->overflow=value;return true;}
+bool invoke_bool_getter(const void *,void *object,bool *value) {*value=static_cast<Object *>(object)->wrap!=0;return true;}
 bool invoke_bool_setter(const void *,void *object,bool value) {static_cast<Object *>(object)->wrap=value;return true;}
+#include "runtime-wrapping-under-test.inc"
 std::u16string format=u"<size=120%>{0}</size>";
 void field(void *object,const void *slot,void *out) {*static_cast<void **>(out)=slot==&format_field?static_cast<void *>(&format):static_cast<void *>(static_cast<Object *>(object)->body);}
 auto g_field_get_value=field;
@@ -83,6 +86,7 @@ int main() {
     assert(received==&unknown && body.wrap && body.height==120);
     replacement_notice_extra<1>(&owner,&raw,nullptr);
     assert(received==&chinese && is_notice_text(&body,&chinese,true));
+    body.wrap=3;prepare_notice_body(&body);assert(body.wrap==2);
     assert(!is_notice_text(&other));
     ++body.id; assert(!is_notice_text(&body));
     prepare_notice_body(&other);assert(!other.wrap);

@@ -179,7 +179,7 @@ bool remember_translated_text(void *object, const std::string &text) {
     return true;
 }
 struct TmpComponentState {
-    limbus_text_provenance::LayoutOverride<bool> wrapping;
+    limbus_text_provenance::LayoutOverride<int32_t> wrapping;
     limbus_text_provenance::LayoutOverride<int32_t> overflow;
     limbus_text_provenance::LayoutOverride<float> spacing;
     void *font = nullptr;
@@ -355,6 +355,8 @@ const void *g_tmp_set_font_size_max_info = nullptr;
 const void *g_tmp_get_auto_sizing_info = nullptr;
 const void *g_tmp_set_auto_sizing_info = nullptr;
 const void *g_tmp_get_word_wrapping_info = nullptr;
+const void *g_tmp_get_wrapping_mode_info = nullptr;
+const void *g_tmp_set_wrapping_mode_info = nullptr;
 const void *g_tmp_set_word_wrapping_info = nullptr;
 const void *g_tmp_get_overflow_mode_info = nullptr;
 const void *g_tmp_set_overflow_mode_info = nullptr;
@@ -391,6 +393,8 @@ const void *g_game_object_get_active_info = nullptr;
 const void *g_tmp_runtime_type = nullptr;
 const void *g_content_fitter_runtime_type = nullptr;
 const void *g_content_fitter_vertical_info = nullptr;
+const void *g_click_handler_runtime_type = nullptr;
+const void *g_layout_get_component_info = nullptr;
 const void *g_material_get_float_info = nullptr;
 const void *g_material_set_float_info = nullptr;
 const void *g_material_get_texture_info = nullptr;
@@ -1742,6 +1746,25 @@ void invoke_object_setter(const void *method_info, void *instance, void *value) 
     g_runtime_invoke(method_info, instance, args, &exception);
 }
 
+bool read_tmp_wrapping(void *instance, int32_t *mode) {
+    if (g_tmp_get_wrapping_mode_info && g_tmp_set_wrapping_mode_info)
+        return invoke_int_getter(g_tmp_get_wrapping_mode_info, instance, mode) && *mode >= 0 && *mode <= 3;
+    bool enabled = false;
+    if (!invoke_bool_getter(g_tmp_get_word_wrapping_info, instance, &enabled)) return false;
+    *mode = enabled ? 1 : 0;
+    return true;
+}
+
+int32_t tmp_wrapping_mode(int32_t original, bool enabled) {
+    return original >= 2 ? (enabled ? 2 : 3) : (enabled ? 1 : 0);
+}
+
+void write_tmp_wrapping(void *instance, int32_t mode) {
+    if (g_tmp_get_wrapping_mode_info && g_tmp_set_wrapping_mode_info)
+        invoke_int_setter(g_tmp_set_wrapping_mode_info, instance, mode);
+    else invoke_bool_setter(g_tmp_set_word_wrapping_info, instance, mode == 1 || mode == 2);
+}
+
 struct ComponentRect {
     float width = 0.0f;
     float height = 0.0f;
@@ -2771,9 +2794,9 @@ void restore_tmp_component_state(void *instance) {
     if (g_tmp_set_font != nullptr) g_tmp_set_font(instance, state.font, g_tmp_set_font_info);
     if (state.shared_material != nullptr)
         invoke_object_setter(g_tmp_set_shared_material_info, instance, state.shared_material);
-    bool wrap = false; int32_t overflow = 0; float spacing = 0;
-    if (invoke_bool_getter(g_tmp_get_word_wrapping_info, instance, &wrap) && state.wrapping.restore(wrap))
-        invoke_bool_setter(g_tmp_set_word_wrapping_info, instance, state.wrapping.original);
+    int32_t wrap = 0, overflow = 0; float spacing = 0;
+    if (read_tmp_wrapping(instance, &wrap) && state.wrapping.restore(wrap))
+        write_tmp_wrapping(instance, state.wrapping.original);
     if (invoke_int_getter(g_tmp_get_overflow_mode_info, instance, &overflow) && state.overflow.restore(overflow))
         invoke_int_setter(g_tmp_set_overflow_mode_info, instance, state.overflow.original);
     if (invoke_float_getter(g_tmp_get_line_spacing_info, instance, &spacing) && state.spacing.restore(spacing))
@@ -2850,6 +2873,21 @@ bool has_content_fitted_height(void *instance) {
             enabled && invoke_int_getter(g_content_fitter_vertical_info, fitter, &fit) && (fit == 1 || fit == 2);
 }
 
+bool has_interactive_text_owner(void *instance) {
+    if (!instance || !g_click_handler_runtime_type || !g_layout_get_component_info ||
+        !g_component_get_transform_info || !g_transform_get_parent_info || !g_runtime_invoke) return false;
+    void *node = invoke_object_getter(g_component_get_transform_info, instance);
+    // Include the text node and at most three ancestors, never an unrelated page overlay.
+    for (int depth = 0; node && depth <= 3; ++depth) {
+        void *args[] = {const_cast<void *>(g_click_handler_runtime_type)}, *exception = nullptr;
+        void *handler = g_runtime_invoke(g_layout_get_component_info, node, args, &exception);
+        if (exception) return false;
+        if (handler) return true;
+        node = invoke_object_getter(g_transform_get_parent_info, node);
+    }
+    return false;
+}
+
 void save_tmp_layout_state(void *instance, const TmpComponentState &state) {
     const auto id = component_id(instance);
     pthread_mutex_lock(&g_font_state_lock);
@@ -2895,22 +2933,26 @@ void apply_translated_tmp_style(void *instance, void *managed_text,
     const float size = read_tmp_layout_size(instance);
     if (size <= 0) return;
     auto state = previous;
-    bool current_wrap = false; int32_t current_overflow = 0;
-    const bool has_wrap = invoke_bool_getter(g_tmp_get_word_wrapping_info, instance, &current_wrap);
+    int32_t current_wrap = 0, current_overflow = 0;
+    const bool has_wrap = read_tmp_wrapping(instance, &current_wrap);
     const bool has_overflow = invoke_int_getter(g_tmp_get_overflow_mode_info, instance, &current_overflow);
-    const bool original_wrap = has_wrap && state.wrapping.observe(current_wrap);
+    const int32_t original_mode = has_wrap ? state.wrapping.observe(current_wrap) : -1;
+    const bool original_wrap = original_mode == 1 || original_mode == 2;
     const int32_t original_overflow = has_overflow ? state.overflow.observe(current_overflow) : -1;
+    const bool managed_flow = original_overflow >= 4;
     const auto visible = count_visible_codepoints(text);
     const bool explicit_break = limbus_text_provenance::explicit_line_break(text);
     const auto rect = read_component_rect(instance, g_tmp_get_rect_transform_info);
     const bool fitted = has_content_fitted_height(instance);
+    const bool interactive = has_wrap && !original_wrap && !fitted && !explicit_break && visible <= 48 &&
+            original_overflow < 4 && rect.height > size * 1.8f && has_interactive_text_owner(instance);
     const bool single = limbus_text_provenance::single_line_label(visible, explicit_break,
-            has_wrap && !original_wrap, rect.height, size, original_overflow, fitted);
-    const bool title = explicit_break && read_unity_object_name(instance) == "[Text]GroupName";
+            has_wrap && !original_wrap, rect.height, size, original_overflow, fitted, interactive);
+    const bool title = !managed_flow && explicit_break && read_unity_object_name(instance) == "[Text]GroupName";
     const bool body = fitted || explicit_break || visible > 48 || rect.height > size * 1.8f || original_wrap;
     if (has_wrap) {
-        const bool desired = title || single ? false : body;
-        if (current_wrap != desired) invoke_bool_setter(g_tmp_set_word_wrapping_info, instance, desired);
+        const int32_t desired = managed_flow ? original_mode : tmp_wrapping_mode(original_mode, !(title || single) && body);
+        if (current_wrap != desired) write_tmp_wrapping(instance, desired);
         state.wrapping.record(desired);
     }
     if (has_overflow) {
@@ -3269,8 +3311,10 @@ void apply_translated_ui_style(void *instance, void *managed_text,
     const bool explicit_break = limbus_text_provenance::explicit_line_break(text);
     const auto rect = read_component_rect(instance, g_ui_get_rect_transform_info);
     const bool fitted = has_content_fitted_height(instance);
+    const bool interactive = original_horizontal == 1 && !fitted && !explicit_break && visible <= 48 &&
+            rect.height > static_cast<float>(size) * 1.8f && has_interactive_text_owner(instance);
     const bool single = limbus_text_provenance::single_line_label(visible, explicit_break,
-            original_horizontal == 1, rect.height, static_cast<float>(size), -1, fitted);
+            original_horizontal == 1, rect.height, static_cast<float>(size), -1, fitted, interactive);
     const bool body = fitted || explicit_break || visible > 48 || rect.height > size * 1.8f;
     if (has_horizontal) {
         const auto desired = single ? 1 : body ? 0 : original_horizontal;
@@ -3336,7 +3380,8 @@ void prepare_notice_body(void *target) {
     if (!registered) return;
     // Run before SetData measures preferredHeight, including after TMP restores an original style.
     // No font size, link, colour or unrelated component is changed.
-    invoke_bool_setter(g_tmp_set_word_wrapping_info, target, true);
+    int32_t wrapping = 0;
+    if (read_tmp_wrapping(target, &wrapping)) write_tmp_wrapping(target, tmp_wrapping_mode(wrapping, true));
     int32_t mode = 0;
     if (invoke_int_getter(g_tmp_get_overflow_mode_info, target, &mode) && (mode == 1 || mode == 3))
         invoke_int_setter(g_tmp_set_overflow_mode_info, target, 0);
@@ -3895,6 +3940,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
     const void *tmp_set_text_one_method = nullptr;
     const void *tmp_set_text_string_method = nullptr;
     void *tmp_text_class = nullptr;
+    void *tmp_wrapping_class = nullptr;
     void *rich_text_matcher_class = nullptr, *material_writer_class = nullptr, *material_reference_class = nullptr;
     void *story_dialog_class = nullptr;
     void *story_data_class = nullptr;
@@ -3917,6 +3963,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
     void *transform_class = nullptr;
     void *behaviour_class = nullptr;
     void *content_fitter_class = nullptr;
+    void *click_handler_class = nullptr;
     void *game_object_class = nullptr;
     void *rect_transform_class = nullptr;
     void *material_class = nullptr;
@@ -4041,6 +4088,10 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         if (!notice_extra_classes[2]) notice_extra_classes[2] = class_from_name(image, "MainUI.NoticeUI", "NoticeUIContentHyperLink");
         if (!content_fitter_class)
             content_fitter_class = class_from_name(image, "UnityEngine.UI", "ContentSizeFitter");
+        if (!tmp_wrapping_class)
+            tmp_wrapping_class = class_from_name(image, "TMPro", "TextWrappingModes");
+        if (!click_handler_class)
+            click_handler_class = class_from_name(image, "UnityEngine.EventSystems", "IPointerClickHandler");
         if (choice_button_class == nullptr)
             choice_button_class = class_from_name(image, "", "ActionChoiceButton");
         if (g_choice_result_log_class == nullptr)
@@ -4530,6 +4581,26 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         g_tmp_get_line_spacing_info = tmp_get_line_spacing_method;
         g_tmp_set_line_spacing_info = tmp_set_line_spacing_method;
         g_tmp_get_font_size_info = tmp_get_font_size_method;
+        if (tmp_wrapping_class && class_is_enum && class_is_enum(tmp_wrapping_class) &&
+            class_get_field_from_name && field_get_type && field_get_flags && field_static_get_value &&
+            class_from_type && type_get_name && il2cpp_free) {
+            const void *value_field = class_get_field_from_name(tmp_wrapping_class, "value__");
+            char *value_name = value_field ? type_get_name(field_get_type(value_field)) : nullptr;
+            bool valid = value_name && strcmp(value_name, "System.Int32") == 0;
+            if (value_name) il2cpp_free(value_name);
+            const char *names[] = {"NoWrap", "Normal", "PreserveWhitespace", "PreserveWhitespaceNoWrap"};
+            for (int32_t i = 0; valid && i < 4; ++i) {
+                const void *field = class_get_field_from_name(tmp_wrapping_class, names[i]);
+                int32_t actual = -1;
+                valid = field && (field_get_flags(field) & 0x0050u) == 0x0050u &&
+                        class_from_type(field_get_type(field)) == tmp_wrapping_class;
+                if (valid) { field_static_get_value(field, &actual); valid = actual == i; }
+            }
+            if (valid) {
+                g_tmp_get_wrapping_mode_info = diagnostic_method(tmp_text_class, "get_textWrappingMode", "", "TMPro.TextWrappingModes", false);
+                g_tmp_set_wrapping_mode_info = diagnostic_method(tmp_text_class, "set_textWrappingMode", "TMPro.TextWrappingModes", "System.Void", false);
+            }
+        }
         g_tmp_set_font_size_info = tmp_set_font_size_method;
         g_tmp_get_font_size_min_info = tmp_get_font_size_min_method;
         g_tmp_set_font_size_min_info = tmp_set_font_size_min_method;
@@ -4580,6 +4651,13 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         if (class_get_type && type_get_object && tmp_text_class) g_tmp_runtime_type = type_get_object(class_get_type(tmp_text_class));
         if (class_get_type && type_get_object && content_fitter_class)
             g_content_fitter_runtime_type = type_get_object(class_get_type(content_fitter_class));
+        if (class_get_type && type_get_object && click_handler_class) {
+            g_layout_get_component_info = diagnostic_method(component_class, "GetComponent", "System.Type", "UnityEngine.Component", false);
+            if (g_layout_get_component_info)
+                g_click_handler_runtime_type = type_get_object(class_get_type(click_handler_class));
+        }
+        append_native_metadata("font-state.log", g_click_handler_runtime_type && g_layout_get_component_info ?
+                "interactive_label_apis=1" : "interactive_label_apis=0");
         for (const char *fit_type : {"UnityEngine.UI.ContentSizeFitter.FitMode", "UnityEngine.UI.ContentSizeFitter/FitMode"}) {
             if (!g_content_fitter_vertical_info)
                 g_content_fitter_vertical_info = diagnostic_method(content_fitter_class, "get_verticalFit", "", fit_type, false);

@@ -9,7 +9,7 @@
 #include <memory>
 #include <unordered_map>
 struct TmpComponentState {
-    limbus_text_provenance::LayoutOverride<bool> wrapping;
+    limbus_text_provenance::LayoutOverride<int32_t> wrapping;
     limbus_text_provenance::LayoutOverride<int32_t> overflow;
     limbus_text_provenance::LayoutOverride<float> spacing;
 };
@@ -23,6 +23,8 @@ struct Control {
     TmpComponentState tmp;
     UiComponentState ui;
     bool announcer=false,choice=false,ruby=false,fitted=false;
+    bool clickable=false,reflection_error=false;
+    Control *parent=nullptr;
     std::string name;
 };
 std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> codec;
@@ -31,6 +33,7 @@ const uint16_t *chars(void *s) { return reinterpret_cast<const uint16_t *>(stati
 auto g_string_length=length; auto g_string_chars=chars;
 bool utf16_to_utf8(const uint16_t *s,int32_t n,std::string *out) { *out=codec.to_bytes(reinterpret_cast<const char16_t *>(s),reinterpret_cast<const char16_t *>(s)+n);return true; }
 int g_tmp_get_rect_transform_info=0,g_tmp_set_word_wrapping_info=Wrap,g_tmp_get_word_wrapping_info=Wrap;
+int g_tmp_get_wrapping_mode_info=Wrap,g_tmp_set_wrapping_mode_info=Wrap;
 int g_tmp_set_overflow_mode_info=Overflow,g_tmp_get_overflow_mode_info=Overflow;
 int g_tmp_get_auto_sizing_info=AutoSize,base_field;
 const void *g_tmp_base_size_field=&base_field;
@@ -46,10 +49,22 @@ bool invoke_bool_getter(int key,void *i,bool *out) {*out=static_cast<Control *>(
 void invoke_float_setter(int key,void *i,float v) {auto &c=*static_cast<Control *>(i);c.values[key]=v;c.writes.push_back(key);}
 void invoke_int_setter(int key,void *i,int32_t v) {invoke_float_setter(key,i,v);}
 void invoke_bool_setter(int key,void *i,bool v) {invoke_float_setter(key,i,v);}
+#include "runtime-wrapping-under-test.inc"
 bool is_announcer_description(void *i) {return static_cast<Control *>(i)->announcer;}
 bool is_choice_text(void *i) {return static_cast<Control *>(i)->choice;}
 bool is_ruby_text(void *i) {return static_cast<Control *>(i)->ruby;}
 bool has_content_fitted_height(void *i) {return static_cast<Control *>(i)->fitted;}
+int g_component_get_transform_info=1,g_transform_get_parent_info=2,g_layout_get_component_info=3,click_type;
+const void *g_click_handler_runtime_type=&click_type;
+void *invoke_object_getter(int key,void *i) {return key==1?i:static_cast<Control *>(i)->parent;}
+void *invoke_component(int key,void *i,void **args,void **error) {
+    assert(key==3 && args[0]==g_click_handler_runtime_type);
+    auto c=static_cast<Control *>(i);
+    if(c->reflection_error){*error=c;return nullptr;}
+    return c->clickable?i:nullptr;
+}
+auto g_runtime_invoke=invoke_component;
+#include "runtime-interactive-owner-under-test.inc"
 ComponentRect read_component_rect(void *i,int) {return static_cast<Control *>(i)->rect;}
 std::string read_unity_object_name(void *i) {return static_cast<Control *>(i)->name;}
 size_t count_visible_codepoints(const std::string &s) {return limbus_rich_text::visible_codepoints(s);}
@@ -81,6 +96,41 @@ void legacy(Control &c,const std::string &text) {
     for(int key:{Size,Minimum,Maximum,AutoSize,Spacing,Overflow}) assert(c.values.at(key)==before.at(key));
 }
 int main() {
+    // Actual serialized mirror pack-search configuration: no-wrap, auto 20..45,
+    // base 40; HorizontalLayoutGroup stretches its text slot to about 133 x 97.
+    Control pack_button,pack_row,pack_text;
+    pack_button.clickable=true;pack_row.parent=&pack_button;pack_text.parent=&pack_row;
+    pack_text.rect={132.761f,97};pack_text.values[Base]=40;pack_text.values[Size]=34.95f;
+    pack_text.values[Minimum]=20;pack_text.values[Maximum]=45;
+    apply(pack_text,"主题卡包观测");assert(pack_text.values[Wrap]==0);
+    legacy(pack_text,"主题卡包观测");assert(pack_text.values[Horizontal]==1);
+    // Resizing, repeated parsing and a fitted small size must not open wrapping.
+    pack_text.values[Size]=20;pack_text.rect.height=110;
+    apply(pack_text,"主题卡包观测");assert(pack_text.values[Wrap]==0);
+    for(const auto *text:{"E.G.O","胜率","伤害","刷新","人格详情","通行证任务"}) {
+        Control c;c.parent=&pack_button;c.rect.height=97;apply(c,text);assert(c.values[Wrap]==0);
+    }
+    // A later explicit game layout change, body/fitter, paging, or line break wins.
+    pack_text.values[Wrap]=1;apply(pack_text,"游戏改成多行");assert(pack_text.values[Wrap]==1);
+    Control fitted_label;fitted_label.parent=&pack_button;fitted_label.fitted=true;fitted_label.rect.height=100;
+    apply(fitted_label,"饰品说明");assert(fitted_label.values[Wrap]==1);
+    Control broken_label;broken_label.parent=&pack_button;broken_label.rect.height=100;
+    apply(broken_label,"第一段\n第二段");assert(broken_label.values[Wrap]==1);
+    for(int mode:{4,5,6}) {Control c;c.parent=&pack_button;c.rect.height=100;c.values[Overflow]=mode;
+        apply(c,"分段正文");assert(c.values[Wrap]==0&&c.values[Overflow]==mode);}
+    Control whitespace;whitespace.values[Wrap]=2;apply(whitespace,"确认");assert(whitespace.values[Wrap]==3);
+    assert(whitespace.tmp.wrapping.restore(3)&&whitespace.tmp.wrapping.original==2);
+    whitespace.rect.height=180;apply(whitespace,"包含空白的正文。");assert(whitespace.values[Wrap]==2);
+    Control whitespace_button;whitespace_button.parent=&pack_button;whitespace_button.rect.height=97;
+    whitespace_button.values[Wrap]=3;apply(whitespace_button,"主题卡包观测");assert(whitespace_button.values[Wrap]==3);
+    g_tmp_get_wrapping_mode_info=0;g_tmp_set_wrapping_mode_info=0;
+    Control classic;classic.rect.height=97;classic.parent=&pack_button;apply(classic,"旧版按钮");assert(classic.values[Wrap]==0);
+    g_tmp_get_wrapping_mode_info=Wrap;g_tmp_set_wrapping_mode_info=Wrap;
+    Control outside,a,b,c;outside.clickable=true;a.parent=&outside;b.parent=&a;c.parent=&b;
+    Control child;child.parent=&c;assert(!has_interactive_text_owner(&child));
+    assert(has_interactive_text_owner(&c));c.reflection_error=true;assert(!has_interactive_text_owner(&c));
+    // An ordinary short paragraph with identical dimensions remains multi-line.
+    Control paragraph;paragraph.rect={132.761f,97};apply(paragraph,"这里是对话正文。");assert(paragraph.values[Wrap]==1);
     // fontSizeMax can be 10x the actual size: a translated label must not grow.
     for(float size:{8.f,18.f,30.f,46.f}) for(bool automatic:{false,true}) {
         Control c;c.values[Size]=size;c.values[Base]=size;c.values[AutoSize]=automatic;c.rect.height=size*1.3f;
