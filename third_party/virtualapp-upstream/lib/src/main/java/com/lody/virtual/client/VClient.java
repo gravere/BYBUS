@@ -1794,6 +1794,19 @@ public final class VClient extends IVClient.Stub {
         File dataDir = new File("/data/user/0/" + packageName);
         File externalPackageDir = new File(
                 "/storage/emulated/0/Android/data/" + packageName);
+        if (com.lody.virtual.helper.compat.ContainerAbiCompat.requiresHostContextPaths(Build.SUPPORTED_ABIS)) {
+            // Unity's Java resource extraction otherwise writes to the official app's directory:
+            // x86 libcore does not pass through the translated ARM libc IO hooks. Use the existing
+            // mapping, not a second cache or a copy of the original game's data.
+            String internalPath = NativeEngine.getRedirectedPath(dataDir.getAbsolutePath() + "/");
+            String externalPath = NativeEngine.getRedirectedPath(externalPackageDir.getAbsolutePath() + "/");
+            if (internalPath == null || externalPath == null) {
+                Log.w("LimbusVA", "Game context storage mapping unavailable");
+                return;
+            }
+            dataDir = new File(internalPath);
+            externalPackageDir = new File(externalPath);
+        }
         File externalFilesDir = new File(externalPackageDir, "files");
         File externalCacheDir = new File(externalPackageDir, "cache");
         String hostPackageName = VirtualCore.get().getHostPkg();

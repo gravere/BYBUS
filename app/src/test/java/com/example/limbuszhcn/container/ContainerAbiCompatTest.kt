@@ -5,6 +5,14 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ContainerAbiCompatTest {
+    @Test fun translatedArmUsesHostFilePathsWithoutChangingNativeArmDevices() {
+        assertEquals(true, ContainerAbiCompat.requiresHostContextPaths(arrayOf("x86_64", "arm64-v8a")))
+        assertEquals(true, ContainerAbiCompat.requiresHostContextPaths(arrayOf("x86", "armeabi-v7a")))
+        assertEquals(false, ContainerAbiCompat.requiresHostContextPaths(arrayOf("arm64-v8a", "armeabi-v7a")))
+        assertEquals(false, ContainerAbiCompat.requiresHostContextPaths(arrayOf("armeabi-v7a")))
+        assertEquals(false, ContainerAbiCompat.requiresHostContextPaths(emptyArray()))
+        assertEquals(false, ContainerAbiCompat.requiresHostContextPaths(null))
+    }
     @Test fun installedArmEngineKeepsItsAbiOnAnX86Device() {
         assertEquals("arm64-v8a", ContainerAbiCompat.primaryAbi(
             "arm64-v8a", arrayOf("x86_64", "arm64-v8a"), "x86_64"))

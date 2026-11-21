@@ -10,6 +10,20 @@ import org.junit.Test
  * 验证公开诊断包写入前的敏感信息脱敏与长度限制。
  */
 class DebugLogExporterTest {
+    @Test fun engineMarkersContainNoFreeTextOrAccountPayload() {
+        val prefix = "1795004706.847  8909  8958 E Unity : "
+        assertEquals("time=1795004706.847 pid=8909 event=intro_complete", safeGameStartupMarker(prefix + "PlayDone"))
+        assertEquals("time=1795004706.847 pid=8909 event=resource_install_failed",
+            safeGameStartupMarker(prefix + "Not enough storage space to install required resources."))
+        assertEquals("time=1795004706.847 pid=8909 event=addressables_runtime_data_missing",
+            safeGameStartupMarker(prefix + "RuntimeData is null path=/private/account-123"))
+        val error = safeGameStartupMarker(prefix + "Curl error 7 https://private.example?token=fixture")!!
+        assertFalse(error.contains("private")); assertFalse(error.contains("fixture"))
+        assertEquals(null, safeGameStartupMarker(prefix + "Login user private@example.com"))
+        assertEquals(null, safeGameStartupMarker(prefix + "PlayDone purchase={secret receipt}"))
+        assertEquals(null, safeGameStartupMarker(prefix.replace("Unity", "Billing") + "PlayDone"))
+        assertEquals(null, safeGameStartupMarker("invalid time 8909 E Unity : PlayDone"))
+    }
     @Test fun gameExitCodesRequireTheCurrentProcessTimeAndAnExplicitMessage() {
         val line = " 1795004706.847  8909  8958 E AppSealing: !!! Kill Process ........[50025]"
         val time = 1_795_004_706_847L

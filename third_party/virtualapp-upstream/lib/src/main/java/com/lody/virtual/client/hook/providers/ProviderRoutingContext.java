@@ -18,7 +18,8 @@ public final class ProviderRoutingContext extends ContextWrapper {
 
     public ProviderRoutingContext(Context base, Context transport, int physicalUser,
                                   RoutedContentResolver.Router router) {
-        super(base);
+        super(com.lody.virtual.client.fixer.LimbusStorageContext.wrap(base,
+                com.lody.virtual.client.VClient.get().getCurrentPackage(), android.os.Build.SUPPORTED_ABIS));
         this.transport = transport;
         this.physicalUser = physicalUser;
         this.router = router;

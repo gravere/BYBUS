@@ -177,14 +177,14 @@ public class ServiceManager {
                 res.restart = false;
             }
         }
-        boolean destroy = res.startId == 0 || res.restart;
+        boolean destroy = res.died || res.startId == 0 || res.restart;
         if (destroy || record.decreaseConnectionCount(intent)) {
             boolean rebind = record.service.onUnbind(intent);
             if (destroy) {
                 record.service.onDestroy();
                 mServices.remove(component);
-                VActivityManager.get().onServiceDestroyed(VUserHandle.myUserId(), component);
-                if (res.restart) {
+                if (!res.died) VActivityManager.get().onServiceDestroyed(VUserHandle.myUserId(), component);
+                if (res.restart && !res.died) {
                     ServiceRecord sr = getOrCreateService(component, serviceInfo);
                     sr.service.onStartCommand(null, 0, res.startId);
                 }

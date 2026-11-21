@@ -56,6 +56,7 @@ internal class DebugLogExporter(private val context: Context) {
                     zip.writeText("persistent/${logFile.name}", content)
                 }
             zip.writeText("logcat.txt", collectLogcat())
+            zip.writeText("game-startup.txt", collectGameStartup())
             zip.writeText("process-starts.txt", SystemStartupDiagnostics.collect(context))
             zip.writeText("game-session.txt", runCatching {
                 com.example.limbuszhcn.container.VirtualAppSession(context).snapshot().diagnostic()
@@ -212,6 +213,25 @@ internal class DebugLogExporter(private val context: Context) {
             "logcat collection failed: ${error.javaClass.simpleName}: ${error.message}"
                 .redactedAndBounded(MAX_SUMMARY_BYTES)
         }
+    }
+
+    /** Export fixed engine-stage/error categories, never arbitrary Unity logs or payloads. */
+    private fun collectGameStartup(): String {
+        val command = listOf("logcat", "-d", "-b", "main", "-v", "epoch",
+            "--uid=${Process.myUid()}", "-t", "6000", "Unity:I", "*:S")
+        return runCatching {
+            val process = ProcessBuilder(command).redirectErrorStream(true).start()
+            val read = FutureTask {
+                process.inputStream.bufferedReader().useLines { lines ->
+                    lines.take(6000).mapNotNull(::safeGameStartupMarker).take(256).joinToString("\n")
+                }
+            }
+            try {
+                Thread(read, "bybus-startup-markers").apply { isDaemon = true; start() }
+                "scope=own-uid; engine markers only; missing markers do not prove success\n" +
+                    read.get(2, TimeUnit.SECONDS).ifEmpty { "no_markers" } + "\n"
+            } finally { process.destroy(); read.cancel(true) }
+        }.getOrElse { "startup_markers_unavailable\n" }
     }
 
     private fun collectExitReasons(): ExitDiagnostics {
@@ -464,6 +484,29 @@ internal fun String.redactedAndBounded(maxBytes: Int): String {
 }
 
 private val GAME_EXIT_LOG = Regex("""(\d{1,11})\.(\d{3,9})\s+(\d+)\s+\d+\s+[EF]\s+AppSealing\s*:\s*[! ]*Kill\s+Process[. ]*\[([1-9]\d{4})\]""")
+
+private val GAME_STARTUP_LOG = Regex("""(\d{1,11}\.\d{3,9})\s+(\d{1,10})\s+\d+\s+[VDIWEF]\s+Unity\s*:\s*(.{0,8192})""")
+
+internal fun safeGameStartupMarker(line: String): String? {
+    val match = GAME_STARTUP_LOG.matchEntire(line.trim()) ?: return null
+    val message = match.groupValues[3].trim()
+    val category = when {
+        message in listOf("PlayVideo", "PlayVideo()") -> "intro_video"
+        message in listOf("PlayWarningAnim", "PlayWarningAnim()") -> "warning_animation"
+        message in listOf("PlayDone", "PlayDone()") -> "intro_complete"
+        message.contains("Not enough storage space to install required resources", true) -> "resource_install_failed"
+        message.contains("RuntimeData is null", true) -> "addressables_runtime_data_missing"
+        message.contains("Failed to load PlayerSettings", true) -> "player_settings_missing"
+        message.contains("Unable to initialize the Unity Engine", true) -> "engine_initialization_failed"
+        message.contains("Failed to extract resources", true) -> "resource_extraction_failed"
+        message.contains("Unable to load", true) && message.contains("global-metadata.dat", true) -> "il2cpp_metadata_unreadable"
+        message.contains("Curl error", true) -> "network_request_failed"
+        message.contains("FMOD", true) && message.contains("error", true) -> "audio_resource_failed"
+        else -> return null
+    }
+    // Only a numeric timestamp, PID and our category can leave this parser.
+    return "time=${match.groupValues[1]} pid=${match.groupValues[2]} event=$category"
+}
 
 private const val EARLY_GAME_EXIT_MS = 30_000L
 private const val GAME_BIND_EVENT = "VClient.bindApplication before makeApplication"
