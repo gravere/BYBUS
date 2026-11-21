@@ -56,6 +56,14 @@ end = source.index("bool invoke_float_getter(", start)
 start = source.index("float read_tmp_layout_size(")
 end = source.index("\nvoid *apply_tmp_component_layout_markup(", start)
 (output / "runtime-layout-under-test.inc").write_text(source[start:end], encoding="utf-8")
+title_layout = []
+for signature in ("float personality_title_character_width(", "std::vector<std::string> split_utf8_codepoints(",
+                  "uint32_t first_utf8_codepoint(", "std::vector<std::string> wrap_personality_title_line(",
+                  "std::string reflow_personality_title(", "void *apply_tmp_component_layout_markup("):
+    start = source.index(signature)
+    end = source.index("\n}", start) + 2
+    title_layout.append(source[start:end])
+(output / "runtime-title-layout-under-test.inc").write_text("\n\n".join(title_layout), encoding="utf-8")
 start = source.index("void apply_translated_ui_style(")
 end = source.index("\nvoid *prepare_ui_text(", start)
 (output / "runtime-ui-layout-under-test.inc").write_text(source[start:end], encoding="utf-8")

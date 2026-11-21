@@ -134,7 +134,7 @@ class ContainerPatchInstaller(
                 "汉化清单文件超出准备目录"
             }
         }
-        onProgress("准备首次加载汉化")
+        onProgress("加载汉化资源")
         LiveTranslationStore(cacheRoot).prepare(patchDirectory, manifest, forceRebuild,
             progress = { done, total -> onCount("读取汉化包", done, total) }) { target ->
             japaneseSourceFor(storage.resolvePatchTarget(target))

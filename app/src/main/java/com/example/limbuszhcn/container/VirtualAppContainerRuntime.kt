@@ -153,8 +153,9 @@ class VirtualAppContainerRuntime(
             bridge.ensureGameLaunchLibraries(apks)
             if (installed != null) gameBuild.requireUnchanged(installed)
         }
-        // Retry a prior background-policy rejection only for this explicit game launch.
-        com.lody.virtual.client.stub.KeepAliveService.requestStart(context)
+        // The guest now binds the engine from its own process. Retire the old optional
+        // foreground service without touching the separate AI task service or its notification.
+        context.stopService(Intent(context, com.lody.virtual.client.stub.KeepAliveService::class.java))
         try { measureStartup("activity_handoff") { bridge.launch(LocalContainerRuntime.GAME_PACKAGE) } }
         catch (error: Exception) {
             context.stopService(Intent(context, com.lody.virtual.client.stub.KeepAliveService::class.java))

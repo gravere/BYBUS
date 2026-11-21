@@ -5,6 +5,19 @@ import org.junit.Test
 import java.nio.file.Files
 
 class LauncherOperationFeedbackTest {
+    @Test fun managementActionsMatchReadinessAfterReturningFromGame() {
+        val imported = com.example.limbuszhcn.container.ContainerStatus(true, true, "ready")
+        val ready = LauncherUiState(container = imported, canResumeGame = true,
+            coverage = com.example.limbuszhcn.translation.CoverageState(language = com.example.limbuszhcn.gamefs.GameTextLanguage.English))
+        assertTrue(ready.canInspectCoverage)
+        assertTrue(ready.canEditAiTranslations)
+        assertFalse(ready.copy(busy = true).canInspectCoverage)
+        assertFalse(ready.copy(coverage = com.example.limbuszhcn.translation.CoverageState()).canInspectCoverage)
+        assertFalse(ready.copy(container = imported.copy(gameImported = false)).canInspectCoverage)
+        assertFalse(ready.copy(ai = ready.ai.copy(recoveryIssue = true)).canEditAiTranslations)
+        assertFalse(ready.copy(gameInstallPending = true).canEditAiTranslations)
+        assertTrue(ready.copy(ai = ready.ai.copy(recoveryIssue = true)).canInspectCoverage)
+    }
     @Test fun aiTestFailureDoesNotChangeGameReadinessOrAnExistingOperation() {
         for (initial in listOf(LauncherUiState(), LauncherUiState(busy = true, failed = true, stage = "准备启动", message = "原有错误", launchStep = 2))) {
             val testing = initial.beginAiSettings("正在测试翻译")

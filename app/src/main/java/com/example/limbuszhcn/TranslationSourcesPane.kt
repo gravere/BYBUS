@@ -166,7 +166,7 @@ internal fun TranslationSourcesPane(state: LauncherUiState, actions: Translation
                 SheetAction(Glyph.Ai, "继续 AI 翻译", navigation = true, onClick = onAi)
                 if (!selected.independent && selected.baseId != "global") {
                     DetailActionDivider()
-                    SheetAction(Glyph.Sync, "更新原包译文", !state.busy, navigation = true, onClick = { onBaseUpdate(selected.id) })
+                    SheetAction(Glyph.Sync, "更新原包译文", state.canEditAiTranslations, navigation = true, onClick = { onBaseUpdate(selected.id) })
                 }
             }
             DetailActionDivider()

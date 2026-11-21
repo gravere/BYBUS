@@ -673,23 +673,6 @@ std::string apply_dante_line_height(const std::string &translation) {
     return output;
 }
 
-std::string apply_uniform_line_height(const std::string &text, int32_t percentage) {
-    std::string output;
-    output.reserve(text.size() + 96);
-    std::string line_height_tag = "<line-height=" + std::to_string(percentage) + "%>\n";
-    for (char character : text) {
-        if (character != '\n') {
-            output.push_back(character);
-            continue;
-        }
-        // TMP 在换行符前读取当前 line-height；换行后立即恢复 100%，避免标签
-        // 继续影响同一组件之外的自动布局计算。
-        output += line_height_tag;
-        output += "<line-height=100%>";
-    }
-    return output;
-}
-
 float personality_title_character_width(uint32_t codepoint) {
     // 拉丁字母、数字与标点在当前中文字体中的实际宽度明显小于一个汉字；
     // 用近似字宽而不是字节数计算，避免把 LCA、E.G.O 等缩写过度拆行。
@@ -2959,14 +2942,17 @@ void *apply_tmp_component_layout_markup(void *instance, void *managed_text) {
     int32_t length = g_string_length(managed_text);
     std::string text;
     if (length < 0 || length > 4096 ||
-        !utf16_to_utf8(g_string_chars(managed_text), length, &text) ||
-        text.find("<line-height=") != std::string::npos) {
+        !utf16_to_utf8(g_string_chars(managed_text), length, &text)) {
         return managed_text;
     }
+    auto markup = text;
+    for (char &c : markup) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+    if (markup.find("<line-height=") != std::string::npos) return managed_text;
     std::string component_name = read_unity_object_name(instance);
     if (component_name != "[Text]GroupName") {
         return managed_text;
     }
+    const std::string original_text = text;
     // 某些页面会把包内换行压成空格或直接去掉。通过当前汉化包自动生成的兼容索引
     // 恢复原始分行，确保任意人格标题都遵循包内排版，而不是只修复已知个例。
     auto package_layout = g_package_line_breaks.find(text);
@@ -2976,12 +2962,11 @@ void *apply_tmp_component_layout_markup(void *instance, void *managed_text) {
     if (text.find('\n') == std::string::npos) {
         return managed_text;
     }
-    // 人格名称控件会忽略运行时 lineSpacing，却会在生成网格时遵守 TMP 富文本行高。
-    // 只移动空格处的换行，不增删或改写汉化包正文，并统一使用用户指定的 150% 行高。
+    // Preserve the package's line breaks without inflating the font's native baseline distance.
+    // A 150% rich-text override made compact roster cards much looser than the same identity elsewhere.
     size_t line_count = 0;
-    std::string reflowed = reflow_personality_title(text, &line_count);
-    // 用户要求所有人格卡底栏保持一致，二行与三行标题统一采用 150% 行高。
-    std::string formatted = apply_uniform_line_height(reflowed, 150);
+    std::string formatted = reflow_personality_title(text, &line_count);
+    if (formatted == original_text) return managed_text;
     void *replacement = new_managed_string(formatted);
     if (replacement == nullptr) return managed_text;
     pthread_mutex_lock(&g_font_state_lock);
