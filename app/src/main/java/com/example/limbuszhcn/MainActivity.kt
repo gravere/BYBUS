@@ -303,6 +303,8 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        if (com.example.limbuszhcn.translation.AiTaskService.hasActiveTask())
+            PersistentDiagnosticLog.info(TAG, "MainActivity background with active translation configuration=$isChangingConfigurations")
         foregroundOpening.stopped(isChangingConfigurations)
         super.onStop()
     }

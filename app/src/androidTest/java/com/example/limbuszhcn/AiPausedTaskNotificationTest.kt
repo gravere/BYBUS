@@ -27,7 +27,7 @@ class AiPausedTaskNotificationTest {
     }
     @Suppress("DEPRECATION")
     private fun running() = context.getSystemService(ActivityManager::class.java).getRunningServices(50)
-        .any { it.service.className == AiTaskService::class.java.name }
+        .any { it.service.className in setOf(AiTaskService::class.java.name, AiTransferJobService::class.java.name) }
     private fun fixture() = AiTaskSnapshot("paused-fixture", AiConfig(limit = 49), "zero", "来源",
         "c".repeat(32), "汉化", null, phase = AiTaskPhase.Paused,
         progress = AiProgress(8, 49, reused = 1, elapsedMillis = 171_000),
