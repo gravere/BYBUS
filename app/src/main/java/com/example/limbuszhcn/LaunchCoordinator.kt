@@ -31,6 +31,7 @@ internal data class LauncherUiState(
     val sources: SourceState = SourceState(),
     val ai: AiUiState = AiUiState(),
     val coverage: CoverageState = CoverageState(),
+    val importReview: ImportCoverageReview? = null,
     val aiUpstreamOffer: AiUpstreamOffer? = null,
     val aiPreparingLaunch: Boolean = false,
     val container: ContainerStatus? = null,
@@ -261,6 +262,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
             val report = it.ai.library.report
             val stale = report?.sourceId?.let { id -> sources.sources.find { s -> s.id == id }?.revision != report.revision } == true
             it.copy(sources = sources, coverage = if (changed) CoverageState() else it.coverage,
+                importReview = it.importReview?.takeIf { review -> sources.selected.id == review.sourceId && sources.selected.revision == review.revision },
                 ai = it.ai.copy(library = it.ai.library.copy(stale = it.ai.library.stale || stale)))
         }
         runCatching { publishAiSettings() }.onFailure {
@@ -318,12 +320,114 @@ internal class LaunchCoordinator private constructor(application: Application) {
         val name = app.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
             if (it.moveToFirst()) it.getString(0)?.take(80) else null
         } ?: "本地汉化.zip"
-        app.contentResolver.openInputStream(uri).use { input ->
+        val source = app.contentResolver.openInputStream(uri).use { input ->
             translationSources.import(requireNotNull(input) { "无法读取汉化包" }, name.take(64), replaceId)
         }
         publish { it.copy(translation = null, resourcePreparation = null) }
         publishSources("已导入，下次启动使用此汉化包")
+        inspectImported(source, offer = true)
         "汉化包已导入"
+    }
+
+    private fun inspectImported(source: TranslationSource, offer: Boolean) {
+        coverageRequest.incrementAndGet()
+        val result = runCatching {
+            require(translationSources.read().selected.let { it.id == source.id && it.revision == source.revision }) { "汉化包已变化，请重新检查" }
+            val storage = translationStorage()
+            val language = requireNotNull(storage.textLanguage()) { "还未读取游戏语言。进入游戏下载资源后，可在此包的管理菜单中补齐。" }.language
+            require(storage.textResources(language).isNotEmpty()) { "游戏文本尚未下载，暂时无法判断覆盖。下载后可在此包的管理菜单中补齐。" }
+            stage("检查导入包覆盖")
+            val base = translationSources.prepare(source)
+            val input = coverageInputs(source, storage, verifyContents = true, verified = base)
+            coverageStore.read(input)?.takeUnless { it.needsCheck } ?: run {
+                val ticket = coverageStore.verified(coverageStore.beginCheck(source, language), input)
+                saveCoverage(storage, source, base, input, ticket)
+            }
+        }
+        val saved = result.getOrNull()
+        val issue = result.exceptionOrNull()?.let { error ->
+            if (error is java.util.concurrent.CancellationException) throw error
+            if (error is IllegalArgumentException || error is IllegalStateException) error.message
+            else "覆盖检查未完成，原包已保留，可稍后重新检查。"
+        }
+        publish { current -> current.copy(
+            coverage = saved?.let { CoverageState(report = it.report, fingerprint = it.fingerprint, language = it.report.language) }
+                ?: current.coverage.copy(loading = false, stale = true, error = issue),
+            importReview = if (offer) ImportCoverageReview(source.id, source.revision, source.name, saved?.report, issue) else null) }
+    }
+
+    fun inspectImportedTranslation(id: String) = perform("检查导入包覆盖", page = "translation") {
+        val source = translationSources.read().selected
+        require(source.id == id && source.kind == "local") { "请重新选择导入包" }
+        inspectImported(source, offer = true)
+        "导入包已保留，请选择补齐方式"
+    }
+
+    private fun officialForSupplement(): PreparedTranslation {
+        stage("准备零协汉化包")
+        val repository = com.example.limbuszhcn.update.TranslationRepository(translationCache,
+            releaseMetadata = github::releaseForLaunch, onProgress = { stage(it) })
+        val extracted = try { repository.checkLatest(RELEASE_URL, null) }
+        catch (error: Exception) {
+            if (error is java.util.concurrent.CancellationException) throw error
+            repository.verifiedForLaunch(null)
+        }
+        return PreparedTranslation(extracted.outputDirectory, extracted.manifest)
+    }
+
+    fun chooseImportFill(choice: ImportFillChoice) {
+        if (state.busy) return
+        val review = state.importReview ?: return
+        state = state.copy(importReview = null)
+        if (choice != ImportFillChoice.Official) return // AI selection only opens its existing review screen.
+        perform("零协补齐空缺", page = "translation") {
+            val source = translationSources.read().selected
+            require(source.id == review.sourceId && source.revision == review.revision) { "汉化包已变化，请重新检查" }
+            require(review.report != null) { "请先完成覆盖检查" }
+            stopGame()
+            val next = LocalSourceUpdates(translationSources).supplemented(source, officialForSupplement(), translationStorage(), ::workProgress)
+            translationSources.commitLocal(next, source)
+            publish { it.copy(translation = null, resourcePreparation = null) }
+            publishSources("零协补齐 ${next.supplement?.added ?: 0} 条，导入原包已保留")
+            inspectImported(next, offer = false)
+            "零协补齐完成，导入原包已保留"
+        }
+    }
+
+    fun saveSourceUpdateLink(id: String, url: String, automatic: Boolean) = perform("保存更新链接", page = "translation") {
+        val source = requireNotNull(translationSources.read().sources.find { it.id == id && it.kind == "local" })
+        val link = if (url.isBlank()) null else {
+            val valid = SourceUpdateLink.downloadUrl(url)
+            source.updateLink?.takeIf { it.url == valid }?.copy(automatic = automatic) ?: SourceUpdateLink(valid, automatic)
+        }
+        translationSources.updateLink(id, link)
+        publishSources(if (link == null) "更新链接已移除，汉化包保留" else "更新链接已保存")
+        if (link == null) "更新链接已移除" else "更新链接已保存，可检查更新"
+    }
+
+    fun restoreImportedTranslation(id: String) = perform("恢复导入原包", page = "translation") {
+        val source = translationSources.read().selected
+        require(source.id == id && source.supplement != null) { "当前包未使用零协补齐" }
+        stopGame()
+        val original = source.original
+        val next = original.copy(textFileCount = translationSources.prepare(original).manifest.entries.size)
+        translationSources.commitLocal(next, source)
+        publish { it.copy(translation = null, resourcePreparation = null) }
+        publishSources("已恢复导入原包，不再使用零协补齐内容")
+        "已恢复导入原包"
+    }
+
+    private fun checkLocalUpdate(source: TranslationSource): String {
+        stage("检查汉化包更新")
+        val updates = LocalSourceUpdates(translationSources)
+        val result = updates.update(source, supplement = { raw ->
+            updates.supplemented(raw, officialForSupplement(), translationStorage(), ::workProgress)
+        }, progress = { done, total -> workProgress("下载汉化包更新", done, total) })
+        val message = if (result.changed) "汉化包已更新" else "已是链接中的最新汉化包"
+        if (result.changed) publish { it.copy(translation = null, resourcePreparation = null, importReview = null) }
+        publishSources(message)
+        stage("校验与更新汉化资源")
+        return message
     }
 
     fun renameTranslation(id: String, name: String) = perform("修改汉化名称", page = "translation") {
@@ -1235,6 +1339,13 @@ internal class LaunchCoordinator private constructor(application: Application) {
             val approvedBuild = measureStartup("compatibility") { gameCompatibility.requireApproved(::workProgress) }
             measureStartup("game_sync") { prepareGame() }
             measureStartup("stop_previous_game") { stopGame() }
+            if (selectedSource.kind == "local" && selectedSource.updateLink?.due(System.currentTimeMillis()) == true) {
+                try { checkLocalUpdate(selectedSource) }
+                catch (error: Exception) {
+                    if (error is java.util.concurrent.CancellationException) throw error
+                    publishSources("本次更新检查未完成，继续使用已保存的汉化包")
+                }
+            }
             val updateMessage = update?.let(::applyAiUpdate)
             val patch = installer({ update?.offer?.metadata ?: metadata?.await() ?: error("本地汉化不请求零协更新") }) { stage(it, 1) }
             stage("校验汉化文件", 1)
@@ -1266,6 +1377,10 @@ internal class LaunchCoordinator private constructor(application: Application) {
 
     fun updateTranslation() = perform("校验与更新汉化资源", page = "translation") {
         val source = translationSources.read().selected
+        if (source.kind == "local" && source.updateLink != null) {
+            stopGame()
+            return@perform checkLocalUpdate(source)
+        }
         if (source.kind == "ai") {
             if (source.independent || source.baseId != null && source.baseId != "zero") return@perform "此包保存在本地，可在 AI 翻译中管理条目和继续翻译"
             if (offerAiUpdate(source, releaseCheck.start(15_000).await(), launchAfter = false, force = true))

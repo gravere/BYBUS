@@ -256,6 +256,15 @@ internal fun LauncherScreen(
             }
         }
     }
+    state.importReview?.takeIf { !state.busy }?.let { review ->
+        ImportCoverageDialog(review) { choice ->
+            translationActions.chooseImportFill(choice)
+            if (choice == com.example.limbuszhcn.translation.ImportFillChoice.Ai) {
+                requestedAiScope = com.example.limbuszhcn.translation.AiScope.Missing
+                requestedAiEntries = null; requestedCoverage = null; open("ai-translation")
+            }
+        }
+    }
     state.aiUpstreamOffer?.let { offer ->
         AiUpstreamDialog(offer, state.ai.hasKey, !state.busy && !state.ai.settingsBusy,
             translationActions.chooseAiUpdate, { translationActions.chooseAiUpdate(null); requestedAiScope = null; open("ai-translation") })

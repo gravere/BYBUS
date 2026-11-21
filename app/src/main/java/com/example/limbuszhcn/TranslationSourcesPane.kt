@@ -30,6 +30,9 @@ internal data class TranslationActions(
     val icon: (String) -> Unit = {}, val resetIcon: (String) -> Unit = {},
     val rename: (String, String) -> Unit = { _, _ -> }, val remove: (String) -> Unit = {},
     val export: (TranslationSource) -> Unit = {},
+    val inspectImport: (String) -> Unit = {}, val chooseImportFill: (ImportFillChoice) -> Unit = {},
+    val saveUpdateLink: (String, String, Boolean) -> Unit = { _, _, _ -> },
+    val restoreImported: (String) -> Unit = {},
     val saveAi: (AiConfig, String, Boolean) -> Unit = { _, _, _ -> },
     val generateAi: (AiConfig, String) -> Unit = { _, _ -> }, val cancelAi: () -> Unit = {},
     val saveKey: (String, String, String, String) -> Unit = { _, _, _, _ -> },
@@ -100,6 +103,8 @@ internal fun TranslationSourcesPane(state: LauncherUiState, actions: Translation
     var remove by remember(selected.id) { mutableStateOf(false) }
     var rename by remember(selected.id) { mutableStateOf(false) }
     var resetIcon by remember(selected.id) { mutableStateOf(false) }
+    var updateLink by remember(selected.id) { mutableStateOf(false) }
+    var restoreImported by remember(selected.id) { mutableStateOf(false) }
     var name by remember(selected.id) { mutableStateOf(selected.name) }
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         if (state.busy && state.taskPage == "translation") DetailCard {
@@ -114,6 +119,16 @@ internal fun TranslationSourcesPane(state: LauncherUiState, actions: Translation
             }
         }
         CoverageSummary(state, onCoverage, actions.inspectCoverage)
+        if (selected.kind == "local") DetailActionSection("导入包设置") {
+            SheetAction(Glyph.Translation, "补齐未覆盖文本", !state.busy, onClick = { actions.inspectImport(selected.id) })
+            DetailActionDivider()
+            SheetAction(Glyph.Globe, if (selected.updateLink == null) "添加更新链接" else "管理更新链接", !state.busy,
+                onClick = { updateLink = true })
+            if (selected.supplement != null) {
+                DetailActionDivider()
+                SheetAction(Glyph.File, "恢复导入原包", !state.busy, onClick = { restoreImported = true })
+            }
+        }
         sourceFamilies(state.sources.sources).forEach { family ->
             DetailActionSection(if (family.base == null) family.name else "汉化源") {
                 family.base?.let { source -> SourceSelectionRow(source, state, onProject) {
@@ -165,6 +180,13 @@ internal fun TranslationSourcesPane(state: LauncherUiState, actions: Translation
         state.sources.message?.let { Text(it, color = C.Muted, style = MaterialTheme.typography.bodySmall) }
         if (state.failed && !state.busy) Text(state.message, color = C.Error, style = MaterialTheme.typography.bodyMedium)
     }
+    if (updateLink) SourceUpdateLinkDialog(selected, !state.busy, { updateLink = false }) { url, automatic ->
+        updateLink = false; actions.saveUpdateLink(selected.id, url, automatic)
+    }
+    if (restoreImported) BybusDialog(onDismissRequest = { restoreImported = false }, title = { Text("恢复导入原包？") },
+        text = { Text("将关闭游戏，移除此包中零协补齐的内容。导入的原始译文、图标和更新链接会保留。") },
+        confirmButton = { TextButton({ restoreImported = false; actions.restoreImported(selected.id) }, enabled = !state.busy) { Text("恢复") } },
+        dismissButton = { TextButton({ restoreImported = false }) { Text("取消") } })
     state.sources.sources.firstOrNull { it.id == select }?.let { source ->
         TranslationSourceSwitchDialog(source, !state.busy, { select = null }) {
             select = null; actions.select(source.id)

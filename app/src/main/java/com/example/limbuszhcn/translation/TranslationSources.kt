@@ -16,9 +16,10 @@ internal data class TranslationSource(val id: String, val name: String, val kind
     val revision: String = "", val archive: String = "", val icon: String? = null, val baseId: String? = null,
     val updatedAtMillis: Long = 0, val textFileCount: Int = 0, val officialVersion: Long? = null,
     val independent: Boolean = false, val language: String? = null, val aiEntryCount: Int? = null,
-    val baseName: String? = null) {
+    val baseName: String? = null, val updateLink: SourceUpdateLink? = null, val supplement: OfficialSupplement? = null) {
     val isOfficial get() = id == "zero"
-    val label get() = when { isOfficial -> "自动更新"; kind == "ai" -> "AI 译文"; else -> "本地文件" }
+    val label get() = when { isOfficial -> "自动更新"; kind == "ai" -> "AI 译文"; updateLink != null -> "链接更新"; else -> "本地文件" }
+    val original get() = supplement?.let { copy(revision = it.originalRevision, archive = it.originalArchive, supplement = null) } ?: this
 }
 
 internal data class SourceState(val sources: List<TranslationSource> = listOf(TranslationSources.OFFICIAL),
@@ -67,7 +68,9 @@ internal class TranslationSources(val cache: Path) {
                 it.optLong("officialVersion").takeIf { version -> version > 0 }, it.optBoolean("independent"),
                 it.optString("language").takeIf { code -> code in setOf("jp", "en", "kr") },
                 if (it.has("aiEntryCount") && !it.isNull("aiEntryCount")) it.optInt("aiEntryCount").coerceAtLeast(0) else null,
-                it.optString("baseName").takeIf(String::isNotBlank))
+                it.optString("baseName").takeIf(String::isNotBlank),
+                it.optJSONObject("updateLink")?.let(SourceUpdateLink::read),
+                it.optJSONObject("supplement")?.let(OfficialSupplement::read))
         } }
         require(sources.map { it.id }.distinct().size == sources.size && sources.none { it.isOfficial })
         val taken = (listOf(OFFICIAL.name) + sources.filterNot { it.kind == "ai" }.map { it.name }).toMutableList()
@@ -115,6 +118,7 @@ internal class TranslationSources(val cache: Path) {
         .put("baseId", s.baseId.orEmpty()).put("updatedAtMillis", s.updatedAtMillis).put("textFileCount", s.textFileCount)
         .put("officialVersion", s.officialVersion).put("independent", s.independent)
         .put("language", s.language).put("aiEntryCount", s.aiEntryCount).put("baseName", s.baseName)
+        .put("updateLink", s.updateLink?.json()).put("supplement", s.supplement?.json())
 
     fun select(id: String): SourceState = read().let { state ->
         require(state.sources.any { it.id == id }) { "汉化源不存在" }
@@ -160,10 +164,31 @@ internal class TranslationSources(val cache: Path) {
         return importArchive(input, name, replaceId)
     }
 
+    /** Validation and immutable storage only. Caller commits after all preparation succeeds. */
+    fun stage(input: InputStream, name: String, replaceId: String? = null): TranslationSource =
+        importArchive(input, name, replaceId, commit = false)
+
+    fun commitLocal(source: TranslationSource, expected: TranslationSource, activate: Boolean = false): TranslationSource {
+        require(source.id == expected.id && source.kind == "local")
+        val state = read()
+        require(state.sources.find { it.id == expected.id } == expected) { "汉化包已变化，请重新操作" }
+        prepare(source)
+        source.supplement?.let { prepare(source.original) }
+        save(state.copy(sources = state.sources.map { if (it.id == source.id) source else it },
+            selectedId = if (activate) source.id else state.selectedId))
+        return source
+    }
+
+    fun updateLink(id: String, link: SourceUpdateLink?): SourceState = change(id) {
+        require(it.kind == "local") { "请在原始导入包中设置更新链接" }
+        it.copy(updateLink = link)
+    }
+
     private fun importArchive(input: InputStream, name: String, replaceId: String? = null,
                               generatedId: String? = null, baseId: String? = null, officialVersion: Long? = null,
                               activate: Boolean = true, independent: Boolean = false, language: String? = null,
-                              aiEntryCount: Int? = null, baseName: String? = null, summary: AiChangeSummary? = null): TranslationSource {
+                              aiEntryCount: Int? = null, baseName: String? = null, summary: AiChangeSummary? = null,
+                              commit: Boolean = true): TranslationSource {
         require(generatedId == null || validId(generatedId))
         val state = read()
         val previous = replaceId?.let { id -> requireNotNull(state.sources.find { it.id == id && !it.isOfficial }) }
@@ -184,14 +209,17 @@ internal class TranslationSources(val cache: Path) {
                 revision = hash, archive = target.fileName.toString(), icon = previous?.icon,
                 updatedAtMillis = System.currentTimeMillis(), textFileCount = prepared.manifest.entries.size,
                 officialVersion = officialVersion?.takeIf { it > 0 }, independent = independent, language = language,
-                aiEntryCount = aiEntryCount, baseName = baseName)
+                aiEntryCount = aiEntryCount, baseName = baseName,
+                updateLink = if (generatedId == null) previous?.updateLink?.let { SourceUpdateLink(it.url, it.automatic) } else null)
             val sources = if (previous == null) state.sources + source
                 else state.sources.map { if (it.id == source.id) source else it }
             val undo = if (generatedId != null) AiUndoPoint(source.id, source.revision, previous, state.selectedId,
                 summary?.copy(atMillis = source.updatedAtMillis)?.validated())
                 else state.undo?.takeUnless { it.sourceId == source.id }
-            save(state.copy(sources = sources, selectedId = if (activate) source.id else state.selectedId, undo = undo))
-            if (generatedId == null && previous?.kind == "ai") deleteAiCache(previous.id)
+            if (commit) {
+                save(state.copy(sources = sources, selectedId = if (activate) source.id else state.selectedId, undo = undo))
+                if (generatedId == null && previous?.kind == "ai") deleteAiCache(previous.id)
+            }
             return source
         } finally { Files.deleteIfExists(staged) }
     }
@@ -239,6 +267,7 @@ internal class TranslationSources(val cache: Path) {
         if (Files.exists(cache.resolve(".source-switch/ready"))) return
         val state = read()
         val retained = state.sources.map { it.revision }.toMutableSet()
+        state.sources.mapNotNull { it.supplement?.originalRevision }.forEach(retained::add)
         state.undo?.previous?.revision?.let(retained::add)
         com.example.limbuszhcn.container.LiveTranslationStore(cache).read()?.archive?.let(retained::add)
         val indexes = com.example.limbuszhcn.container.TranslationIndexStore(cache.resolve("translation-index"))
@@ -268,7 +297,7 @@ internal class TranslationSources(val cache: Path) {
         Files.deleteIfExists(root.resolve("icons/$id.png"))
         val removed = state.sources.first { it.id == id }
         deleteAiCache(id)
-        if (removed.archive.isNotEmpty() && remaining.none { it.archive == removed.archive } && next.undo?.previous?.archive != removed.archive &&
+        if (removed.archive.isNotEmpty() && remaining.none { it.archive == removed.archive || it.supplement?.originalArchive == removed.archive } && next.undo?.previous?.archive != removed.archive &&
             removed.archive.matches(Regex("[a-f0-9]{64}\\.pack"))) Files.deleteIfExists(archives.resolve(removed.archive))
         return next
     }

@@ -81,13 +81,14 @@ internal fun AppUpdatesPane(state: AppUpdateState, onCheck: () -> Unit, onOpenPa
 
 @Composable
 internal fun TranslationUpdateControls(state: LauncherUiState, onCheck: () -> Unit, horizontalPadding: Dp = 24.dp) {
-    val checking = state.busy && state.stage == "校验与更新汉化资源"
-    val showingResult = state.stage == "校验与更新汉化资源"
+    val showingResult = state.stage in setOf("校验与更新汉化资源", "检查汉化包更新", "下载汉化包更新")
+    val checking = state.busy && showingResult
     UpdateActionCard(message = state.message.takeIf { showingResult }, icon = Glyph.Translation,
-        busy = checking, failed = showingResult && state.failed, description = "汉化更新操作",
+        busy = checking, progress = state.workProgress.fraction?.let { (it * 100).toInt() },
+        failed = showingResult && state.failed, description = "汉化更新操作",
         progressDescription = "汉化更新进度", horizontalPadding = horizontalPadding,
-        action = if (checking) null else if (state.sources.selected.isOfficial || state.sources.selected.kind == "ai") "检查汉化更新" else "校验汉化包",
-        actionEnabled = !state.busy && (state.container?.gameImported == true || state.sources.selected.kind == "ai"), onAction = onCheck)
+        action = if (checking) null else if (state.sources.selected.isOfficial || state.sources.selected.kind == "ai" || state.sources.selected.updateLink != null) "检查汉化更新" else "校验汉化包",
+        actionEnabled = !state.busy && (state.container?.gameImported == true || state.sources.selected.kind == "ai" || state.sources.selected.updateLink != null), onAction = onCheck)
 }
 
 /** Keep transfer feedback beside its action, outside long release notes. */
