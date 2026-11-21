@@ -115,7 +115,7 @@ internal fun LauncherScreen(
         }
     }
     fun openCoverage() {
-        if (state.coverage.report != null) openChild("coverage")
+        if (state.coverage.report != null || !state.canInspectCoverage) openChild("coverage")
         else if (!state.coverage.loading) translationActions.inspectCoverage()
     }
     fun openAiEntries(id: String?) {
@@ -158,7 +158,7 @@ internal fun LauncherScreen(
                                 horizontalArrangement = Arrangement.spacedBy(layout.columnGap.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
                                 InstallationCard(state, Modifier.weight(1f).fillMaxHeight()) { open("status") }
-                                LaunchActions(state, onLaunch, onRefresh, resumed && sheet == null,
+                                LaunchActions(state, onLaunch, onRefresh, resumed,
                                     onDetails = { if (state.busy || state.ai.hasPendingTask) openTask() else open(if (state.failed) "error" else "status") },
                                     modifier = Modifier.width(layout.actionWidth.dp))
                                 HomeProjectCard(state, projectState, homeProjectSourceId, onHomeProjectSource,
@@ -174,7 +174,7 @@ internal fun LauncherScreen(
                             verticalArrangement = Arrangement.SpaceBetween,
                             horizontalAlignment = Alignment.CenterHorizontally) {
                             InstallationCard(state) { open("status") }
-                            LaunchActions(state, onLaunch, onRefresh, resumed && sheet == null,
+                            LaunchActions(state, onLaunch, onRefresh, resumed,
                                 onDetails = { if (state.busy || state.ai.hasPendingTask) openTask() else open(if (state.failed) "error" else "status") },
                                 modifier = Modifier.widthIn(max = layout.actionWidth.dp).fillMaxWidth())
                             HomeProjectCard(state, projectState, homeProjectSourceId, onHomeProjectSource,
@@ -196,7 +196,10 @@ internal fun LauncherScreen(
                     footer = { active -> when (active) {
                         "app-update" -> AppUpdateControls(appUpdateState, state, onDownloadAppUpdate, onInstallAppUpdate, onCancelAppUpdate, layout.detailPadding.dp)
                         "translation" -> TranslationUpdateControls(state, {
-                            if (state.sources.selected.kind == "ai") onUpdate() else confirmation = ConfirmedOperation.Translation
+                            val selected = state.sources.selected
+                            if (selected.kind == "ai" && (selected.independent || selected.baseId != null && selected.baseId != "zero"))
+                                openAiEntries(selected.id)
+                            else if (selected.kind == "ai") onUpdate() else confirmation = ConfirmedOperation.Translation
                         }, layout.detailPadding.dp)
                         "project" -> if (!state.sources.selected.isOfficial) UpdateActionCard(null, Glyph.Translation,
                             busy = false, description = "选择都市零协会汉化", progressDescription = "",
@@ -327,7 +330,7 @@ private fun InstallationCard(state: LauncherUiState, modifier: Modifier = Modifi
             if (state.gameUpdate.newerSources(state.installedVersionName).isNotEmpty()) "有新版" else null)
         HorizontalDivider(Modifier.padding(start = 32.dp, top = 12.dp, bottom = 12.dp), color = C.Line)
         InstallationRow(Glyph.Translation, "本地汉化", state.translationLabel
-            ?: if (state.resourcePreparation != null) "汉化尚未就绪" else "首次启动时准备")
+            ?: if (state.resourcePreparation != null) "汉化尚未就绪" else "启动时准备汉化")
     }
 }
 

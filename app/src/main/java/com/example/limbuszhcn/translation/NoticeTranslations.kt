@@ -35,6 +35,12 @@ internal class NoticeTexts(private val cache: Path) {
             it.fileName.toString().matches(Regex("${language.code.uppercase()}_BYBUS_NOTICE_${language.code}_[a-f0-9]{64}\\.json")) }
             .limit(200).toArray().map { it as Path }.associateBy { "${language.code}/${it.fileName}" } }
     }
+    fun resource(key: String): Path? {
+        val language = GameTextLanguage.fromCode(key.substringBefore('/')) ?: return null
+        if (key != "${language.code}/${key.substringAfterLast('/')}" || !isResource(key) ||
+            !key.substringAfter('/').startsWith("${language.code.uppercase()}_BYBUS_NOTICE_${language.code}_")) return null
+        return root.resolve(key).takeIf(Files::isRegularFile)
+    }
     companion object {
         fun isResource(path: String) = path.substringAfterLast('/').matches(Regex("(?:JP|EN|KR)_BYBUS_NOTICE_(jp|en|kr)_[a-f0-9]{64}\\.json"))
         /** Preserve exact concatenation, paragraph boundaries and complete markup tokens. */
@@ -66,8 +72,8 @@ internal class NoticeTexts(private val cache: Path) {
 /** Read-only additional AI/coverage inputs. Never placed in the game's resource tree. */
 internal class NoticeGameStorage(private val delegate: GameStorage, cache: Path) : GameStorage by delegate {
     private val notices = NoticeTexts(cache)
-    private val captured by lazy { GameTextLanguage.entries.flatMap { notices.resources(it).entries }.associate { it.key to it.value } }
-    private fun notice(path: String): Path? = captured[path.removePrefix(rootPath().trimEnd('/') + "/")]
+    private val captured get() = GameTextLanguage.entries.flatMap { notices.resources(it).entries }.associate { it.key to it.value }
+    private fun notice(path: String): Path? = notices.resource(path.removePrefix(rootPath().trimEnd('/') + "/"))
     override fun textResources(language: GameTextLanguage) = (delegate.textResources(language) + captured.keys.filter { it.startsWith("${language.code}/") }).distinct().sorted()
     override fun read(path: String): ByteArray? = notice(path)?.let { if (Files.size(it) <= 1024 * 1024) Files.readAllBytes(it) else null } ?: delegate.read(path)
     override fun readAtMost(path: String, limit: Int): ByteArray? = notice(path)?.let { if (Files.size(it) <= limit) Files.readAllBytes(it) else null } ?: delegate.readAtMost(path, limit)
@@ -78,7 +84,7 @@ internal class NoticeGameStorage(private val delegate: GameStorage, cache: Path)
     }
 }
 
-/** No network here. Lookup uses the selected verified package and requires every display chunk. */
+/** No network here. Each exact display chunk has its own translation and placeholder validation. */
 internal class NoticeRuntime(private val cache: Path, snapshot: LiveTranslationStore.Snapshot?) : AutoCloseable {
     private val entries = snapshot?.entries?.filter { NoticeTexts.isResource(it.key) }?.associateBy { it.key }.orEmpty()
     private val notices = NoticeTexts(cache)
@@ -94,7 +100,10 @@ internal class NoticeRuntime(private val cache: Path, snapshot: LiveTranslationS
         val parts = NoticeTexts.chunks(original) ?: return null
         val key = notices.key(language, original)
         // Only bounded public text is queued; no paid request or disk write on the game UI thread.
-        if (seen.size < 600 && seen.add(key)) {
+        if (seen.add(key)) {
+            synchronized(seen) {
+                while (seen.size > 400) seen.remove(seen.first())
+            }
             try { worker.execute { runCatching { notices.capture(language, original) }.onFailure { seen.remove(key) } } }
             catch (_: java.util.concurrent.RejectedExecutionException) { seen.remove(key) }
         }
@@ -106,12 +115,14 @@ internal class NoticeRuntime(private val cache: Path, snapshot: LiveTranslationS
             val source = NoticeTexts.document(parts)
             val merged = TranslationJsonPairer.mergeWithCoverage("Localize/$key", source.toString(), String(Files.readAllBytes(file), Charsets.UTF_8))
             val fields = TranslationFields.collect(source, merged.document, key, merged)
-            require(fields.isNotEmpty() && fields.all { it.covered && !it.needsReview })
+            require(fields.isNotEmpty())
             run {
-                val rows = (merged.document as JSONObject).getJSONArray("dataList")
-                val output = (0 until rows.length()).joinToString("") { rows.getJSONObject(it).getString("content") }
-                // Validate each chunk's placeholders using the same contract as paid generation.
-                fields.forEach { field -> ProtectedTranslation(field.text).maskTranslated(requireNotNull(field.translated)) }
+                val approved = fields.filter { field -> field.covered && !field.needsReview && runCatching {
+                    ProtectedTranslation(field.text).maskTranslated(requireNotNull(field.translated))
+                }.isSuccess }.associateBy { it.pointer }
+                val output = parts.mapIndexed { index, originalPart ->
+                    approved["/dataList/$index/content"]?.translated ?: originalPart
+                }.joinToString("")
                 output.takeIf { it != original && it.length <= 256 * 1024 }
             }
         }.getOrNull()

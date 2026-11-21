@@ -66,6 +66,8 @@ internal data class LauncherUiState(
     val failed: Boolean = false,
     val exportRequest: File? = null
 ) {
+    val canInspectCoverage: Boolean get() = !busy && !coverage.loading && coverage.language != null && container?.gameImported == true
+    val canEditAiTranslations: Boolean get() = !busy && !ai.hasPendingTask && !gameInstallPending && gameInstallReview == null
     val translationLabel: String? get() = translation?.let {
         if (sources.selected.isOfficial) it.version else sources.selected.name
     }
@@ -530,10 +532,17 @@ internal class LaunchCoordinator private constructor(application: Application) {
         perform("检查汉化覆盖", preserveFailure = true, page = "coverage") {
             publish { it.copy(coverage = it.coverage.copy(loading = true, error = null)) }
             var ticket: CoverageCheck? = null
+            var reused = false
             val result = runCatching {
                 check(coverageRequest.get() == request) { "已有新的覆盖检查" }
                 val storage = translationStorage()
                 val language = requireNotNull(storage.textLanguage()) { "请先从 BYBUS 启动一次游戏，以读取当前游戏语言。" }.language
+                // A package/language/content-identical report is already a completed inspection.
+                // Only changed resources need another scan; paid requests verify their inputs separately.
+                val selected = translationSources.read().selected
+                coverageStore.read(coverageInputs(selected, storage))?.takeIf {
+                    !it.needsCheck && it.report.unreadable == 0
+                }?.let { reused = true; return@runCatching it }
                 val checkId = coverageStore.beginCheck(translationSources.read().selected, language)
                 ticket = checkId
                 publish { current -> current.copy(coverage = current.coverage.copy(language = language,
@@ -566,7 +575,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
                         else "本地文本读取失败，请在资源下载完成后重新检查"
                     }))
             }
-            result.fold({ "已检查 ${it.report.total} 条文本" }, { it.userMessage() })
+            result.fold({ if (reused) "文本未变化，沿用上次检查结果" else "已检查 ${it.report.total} 条文本" }, { it.userMessage() })
         }
     }
 

@@ -6,6 +6,8 @@
 #include <locale>
 #include <map>
 #include <vector>
+#include <memory>
+#include <unordered_map>
 struct TmpComponentState {
     limbus_text_provenance::LayoutOverride<bool> wrapping;
     limbus_text_provenance::LayoutOverride<int32_t> overflow;
@@ -57,6 +59,16 @@ std::atomic<uint64_t> g_layout_decisions{0};
 #define LT_LOGI(...) ((void)0)
 #include "runtime-layout-under-test.inc"
 #include "runtime-ui-layout-under-test.inc"
+std::unordered_map<std::string,std::string> g_package_line_breaks;
+int g_font_state_lock;
+void pthread_mutex_lock(int *) {}
+void pthread_mutex_unlock(int *) {}
+bool remember_translated_text(void *,const std::string &) {return true;}
+std::vector<std::unique_ptr<std::u16string>> title_strings;
+void *new_managed_string(const std::string &text) {
+    title_strings.emplace_back(new std::u16string(codec.from_bytes(text)));return title_strings.back().get();
+}
+#include "runtime-title-layout-under-test.inc"
 void apply(Control &c,const std::string &text) {
     auto s=codec.from_bytes(text);auto before=c.values;
     apply_translated_tmp_style(&c,&s,c.tmp);
@@ -100,7 +112,17 @@ int main() {
     Control lines;apply(lines,"第一行<br>第二行");assert(lines.values[Wrap]==1);
     Control title;title.name="[Text]GroupName";title.values[Spacing]=4;
     apply(title,"第一行\n第二行");assert(title.values[Spacing]==0);
+    for(const auto *name:{"黎明事务所\n收尾人","高级定制::\n黑派\n品牌经理","<line-height=110%>保留\n原排版", "<LINE-HEIGHT=110%>保留\n原排版"}) {
+        auto value=codec.from_bytes(name);
+        auto *output=static_cast<std::u16string *>(apply_tmp_component_layout_markup(&title,&value));
+        assert(*output==value);assert(title.values[Size]==30);
+    }
+    g_package_line_breaks["黎明事务所 收尾人"]="黎明事务所\n收尾人";
+    auto collapsed=codec.from_bytes("黎明事务所 收尾人");
+    auto *restored=static_cast<std::u16string *>(apply_tmp_component_layout_markup(&title,&collapsed));
+    assert(codec.to_bytes(*restored)=="黎明事务所\n收尾人");
     title.name="ordinary";apply(title,"中文正文");assert(title.values[Spacing]==4);
+    assert(apply_tmp_component_layout_markup(&title,&collapsed)==&collapsed);
     for(int mode:{0,1,2,3,4,5,6}) {
         Control c;c.rect.height=180;c.values[Overflow]=mode;apply(c,"正文排版。");
         assert(c.values[Overflow]==((mode==1||mode==3)?0:mode));

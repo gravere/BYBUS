@@ -214,6 +214,7 @@ public final class AppInstrumentation extends InstrumentationDelegate implements
             }
         }
         com.lody.virtual.helper.compat.LimbusAppleAuthBridge.created(activity);
+        com.lody.virtual.client.stub.GuestRuntimeService.bindForGame();
         super.callActivityOnCreate(activity, icicle);
         com.lody.virtual.helper.compat.MicrogActivityInsets.apply(activity);
         exposeMicrogLoginWebViewIfBridgeStalls(activity);

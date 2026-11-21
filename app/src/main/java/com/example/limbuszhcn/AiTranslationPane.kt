@@ -253,7 +253,7 @@ internal fun AiTranslationPane(state: LauncherUiState, actions: TranslationActio
                 Button({ finishEditing(); onEntries(null) }, enabled = enabled,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("读取原文并选择范围") }
             } else if (requestedEntries == null && (!state.coverage.current || state.coverage.report?.entryIndex == null)) {
-                FilledTonalButton({ finishEditing(); actions.inspectCoverage() }, enabled = enabled && !state.coverage.loading,
+                FilledTonalButton({ finishEditing(); actions.inspectCoverage() }, enabled = enabled && state.canInspectCoverage,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                     Text(if (state.coverage.loading) "正在检查汉化覆盖" else "先检查汉化覆盖")
                 }

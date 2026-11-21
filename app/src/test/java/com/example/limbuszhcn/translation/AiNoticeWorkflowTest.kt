@@ -15,6 +15,50 @@ import java.nio.file.Files
 class AiNoticeWorkflowTest {
     @get:Rule val temp = TemporaryFolder()
 
+    @Test fun aMissingOrInvalidChunkDoesNotDiscardOtherVerifiedNoticeText() {
+        val cache = Files.createDirectories(temp.root.toPath().resolve("partial"))
+        val first = "Notice body. ".repeat(440) + "\n"
+        val original = first + "Updated reward details. ".repeat(300)
+        val parts = requireNotNull(NoticeTexts.chunks(original))
+        assertTrue(parts.size > 1)
+        val notices = NoticeTexts(cache)
+        notices.capture(GameTextLanguage.English, original)
+        val translated = NoticeTexts.document(listOf("公告正文。\n"))
+        val archive = cache.resolve("input.zip")
+        java.util.zip.ZipOutputStream(Files.newOutputStream(archive)).use {
+            it.putNextEntry(java.util.zip.ZipEntry(notices.key(GameTextLanguage.English, original)))
+            it.write(translated.toString().toByteArray()); it.closeEntry()
+        }
+        val pack = LocalTranslationArchive(cache).extract(archive, "local-${archive.sha256()}")
+        val snapshot = LiveTranslationStore(cache).prepare(pack.directory, pack.manifest) { GameTextLanguage.Japanese.resourceKey(it) }
+        NoticeRuntime(cache, snapshot).use { runtime ->
+            assertEquals("公告正文。\n" + parts.drop(1).joinToString(""), runtime.translate("en", original))
+            assertNull(runtime.translate("en", original + " A different notice"))
+            assertNull(runtime.translate("kr", original))
+        }
+    }
+
+    @Test fun newNoticeInvalidatesSavedCoverageWithoutChangingTheTranslationPackage() {
+        val cache = Files.createDirectories(temp.root.toPath().resolve("freshness"))
+        val language = GameTextLanguage.English
+        val notices = NoticeTexts(cache)
+        notices.capture(language, "First public notice")
+        val storage = NoticeGameStorage(ContainerWorkspaceStorage(Files.createDirectories(cache.resolve("Localize")),
+            language = { GameTextLanguageState(language, "en") }), cache)
+        val source = TranslationSource("local", "本地包", revision = "same-package")
+        val store = CoverageStore(cache)
+        val input = store.inputs(source, storage)
+        val report = CoverageReport(source.name, 123456L, 1, 1, 0, 1, 0, 1, 0, emptyList(), language = language)
+        store.save(input, report, store.beginCheck(input))
+        assertFalse(store.read(store.inputs(source, storage))!!.needsCheck)
+        notices.capture(language, "First public notice")
+        assertEquals(123456L, store.read(store.inputs(source, storage))!!.report.checkedAt)
+        notices.capture(language, "Second public notice")
+        assertEquals(2, storage.textResources(language).size)
+        assertTrue(store.read(store.inputs(source, storage))!!.needsCheck)
+        assertEquals(123456L, store.read(store.inputs(source, storage))!!.report.checkedAt)
+    }
+
     @Test fun announcementPassesRequestPersistenceAndActualWholeNoticeLookupWithoutAnotherPaidCall() {
         val root = temp.root.toPath(); val cache = root.resolve("cache")
         val original = "Period: Nov. 11th 2026 (KST)\nWALPURGISNACHT-X"

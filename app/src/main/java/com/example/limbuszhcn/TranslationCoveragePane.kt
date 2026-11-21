@@ -47,11 +47,14 @@ internal fun CoverageSummary(state: LauncherUiState, onOpen: () -> Unit, onCheck
                     coverage.language == null -> "首次启动游戏后可检查"
                     else -> "还未检查本地游戏文本"
                 }, color = C.Muted, style = MaterialTheme.typography.bodySmall)
+                if (report != null) Text("检查于 " + DateTimeFormatter.ofPattern("MM-dd HH:mm")
+                    .withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(report.checkedAt)),
+                    color = C.Muted, style = MaterialTheme.typography.labelSmall)
             }
             if (report != null) {
-                ActionIconButton(Glyph.Refresh, "重新检查", onCheck, enabled = !state.busy, busy = coverage.loading)
+                ActionIconButton(Glyph.Refresh, "检查内容变化", onCheck, enabled = state.canInspectCoverage, busy = coverage.loading)
             } else {
-                TextButton(onCheck, enabled = !coverage.loading && !state.busy) {
+                TextButton(onCheck, enabled = state.canInspectCoverage) {
                     Text(if (coverage.loading) "检查中" else "检查", style = MaterialTheme.typography.labelMedium)
                 }
             }
@@ -77,10 +80,14 @@ internal fun TranslationCoveragePane(state: LauncherUiState, onCheck: () -> Unit
                         .format(Instant.ofEpochMilli(report.checkedAt)) + if (coverage.stale) " · 待重新检查" else " · 已保存",
                         style = MaterialTheme.typography.labelSmall, color = C.Muted)
                 }
-                ActionIconButton(Glyph.Refresh, "重新检查", onCheck, enabled = !state.busy, busy = coverage.loading)
+                ActionIconButton(Glyph.Refresh, "检查内容变化", onCheck, enabled = state.canInspectCoverage, busy = coverage.loading)
             }
             coverage.error?.let { Text(it, color = C.Error, style = MaterialTheme.typography.bodyMedium) }
             if (coverage.loading) OperationProgress(state)
+            if (report == null && !coverage.loading && coverage.error == null) Text(
+                if (coverage.language == null) "先从 BYBUS 进入游戏，读取当前语言后即可检查。"
+                else "尚未检查当前汉化包。读取本地游戏文本后，可查看未覆盖的内容。",
+                style = MaterialTheme.typography.bodyMedium)
             if (report != null) {
                 Text("${report.sourceName} · ${report.language.displayName}原文", style = MaterialTheme.typography.bodyMedium)
                 Row(Modifier.fillMaxWidth()) {

@@ -351,6 +351,10 @@
         <!--safekey adapter-->
 
         <service
+            android:name="com.lody.virtual.client.stub.GuestRuntimeService"
+            android:exported="false"
+            android:process="@string/engine_process_name" />
+        <service
             android:name="com.lody.virtual.client.stub.KeepAliveService"
             android:foregroundServiceType="specialUse"
             android:process="@string/engine_process_name">

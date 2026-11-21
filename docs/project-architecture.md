@@ -2,6 +2,8 @@
 
 This document keeps the longer project background out of `AGENTS.md`.
 
+The launch indicator remains animated under an in-app sheet while the host Activity is resumed. Resource preparation uses neutral stage names on every launch; it does not infer first use from an inactive package. The optional game keepalive uses a host-owned bound service held by the guest process, without a foreground notification. Active AI jobs retain their own foreground service and controls. Management actions that stop a running game require explicit confirmation before execution.
+
 Current text-index revision is schema 9. The 2026-09-23 update adds sparse identity/field/full-source contexts, verified built-in BattleHint sources, RPG localization fields and formatting boundaries. The older schema-8 discussion below describes the preceding term-index foundation; current coverage and remaining gaps are recorded in [text-coverage-audit.md](text-coverage-audit.md).
 
 ## Overview
