@@ -1429,6 +1429,10 @@ class MethodProxies {
         @Override
         public Object call(Object who, Method method, Object... args) throws Throwable {
             Intent intent = (Intent) args[0];
+            if ("com.ProjectMoon.LimbusCompany".equals(getAppPkg())) {
+                ResolveInfo browser = com.lody.virtual.helper.compat.LimbusAppleAuthBridge.resolveBrowserProbe(intent);
+                if (browser != null) return browser;
+            }
             String resolvedType = (String) args[1];
             int flags = readPackageFlags(args[2]);
             int userId = VUserHandle.myUserId();

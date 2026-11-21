@@ -1,0 +1,29 @@
+name: Public update metadata
+
+on:
+  schedule:
+    - cron: '7,27,47 * * * *'
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: public-update-metadata
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'gravere/BYBUS' && github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Refresh public release metadata
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/sync-public-updates.py

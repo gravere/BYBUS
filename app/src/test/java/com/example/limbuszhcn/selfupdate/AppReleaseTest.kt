@@ -68,6 +68,11 @@ class AppReleaseTest {
         })
         assertEquals(41L, repository.checkNotice())
         assertEquals(listOf(AppReleases.NOTICE), calls)
+        val full = repository.check()
+        assertEquals(listOf(AppReleases.NOTICE, AppReleases.NOTICE), calls)
+        assertEquals("https://github.com/gravere/BYBUS/releases/download/v1.0-build.41/BYBUS-Android.apk", full.apk.url)
+        assertTrue(AppReleases.allowed(full.apk.url))
+        assertEquals("a".repeat(64), full.sha256)
         for ((key, value) in listOf("packageName" to "other.app", "versionCode" to 0, "schemaVersion" to 2,
             "versionName" to "future", "size" to -1, "sha256" to "invalid")) {
             rejects { AppRelease.noticeVersion(manifest().put(key, value)) }

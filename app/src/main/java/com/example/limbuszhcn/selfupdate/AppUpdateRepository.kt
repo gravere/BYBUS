@@ -17,18 +17,19 @@ internal fun interface AppUpdateTransport {
 internal data class AppUpdateProgress(val message: String, val percent: Int?, val delta: AppDelta?, val reuse: AppReusePlan? = null)
 
 internal class AppUpdateRepository @JvmOverloads constructor(private val directory: File,
-    private val transport: AppUpdateTransport = AppUpdateTransport { url, binary, consume -> fetch(url, binary, consume = consume) },
+    transport: AppUpdateTransport? = null,
     private val rangeFactory: (ReleaseAsset) -> AppRangeReader = { asset -> ranges(asset) }) {
+    private val transport = transport ?: AppUpdateTransport { url, binary, consume -> fetch(url, binary, consume = consume) }
+    private val metadata = if (transport == null) com.example.limbuszhcn.update.PublicMetadataCache(
+        File(directory, "public-manifest.json").toPath(), AppReleases.NOTICE, 30_000, 32 * 1024,
+        { AppRelease.fromManifest(JSONObject(it)) }) else null
     private val apk get() = File(directory, AppReleases.APK)
 
-    fun checkNotice(): Long = AppRelease.noticeVersion(JSONObject(readJson(AppReleases.NOTICE, 32 * 1024, binary = true)))
+    fun checkNotice(): Long = check().versionCode
 
     fun check(): AppRelease {
-        val release = JSONObject(readJson("${AppReleases.API}/latest", 512 * 1024))
-        require(!release.getBoolean("draft") && !release.getBoolean("prerelease")) { "尚无正式版本" }
-        val metadata = AppRelease.asset(release, AppReleases.MANIFEST)
-        require(metadata.size <= 32 * 1024) { "更新描述过大" }
-        return AppRelease.parse(release, JSONObject(readJson(metadata.url, 32 * 1024, binary = true)))
+        return AppRelease.fromManifest(JSONObject(metadata?.get()
+            ?: readJson(AppReleases.NOTICE, 32 * 1024, binary = true)))
     }
 
     private fun readJson(url: String, maxBytes: Int, binary: Boolean = false): String {

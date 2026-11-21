@@ -70,6 +70,8 @@ https://github.com/user-attachments/assets/7949c668-7c05-4589-a17f-4e6bccf5cb2f
 
 使用 Google 登录时，可以直接在游戏登录界面选择 Google，按提示添加或选择账号；也可以提前在「设置与工具 → Google 账号与付款」中添加。手机系统里已登录的 Google 账号不会自动出现在 BYBUS 中，需要在 BYBUS 里添加一次，可以使用同一个账号。商店与付款服务默认开启。
 
+使用 Apple 账号时，在游戏登录界面选择 Apple，在授权窗口完成登录后返回游戏；不需要在 BYBUS 的 Google 设置中添加 Apple 账号。
+
 游戏运行时，点桌面 BYBUS 图标会返回游戏。要换汉化或调整设置，长按桌面图标，选择 **管理 BYBUS**，即可打开启动器首页。首页任务按钮可返回正在进行的检查、翻译或其他任务。
 
 <details>
