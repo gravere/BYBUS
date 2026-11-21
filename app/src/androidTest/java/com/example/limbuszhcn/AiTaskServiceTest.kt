@@ -35,7 +35,7 @@ class AiTaskServiceTest {
             lateinit var session: AiTaskService.Session
             var previousRequest = 0L
             screen.onActivity { previousRequest = LaunchCoordinator.get(it.application).state.aiTaskRequest }
-            screen.onActivity { session = AiTaskService.start(it) { pauses.incrementAndGet() } }
+            screen.onActivity { session = AiTaskService.start(it, useJob = false) { pauses.incrementAndGet() } }
             try {
                 session.awaitStarted()
                 session.update("正在翻译所选文本", 1, 37)
@@ -121,7 +121,7 @@ class AiTaskServiceTest {
         ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).setAction(AiTaskService.OPEN_TASK)).use { screen ->
             screen.onActivity { activity ->
                 // All three requests are queued before the main thread can create the service.
-                repeat(3) { AiTaskService.start(activity) { fail("Cancelled session must not resume") }.close() }
+                repeat(3) { AiTaskService.start(activity, useJob = false) { fail("Cancelled session must not resume") }.close() }
             }
             InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             waitFor { running() == null }
@@ -136,9 +136,9 @@ class AiTaskServiceTest {
         ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).setAction(AiTaskService.OPEN_TASK)).use { screen ->
             lateinit var first: AiTaskService.Session
             lateinit var second: AiTaskService.Session
-            screen.onActivity { first = AiTaskService.start(it) { pauses.incrementAndGet() } }
+            screen.onActivity { first = AiTaskService.start(it, useJob = false) { pauses.incrementAndGet() } }
             first.awaitStarted()
-            screen.onActivity { first.close(); second = AiTaskService.start(it) { pauses.incrementAndGet() } }
+            screen.onActivity { first.close(); second = AiTaskService.start(it, useJob = false) { pauses.incrementAndGet() } }
             try {
                 second.awaitStarted()
                 assertEquals(0, pauses.get())

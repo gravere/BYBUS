@@ -193,7 +193,8 @@ internal class LaunchCoordinator private constructor(application: Application) {
                 return
             }
         } else null
-        worker.execute {
+        if (foregroundAi) state = state.copy(ai = state.ai.copy(running = true, stopping = false, failed = false, message = "等待后台任务开始"))
+        val operation = Runnable {
             val start = System.nanoTime()
             val result = runCatching { try {
                 foreground?.awaitStarted()
@@ -203,8 +204,11 @@ internal class LaunchCoordinator private constructor(application: Application) {
                 }
                 task()
             } } finally {
-                foreground?.finish(runCatching { aiTaskStore.latest() ?: aiTaskStore.read() }.getOrNull())
-                if (foregroundAi) synchronized(aiControl) { aiRequestControl = null }
+                try { if (foregroundAi && aiDiscarded.get()) aiTaskStore.discard() }
+                finally {
+                    foreground?.finish(runCatching { aiTaskStore.latest() ?: aiTaskStore.read() }.getOrNull())
+                    if (foregroundAi) synchronized(aiControl) { aiRequestControl = null }
+                }
             } }
             result.exceptionOrNull()?.let { PersistentDiagnosticLog.error(TAG, label, it) }
             refreshCoverageFreshness()
@@ -215,9 +219,12 @@ internal class LaunchCoordinator private constructor(application: Application) {
                 val finished = it.finishOperation(result.getOrElse { failure -> failure.userMessage() },
                     failed = result.isFailure && !cancelled && !(foregroundAi && preserveFailure), preserveFailure = preserveFailure)
                 if (foregroundAi && error != null) finished.copy(ai = it.ai.copy(running = false, stopping = false,
-                    failed = !cancelled, message = if (cancelled) "翻译已停止，已保存的进度保留" else error.userMessage())) else finished
+                    failed = !cancelled, task = if (aiDiscarded.get()) null else it.ai.task,
+                    message = if (aiDiscarded.get()) "任务已取消，本次未完成的译文已删除"
+                    else if (cancelled) "翻译已停止，已保存的进度保留" else error.userMessage())) else finished
             }
         }
+        if (foreground != null) foreground.execute(worker, operation) else worker.execute(operation)
     }
 
     private fun readGameStatus(): Pair<ContainerStatus, Long?> {
@@ -627,6 +634,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
         aiCancelled.set(true)
         aiRequestControl?.stop()
         state = state.copy(ai = state.ai.copy(stopping = true, message = "正在停止，保留已完成进度"))
+        AiTaskService.pause()
         AiTaskService.update("正在停止，保留已完成进度")
     }
 
@@ -636,6 +644,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
             aiDiscarded.set(true); aiCancelled.set(true)
             aiRequestControl?.stop()
             runCatching { aiTaskStore.requestDiscard() }.onFailure { PersistentDiagnosticLog.error(TAG, "Save AI cancellation", it) }
+            AiTaskService.pause()
             state = state.copy(ai = state.ai.copy(stopping = true, message = "正在取消并删除本次译文"))
         } else perform("取消翻译任务", preserveFailure = true, page = "ai-translation") {
             aiTaskStore.discard()

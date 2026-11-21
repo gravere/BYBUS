@@ -143,11 +143,12 @@ internal class AiTranslationClient(private val config: AiConfig, private val key
             progress: (AiResponseProgress) -> Unit = {},
             idleMillis: Long = 120_000, totalMillis: Long = 300_000,
             clock: () -> Long = { System.nanoTime() / 1_000_000 },
+            openConnection: (java.net.URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection },
             beforeRequest: () -> Unit = {}): String {
             control?.check()
             beforeRequest()
             control?.check()
-            val c = URI(url).toURL().openConnection() as HttpURLConnection
+            val c = openConnection(URI(url).toURL())
             var sent = false
             val lease = control?.attach { c.disconnect() }
             val deadline = AiRequestDeadline({ c.disconnect() }, clock, idleMillis, totalMillis)
