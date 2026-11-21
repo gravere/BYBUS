@@ -46,7 +46,7 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
                     DetailActionDivider()
                     SheetAction(Glyph.Account, "Google 账号与付款", enabled, navigation = true, onClick = onGoogleSettings)
                     DetailActionDivider()
-                    SheetAction(Glyph.Battery, "后台运行", enabled, navigation = true, onClick = onSettings)
+                    SheetAction(Glyph.Battery, "后台运行", navigation = true, onClick = onSettings)
                     DetailActionDivider()
                     SheetAction(Glyph.Import, "数据迁移", navigation = true, onClick = onMigration)
                 }

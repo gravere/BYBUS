@@ -350,6 +350,8 @@ internal fun AiTaskCard(state: LauncherUiState, onPause: () -> Unit, onResume: (
     val context = androidx.compose.ui.platform.LocalContext.current
     val lifecycle = androidx.compose.ui.platform.LocalLifecycleOwner.current.lifecycle
     var backgroundAllowed by remember { mutableStateOf(com.example.limbuszhcn.translation.AiBackgroundAccess.allowed(context)) }
+    var backgroundSettings by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    if (backgroundSettings) BackgroundSettingsDialog { backgroundSettings = false }
     DisposableEffect(lifecycle) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME)
@@ -389,9 +391,12 @@ internal fun AiTaskCard(state: LauncherUiState, onPause: () -> Unit, onResume: (
             Text(if (progress.totalFiles > 0) "准备文本 ${progress.scannedFiles}/${progress.totalFiles}" else "正在准备文本",
                 style = MaterialTheme.typography.bodySmall, color = C.Muted)
         }
-        if (ai.failed) ai.message?.let { Text(it, color = C.Error, style = MaterialTheme.typography.bodySmall) }
-        if (!backgroundAllowed) TextButton({ com.example.limbuszhcn.translation.AiBackgroundAccess.open(context) }) {
-            Text("允许锁屏后继续翻译")
+        val systemPaused = !ai.running && task?.backgroundStopReason != null
+        if (ai.failed || systemPaused) (task?.error?.takeIf { systemPaused } ?: ai.message)?.let {
+            Text(it, color = if (ai.failed) C.Error else C.Muted, style = MaterialTheme.typography.bodySmall)
+        }
+        if (!backgroundAllowed || systemPaused) TextButton({ backgroundSettings = true }) {
+            Text("后台运行设置", style = MaterialTheme.typography.labelMedium)
         }
         if (!ai.running && !saving && task != null) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,

@@ -96,7 +96,7 @@ class AiTaskService : Service() {
 
     override fun onTimeout(startId: Int, fgsType: Int) {
         // Android 15 gives only a few seconds to stop the foreground service after its quota expires.
-        session?.pause()
+        session?.interrupt("系统后台运行时间已用完，已保存的进度会保留")
         PersistentDiagnosticLog.warn("AiTaskService", "Foreground time limit reached; requesting pause")
         session?.close()
         stopSelf()
@@ -107,8 +107,7 @@ class AiTaskService : Service() {
         session?.let { current ->
             current.service = null
             if (!current.closed.get()) {
-                current.failure = "后台翻译已停止，进度已保留，可返回 BYBUS 继续"
-                current.pause()
+                current.interrupt("后台翻译服务已停止，已保存的进度会保留")
                 current.started()
                 current.close()
             }
@@ -142,6 +141,9 @@ class AiTaskService : Service() {
         val closed = AtomicBoolean(false)
         val paused = AtomicBoolean(false)
         @Volatile var failure: String? = null
+        /** Null is a user pause; -1 is a service interruption without a JobScheduler code. */
+        @Volatile var backgroundStopReason: Int? = null
+            private set
         @Volatile internal var service: AiTaskService? = null
         @Volatile internal var jobService: AiTransferJobService? = null
         @Volatile internal var jobNetwork: android.net.Network? = null
@@ -182,11 +184,23 @@ class AiTaskService : Service() {
             if (Build.VERSION.SDK_INT >= 34) jobService?.refresh()
         }
 
-        internal fun pause() {
+        internal fun pause() = requestPause(null, null)
+
+        internal fun interrupt(message: String, reason: Int = -1) = requestPause(message, reason)
+
+        private fun requestPause(message: String?, reason: Int?) {
             if (!closed.get() && paused.compareAndSet(false, true)) {
+                if (message != null) failure = message
+                backgroundStopReason = reason
                 val stop = Runnable {
                     // A delayed main-thread callback from the old run must not cancel a new run.
-                    if (!closed.get() && currentSession() === this) onPause()
+                    if (!closed.get() && currentSession() === this) {
+                        // The socket worker may be delayed or frozen after a system stop.
+                        // Announce the interruption now; finish() replaces this with the saved task.
+                        if (reason != null) runCatching { AiPausedTaskNotification.interrupted(context, this) }
+                            .onFailure { PersistentDiagnosticLog.warn("AiTaskService", "Cannot show task interruption", it) }
+                        onPause()
+                    }
                     started()
                 }
                 if (Looper.myLooper() == Looper.getMainLooper()) stop.run() else main.post(stop)
