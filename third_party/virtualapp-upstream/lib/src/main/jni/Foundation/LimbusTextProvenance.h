@@ -134,10 +134,13 @@ inline bool explicit_line_break(std::string_view text) {
 // alone must not turn it into an ellipsized, single-line label.
 inline bool single_line_label(size_t visible, bool explicit_break, bool original_no_wrap,
                               float rect_height, float font_size, int overflow = -1,
-                              bool content_fitted_height = false) {
+                              bool content_fitted_height = false, bool interactive_owner = false) {
     // ScrollRect, Page and Linked own their text flow. Masking/Truncate also
     // occur on ordinary one-line buttons and must not force CJK vertical stacks.
     if (overflow >= 4 || visible > 48 || explicit_break || content_fitted_height) return false;
+    // An icon/layout group can stretch a button's text rectangle to several lines.
+    // Respect its declared no-wrap policy instead of making auto-size fit two large rows.
+    if (original_no_wrap && interactive_owner) return true;
     if (rect_height > 0 && font_size > 0)
         return rect_height <= font_size * 1.8f;
     return original_no_wrap;
