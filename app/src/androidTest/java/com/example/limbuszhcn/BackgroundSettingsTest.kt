@@ -70,10 +70,10 @@ class BackgroundSettingsTest {
         } }
         compose.onNodeWithText(task.error!!).assertIsDisplayed()
         compose.onNodeWithText("后台运行设置").assertIsEnabled().performClick()
-        compose.onNodeWithText("让翻译在切换应用或锁屏后继续，无需开启自启动。").assertIsDisplayed()
-        compose.onNodeWithText("应用设置").assertIsDisplayed()
-        compose.onNodeWithText("电池优化：已豁免").assertIsDisplayed()
-        val folder = File(context.getExternalFilesDir(null), "background143").apply { mkdirs() }
+        compose.onNodeWithText("锁屏后继续翻译，无需开启自启动。").assertIsDisplayed()
+        compose.onNodeWithText("去设置").assertIsDisplayed()
+        compose.onNodeWithText("已豁免").assertIsDisplayed()
+        val folder = File(context.getExternalFilesDir(null), "source144").apply { mkdirs() }
         compose.onNode(isDialog()).captureToImage().asAndroidBitmap().let { bitmap ->
             File(folder, "settings.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
         }

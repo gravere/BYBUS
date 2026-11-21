@@ -247,6 +247,8 @@ class MainActivity : ComponentActivity() {
                     },
                     onSettings = { backgroundSettings.value = true },
                     translationActions = TranslationActions(
+                        inspectImport = model::inspectImportedTranslation, chooseImportFill = model::chooseImportFill,
+                        saveUpdateLink = model::saveSourceUpdateLink, restoreImported = model::restoreImportedTranslation,
                         select = model::selectTranslation,
                         import = { id -> replacingPack.value = id
                             runCatching { translationPicker.launch(arrayOf("*/*")) }.onFailure(model::showError) },
