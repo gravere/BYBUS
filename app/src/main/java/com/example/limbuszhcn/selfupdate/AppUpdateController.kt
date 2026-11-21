@@ -44,12 +44,12 @@ internal class AppUpdateController(private val app: Application) {
     private var notice = AppUpdateNotice(preferences.getLong("noticeVersion", 0),
         preferences.getLong("noticeCheckedAt", 0), preferences.getLong("noticeAttemptedAt", 0))
     private val checkPolicy = AppUpdateCheckPolicy(SystemClock::elapsedRealtime, System::currentTimeMillis,
-        if (preferences.getInt("retrySchema", 0) == 2)
+        if (preferences.getInt("retrySchema", 0) == 3)
             UpdateRateLimitWindow(preferences.getLong("rateRecordedAt", 0), preferences.getLong("rateRetryAt", 0)) else null
     ) { saved ->
         preferences.edit().remove("retryAt").apply {
             if (saved == null) remove("retrySchema").remove("rateRecordedAt").remove("rateRetryAt")
-            else putInt("retrySchema", 2).putLong("rateRecordedAt", saved.recordedAt).putLong("rateRetryAt", saved.retryAt)
+            else putInt("retrySchema", 3).putLong("rateRecordedAt", saved.recordedAt).putLong("rateRetryAt", saved.retryAt)
         }.apply()
     }
     private var task: Future<*>? = null
@@ -67,7 +67,10 @@ internal class AppUpdateController(private val app: Application) {
         private set
 
     init {
-        preferences.edit().remove("retryAt").apply()
+        preferences.edit().remove("retryAt").apply {
+            if (preferences.getInt("retrySchema", 0) != 3)
+                remove("retrySchema").remove("rateRecordedAt").remove("rateRetryAt")
+        }.apply()
         worker.submit { installer.observe() }
     }
 
@@ -123,7 +126,7 @@ internal class AppUpdateController(private val app: Application) {
     fun check(force: Boolean = false) {
         if (closed || state.busy) return
         when (checkPolicy.beforeCheck(force)) {
-            UpdateCheckDecision.Cached -> return
+            UpdateCheckDecision.Cached -> if (state.release != null) return
             UpdateCheckDecision.Wait -> { showServerWait(); return }
             UpdateCheckDecision.Check -> Unit
         }

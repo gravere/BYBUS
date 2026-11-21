@@ -20,7 +20,7 @@ class GitHubProjectRepositoryTest {
             put("digest", "sha256:" + "a".repeat(64))
         })).toString()
 
-    @Test fun launchSharesRecentMetadataButDoesNotReuseTheFifteenMinuteDisplayCache() {
+    @Test fun launchSharesFiveMinuteMetadataAcrossPagesAndRestart() {
         var calls = 0
         var tick = 0L
         val file = folder.root.toPath().resolve("github.json")
@@ -33,6 +33,11 @@ class GitHubProjectRepositoryTest {
         assertEquals(2026092102L, release.version)
         assertEquals(1, calls)
         tick = 16_000
+        repository.releaseForLaunch()
+        assertEquals(1, calls)
+        GitHubProjectRepository(file, { calls++; downloadable }, { now + tick }).releaseForLaunch()
+        assertEquals(1, calls)
+        tick = 300_000
         repository.releaseForLaunch()
         assertEquals(2, calls)
         assertEquals(now + tick, observed.last().snapshot!!.fetchedAtMillis)
@@ -62,6 +67,19 @@ class GitHubProjectRepositoryTest {
         assertTrue(restarted.releaseForLaunch().contains("LimbusLocalize_2026092102.7z"))
         assertEquals(2, calls)
         assertNull(restarted.cached().retryAtMillis)
+    }
+
+    @Test fun upgradingFromAnExhaustedRestQuotaImmediatelyAllowsPublicFeedChecks() {
+        val file = folder.root.toPath().resolve("github.json")
+        val obsolete = file.resolveSibling("github.json.retry")
+        Files.write(obsolete, """{"schema":1,"retryAt":${now + 3_600_000},"attempts":7}""".toByteArray())
+        var calls = 0
+        val upgraded = GitHubProjectRepository(file, { calls++; downloadable }, { now })
+        assertNull(upgraded.cached().retryAtMillis)
+        assertTrue(upgraded.releaseForLaunch().contains("2026092102"))
+        assertEquals(1, calls)
+        assertFalse(Files.exists(obsolete))
+        assertNull(upgraded.refresh(true).issue)
     }
 
     @Test fun concurrentLaunchJoinsTheTrackerRequestWithoutAnotherNetworkCall() {
@@ -192,7 +210,7 @@ class GitHubProjectRepositoryTest {
         wall = deadline; tick += 3_600_000
         assertNull(restarted.refresh(true).issue)
         assertEquals(2, calls)
-        assertFalse(Files.exists(file.resolveSibling("github.json.retry")))
+        assertFalse(Files.exists(file.resolveSibling("github.json.public.retry")))
     }
 
     @Test fun missingRetryHeadersBackOffAcrossRestartsWithoutRewritingGoodData() {
@@ -215,7 +233,7 @@ class GitHubProjectRepositoryTest {
 
     @Test fun invalidRetryCacheCannotDisableRefresh() {
         val file = folder.root.toPath().resolve("github.json")
-        val retry = file.resolveSibling("github.json.retry")
+        val retry = file.resolveSibling("github.json.public.retry")
         for (bad in listOf("partial", """{"schema":1,"retryAt":${now + 999_999_999},"attempts":1}""",
             """{"schema":1,"retryAt":${now + 60_000},"attempts":99}""")) {
             Files.write(retry, bad.toByteArray())

@@ -70,7 +70,7 @@
 - PlayCore asset pack 必须通过注入 `local_testing_dir` 走 `FakeAssetPackService`, 不得绑定宿主 Play Store `AssetModuleService`。
 - GMS broker 请求必须通过 `ServiceConnectionDelegate` 改写残留调用包名, 避免 `Unknown calling package name 'com.ProjectMoon.LimbusCompany'`。该改写同时适用于宿主 GMS 和容器内安装的 microG,不得因 `com.google.android.gms` 已虚拟安装而跳过。
 - Limbus Credentials `HiddenActivity` extras 含 GMS Parcelable 和 Binder, 不得经过 VAMS server 解包。必须在游戏进程内包装为当前 vpid 的 host stub Intent 并调用系统 `ActivityTaskManager`; 目标 Activity 仍由 `AppInstrumentation` 使用游戏 classloader 创建。该瞬态 Activity 没有 VAMS `ActivityRecord`, create/resume/finish/destroy 不得登记到 VAMS 任务栈, 但系统 token 和 Activity result 链路必须保留。
-- 容器内 microG Services/FakeStore 与 Limbus 一样不得进入旧式 ART `jmethodID` 内存改写 VM hook；它们所需的 IO 重定向、Binder 身份和 Activity result 兼容均由独立层完成。Firebase Apple/验证码浏览器回调只允许由宿主精确接管 `genericidp://firebase.auth/` 与 `recaptcha://firebase.auth/`,再显式转发到容器内 Limbus 对应 Activity；不得把其它 URI 或浏览器 extras 带入容器。
+- 容器内 microG Services/FakeStore 与 Limbus 一样不得进入旧式 ART `jmethodID` 内存改写 VM hook；它们所需的 IO 重定向、Binder 身份和 Activity result 兼容均由独立层完成。Firebase Apple/验证码浏览器回调只允许由宿主精确接管 `genericidp://firebase.auth/` 与 `recaptcha://firebase.auth/`,再显式转发到容器内 Limbus 对应 Activity；不得把其它 URI 或任意浏览器 extras 带入容器。Apple 专用、非导出的授权窗口按 `docs/apple-login-and-public-updates.md` 绑定游戏原有事件，只重建 SDK 所需的有界结果字段，保留原包身份、加密与 Firebase 校验；不能将授权窗口开启视为实际账号登录已通过。
 - Limbus 原生 DNS 与 socket 连接必须绕过 VirtualApp 域名/IP 策略。允许有限日志诊断, 不得修改测试机 VPN、代理或路由。
 
 ## 原生容器与游戏完整性

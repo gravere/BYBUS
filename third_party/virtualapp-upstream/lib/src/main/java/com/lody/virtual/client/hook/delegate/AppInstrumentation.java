@@ -213,6 +213,7 @@ public final class AppInstrumentation extends InstrumentationDelegate implements
                 }
             }
         }
+        com.lody.virtual.helper.compat.LimbusAppleAuthBridge.created(activity);
         super.callActivityOnCreate(activity, icicle);
         com.lody.virtual.helper.compat.MicrogActivityInsets.apply(activity);
         exposeMicrogLoginWebViewIfBridgeStalls(activity);
@@ -683,12 +684,12 @@ public final class AppInstrumentation extends InstrumentationDelegate implements
 	
 	public Activity newActivity(ClassLoader cl, String className, Intent intent) throws InstantiationException, IllegalAccessException, ClassNotFoundException {
         Log.i("LimbusVA", "AppInstrumentation newActivity className=" + className
-                + " intent=" + intent
+                + " intent=" + com.lody.virtual.helper.compat.LimbusAppleAuthBridge.forLog(intent)
                 + " isStub=" + StubManifest.isStubActivity(className)
                 + " appRunning=" + VClient.get().isAppRunning());
         if (intent != null && StubManifest.isStubActivity(className)) {
             StubActivityRecord record = new StubActivityRecord(intent);
-            Log.i("LimbusVA", "AppInstrumentation stub record targetIntent=" + record.intent
+            Log.i("LimbusVA", "AppInstrumentation stub record targetIntent=" + com.lody.virtual.helper.compat.LimbusAppleAuthBridge.forLog(record.intent)
                     + " info=" + record.info
                     + " userId=" + record.userId
                     + " token=" + record.virtualToken);

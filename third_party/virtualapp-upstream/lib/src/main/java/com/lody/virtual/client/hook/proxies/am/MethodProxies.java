@@ -674,6 +674,15 @@ class MethodProxies {
             String resolvedType = (String) args[intentIndex + 1];
             Intent intent = (Intent) args[intentIndex];
 
+            Intent appleWindow = com.lody.virtual.helper.compat.LimbusAppleAuthBridge.browserIntent(getAppPkg(), intent);
+            if (appleWindow != null) {
+                args[intentIndex] = appleWindow;
+                args[intentIndex + 1] = null;
+                MethodParameterUtils.replaceFirstAppPkg(args);
+                Log.i("LimbusVA", "Open scoped Apple OAuth window");
+                return method.invoke(who, args);
+            }
+
             com.lody.virtual.client.hook.proxies.pm.PackageManagerStub.recordBeforeSafetyAlert(intent);
 
             // Resolve the one approved store link in the host process, before FakeStore/chooser
@@ -694,7 +703,7 @@ class MethodProxies {
             }
 
             Log.e("lxf","startActivity app "+getAppPkg());
-            Log.e("lxf","startActivity intent "+ intent.toString());
+            Log.e("lxf","startActivity intent "+ com.lody.virtual.helper.compat.LimbusAppleAuthBridge.forLog(intent));
             String action = intent.getAction();
             if(Intent.ACTION_VIEW.equals(action)&&"*/*".equals(resolvedType)){
                 String suffix = MimeTypeMap.getFileExtensionFromUrl(intent.getDataString());

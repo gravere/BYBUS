@@ -20,6 +20,7 @@ internal object ZeroGitHub {
     const val REPOSITORY = "https://github.com/LocalizeLimbusCompany/LocalizeLimbusCompany"
     const val RELEASES = "$REPOSITORY/releases"
     const val API = "https://api.github.com/repos/LocalizeLimbusCompany/LocalizeLimbusCompany/releases/latest"
+    const val FEED = "https://raw.githubusercontent.com/gravere/BYBUS/updates/zero-release.json"
 }
 
 internal data class GitHubSnapshot(val tag: String, val publishedAtMillis: Long, val fetchedAtMillis: Long)
@@ -79,16 +80,25 @@ internal object GitHubSnapshotCodec {
 /** Application-wide release metadata and quota state, shared by the tracker and launch check. */
 internal class GitHubProjectRepository(
     private val cache: Path,
-    private val fetch: () -> String = { fetchProjectJson(ZeroGitHub.API) },
+    private val fetch: (() -> String)? = null,
     private val clock: () -> Long = System::currentTimeMillis,
     private val elapsed: () -> Long = { System.nanoTime() / 1_000_000 }
 ) {
     private var result: GitHubTrackerState? = null
     private var lastAttempt: Long? = null
     private var rateLimitAttempts = 0
-    private val retryCache = cache.resolveSibling(cache.fileName.toString() + ".retry")
+    // A REST quota window from an older app must not block the independent static feed.
+    private val retryCache = cache.resolveSibling(cache.fileName.toString() + ".public.retry")
+    private val publicFeed = com.example.limbuszhcn.update.PublicMetadataCache(
+        cache.resolveSibling(cache.fileName.toString() + ".http"), ZeroGitHub.FEED, 30_000, 32 * 1024,
+        { ZeroReleaseFeed.release(it, clock()) }, clock)
     private var releaseMetadata: String? = null
     private val listeners = CopyOnWriteArrayList<(GitHubTrackerState) -> Unit>()
+
+    init {
+        // Delete only the obsolete REST wait; keep translations, snapshots and the new endpoint's wait.
+        runCatching { Files.deleteIfExists(cache.resolveSibling(cache.fileName.toString() + ".retry")) }
+    }
 
     fun observe(listener: (GitHubTrackerState) -> Unit): () -> Unit {
         listeners.add(listener)
@@ -130,11 +140,14 @@ internal class GitHubProjectRepository(
         val sinceAttempt = lastAttempt?.let { (elapsed() - it).coerceAtLeast(0) }
         if (sinceAttempt != null && sinceAttempt < if (force) 15_000 else 60_000) return publish(current)
         val age = current.snapshot?.let { clock() - it.fetchedAtMillis }
-        if (!force && current.issue == null && age != null && age in 0 until 15 * 60_000) return publish(current)
+        if (!force && current.issue == null && age != null && age in 0 until 5 * 60_000) return publish(current)
         publish(current.copy(loading = true))
         lastAttempt = elapsed()
-        val response = try { fetch() } catch (error: Exception) {
-            val failure = error as? ProjectFetchException
+        val response = try { fetch?.invoke() ?: ZeroReleaseFeed.release(publicFeed.get(), clock()) } catch (error: Exception) {
+            val http = error as? com.example.limbuszhcn.selfupdate.UpdateHttpException
+            val failure = error as? ProjectFetchException ?: http?.takeIf { it.retryAfterMillis > 0 }?.let {
+                ProjectFetchException(ProjectIssue.RateLimited, clock() + it.retryAfterMillis)
+            }
             val issue = failure?.issue ?: ProjectIssue.Network
             val retryAt = if (issue == ProjectIssue.RateLimited) {
                 rateLimitAttempts = (rateLimitAttempts + 1).coerceAtMost(7)
@@ -180,9 +193,11 @@ internal class GitHubProjectRepository(
         return publish(GitHubTrackerState(snapshot))
     }
 
-    /** Join a recent/in-flight check, but never substitute the 15-minute display cache for launch. */
+    /** Share the five-minute validated snapshot with the home page and concurrent launch checks. */
     @Synchronized fun releaseForLaunch(): String {
-        val checked = refresh(force = true)
+        cached()
+        val hasAssets = runCatching { JSONObject(releaseMetadata ?: "{}").getJSONArray("assets").length() == 1 }.getOrDefault(false)
+        val checked = refresh(force = !hasAssets)
         checked.issue?.let { throw ProjectFetchException(it, checked.retryAtMillis) }
         return releaseMetadata ?: throw ProjectFetchException(ProjectIssue.InvalidData)
     }

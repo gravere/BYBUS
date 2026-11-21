@@ -16,6 +16,10 @@ The production path is container mode:
 
 The project does not modify the game APK and does not rely on Frida or Shizuku.
 
+Apple OAuth routing and the public, cached update feed are described in
+[Apple login and public updates](apple-login-and-public-updates.md). The default Android update
+and Zero Association metadata paths do not call the GitHub REST API from each device.
+
 Native startup qualification now accepts either an exact legacy profile or the independently
 verified engine family described in [automatic-native-compatibility.md](automatic-native-compatibility.md).
 The family path reads the current signed APK's ELF geometry and compares original game verifier

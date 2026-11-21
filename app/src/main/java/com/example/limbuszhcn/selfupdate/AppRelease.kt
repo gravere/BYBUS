@@ -29,15 +29,15 @@ internal object AppReleases {
             "api.github.com" -> uri.path == "$API_PATH/latest" ||
                 uri.path.matches(Regex("$API_PATH/assets/[1-9][0-9]*"))
             "github.com" -> uri.rawQuery == null && (uri.path == "/$REPOSITORY/releases/latest/download/$MANIFEST" ||
-                uri.path.matches(Regex("/$REPOSITORY/releases/download/v[0-9]+(?:\\.[0-9]+){1,2}-build\\.[1-9][0-9]*/$MANIFEST")))
+                uri.path.matches(Regex("/$REPOSITORY/releases/download/v[0-9]+(?:\\.[0-9]+){1,2}-build\\.[1-9][0-9]*/(?:${Regex.escape(MANIFEST)}|${Regex.escape(APK)}|BYBUS-update-[1-9][0-9]*-to-[1-9][0-9]*\\.delta)")))
             "release-assets.githubusercontent.com", "objects.githubusercontent.com", "github-releases.githubusercontent.com" -> true
             else -> false
         }
     }.getOrDefault(false)
 }
 
-internal data class ReleaseAsset(val id: Long, val name: String, val size: Long) {
-    val url get() = "${AppReleases.API}/assets/$id"
+internal data class ReleaseAsset(val id: Long, val name: String, val size: Long, private val publicUrl: String? = null) {
+    val url get() = publicUrl ?: "${AppReleases.API}/assets/$id"
 }
 
 internal data class AppDelta(val fromVersionCode: Long, val fromSize: Long, val fromSha256: String,
@@ -51,6 +51,20 @@ internal data class AppRelease(val tag: String, val versionName: String, val ver
     fun newerThan(installed: Long) = versionCode > installed
 
     companion object {
+        /** The release's public manifest is sufficient; Android verifies APK identity and signing. */
+        fun fromManifest(manifest: JSONObject): AppRelease {
+            val code = noticeVersion(manifest)
+            val version = manifest.getString("versionName")
+            val tag = "$version-build.$code"
+            val size = manifest.getLong("size")
+            val url = "https://github.com/${AppReleases.REPOSITORY}/releases/download/$tag/${AppReleases.APK}"
+            require(AppReleases.allowed(url))
+            return AppRelease(tag, version, code, manifest.getInt("minSdk"),
+                manifest.getString("sha256").lowercase(java.util.Locale.ROOT),
+                ReleaseAsset(0, AppReleases.APK, size, url), manifest.optString("notes").take(3000),
+                reuse = parseReuse(manifest, size))
+        }
+
         fun asset(release: JSONObject, name: String): ReleaseAsset {
             val assets = release.getJSONArray("assets")
             require(assets.length() <= 30) { "发行文件数量异常" }

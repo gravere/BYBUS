@@ -396,6 +396,10 @@
             游戏内 Firebase Auth Activity 只存在于虚拟 manifest，系统浏览器无法直接回到容器。
             此跳板仅匹配游戏原 manifest 的精确 URI，并在 Java 层再次校验后转发到 p0。
         -->
+        <activity android:name=".client.stub.LimbusAppleAuthActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
         <activity
             android:name=".client.stub.LimbusOAuthRedirectActivity"
             android:excludeFromRecents="true"
