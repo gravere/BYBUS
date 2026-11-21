@@ -9,6 +9,7 @@ import android.content.pm.ProviderInfo;
 import android.content.pm.ResolveInfo;
 import android.content.pm.ServiceInfo;
 import android.os.Bundle;
+import android.os.DeadObjectException;
 import android.os.IBinder;
 import android.os.IInterface;
 import android.os.Process;
@@ -71,7 +72,7 @@ public class VActivityManager {
     }
 
     private static final VActivityManager sAM = new VActivityManager();
-    private IActivityManager mService;
+    private volatile IActivityManager mService;
 
     public IActivityManager getService() {
         if (!IInterfaceUtils.isAlive(mService)) {
@@ -622,19 +623,36 @@ public class VActivityManager {
     }
 
     public void onServiceDestroyed(int userId, ComponentName component) {
+        // A teardown callback must not reconnect and resurrect a stopped container server.
+        IActivityManager service = mService;
+        if (!IInterfaceUtils.isAlive(service)) return;
         try {
-            getService().onServiceDestroyed(userId, component);
+            service.onServiceDestroyed(userId, component);
+        } catch (DeadObjectException e) {
+            VLog.w("LimbusVA", "Service destroy completed after container server exit");
         } catch (RemoteException e) {
             e.printStackTrace();
         }
     }
 
     public ServiceResult onServiceUnBind(int userId, ComponentName component) {
+        IActivityManager service = mService;
+        if (!IInterfaceUtils.isAlive(service)) return disconnectedService();
         try {
-            return getService().onServiceUnBind(userId, component);
+            return service.onServiceUnBind(userId, component);
+        } catch (DeadObjectException e) {
+            // isBinderAlive is only a snapshot; the server may die during the transaction.
+            VLog.w("LimbusVA", "Service unbind completed after container server exit");
+            return disconnectedService();
         } catch (RemoteException e) {
             return VirtualRuntime.crash(e);
         }
+    }
+
+    private static ServiceResult disconnectedService() {
+        ServiceResult result = new ServiceResult();
+        result.died = true;
+        return result;
     }
 
     public void stopService(int userId, ServiceInfo serviceInfo) throws RemoteException {

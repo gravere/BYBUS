@@ -47,7 +47,8 @@ internal class TranslationUpdateManager(
         val boundedTransport = BudgetHttpTransport(transport, 90_000)
         val releaseClient = GitHubTranslationReleaseClient(request.releaseUrl, boundedTransport)
         onProgress("检查汉化更新")
-        logInfo("Fetching GitHub translation release url=${request.releaseUrl}")
+        logInfo(if (releaseMetadata != null) "Checking translation release via shared public metadata"
+            else "Fetching GitHub translation release url=${request.releaseUrl}")
         val release = releaseMetadata?.let { releaseClient.parseRelease(it()) } ?: releaseClient.fetchRelease()
         if (request.installedVersion != null && release.version <= request.installedVersion) {
             throw NoTranslationUpdateException(
