@@ -5,6 +5,7 @@ import com.example.limbuszhcn.gamefs.GameStorage
 internal data class AiTerms(val values: Map<String, String>, val required: Set<String>)
 
 internal class AiTerminology(private val values: Map<String, String>, private val names: Set<String>) {
+    fun json() = org.json.JSONObject().put("values", org.json.JSONObject(values)).put("names", org.json.JSONArray(names.toList()))
     private val longestFirst = values.entries.sortedByDescending { it.key.length }
     fun forText(text: String, context: String): AiTerms {
         val visible = ProtectedTranslation(text).masked
@@ -30,6 +31,13 @@ internal class AiTerminology(private val values: Map<String, String>, private va
     }
 
     companion object {
+        fun read(value: org.json.JSONObject): AiTerminology {
+            val terms = value.getJSONObject("values"); val names = value.getJSONArray("names")
+            require(terms.length() <= 12020 && names.length() <= 12020)
+            val values = terms.keys().asSequence().associateWith { terms.getString(it).also { text -> require(text.length in 1..64) } }
+            require(values.keys.all { it.length in 1..64 })
+            return AiTerminology(values, (0 until names.length()).map { names.getString(it) }.toSet().also { require(values.keys.containsAll(it)) })
+        }
         // Checked against Zero 2026111401 Characters/ScenarioModelCodes and paired game JP tables.
         private val DEFAULT_NAMES = mapOf("イサン" to "李箱", "ファウスト" to "浮士德", "ドンキホーテ" to "堂吉诃德",
             "良秀" to "良秀", "ムルソー" to "默尔索", "ホンル" to "鸿璐", "ヒースクリフ" to "希斯克利夫",

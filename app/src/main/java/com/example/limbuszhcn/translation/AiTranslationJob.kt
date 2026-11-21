@@ -44,9 +44,6 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
         val identity = identityOverride ?: digest("v2|$baseId|${c.endpoint}|${c.model}|${c.missingOnly}|${digest(c.prompt)}").take(32)
         require(identity.matches(Regex("[a-f0-9]{32}")))
         val root = (session?.work ?: cache).resolve("ai-jobs/$identity"); Files.createDirectories(root)
-        val output = root.resolve("output")
-        if (Files.exists(output)) AtomicFiles.deleteOwnedTree(root, output)
-        Files.createDirectories(output)
         val originals = base?.manifest?.entries?.associateBy { inspection.language.resourceKey(it.targetPath) }.orEmpty()
         val contextReference = reference?.takeUnless { it === base }?.let { TranslationInspection(storage, it, cancelled, inspection.language) }
         fun checkCancelled() { if (cancelled() || Thread.currentThread().isInterrupted) throw CancellationException("翻译已暂停，已完成内容会在下次继续时复用") }
@@ -88,10 +85,23 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
             lastPreparationAt = now
             emit(previous.copy(message = "$label $done/$total", scannedFiles = done, totalFiles = total))
         }
-        terminology = AiTerminology.build(storage, reference, cancelled, inspection.language) { done, total ->
-            preparing("读取参考术语", done, total)
+        val contextFingerprint = session?.let {
+            AiPreparationCheckpoint.fingerprint(storage, inspection.language, base, reference, requireNotNull(snapshot).id)
         }
-        if (c.missingOnly) shared = inspection.sharedTranslations { done, total -> preparing("读取参考译文", done, total) }
+        val preparation = AiPreparationCheckpoint(root, contextFingerprint)
+        val ready = preparation.read()
+        if (ready != null) {
+            terminology = ready.terminology; shared = ready.shared
+            preparing("恢复已保存的任务", 1, 1)
+        } else {
+            terminology = AiTerminology.build(storage, reference, cancelled, inspection.language) { done, total ->
+                preparing("读取参考术语", done, total)
+            }
+            if (c.missingOnly) shared = inspection.sharedTranslations { done, total -> preparing("读取参考译文", done, total) }
+            if (contextFingerprint != null) require(contextFingerprint == AiPreparationCheckpoint.fingerprint(
+                storage, inspection.language, base, reference, requireNotNull(snapshot).id)) { "游戏文本正在更新，请稍后继续" }
+            preparation.save(AiPreparedContext(terminology, shared))
+        }
         val plan = if (session == null) null else snapshot?.plan ?: run {
             val selected = linkedMapOf<String, Set<String>>(); val hashes = linkedMapOf<String, String>()
             var available = 0; var chosen = 0
@@ -120,15 +130,26 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
             require(eligible.containsAll(plan.selected.getValue(key))) { "本次任务的翻译范围已变化，请取消任务后重新检查" }
             preparing("核对所选文本", index + 1, plan.hashes.size)
         }
-        if (preserveBase && base != null) for ((key, entry) in originals) {
-            val target = output.resolve(key); Files.createDirectories(target.parent)
-            Files.copy(base.directory.resolve(entry.cachePath), target, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
-        }
+        val outputFingerprint = contextFingerprint?.let { digest("$it|${c.missingOnly}|$reuseOnly|${plan?.selected}|${plan?.hashes}") }
+        val checkpoint = AiOutputCheckpoint(root, outputFingerprint)
+        val output = checkpoint.output
         var done = 0; var reused = 0; var carried = 0; var remaining = 0; var totalBytes = 0L
-        val aiIds = hashSetOf<String>()
+        var aiEntryCount = 0
         val progressLimit = plan?.total ?: c.limit
-        for (key in resources) {
+        // Reach unfinished selected files first; unrelated output is assembled only after their requests.
+        val ordered = if (plan == null) resources else resources.sortedBy { if (it in plan.selected) 0 else 1 }
+        for (key in ordered) {
             checkCancelled()
+            val finished = checkpoint.completed(key)
+            if (finished != null) {
+                reused += finished.selected; carried += finished.carried; aiEntryCount += finished.aiEntries
+                remaining += finished.remaining; totalBytes += finished.bytes
+                require(totalBytes <= 128L * 1024 * 1024) { "本次游戏文本总量超出限制" }
+                changes.merge(key, finished.changes)
+                continue
+            }
+            val fileChanges = AiChangeCollector(if (upstream) AiChangeKind.Upstream else AiChangeKind.Translation)
+            val carriedBefore = carried
             val resource = inspection.readable(key)
             if (resource == null) {
                 require(plan?.selected?.containsKey(key) != true) { "所选文本已无法读取，请重新检查" }
@@ -186,7 +207,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
                         AiTerminology.validate(it, terminology.forText(leaf.text, leaf.context))
                     } }.getOrNull()
                     if (validated != null) {
-                        changes.record(key, leaf.text, leaf.translated, validated)
+                        fileChanges.record(key, leaf.text, leaf.translated, validated)
                         leaf.apply(validated); applied += leaf.id; reused++; saved.put(savedId, old); reusedChanged = true; continue
                     }
                 }
@@ -197,9 +218,9 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
             while (!reuseOnly && cursor < pending.size && done < c.limit) {
                 checkCancelled()
                 val batch = mutableListOf<TranslationField>(); var characters = 0
-                while (cursor < pending.size && batch.size < AI_REQUEST_ITEMS && batch.size < c.limit - done) {
+                while (cursor < pending.size && batch.size < AI_BATCH_ITEMS && batch.size < c.limit - done) {
                     val leaf = pending[cursor]
-                    if (characters + leaf.text.length > AI_REQUEST_CHARACTERS && batch.isNotEmpty()) break
+                    if (characters + leaf.text.length > AI_BATCH_CHARACTERS && batch.isNotEmpty()) break
                     batch += leaf; characters += leaf.text.length; cursor++
                 }
                 emit(AiProgress(done, progressLimit, reused, input, tokens, "等待翻译结果 · 本批 ${batch.size} 条"))
@@ -215,7 +236,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
                 })
                 for (leaf in batch) {
                     val value = result.translations[leaf.id] ?: continue
-                    changes.record(key, leaf.text, leaf.translated, value)
+                    fileChanges.record(key, leaf.text, leaf.translated, value)
                     leaf.apply(value)
                     applied += leaf.id
                     // Store the protected form so reading cache applies the same validator.
@@ -235,11 +256,26 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
                 val verified = TranslationJsonPairer.mergeWithCoverage("Localize/$key", raw, generated)
                 val loaded = TranslationFields.collect(original, verified.document, key, verified).filter { it.covered }.map { it.id }.toSet()
                 check(loaded.containsAll(applied) && loaded.containsAll(carriedInFile.keys)) { "译文已保存到任务，但部分条目未通过加载检查；未替换当前汉化" }
-                aiIds += applied; aiIds += carriedInFile.keys
             }
             Files.write(target, generated.toByteArray(Charsets.UTF_8))
+            val fileAiEntries = (applied + carriedInFile.keys).size
+            aiEntryCount += fileAiEntries
+            val summary = fileChanges.snapshot(); changes.merge(key, summary)
+            checkpoint.save(key, AiFinishedResource(applied.size, carried - carriedBefore, fileAiEntries,
+                resource.bytes.toLong(), pending.size - cursor, summary))
+        }
+        // Preserve base-only resources, without copying every overwritten file before the first request.
+        if (preserveBase && base != null) for ((key, entry) in originals) {
+            checkCancelled()
+            val target = output.resolve(key)
+            if (!Files.exists(target)) {
+                Files.createDirectories(target.parent)
+                Files.copy(base.directory.resolve(entry.cachePath), target)
+            }
         }
         checkCancelled()
+        if (contextFingerprint != null) require(contextFingerprint == AiPreparationCheckpoint.fingerprint(
+            storage, inspection.language, base, reference, requireNotNull(snapshot).id)) { "游戏文本正在更新，请稍后继续" }
         if (plan != null) remaining = plan.available - plan.total
         require(done + reused + carried > 0 || base != null) { "没有可翻译的显示文本" }
         val archive = root.resolve("generated.zip")
@@ -260,7 +296,7 @@ internal class AiTranslationJob(private val cache: Path, private val storage: Ga
             else if (done + reused == 0) "所选范围没有需要 AI 处理的文本"
             else if (remaining > 0) "本批完成，还有 $remaining 条可继续翻译" else "翻译完成，下次启动时加载"))
         emit(result)
-        return AiJobResult(archive, identity, result, remaining, carried, aiIds.size, changes.snapshot())
+        return AiJobResult(archive, identity, result, remaining, carried, aiEntryCount, changes.snapshot())
     }
 
     companion object {

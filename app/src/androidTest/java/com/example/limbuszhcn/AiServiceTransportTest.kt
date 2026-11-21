@@ -70,4 +70,54 @@ class AiServiceTransportTest {
             assertTrue("error read took $elapsed ms", elapsed < 8000)
         }
     }
+
+    @Test fun waitingAndHeartbeatOnlyStreamsHaveABoundedDeadlineOnAndroid() {
+        for (body in listOf("", ": heartbeat\n\n")) {
+            response("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close", body, hold = true) { url ->
+                val started = android.os.SystemClock.elapsedRealtime()
+                val error = assertThrows(AiRequestTimeout::class.java) {
+                    AiTranslationClient.post(url, "fixture", "{}", idleMillis = 500, totalMillis = 3000,
+                        clock = android.os.SystemClock::elapsedRealtime)
+                }
+                assertFalse(error.total)
+                assertTrue(android.os.SystemClock.elapsedRealtime() - started < 2500)
+            }
+        }
+    }
+
+    @Test fun explicitPauseStillWinsOverTheRequestDeadline() {
+        response("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close", ": heartbeat\n\n", hold = true) { url ->
+            val control = AiRequestControl()
+            val error = assertThrows(AiRequestCancelled::class.java) {
+                AiTranslationClient.post(url, "fixture", "{}", control, progress = {
+                    if (it.heartbeats > 0) control.stop()
+                }, idleMillis = 2000)
+            }
+            assertTrue(error.sent)
+        }
+    }
+
+    @Test fun androidFileChangeProofIsDurableAndInvalidatesChangedFrozenInputs() {
+        check(android.os.Build.HARDWARE in setOf("ranchu", "goldfish"))
+        val root = java.nio.file.Files.createTempDirectory(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+            .targetContext.cacheDir.toPath(), "ai-proof-")
+        try {
+            val file = root.resolve("frozen.json")
+            java.nio.file.Files.write(file, "before".toByteArray())
+            assertNotNull(aiPrivateFileStamp(file))
+            val hash = AiTranslationJob.digest("before")
+            AiSnapshotVerification(root).apply { verify("frozen.json", file, 6, hash); save() }
+            val marker = root.resolve("verified-files.json")
+            val originalMarker = java.nio.file.Files.readAllBytes(marker)
+            AiSnapshotVerification(root).apply { verify("frozen.json", file, 6, hash); save() }
+            assertArrayEquals(originalMarker, java.nio.file.Files.readAllBytes(marker))
+            val mtime = java.nio.file.Files.getLastModifiedTime(file)
+            Thread.sleep(20)
+            java.nio.file.Files.write(file, "after!".toByteArray())
+            java.nio.file.Files.setLastModifiedTime(file, mtime)
+            assertThrows(IllegalArgumentException::class.java) {
+                AiSnapshotVerification(root).verify("frozen.json", file, 6, hash)
+            }
+        } finally { com.example.limbuszhcn.storage.AtomicFiles.deleteOwnedTree(root.parent, root) }
+    }
 }

@@ -27,6 +27,8 @@ class AiStreamingResponseTest {
         assertTrue(states.filter { it.events <= 1 }.all { it.stage == AiResponseStage.Waiting })
         assertTrue(states.any { it.events >= 2 && it.stage == AiResponseStage.Receiving })
         assertTrue(states.any { it.bytes > 0 && it.stage == AiResponseStage.Waiting })
+        assertTrue(states.filter { it.events <= 1 }.all { it.characters == 0L })
+        assertEquals(translated.length.toLong(), states.last().characters)
     }
 
     @Test fun streamedChunksPassExistingValidationAndUsageWithEveryLineEnding() {
