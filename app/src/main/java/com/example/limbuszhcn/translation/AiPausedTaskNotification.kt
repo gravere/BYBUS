@@ -17,13 +17,33 @@ internal object AiPausedTaskNotification {
     const val RESUME_TASK = "resume_saved_ai_task"
     const val CANCEL_TASK = "cancel_saved_ai_task"
 
+    /** Does not wait for the HTTP worker and does not suggest continuing before it has stopped. */
+    fun interrupted(context: Context, session: AiTaskService.Session) {
+        channel(context)
+        val progress = session.progress
+        val open = PendingIntent.getActivity(context, 0, Intent(context, MainActivity::class.java)
+            .setAction(AiTaskService.OPEN_TASK)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        context.getSystemService(NotificationManager::class.java).notify(ID,
+            Notification.Builder(context, AiTaskService.CHANNEL)
+                .setSmallIcon(R.drawable.ic_notification_bus).setContentTitle("后台翻译已中断")
+                .setContentText("已完成 ${progress.done} 条 · 点击查看任务")
+                .setContentIntent(open).setOnlyAlertOnce(true).setShowWhen(false).setOngoing(false)
+                .build())
+    }
+
+    private fun channel(context: Context) = context.getSystemService(NotificationManager::class.java)
+        .createNotificationChannel(NotificationChannel(AiTaskService.CHANNEL, "AI 翻译任务", NotificationManager.IMPORTANCE_LOW))
+
     fun update(context: Context, task: AiTaskSnapshot?) {
         val manager = context.getSystemService(NotificationManager::class.java)
         if (task == null || task.phase != AiTaskPhase.Paused) { manager.cancel(ID); return }
-        manager.createNotificationChannel(NotificationChannel(AiTaskService.CHANNEL, "AI 翻译任务", NotificationManager.IMPORTANCE_LOW))
+        channel(context)
         val total = task.plan?.total ?: task.progress.limit
         val done = (task.progress.completed + task.progress.reused).coerceIn(0, total.coerceAtLeast(0))
-        val caption = if (task.plan == null) "翻译已暂停" else "已暂停 · $done/$total"
+        val status = if (task.backgroundStopReason != null) "系统已暂停" else "已暂停"
+        val caption = if (task.plan == null) status else "$status · $done/$total"
         fun action(kind: String, extra: String? = null) = PendingIntent.getActivity(context, 0,
             Intent(context, MainActivity::class.java).setAction(AiTaskService.OPEN_TASK)
                 .setData(Uri.Builder().scheme("bybus-task").authority(kind).appendPath(task.id).build())

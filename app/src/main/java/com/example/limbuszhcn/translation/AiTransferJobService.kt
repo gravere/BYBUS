@@ -1,6 +1,5 @@
 package com.example.limbuszhcn.translation
 
-import android.app.NotificationManager
 import android.app.job.JobInfo
 import android.app.job.JobParameters
 import android.app.job.JobScheduler
@@ -23,9 +22,17 @@ class AiTransferJobService : JobService() {
     private var lastNoticeAt = 0L
     private val flushNotice = Runnable {
         val current = owner
-        if (current != null && !current.closed.get()) {
+        val params = parameters
+        if (current != null && params != null && !current.closed.get()) {
             lastNoticeAt = SystemClock.elapsedRealtime()
-            getSystemService(NotificationManager::class.java).notify(AiTaskNotification.ID, AiTaskNotification.build(this, current))
+            // A new Notification posted with notify() loses the framework's UIDT flag.
+            // Keep every update associated with the same running job via the public API.
+            runCatching {
+                setNotification(params, AiTaskNotification.ID, AiTaskNotification.build(this, current), JOB_END_NOTIFICATION_POLICY_REMOVE)
+            }.onFailure {
+                PersistentDiagnosticLog.warn(TAG, "Cannot update user transfer notification", it)
+                current.interrupt("后台任务通知更新失败，已保存的进度会保留")
+            }
         }
     }
 
@@ -47,8 +54,7 @@ class AiTransferJobService : JobService() {
         } catch (error: Exception) {
             PersistentDiagnosticLog.warn(TAG, "Cannot start user transfer", error)
             detach()
-            current.failure = "无法启动后台翻译，已保留进度，请返回 BYBUS 后继续"
-            current.pause()
+            current.interrupt("无法启动后台翻译，已保存的进度会保留")
             return false
         }
     }
@@ -66,8 +72,7 @@ class AiTransferJobService : JobService() {
         detach()
         PersistentDiagnosticLog.info(TAG, "User transfer stopped job=${params.jobId} reason=${params.stopReason} closed=${current.closed.get()}")
         if (!current.closed.get()) {
-            current.failure = "系统已暂停后台翻译，进度已保留，可继续未完成内容"
-            current.pause()
+            current.interrupt("系统暂停了后台翻译，已保存的进度会保留", params.stopReason)
         }
         return false // Outcome of an interrupted HTTP request is unknown; no automatic retry.
     }
@@ -77,8 +82,7 @@ class AiTransferJobService : JobService() {
         detach()
         if (current != null && !current.closed.get()) {
             PersistentDiagnosticLog.warn(TAG, "Transfer service destroyed before completion")
-            current.failure = "后台翻译已停止，进度已保留，可继续未完成内容"
-            current.pause()
+            current.interrupt("后台翻译服务已停止，已保存的进度会保留")
         }
         super.onDestroy()
     }

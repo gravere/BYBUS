@@ -25,7 +25,8 @@ internal data class AiTaskSnapshot(val id: String, val config: AiConfig, val bas
     val phase: AiTaskPhase = AiTaskPhase.Running, val progress: AiProgress = AiProgress(),
     val plan: AiTaskPlan? = null, val error: String? = null, val resultHash: String? = null,
     val binding: AiTaskBinding? = null, val upstream: Boolean = false, val resultTarget: String? = null,
-    val explicitEntries: Boolean = false, val baseName: String? = null, val cacheConnection: AiCacheConnection? = null) {
+    val explicitEntries: Boolean = false, val baseName: String? = null, val cacheConnection: AiCacheConnection? = null,
+    val backgroundStopReason: Int? = null) {
     val scopeLabel get() = if (explicitEntries) "所选条目" else if (!config.missingOnly) "全部文本" else when {
         config.includeMissing && config.includeReview -> "未覆盖与待核对"
         config.includeReview -> "待核对"
@@ -87,7 +88,8 @@ internal class AiTaskStore(private val cache: Path) {
             j.optJSONObject("binding")?.let { b -> AiTaskBinding(b.getString("selected"), b.getString("revision"),
                 b.optString("targetRevision").takeIf(String::isNotEmpty), b.optString("selectedKind"), b.optString("language", "jp")) }, j.optBoolean("upstream"),
             j.optString("resultTarget").takeIf(String::isNotEmpty), j.optBoolean("explicitEntries"),
-            j.optString("baseName").takeIf(String::isNotEmpty), j.optJSONObject("cacheConnection")?.let(AiCacheConnection::read)).also {
+            j.optString("baseName").takeIf(String::isNotEmpty), j.optJSONObject("cacheConnection")?.let(AiCacheConnection::read),
+            j.optInt("backgroundStopReason").takeIf { j.has("backgroundStopReason") && !j.isNull("backgroundStopReason") }).also {
             require(it.id.matches(ID) && it.outputIdentity.matches(ID))
             latestSnapshot = it
         }
@@ -175,6 +177,7 @@ internal class AiTaskStore(private val cache: Path) {
         val j = JSONObject().put("schema", 1).put("id", task.id).put("baseId", task.baseId)
             .put("sourceName", task.sourceName).put("outputIdentity", task.outputIdentity).put("outputName", task.outputName)
             .put("officialVersion", task.officialVersion).put("phase", task.phase.name).put("error", task.error)
+            .put("backgroundStopReason", task.backgroundStopReason)
             .put("binding", task.binding?.let { JSONObject().put("selected", it.selected).put("revision", it.revision).put("targetRevision", it.targetRevision).put("selectedKind", it.selectedKind).put("language", it.language) })
             .put("upstream", task.upstream).put("resultTarget", task.resultTarget)
             .put("explicitEntries", task.explicitEntries).put("baseName", task.baseName).put("cacheConnection", task.cacheConnection?.json())

@@ -2,14 +2,10 @@ package com.example.limbuszhcn
 
 import android.app.ActivityManager
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
-import android.provider.Settings
 import android.system.Os
 import android.system.OsConstants
-import com.lody.virtual.oem.OemPermissionHelper
 
 /**
  * 描述当前手机对汉化容器关键运行条件的支持情况。
@@ -72,10 +68,7 @@ internal data class DeviceCompatibilityReport(
 }
 
 /**
- * 采集设备兼容信息，并提供常见国产 ROM 的后台运行设置入口。
- *
- * 这里不尝试静默修改系统策略，因为 vivo、iQOO、MIUI、ColorOS 等系统都要求用户
- * 在系统界面确认后台运行权限；应用只负责打开经过 PackageManager 验证的设置页面。
+ * 采集设备兼容信息。厂商后台耗电策略不能由标准 Doze 豁免状态推断。
  */
 internal class DeviceCompatibility(private val context: Context) {
     /**
@@ -100,7 +93,7 @@ internal class DeviceCompatibility(private val context: Context) {
             }
             if (isAggressiveBackgroundRom() && !ignoresBatteryOptimizations) {
                 // 国产 ROM 经常在 Activity 切换到游戏后清理容器 server；这里只提示用户显式放行。
-                add("建议在系统设置中允许自启动、后台高耗电和后台运行")
+                add("后台容易中断时，请检查系统电池设置中是否允许 BYBUS 后台运行")
             }
             if (activityManager.isLowRamDevice) {
                 add("设备处于低内存模式，启动前建议关闭其他大型应用")
@@ -123,31 +116,7 @@ internal class DeviceCompatibility(private val context: Context) {
         )
     }
 
-    /**
-     * 返回最适合当前 ROM 的后台权限设置页面。
-     *
-     * @return OEM 页面可用时返回其 Intent，否则回退到系统电池优化或应用详情页面。
-     */
-    fun settingsIntent(): Intent {
-        // 个别 ROM 的属性探测或 PackageManager 实现可能抛出厂商异常，不能因此失去标准设置回退。
-        runCatching { OemPermissionHelper.getPermissionActivityIntent(context) }
-            .getOrNull()
-            ?.let { return it }
-
-        val batterySettings = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        if (batterySettings.resolveActivity(context.packageManager) != null) {
-            return batterySettings
-        }
-
-        // 应用详情页是所有 Android 品牌都应提供的最终回退，用户可从这里进入电池与权限设置。
-        return Intent(
-            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-            Uri.parse("package:${context.packageName}")
-        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    }
-
-    /** 判断当前品牌是否通常会额外限制后台进程和自启动。 */
+    /** 判断当前品牌是否通常会额外限制后台进程。 */
     private fun isAggressiveBackgroundRom(): Boolean {
         val identity = "${Build.MANUFACTURER} ${Build.BRAND}".lowercase()
         return AGGRESSIVE_BACKGROUND_BRANDS.any(identity::contains)

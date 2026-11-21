@@ -94,6 +94,7 @@ class MainActivity : ComponentActivity() {
             val pendingPack = androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf<String?>(null) }
             val replacingPack = androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf<String?>(null) }
             val iconTarget = androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf<String?>(null) }
+            val backgroundSettings = androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
             val exportSource = androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf<String?>(null) }
             val exportDestination = androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf<String?>(null) }
             val sourceExportPicker = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
@@ -173,6 +174,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
             LimbusZhCNTheme {
+                if (backgroundSettings.value) BackgroundSettingsDialog { backgroundSettings.value = false }
                 pendingPack.value?.let { selectedUri ->
                     BybusDialog(onDismissRequest = { pendingPack.value = null },
                         title = { androidx.compose.material3.Text("导入并使用汉化包？") },
@@ -243,10 +245,7 @@ class MainActivity : ComponentActivity() {
                                 }
                         }
                     },
-                    onSettings = {
-                        runCatching { startActivity(DeviceCompatibility(applicationContext).settingsIntent()) }
-                            .onFailure(model::showError)
-                    },
+                    onSettings = { backgroundSettings.value = true },
                     translationActions = TranslationActions(
                         select = model::selectTranslation,
                         import = { id -> replacingPack.value = id

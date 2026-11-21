@@ -203,7 +203,18 @@ internal class LaunchCoordinator private constructor(application: Application) {
                     "旧数据迁移尚未完成，请先继续导入"
                 }
                 task()
-            } } finally {
+            } } catch (error: Exception) {
+                // A queued job may stop before runAiTask has even entered its own catch block.
+                val reason = foreground?.backgroundStopReason
+                if (reason != null && !aiDiscarded.get()) runCatching {
+                    (aiTaskStore.latest() ?: aiTaskStore.read())?.let {
+                        aiTaskStore.write(it.copy(phase = AiTaskPhase.Paused,
+                            progress = it.progress.freezeAt(android.os.SystemClock.elapsedRealtime()),
+                            error = foreground.failure, backgroundStopReason = reason))
+                    }
+                }.onFailure { PersistentDiagnosticLog.warn(TAG, "Cannot save interrupted task", it) }
+                throw error
+            } finally {
                 try { if (foregroundAi && aiDiscarded.get()) aiTaskStore.discard() }
                 finally {
                     foreground?.finish(runCatching { aiTaskStore.latest() ?: aiTaskStore.read() }.getOrNull())
@@ -219,9 +230,10 @@ internal class LaunchCoordinator private constructor(application: Application) {
                 val finished = it.finishOperation(result.getOrElse { failure -> failure.userMessage() },
                     failed = result.isFailure && !cancelled && !(foregroundAi && preserveFailure), preserveFailure = preserveFailure)
                 if (foregroundAi && error != null) finished.copy(ai = it.ai.copy(running = false, stopping = false,
-                    failed = !cancelled, task = if (aiDiscarded.get()) null else it.ai.task,
+                    failed = !cancelled && foreground?.backgroundStopReason == null,
+                    task = if (aiDiscarded.get()) null else aiTaskStore.latest() ?: it.ai.task,
                     message = if (aiDiscarded.get()) "任务已取消，本次未完成的译文已删除"
-                    else if (cancelled) "翻译已停止，已保存的进度保留" else error.userMessage())) else finished
+                    else foreground?.failure ?: if (cancelled) "翻译已停止，已保存的进度保留" else error.userMessage())) else finished
             }
         }
         if (foreground != null) foreground.execute(worker, operation) else worker.execute(operation)
@@ -780,6 +792,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
 
     private data class AiRunResult(val completed: Boolean, val message: String)
     private fun runAiTask(prepare: () -> AiTaskSnapshot): AiRunResult {
+        val backgroundSession = AiTaskService.currentSession()
         val clock = android.os.SystemClock::elapsedRealtime
         val started = clock()
         var lastProgress = (aiTaskStore.latest()?.progress ?: AiProgress()).copy(sampledAt = started)
@@ -793,7 +806,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
             val preparedTask = prepare()
             val connection = aiSettings.connection()
             val nextPrice = runCatching { pricing.find(connection.config.endpoint, connection.config.model) }.getOrNull()
-            var task = preparedTask.withConnection(connection.config, nextPrice).copy(phase = AiTaskPhase.Running, error = null)
+            var task = preparedTask.withConnection(connection.config, nextPrice).copy(phase = AiTaskPhase.Running, error = null, backgroundStopReason = null)
             task = aiTaskStore.write(task.copy(progress = task.progress.copy(
                 elapsedMillis = lastProgress.elapsedAt(clock()), sampledAt = clock())))
             PersistentDiagnosticLog.info(TAG, "AI task scope=${task.scopeLabel} limit=${task.config.limit} resumed=${task.plan != null}")
@@ -858,17 +871,19 @@ internal class LaunchCoordinator private constructor(application: Application) {
             return AiRunResult(true, message)
         } catch (e: Exception) {
             val paused = e is java.util.concurrent.CancellationException
+            val backgroundStop = backgroundSession?.backgroundStopReason
+            val pauseMessage = backgroundSession?.failure?.takeIf { backgroundStop != null }
             if (!paused) PersistentDiagnosticLog.error(TAG, "AI task paused", e)
             val discarded = aiDiscarded.get()
             val saved = if (discarded) { aiTaskStore.discard(); null } else runCatching { (aiTaskStore.latest() ?: aiTaskStore.read())?.let {
                 val progress = it.progress.takeIf { p -> p.sampledAt > 0 } ?: lastProgress
                 aiTaskStore.write(it.copy(phase = AiTaskPhase.Paused, progress = progress.freezeAt(clock()),
-                    error = if (paused) null else e.userMessage()))
+                    error = pauseMessage ?: if (paused) null else e.userMessage(), backgroundStopReason = backgroundStop))
             } }.getOrNull()
-            val message = if (discarded) "任务已取消，本次未完成的译文已删除" else if (paused) "已暂停，可随时继续" else "翻译已暂停：${e.userMessage()}"
+            val message = if (discarded) "任务已取消，本次未完成的译文已删除" else pauseMessage ?: if (paused) "已暂停，可随时继续" else "翻译已暂停：${e.userMessage()}"
             publish { it.copy(ai = it.ai.copy(running = false,
                 stopping = false, task = saved, recoveryIssue = saved == null && aiTaskStore.exists(),
-                progress = saved?.progress ?: AiProgress(), failed = !paused && !discarded, message = message)) }
+                progress = saved?.progress ?: AiProgress(), failed = !paused && backgroundStop == null && !discarded, message = message)) }
             return AiRunResult(false, message)
         } finally {
             network.close()

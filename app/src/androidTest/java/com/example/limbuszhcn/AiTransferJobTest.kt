@@ -40,6 +40,28 @@ class AiTransferJobTest {
     private fun count(name: String) = java.net.URL("http://10.0.2.2:18765/count/$name").readText().trim().toInt()
     private fun screen() = ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).setAction(AiTaskService.OPEN_TASK))
 
+    @Test fun everyProgressRefreshKeepsSystemUserInitiatedNotification() {
+        val manager = context.getSystemService(NotificationManager::class.java)
+        // Read the framework flag only in this assertion; production must use setNotification.
+        fun notice() = manager.activeNotifications.firstOrNull { it.id == 4107 }?.notification
+        screen().use { screen ->
+            lateinit var session: AiTaskService.Session
+            screen.onActivity { session = AiTaskService.start(it) {} }
+            try {
+                session.awaitStarted()
+                waitFor { notice() != null }
+                assertTrue("Initial notification must be associated with a UIDT", notice()!!.flags and 0x8000 != 0)
+                screen.moveToState(Lifecycle.State.CREATED)
+                for (done in 1..3) {
+                    session.update("等待翻译结果", done, 10)
+                    waitFor { notice()?.extras?.getCharSequence(android.app.Notification.EXTRA_TEXT)?.startsWith("$done/10") == true }
+                    assertTrue("Progress $done lost the system UIDT flag", notice()!!.flags and 0x8000 != 0)
+                }
+            } finally { session.close() }
+            waitFor { scheduler.getPendingJob(session.jobId) == null }
+        }
+    }
+
     @Test fun currentAndNextRequestCompleteAfterHomeAndScreenOff() {
         val name = "uidt-${System.nanoTime()}"
         val executor = Executors.newSingleThreadExecutor()
@@ -83,6 +105,8 @@ class AiTransferJobTest {
         val result = CompletableFuture<Boolean>()
         val control = AiRequestControl()
         val pauses = AtomicInteger()
+        val cleanup = java.util.concurrent.CountDownLatch(1)
+        val manager = context.getSystemService(NotificationManager::class.java)
         screen().use { screen ->
             lateinit var session: AiTaskService.Session
             screen.onActivity { activity ->
@@ -92,9 +116,16 @@ class AiTransferJobTest {
                         session.awaitStarted()
                         AiNetworkGuard(context).use { it.post("http://10.0.2.2:18765/stream/$name", "fixture", "{\"stream\":true}", control) {} }
                         result.complete(false)
-                    } catch (error: AiRequestCancelled) { result.complete(error.sent) }
+                    } catch (error: AiRequestCancelled) {
+                        result.complete(error.sent)
+                        // Simulate delayed worker cleanup after the system callback.
+                        assertTrue(cleanup.await(10, TimeUnit.SECONDS))
+                    }
                     catch (error: Throwable) { result.completeExceptionally(error) }
-                    finally { session.close() }
+                    finally {
+                        session.finish(AiTaskSnapshot("fixture", AiConfig(), "zero", "来源", "output", "汉化", null,
+                            phase = AiTaskPhase.Paused, error = session.failure, backgroundStopReason = session.backgroundStopReason))
+                    }
                 })
             }
             try {
@@ -103,9 +134,20 @@ class AiTransferJobTest {
                 assertTrue(stopped, stopped.contains("Stopping"))
                 assertTrue(result.get(8, TimeUnit.SECONDS))
                 assertEquals(1, pauses.get())
+                assertEquals(3, session.backgroundStopReason)
+                waitFor { manager.activeNotifications.any { it.id == 4108 } }
+                assertEquals("后台翻译已中断", manager.activeNotifications.single { it.id == 4108 }
+                    .notification.extras.getCharSequence(android.app.Notification.EXTRA_TITLE).toString())
+                assertFalse(session.closed.get()) // Notice exists even while worker cannot finish.
                 waitFor { scheduler.getPendingJob(session.jobId) == null }
                 assertEquals(1, count(name))
-            } finally { control.stop(); session.close(); executor.shutdownNow() }
+                cleanup.countDown()
+                waitFor { session.closed.get() && manager.activeNotifications.any { it.id == 4108 &&
+                    it.notification.extras.getCharSequence(android.app.Notification.EXTRA_TITLE) == "翻译已暂停" } }
+            } finally {
+                cleanup.countDown(); control.stop(); session.close(); executor.shutdownNow()
+                AiTaskService.restorePaused(context, null)
+            }
         }
     }
 
