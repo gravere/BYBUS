@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "repository": "LocalizeLimbusCompany/LocalizeLimbusCompany",
+  "syncedAt": "2026-11-21T05:02:30.052837Z",
+  "release": {
+    "tag_name": "2026111901",
+    "published_at": "2026-11-19T09:43:59Z",
+    "html_url": "https://github.com/LocalizeLimbusCompany/LocalizeLimbusCompany/releases/tag/2026111901",
+    "draft": false,
+    "prerelease": false,
+    "assets": [
+      {
+        "name": "LimbusLocalize_2026111901.7z",
+        "size": 2938106,
+        "browser_download_url": "https://github.com/LocalizeLimbusCompany/LocalizeLimbusCompany/releases/download/2026111901/LimbusLocalize_2026111901.7z",
+        "digest": "sha256:6b693f7e7ac547675da11f526c1dfc38038101c1d854d1d73a1f8128069e3f62"
+      }
+    ]
+  }
+}
