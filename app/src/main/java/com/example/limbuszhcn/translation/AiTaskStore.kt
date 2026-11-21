@@ -219,13 +219,15 @@ internal class AiTaskStore(private val cache: Path) {
         if (!Files.isRegularFile(file)) return null
         require(Files.size(file) <= 2 * 1024 * 1024)
         val manifest = PatchManifest.fromJson(String(Files.readAllBytes(file), Charsets.UTF_8))
+        val verification = AiSnapshotVerification(directory)
         progress(0, manifest.entries.size)
         manifest.entries.forEachIndexed { index, entry ->
             if (cancelled()) throw java.util.concurrent.CancellationException()
             val source = ownedFile(directory, entry.cachePath)
-            require(Files.size(source) == entry.size && source.sha256() == entry.sha256) { "已保存的汉化快照损坏，请取消任务后重新生成" }
+            verification.verify(entry.cachePath, source, entry.size, entry.sha256)
             progress(index + 1, manifest.entries.size)
         }
+        verification.save()
         return PreparedTranslation(directory, manifest)
     }
 

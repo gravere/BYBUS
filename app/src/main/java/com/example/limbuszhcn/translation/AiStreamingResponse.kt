@@ -9,7 +9,7 @@ import java.nio.charset.CodingErrorAction
 
 internal enum class AiResponseStage { Sending, Waiting, Receiving, Thinking }
 internal data class AiResponseProgress(val stage: AiResponseStage, val bytes: Long = 0, val events: Int = 0,
-    val heartbeats: Int = 0)
+    val heartbeats: Int = 0, val characters: Long = 0)
 
 /** One HTTP response only; accepting ordinary JSON never causes a second billed request. */
 internal fun readAiHttpResponse(input: InputStream, contentType: String?,
@@ -22,8 +22,8 @@ private fun decodeAiHttpResponse(input: InputStream, contentType: String?,
     var received = 0L
     var current = AiResponseProgress(AiResponseStage.Waiting)
     fun report(stage: AiResponseStage = current.stage, events: Int = current.events,
-        heartbeats: Int = current.heartbeats) {
-        current = AiResponseProgress(stage, received, events, heartbeats); progress(current)
+        heartbeats: Int = current.heartbeats, characters: Long = current.characters) {
+        current = AiResponseProgress(stage, received, events, heartbeats, characters); progress(current)
     }
     val bounded = object : FilterInputStream(input) {
         private fun add(n: Int) { if (n > 0) { received += n; report(); if (received > 8 * 1024 * 1024) throw AiResponseFormatException() } }
@@ -49,6 +49,7 @@ private fun decodeAiHttpResponse(input: InputStream, contentType: String?,
             if (count < 0) break
             if (out.length + count > 256 * 1024) throw AiResponseFormatException()
             out.append(chars, 0, count)
+            report(characters = current.characters + (0 until count).count { !chars[it].isWhitespace() })
         }
         val raw = out.toString()
         aiServiceFailure(parseAiResponseObject(raw))?.let { throw it }
@@ -71,6 +72,7 @@ private fun decodeAiHttpResponse(input: InputStream, contentType: String?,
         aiServiceFailure(chunk, errorEvent = errorEvent)?.let { throw it }
         events++
         var stage = current.stage
+        var receivedCharacters = current.characters
         val choices = chunk.optJSONArray("choices") ?: throw AiResponseFormatException()
         for (i in 0 until choices.length()) {
             val choice = choices.optJSONObject(i) ?: throw AiResponseFormatException()
@@ -80,10 +82,12 @@ private fun decodeAiHttpResponse(input: InputStream, contentType: String?,
             if (value != null && value !== JSONObject.NULL) {
                 if (value !is String || finish != null && value.isNotEmpty() || content.length + value.length > 256 * 1024) throw AiResponseFormatException()
                 content.append(value)
+                receivedCharacters += value.length
                 if (value.isNotEmpty()) stage = AiResponseStage.Receiving
             }
             if (!delta.isNull("refusal") && delta.optString("refusal").isNotEmpty()) refusal = "refused"
             if (content.isEmpty() && (!delta.isNull("reasoning_content") || !delta.isNull("reasoning"))) stage = AiResponseStage.Thinking
+            for (field in listOf("reasoning_content", "reasoning")) receivedCharacters += (delta.opt(field) as? String)?.length ?: 0
             if (!choice.isNull("finish_reason")) {
                 val reason = choice.opt("finish_reason") as? String ?: throw AiResponseFormatException()
                 if (finish != null && finish != reason) throw AiResponseFormatException()
@@ -91,7 +95,7 @@ private fun decodeAiHttpResponse(input: InputStream, contentType: String?,
             }
         }
         chunk.optJSONObject("usage")?.let { usage = it }
-        report(stage, events)
+        report(stage, events, characters = receivedCharacters)
     }
     val line = StringBuilder()
     var firstLine = true

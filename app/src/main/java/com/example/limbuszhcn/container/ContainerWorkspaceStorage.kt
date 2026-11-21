@@ -29,9 +29,8 @@ class ContainerWorkspaceStorage @JvmOverloads constructor(
     override fun resourceMigrationRoots(): Map<String, Path> = migrationRoots
     override fun japaneseResourceMetadata() = textResourceMetadata(GameTextLanguage.Japanese)
     override fun textResourceMetadata(language: GameTextLanguage): Map<String, String> = textResources(language).associateWith { key ->
-            val attrs = Files.readAttributes(localizeRoot.resolve(key), java.nio.file.attribute.BasicFileAttributes::class.java,
-                java.nio.file.LinkOption.NOFOLLOW_LINKS)
-            "${attrs.size()}|${attrs.lastModifiedTime()}|${attrs.fileKey()}"
+            val path = localizeRoot.resolve(key)
+            com.example.limbuszhcn.storage.reliableFileChangeStamp(path) ?: path.sha256()
     }
     override fun japaneseResources() = textResources(GameTextLanguage.Japanese)
     override fun textResources(language: GameTextLanguage): List<String> {

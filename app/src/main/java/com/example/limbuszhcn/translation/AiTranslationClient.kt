@@ -9,6 +9,8 @@ import java.util.concurrent.CancellationException
 internal const val MAX_AI_TASK_ENTRIES = 500_000
 internal const val AI_REQUEST_ITEMS = 24
 internal const val AI_REQUEST_CHARACTERS = 12000
+internal const val AI_BATCH_ITEMS = 4
+internal const val AI_BATCH_CHARACTERS = 1600
 
 internal data class AiConfig(val endpoint: String = "https://api.openai.com/v1", val model: String = "gpt-4.1-mini",
     val missingOnly: Boolean = true, val limit: Int = 100, val includeMissing: Boolean = true, val includeReview: Boolean = false,
@@ -139,6 +141,8 @@ internal class AiTranslationClient(private val config: AiConfig, private val key
     companion object {
         internal fun post(url: String, key: String, json: String, control: AiRequestControl? = null,
             progress: (AiResponseProgress) -> Unit = {},
+            idleMillis: Long = 120_000, totalMillis: Long = 300_000,
+            clock: () -> Long = { System.nanoTime() / 1_000_000 },
             beforeRequest: () -> Unit = {}): String {
             control?.check()
             beforeRequest()
@@ -146,6 +150,7 @@ internal class AiTranslationClient(private val config: AiConfig, private val key
             val c = URI(url).toURL().openConnection() as HttpURLConnection
             var sent = false
             val lease = control?.attach { c.disconnect() }
+            val deadline = AiRequestDeadline({ c.disconnect() }, clock, idleMillis, totalMillis)
             try {
                 c.instanceFollowRedirects = false; c.useCaches = false
                 c.connectTimeout = 15_000; c.readTimeout = 180_000
@@ -165,11 +170,14 @@ internal class AiTranslationClient(private val config: AiConfig, private val key
                     c.readTimeout = 5_000
                     throw readAiHttpFailure(c, status)
                 }
-                return c.inputStream.use { readAiHttpResponse(it, c.contentType, progress) }
+                return c.inputStream.use { readAiHttpResponse(it, c.contentType) { current ->
+                    deadline.progress(current); progress(current)
+                } }.also { deadline.complete() }
             } catch (error: Exception) {
                 if (control?.isStopped == true) throw AiRequestCancelled(sent)
+                deadline.check()
                 throw error
-            } finally { lease?.close(); c.disconnect() }
+            } finally { deadline.close(); lease?.close(); c.disconnect() }
         }
     }
 }

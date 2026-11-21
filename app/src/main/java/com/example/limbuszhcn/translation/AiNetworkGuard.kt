@@ -62,7 +62,9 @@ internal class AiNetworkGuard(private val context: Context) : AutoCloseable {
         var previousStage: AiResponseStage? = null
         val request = org.json.JSONObject(body)
         val connection = AiTranslationJob.digest("$url|${request.optString("model")}").take(12)
-        log("request-start connection=$connection streaming=${request.optBoolean("stream", false)} requestBytes=${body.toByteArray(Charsets.UTF_8).size} outputLimit=${request.optInt("max_completion_tokens", 0)}")
+        val entries = runCatching { org.json.JSONArray(request.getJSONArray("messages").getJSONObject(1).getString("content")) }.getOrNull()
+        val characters = entries?.let { values -> (0 until values.length()).sumOf { values.getJSONObject(it).optString("text").length } } ?: 0
+        log("request-start connection=$connection items=${entries?.length() ?: 0} sourceChars=$characters streaming=${request.optBoolean("stream", false)} requestBytes=${body.toByteArray(Charsets.UTF_8).size} outputLimit=${request.optInt("max_completion_tokens", 0)}")
         try { return AiTranslationClient.post(url, key, body, control, progress = { current ->
             last = current
             if (previousStage != current.stage) {
@@ -74,7 +76,7 @@ internal class AiNetworkGuard(private val context: Context) : AutoCloseable {
                     AiResponseStage.Thinking -> "模型正在思考"
                 })
             }
-        }) { awaitReady(control, status) }.also {
+        }, clock = SystemClock::elapsedRealtime) { awaitReady(control, status) }.also {
             log("request-complete stage=${last.stage} bytes=${last.bytes} events=${last.events} heartbeats=${last.heartbeats} elapsedMs=${SystemClock.elapsedRealtime() - started}")
         } }
         catch (error: Exception) {

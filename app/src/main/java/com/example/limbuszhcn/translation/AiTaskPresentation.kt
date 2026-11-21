@@ -6,6 +6,7 @@ import java.util.Locale
 internal fun compactAiTaskLabel(message: String): String = when {
     message.contains("停止") || message.contains("暂停") -> "正在暂停"
     message.startsWith("正在翻译") -> "正在翻译"
+    message.startsWith("恢复") -> "准备翻译"
     message.contains("等待翻译") || message.contains("等待模型") -> "等待回复"
     message.contains("接收译文") -> "接收译文"
     message.contains("正在思考") -> "模型思考"

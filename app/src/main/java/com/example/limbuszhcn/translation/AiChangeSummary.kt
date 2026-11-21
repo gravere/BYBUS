@@ -42,6 +42,13 @@ internal class AiChangeCollector(private val kind: AiChangeKind) {
     private val resources = hashSetOf<String>()
     private val categories = linkedMapOf<String, Int>()
     private val examples = mutableListOf<AiChangeExample>()
+    fun merge(resource: String, summary: AiChangeSummary) {
+        summary.validated(); require(summary.kind == kind && summary.files <= 1)
+        if (summary.files > 0) resources += resource
+        added += summary.added; replaced += summary.replaced; removed += summary.removed; unchanged += summary.unchanged
+        summary.categories.forEach { (key, count) -> categories[key] = (categories[key] ?: 0) + count }
+        examples += summary.examples.take((3 - examples.size).coerceAtLeast(0))
+    }
     fun record(resource: String, original: String, before: String?, after: String?) {
         if (before == null && after == null) return
         val category = TranslationCoverage.category(resource)
