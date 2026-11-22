@@ -53,10 +53,8 @@ public class UsageStatsManagerStub extends BinderInvocationProxy {
         }
         @Override
         public Object call(Object who, Method method, Object... args) throws Throwable {
-            if (args[args.length - 1] instanceof Integer) {
-                args[args.length - 1] = 0;
-            }
-            return super.call(who, method, args);
+            return super.call(who, method, com.lody.virtual.helper.compat.FrameworkUserScope.arguments(
+                    method, args, getAppUserId(), getRealUserId()));
         }
     }
 

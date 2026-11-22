@@ -55,7 +55,7 @@ internal fun LaunchButton(action: LaunchAction, enabled: Boolean, step: Int,
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scale = animateFloatAsState(if (pressed) .985f else 1f, tween(130), label = "launch press")
-    // Keep the frame state out of composition and layout; pause when the home is covered.
+    // Read frames only while drawing. Losing focus during handoff must not freeze a visible ring.
     val phase = if (animated && (enabled || busy)) rememberInfiniteTransition(label = "launch outline").animateFloat(
         initialValue = 0f, targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(4800, easing = LinearEasing)), label = "outline phase")

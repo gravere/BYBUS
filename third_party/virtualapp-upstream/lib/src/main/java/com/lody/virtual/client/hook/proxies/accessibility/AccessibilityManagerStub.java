@@ -22,6 +22,7 @@ public class AccessibilityManagerStub extends BinderInvocationProxy {
     protected void onBindMethods() {
         super.onBindMethods();
         addMethodProxy(new ReplaceLastUserIdProxy("addClient"));
+        addMethodProxy(new ReplaceLastUserIdProxy("removeClient"));
         addMethodProxy(new ReplaceLastUserIdProxy("sendAccessibilityEvent"));
         addMethodProxy(new ReplaceLastUserIdProxy("getInstalledAccessibilityServiceList"));
         addMethodProxy(new ReplaceLastUserIdProxy("getEnabledAccessibilityServiceList"));
@@ -37,12 +38,9 @@ public class AccessibilityManagerStub extends BinderInvocationProxy {
         }
 
         @Override
-        public boolean beforeCall(Object who, Method method, Object... args) {
-            int index = args.length - 1;
-            if (index >= 0 && args[index] instanceof Integer) {
-                args[index] = 0;
-            }
-            return super.beforeCall(who, method, args);
+        public Object call(Object who, Method method, Object... args) throws Throwable {
+            return super.call(who, method, com.lody.virtual.helper.compat.FrameworkUserScope.arguments(
+                    method, args, getAppUserId(), getRealUserId()));
         }
     }
 }

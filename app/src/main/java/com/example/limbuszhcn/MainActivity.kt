@@ -108,7 +108,8 @@ class MainActivity : ComponentActivity() {
                 val id = iconTarget.value; iconTarget.value = null
                 if (id != null && uri != null) model.translationIcon(id, uri)
             }
-            val resumed = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+            val resumed = rememberLifecycleAtLeast(lifecycle, androidx.lifecycle.Lifecycle.State.RESUMED)
+            val visible = rememberLifecycleAtLeast(lifecycle, androidx.lifecycle.Lifecycle.State.STARTED)
             val askingNotification = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
             val taskNotificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { askingNotification.value = false }
             androidx.compose.runtime.LaunchedEffect(state.ai.running, resumed.value, askingNotification.value) {
@@ -127,13 +128,6 @@ class MainActivity : ComponentActivity() {
                         com.example.limbuszhcn.translation.AiBackgroundAccess.open(this@MainActivity)
                     }
                 }
-            }
-            androidx.compose.runtime.DisposableEffect(lifecycle) {
-                val observer = androidx.lifecycle.LifecycleEventObserver { _, _ ->
-                    resumed.value = lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
-                }
-                lifecycle.addObserver(observer)
-                onDispose { lifecycle.removeObserver(observer) }
             }
             androidx.compose.runtime.LaunchedEffect(resumed.value, appUpdater.openingGeneration) {
                 if (resumed.value) while (true) {
@@ -190,7 +184,7 @@ class MainActivity : ComponentActivity() {
                     state = state,
                     projectState = model.projectState,
                     appUpdateState = appUpdater.state,
-                    resumed = resumed.value,
+                    visible = visible.value,
                     onCheckAppUpdate = { appUpdater.check(force = true) },
                     onDownloadAppUpdate = appUpdater::download,
                     onCancelAppUpdate = appUpdater::cancel,

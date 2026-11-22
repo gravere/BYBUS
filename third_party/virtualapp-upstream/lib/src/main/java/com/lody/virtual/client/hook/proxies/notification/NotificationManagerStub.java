@@ -8,6 +8,10 @@ import com.lody.virtual.client.hook.base.MethodInvocationProxy;
 import com.lody.virtual.client.hook.base.MethodInvocationStub;
 import com.lody.virtual.client.hook.base.ReplaceCallingPkgMethodProxy;
 import com.lody.virtual.helper.compat.BuildCompat;
+import com.lody.virtual.helper.compat.FrameworkUserScope;
+import com.lody.virtual.client.hook.base.MethodProxy;
+import com.lody.virtual.client.hook.utils.MethodParameterUtils;
+import com.lody.virtual.os.VUserHandle;
 
 import mirror.android.app.NotificationManager;
 import mirror.android.widget.Toast;
@@ -21,7 +25,13 @@ import mirror.android.widget.Toast;
 public class NotificationManagerStub extends MethodInvocationProxy<MethodInvocationStub<IInterface>> {
 
     public NotificationManagerStub() {
-        super(new MethodInvocationStub<IInterface>(NotificationManager.getService.call()));
+        super(new MethodInvocationStub<IInterface>(physicalService()));
+    }
+
+    private static IInterface physicalService() {
+        IInterface base = NotificationManager.getService.call();
+        return base == null ? null : FrameworkUserScope.wrap(base, MethodParameterUtils.getAllInterface(base.getClass()),
+                MethodProxy::getAppUserId, VUserHandle::realUserId);
     }
 
     @Override
@@ -52,6 +62,7 @@ public class NotificationManagerStub extends MethodInvocationProxy<MethodInvocat
             addMethodProxy(new MethodProxies.GetNotificationChannels());
             addMethodProxy(new MethodProxies.DeleteNotificationChannel());
             addMethodProxy(new MethodProxies.GetNotificationChannel());
+            addMethodProxy(new MethodProxies.GetNotificationChannel("getConversationNotificationChannel"));
             addMethodProxy(new MethodProxies.GetNotificationChannelGroup());
         }
         addMethodProxy(new ReplaceCallingPkgMethodProxy("setInterruptionFilter"));

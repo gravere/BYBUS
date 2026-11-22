@@ -30,7 +30,7 @@ internal fun LauncherScreen(
     state: LauncherUiState,
     projectState: ProjectTrackingState,
     appUpdateState: com.example.limbuszhcn.selfupdate.AppUpdateState,
-    resumed: Boolean,
+    visible: Boolean,
     onCheckAppUpdate: () -> Unit,
     onDownloadAppUpdate: () -> Unit,
     onInstallAppUpdate: () -> Unit,
@@ -158,7 +158,7 @@ internal fun LauncherScreen(
                                 horizontalArrangement = Arrangement.spacedBy(layout.columnGap.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
                                 InstallationCard(state, Modifier.weight(1f).fillMaxHeight()) { open("status") }
-                                LaunchActions(state, onLaunch, onRefresh, resumed,
+                                LaunchActions(state, onLaunch, onRefresh, visible,
                                     onDetails = { if (state.busy || state.ai.hasPendingTask) openTask() else open(if (state.failed) "error" else "status") },
                                     modifier = Modifier.width(layout.actionWidth.dp))
                                 HomeProjectCard(state, projectState, homeProjectSourceId, onHomeProjectSource,
@@ -174,7 +174,7 @@ internal fun LauncherScreen(
                             verticalArrangement = Arrangement.SpaceBetween,
                             horizontalAlignment = Alignment.CenterHorizontally) {
                             InstallationCard(state) { open("status") }
-                            LaunchActions(state, onLaunch, onRefresh, resumed,
+                            LaunchActions(state, onLaunch, onRefresh, visible,
                                 onDetails = { if (state.busy || state.ai.hasPendingTask) openTask() else open(if (state.failed) "error" else "status") },
                                 modifier = Modifier.widthIn(max = layout.actionWidth.dp).fillMaxWidth())
                             HomeProjectCard(state, projectState, homeProjectSourceId, onHomeProjectSource,

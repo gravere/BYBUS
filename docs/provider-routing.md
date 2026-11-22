@@ -36,6 +36,16 @@ profile, never return a constant unlocked result or request cross-user grants.
 Do not catch permission failures as successful results, change permission grants,
 retry mutations, or replace a working OEM service with an empty implementation.
 
+The same boundary applies to real ActivityManager PendingIntents, notifications,
+accessibility clients, AppOps and temporary usage exemptions. Match the complete
+AIDL parameter signature before mapping the current virtual user to the physical
+host user. Do not infer a user from an arbitrary integer (request codes, flags,
+notification IDs and UIDs are not users). Keep PendingIntent destination records,
+notification namespaces and virtual package lookups in the virtual user. Preserve
+explicit requests for other profiles and negative platform user constants.
+Profile regression checks must include actual PendingIntent creation through the
+production redirector; successful PackageManager queries alone do not cover it.
+
 Reflection is restricted to checked platform method signatures and fields.
 Missing virtual-routing capabilities produce an explicit error and a bounded
 diagnostic; they must not fall through to a physical Google provider. System

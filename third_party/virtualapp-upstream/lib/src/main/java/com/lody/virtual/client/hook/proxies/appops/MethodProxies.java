@@ -65,8 +65,8 @@ public class MethodProxies {
     }
 
     public static Object resetAllModes(Object who, Method method, Object[] args) throws Throwable {
-        // force userId to 0
-        args[0] = 0;
+        args = com.lody.virtual.helper.compat.FrameworkUserScope.arguments(method, args,
+                com.lody.virtual.client.hook.base.MethodProxy.getAppUserId(), com.lody.virtual.os.VUserHandle.realUserId());
         args[1] = VirtualCore.get().getHostPkg();
         return method.invoke(who, args);
     }

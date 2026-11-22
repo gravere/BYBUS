@@ -1757,8 +1757,7 @@ class MethodProxies {
             if (info != null) {
                 return 0;
             }
-            // force userId to 0
-            args[2] = 0;
+            // The real PackageManager boundary routes the physical user; virtual lookup above does not.
             return method.invoke(who, args);
         }
 

@@ -516,10 +516,7 @@ class MethodProxies {
         protected Object callWithIntentIndexes(Object who, Method method, Object[] args, int intentsIndex, int resolvedTypesIndex, int flagsIndex) throws Throwable {
             String creator = (String) args[1];
             args[1] = getHostPkg();
-            // force userId to 0
-            if (args[args.length - 1] instanceof Integer) {
-                args[args.length - 1] = 0;
-            }
+            args = com.lody.virtual.helper.compat.FrameworkUserScope.arguments(method, args, getAppUserId(), getRealUserId());
             String[] resolvedTypes = (String[]) args[resolvedTypesIndex];
             int indexOfFirst = ArrayUtils.indexOfFirst(args, IBinder.class);
             int type = (int) args[0];

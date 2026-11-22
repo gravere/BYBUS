@@ -186,6 +186,9 @@ class MethodProxies {
         @SuppressWarnings("unchecked")
         @Override
         public Object call(Object who, Method method, Object... args) throws Throwable {
+            if (args.length == 3 && args[1] instanceof String && isAppPkg((String) args[1])) {
+                args[1] = getHostPkg();
+            }
             Object result = super.call(who, method, args);
             boolean slice = ParceledListSliceCompat.isReturnParceledListSlice(method);
             List<NotificationChannel> list = slice ? (List<NotificationChannel>) ParceledListSliceCompat.getList(result)
@@ -212,7 +215,11 @@ class MethodProxies {
     @TargetApi(Build.VERSION_CODES.O)
     static class GetNotificationChannel extends ReplaceCallingPkgMethodProxy {
         public GetNotificationChannel() {
-            super("getNotificationChannel");
+            this("getNotificationChannel");
+        }
+
+        public GetNotificationChannel(String name) {
+            super(name);
         }
 
         @Override
@@ -433,9 +440,6 @@ class MethodProxies {
         @Override
         public Object call(Object who, Method method, Object... args) throws Throwable {
             args[0] = getHostPkg();
-            if (args.length > 1) {
-                args[1] = 0;
-            }
             Object list = super.call(who, method, args);
             boolean slice = ParceledListSliceCompat.isReturnParceledListSlice(method);
             List<StatusBarNotification> resultList = slice ? (List<StatusBarNotification>) ParceledListSliceCompat.getList(list)

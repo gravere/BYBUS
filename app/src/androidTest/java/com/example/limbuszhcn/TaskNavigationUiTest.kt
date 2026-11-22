@@ -65,7 +65,7 @@ class TaskNavigationUiTest {
 
     @Composable private fun Screen(state: LauncherUiState, actions: TranslationActions = TranslationActions(), migration: () -> Unit = {}) {
         LimbusZhCNTheme {
-            LauncherScreen(state, ProjectTrackingState(), AppUpdateState(108), resumed = false,
+            LauncherScreen(state, ProjectTrackingState(), AppUpdateState(108), visible = false,
                 onCheckAppUpdate = {}, onDownloadAppUpdate = {}, onInstallAppUpdate = {}, onCancelAppUpdate = {}, onOpenAppRelease = {},
                 onLaunch = { error("Viewing a task must not launch the game") }, onRefresh = {}, onUpdate = {}, onCheckGameUpdate = {},
                 onSelectGameSource = {}, onOpenGamePage = {}, onOpenInstallSource = {}, onImportGame = {}, onInstallGame = {},
