@@ -19,6 +19,7 @@ import com.lody.virtual.client.ipc.VActivityManager;
 import com.lody.virtual.client.stub.InstallerSetting;
 import com.lody.virtual.client.stub.StubManifest;
 import com.lody.virtual.helper.collection.SparseArray;
+import com.lody.virtual.helper.compat.ActivityManagerCompat;
 import com.lody.virtual.helper.compat.ObjectsCompat;
 import com.lody.virtual.helper.utils.ArrayUtils;
 import com.lody.virtual.helper.utils.ClassUtils;
@@ -73,9 +74,9 @@ import static android.content.pm.ActivityInfo.LAUNCH_SINGLE_TOP;
         return (intent.getFlags() & flags) != 0;
     }
 
-    private void deliverNewIntentLocked(int userId, ActivityRecord sourceRecord, ActivityRecord targetRecord, Intent intent) {
+    private boolean deliverNewIntentLocked(int userId, ActivityRecord sourceRecord, ActivityRecord targetRecord, Intent intent) {
         if (targetRecord == null) {
-            return;
+            return false;
         }
         String creator = getCallingPackage(userId, sourceRecord);
         if (creator == null) {
@@ -83,11 +84,14 @@ import static android.content.pm.ActivityInfo.LAUNCH_SINGLE_TOP;
         }
         try {
             targetRecord.process.client.scheduleNewIntent(creator, targetRecord.token, intent);
+            return true;
         } catch (RemoteException e) {
             e.printStackTrace();
         } catch (NullPointerException npe) {
             npe.printStackTrace();
         }
+        com.lody.virtual.helper.compat.ContainerRuntimeEvent.NEW_INTENT_FAILED.record(3);
+        return false;
     }
 
     private TaskRecord findTaskByAffinityLocked(int userId, String affinity) {
@@ -305,8 +309,6 @@ import static android.content.pm.ActivityInfo.LAUNCH_SINGLE_TOP;
         if (reuseTask == null || reuseTask.isFinishing()) {
             return startActivityInNewTaskLocked(mLauncherFlags, userId, intent, info, options, callingUid, callingPid);
         }
-        mAM.moveTaskToFront(reuseTask.taskId, 0);
-
         /*
          * 一个APP的界面已经打开，我们按Home，再从桌面打开App，不会重新启动App的界面，
          * 而是直接仅仅把界面切到前台。
@@ -422,8 +424,13 @@ import static android.content.pm.ActivityInfo.LAUNCH_SINGLE_TOP;
             finishMarkedActivity();
         }
         if (notifyNewIntentActivityRecord != null) {
-            deliverNewIntentLocked(userId, sourceRecord, notifyNewIntentActivityRecord, intent);
+            if (!deliverNewIntentLocked(userId, sourceRecord, notifyNewIntentActivityRecord, intent)) {
+                return ActivityManagerCompat.START_INTENT_NOT_RESOLVED;
+            }
             if (!notifyNewIntentActivityRecord.marked) {
+                // Queue the result BEFORE asking Android to resume the task. Firebase consumes
+                // it in onResume; raising the task first can cancel a still-pending login.
+                mAM.moveTaskToFront(reuseTask.taskId, 0);
                 return 0;
             }
         } else if (pendingActivityRecorder != null) {
@@ -438,15 +445,18 @@ import static android.content.pm.ActivityInfo.LAUNCH_SINGLE_TOP;
                 }
                 launchingActivity.pendingNewIntents.add(new PendingNewIntent(userId, sourceRecord, intent));
             }
+            mAM.moveTaskToFront(reuseTask.taskId, 0);
             return 0;
         }
         if (startTaskToFront) {
+            mAM.moveTaskToFront(reuseTask.taskId, 0);
             return 0;
         }
         ActivityRecord targetRecord = newActivityRecord(intent, info, resultTo, userId);
         Intent destIntent = startActivityProcess(userId, targetRecord, intent, info, callingUid, callingPid);
 
         if (destIntent != null) {
+            mAM.moveTaskToFront(reuseTask.taskId, 0);
             destIntent.addFlags(mLauncherFlags);
             ActivityRecord startFrom;
             if (sourceTask == reuseTask) {

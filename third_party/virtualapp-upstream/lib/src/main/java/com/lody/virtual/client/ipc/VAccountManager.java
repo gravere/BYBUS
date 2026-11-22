@@ -33,7 +33,7 @@ public class VAccountManager {
         return sMgr;
     }
 
-    private IAccountManager mService;
+    private volatile IAccountManager mService;
 
     public IAccountManager getService() {
         if (mService == null || !IInterfaceUtils.isAlive(mService)) {
@@ -84,18 +84,15 @@ public class VAccountManager {
 
     public Account[] getAccounts(int userId, String type) {
         try {
-            return getService().getAccounts(userId, type);
+            return DeadServiceQuery.run(() -> DeadServiceQuery.requireService(getService())
+                    .getAccounts(userId, type), () -> mService = null);
         } catch (RemoteException e) {
             return VirtualRuntime.crash(e);
         }
     }
 
     public Account[] getAccounts(String type) {
-        try {
-            return getService().getAccounts(VUserHandle.myUserId(), type);
-        } catch (RemoteException e) {
-            return VirtualRuntime.crash(e);
-        }
+        return getAccounts(VUserHandle.myUserId(), type);
     }
 
     public String peekAuthToken(Account account, String authTokenType) {

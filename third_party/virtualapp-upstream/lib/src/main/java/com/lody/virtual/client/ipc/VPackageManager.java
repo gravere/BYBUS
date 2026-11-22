@@ -30,7 +30,7 @@ public class VPackageManager {
 
     private static final VPackageManager sMgr = new VPackageManager();
 
-    private IPackageManager mService;
+    private volatile IPackageManager mService;
 
     public IPackageManager getService() {
         if (!IInterfaceUtils.isAlive(mService)) {
@@ -205,7 +205,8 @@ public class VPackageManager {
 
     public ApplicationInfo getApplicationInfo(String packageName, int flags, int userId) {
         try {
-            return getService().getApplicationInfo(packageName, flags, userId);
+            return DeadServiceQuery.run(() -> DeadServiceQuery.requireService(getService())
+                    .getApplicationInfo(packageName, flags, userId), () -> mService = null);
         } catch (RemoteException e) {
             return VirtualRuntime.crash(e);
         }

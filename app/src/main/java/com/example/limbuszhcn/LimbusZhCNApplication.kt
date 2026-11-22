@@ -89,6 +89,10 @@ class LimbusZhCNApplication : Application() {
         private var notices: com.example.limbuszhcn.translation.NoticeRuntime? = null
         private var liveTranslation: com.example.limbuszhcn.container.LiveResourceTranslator? = null
 
+        override fun onContainerRuntimeEvent(event: com.lody.virtual.helper.compat.ContainerRuntimeEvent, value: Int) {
+            PersistentDiagnosticLog.info("ContainerLifecycle", "stage=${event.name} value=$value")
+        }
+
         override fun prepareLimbusTranslationResources(): Boolean {
             liveTranslation = com.example.limbuszhcn.container.LiveTranslationStore(
                 VirtualCore.get().context.filesDir.toPath().resolve("translation-cache")).open()

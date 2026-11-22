@@ -20,6 +20,16 @@ Apple 登录由游戏现有 Firebase OAuth 发起，BYBUS 不注册替代 OAuth 
 
 登录返回、异常回调、重复查询、缓存重启、静态数据失效和更新完整性分别验证。模拟验证与真实 Apple 账号登录明确区分。
 
+## Activity 回调与恢复顺序
+
+Firebase Auth 23.2.0 的 `GenericIdpActivity.onNewIntent` 只保存 Intent，实际的结果解密、事件校验和本地广播发生在 `onResume`。Android 12 起，`ActivityThread.handleNewIntent` 接收 `ActivityClientRecord`，旧的 `(IBinder, List)` 镜像不再适用；直接调用该方法还会漏掉标准的 pause/newIntent/resume 顺序。
+
+容器在 Android 9+ 通过系统 `ClientTransactionHandler.executeTransaction` 执行 `NewIntentItem`，由原生命周期执行器恢复页面；按实际方法签名支持 Android 15 的 token-on-item 和 Android 16 的构造器入口。旧系统保留原完整 `performNewIntents` 调用。任务先排入结果再移到前台，避免先恢复旧 Intent 导致 SDK 取消授权。找不到目标或平台接口时显式记录失败，不能静默当成送达，不修改 Firebase 会话或凭据。
+
+回归必须覆盖目标已恢复、目标处于后台、返回后 SDK 风格的 onResume 消费，以及失效 token；仅验证 Intent 内容不足以证明路由正确。
+
+诊断 #69 同时记录到容器服务死亡后，应用信息、运行进程及账号枚举仍命中失效 Binder。上述只读查询遇到 `DeadObjectException` 时清除客户端引用并重新获取一次，第二次失败仍抛出真实错误；不重放登录、购买、安装或其他写操作，不把空结果伪装成查询成功。进程初始化与授权返回增加不含 Intent、URL 或账号的有限阶段记录，避免系统清空 logcat 后只剩笼统的启动 -1。
+
 手动刷新须贯穿界面、仓库和公共缓存：跳过成功缓存及本地网络错误退避，仍遵守当前地址明确返回的限流截止时间。自动检查继续合并与退避，不能用上次失败冒充一次新的联网检查。汉化资源的手动更新也走同样入口。
 
 Apple 授权窗口独立允许登录所需 Cookie；仅跟踪允许的顶层导航，不读取 Cookie 或网页内容。回跳判定以已观察到的官方 handler 请求为准，不只依赖 WebView 尚未更新的 getUrl；结果仍须绑定原事件并交还原 Firebase SDK 验证。取消、网页故障和无效结果必须有可返回的状态，不能静默吞掉回跳。

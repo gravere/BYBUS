@@ -696,16 +696,21 @@ public class VActivityManagerService extends IActivityManager.Stub {
      */
     private boolean initProcess(ProcessRecord app) {
         try {
+            com.lody.virtual.helper.compat.ContainerRuntimeEvent.PROCESS_REQUESTED.record(app.vpid);
             //仅仅只是传递ClientConfig，还不需要用到权限
             Bundle extras = new Bundle();
             extras.putParcelable("_VA_|_client_config_", app.getClientConfig());
             Bundle res = ProviderCall.callSafely(app.getProviderAuthority(), "_VA_|_init_process_", null, extras);
             if (res == null) {
+                com.lody.virtual.helper.compat.ContainerRuntimeEvent.PROCESS_EMPTY_REPLY.record(app.vpid);
                 return false;
             }
             app.pid = res.getInt("_VA_|_pid_");
             IBinder clientBinder = BundleCompat.getBinder(res, "_VA_|_client_");
-            return attachClient(app, clientBinder);
+            boolean attached = attachClient(app, clientBinder);
+            (attached ? com.lody.virtual.helper.compat.ContainerRuntimeEvent.PROCESS_ATTACHED
+                    : com.lody.virtual.helper.compat.ContainerRuntimeEvent.PROCESS_INVALID_CLIENT).record(app.vpid);
+            return attached;
         } finally {
             app.initLock.open();
             app.initLock = null;

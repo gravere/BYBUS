@@ -105,8 +105,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import mirror.android.app.ActivityManagerNative;
 import mirror.android.app.ActivityThread;
-import mirror.android.app.ActivityThreadNMR1;
-import mirror.android.app.ActivityThreadQ;
 import mirror.android.app.ContextImpl;
 import mirror.android.app.ContextImplKitkat;
 import mirror.android.app.IActivityManager;
@@ -125,7 +123,6 @@ import mirror.android.view.DisplayAdjustments;
 import mirror.android.view.HardwareRenderer;
 import mirror.android.view.RenderScript;
 import mirror.android.view.ThreadedRenderer;
-import mirror.com.android.internal.content.ReferrerIntent;
 import mirror.dalvik.system.VMRuntime;
 import mirror.java.lang.ThreadGroupN;
 import mirror.oem.HwApiCacheManagerEx;
@@ -359,27 +356,9 @@ public final class VClient extends IVClient.Stub {
     }
 
     private void handleNewIntent(NewIntentData data) {
-        Intent intent;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
-            intent = ReferrerIntent.ctor.newInstance(data.intent, data.creator);
-        } else {
-            intent = data.intent;
-        }
-        if (ActivityThread.performNewIntents != null) {
-            ActivityThread.performNewIntents.call(
-                    VirtualCore.mainThread(),
-                    data.token,
-                    Collections.singletonList(intent)
-            );
-        } else if (ActivityThreadNMR1.performNewIntents != null){
-            ActivityThreadNMR1.performNewIntents.call(
-                    VirtualCore.mainThread(),
-                    data.token,
-                    Collections.singletonList(intent),
-                    true);
-        } else if(ActivityThreadQ.handleNewIntent != null){
-            ActivityThreadQ.handleNewIntent.call(VirtualCore.mainThread(), data.token, Collections.singletonList(intent));
-        }
+        Intent intent = data.intent;
+        if (!com.lody.virtual.helper.compat.NewIntentCompat.deliver(
+                VirtualCore.mainThread(), data.token, intent, data.creator)) return;
         if("com.tencent.mm".equals(getCurrentPackage())){
             //xdja 修复微信按2次返回键退出
             //第二次是因为是在顶层activity，微信用了Process.kill导致重启。

@@ -29,7 +29,12 @@ public final class GuestRuntimeService extends Service {
                 synchronized (GuestRuntimeService.class) {
                     if (guestConnection != this) return;
                     guestConnection = null;
-                    try { context.unbindService(this); } catch (IllegalArgumentException ignored) { }
+                    try { context.unbindService(this); }
+                    catch (RuntimeException error) {
+                        // Cleanup may race the death of system_server itself (DeadSystemException).
+                        // The binding is already gone; cleanup must not crash the game again.
+                        VLog.w("LimbusVA", "Guest engine binding released: " + error.getClass().getSimpleName());
+                    }
                 }
             }
         };

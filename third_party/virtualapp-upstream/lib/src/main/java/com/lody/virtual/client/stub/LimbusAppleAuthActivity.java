@@ -119,6 +119,7 @@ public final class LimbusAppleAuthActivity extends Activity {
             browser.loadUrl(url);
         } else navigation.requested(browser.getUrl());
         android.util.Log.i("LimbusVA", "Apple OAuth window ready");
+        com.lody.virtual.helper.compat.ContainerRuntimeEvent.APPLE_WINDOW_OPENED.record(0);
     }
 
     private boolean navigate(WebView view, String url) {
@@ -129,6 +130,7 @@ public final class LimbusAppleAuthActivity extends Activity {
             if (!navigation.canReturn(current)) {
                 status.setText("未能确认登录返回页面，请返回后重试");
                 android.util.Log.w("LimbusVA", "Apple OAuth callback rejected: handler not observed");
+                com.lody.virtual.helper.compat.ContainerRuntimeEvent.APPLE_CALLBACK_REJECTED.record(1);
                 return true;
             }
             try {
@@ -137,10 +139,14 @@ public final class LimbusAppleAuthActivity extends Activity {
                 if (result == null) {
                     status.setText("登录结果无效，请返回后重试");
                     android.util.Log.w("LimbusVA", "Apple OAuth callback rejected: event or fields invalid");
+                    com.lody.virtual.helper.compat.ContainerRuntimeEvent.APPLE_CALLBACK_REJECTED.record(2);
                     return true;
                 }
                 int code = VActivityManager.get().startActivity(result, 0);
                 android.util.Log.i("LimbusVA", "Apple OAuth return forwarded result=" + code);
+                (result.hasExtra("firebaseError")
+                        ? com.lody.virtual.helper.compat.ContainerRuntimeEvent.APPLE_ERROR_RETURN
+                        : com.lody.virtual.helper.compat.ContainerRuntimeEvent.APPLE_RETURN).record(code);
                 if (code == 0) { delivered = true; view.stopLoading(); finish(); }
                 else status.setText("未能返回游戏，请返回后重试");
             } catch (Exception ignored) { status.setText("登录结果无效，请返回后重试"); }

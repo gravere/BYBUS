@@ -710,7 +710,8 @@ public class VActivityManager {
 
     public List<AppRunningProcessInfo> getRunningAppProcesses(String packageName, int userId) {
         try {
-            return getService().getRunningAppProcesses(packageName, userId);
+            return DeadServiceQuery.run(() -> DeadServiceQuery.requireService(getService())
+                    .getRunningAppProcesses(packageName, userId), () -> mService = null);
         } catch (RemoteException e) {
             List<AppRunningProcessInfo> fallback = getCurrentLimbusRunningProcessFallback(packageName);
             if (fallback != null) {
