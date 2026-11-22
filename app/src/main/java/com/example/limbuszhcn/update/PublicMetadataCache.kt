@@ -25,14 +25,14 @@ internal class PublicMetadataCache(private val file: Path, private val url: Stri
     private var failureStatus = 0
     private var failures = 0
 
-    @Synchronized fun get(): String {
+    @Synchronized fun get(force: Boolean = false): String {
         load()
         val now = clock()
         if (now < retryAt) {
             if (failureStatus in listOf(403, 429)) throw UpdateHttpException(failureStatus, retryAt - now)
-            throw IOException("更新服务暂时不可用，请稍后重试")
+            if (!force) throw IOException("更新服务暂时不可用，请稍后重试")
         }
-        body?.takeIf { checkedAt > 0 && now - checkedAt in 0 until ttl }?.let {
+        body?.takeIf { !force && checkedAt > 0 && now - checkedAt in 0 until ttl }?.let {
             try { validate(it); return it } catch (_: Exception) { checkedAt = 0 }
         }
         try {
@@ -93,7 +93,9 @@ internal class PublicMetadataCache(private val file: Path, private val url: Stri
                 val connection = URL(url).openConnection() as HttpURLConnection
                 try {
                     connection.instanceFollowRedirects = false
+                    connection.useCaches = false
                     connection.connectTimeout = 5_000; connection.readTimeout = 7_000
+                    connection.setRequestProperty("Cache-Control", "no-cache")
                     connection.setRequestProperty("User-Agent", "BYBUS-PublicUpdates/1")
                     connection.setRequestProperty("Accept", "application/json")
                     // Conditional requests use the same validator across GitHub's stable redirect.

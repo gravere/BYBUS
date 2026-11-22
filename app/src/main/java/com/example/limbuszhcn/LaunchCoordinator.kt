@@ -1392,13 +1392,13 @@ internal class LaunchCoordinator private constructor(application: Application) {
         }
         if (source.kind == "ai") {
             if (source.independent || source.baseId != null && source.baseId != "zero") return@perform "此包保存在本地，可在 AI 翻译中管理条目和继续翻译"
-            if (offerAiUpdate(source, releaseCheck.start(15_000).await(), launchAfter = false, force = true))
+            if (offerAiUpdate(source, github.releaseForManualCheck(), launchAfter = false, force = true))
                 return@perform "请选择更新后的汉化方式"
             return@perform "零协暂无更新，可在 AI 翻译中继续补译"
         }
         require(readGameStatus().first.gameImported) { "请先启动一次游戏以准备容器" }
         stopGame()
-        val patch = installer()
+        val patch = installer(metadata = github::releaseForManualCheck)
         val summary = prepareTranslation(patch)
         val active = if (summary.indexActivated) summary else patch.activeInstallSummary()
         publish { it.copy(translation = active) }

@@ -12,6 +12,25 @@ class PublicMetadataCacheTest {
     @get:Rule val folder = TemporaryFolder()
     private val url = "https://raw.githubusercontent.com/gravere/BYBUS/updates/zero-release.json"
 
+    @Test fun manualRetryBypassesPersistedNetworkFailureAndSuccessTtlButKeepsEtag() {
+        val file = folder.root.toPath().resolve("cache.json")
+        var calls = 0
+        fun cache() = PublicMetadataCache(file, url, 30_000, 1024, {}, { 1_000_000 }) { _, tag ->
+            calls++
+            when (calls) {
+                1 -> throw java.net.SocketTimeoutException()
+                2 -> PublicMetadataResponse(200, "ok", "v2")
+                else -> { assertEquals("v2", tag); PublicMetadataResponse(304) }
+            }
+        }
+        assertThrows(java.io.IOException::class.java) { cache().get() }
+        assertThrows(java.io.IOException::class.java) { cache().get() }
+        assertEquals(1, calls)
+        assertEquals("ok", cache().get(force = true))
+        assertEquals("ok", cache().get(force = true))
+        assertEquals(3, calls)
+    }
+
     @Test fun concurrentReadersAndRestartReuseOneValidatedResponseThenRevalidateWithEtag() {
         var now = 1_000_000L
         var calls = 0
@@ -72,7 +91,7 @@ class PublicMetadataCacheTest {
         }
         assertThrows(UpdateHttpException::class.java) { cache().get() }
         now += 59_999
-        assertThrows(UpdateHttpException::class.java) { cache().get() }; assertEquals(1, calls)
+        assertThrows(UpdateHttpException::class.java) { cache().get(force = true) }; assertEquals(1, calls)
         now++
         assertEquals("ok", cache().get()); assertEquals(2, calls)
     }

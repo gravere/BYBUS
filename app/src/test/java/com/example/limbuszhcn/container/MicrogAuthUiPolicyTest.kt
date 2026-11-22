@@ -5,6 +5,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MicrogAuthUiPolicyTest {
+    @Test fun finishingAnAddedAccountCannotRemoveItsParentGameTask() {
+        assertEquals(0, P.finishTaskMode(P.GMS, P.LOGIN, false, 2))
+        assertEquals(2, P.finishTaskMode(P.GMS, P.LOGIN, true, 2))
+        assertEquals(0, P.finishTaskMode(P.GMS, P.LOGIN, false, 0))
+        assertEquals(2, P.finishTaskMode(P.GMS, P.AUTH, false, 2))
+        assertEquals(2, P.finishTaskMode(P.GAME, P.LOGIN, false, 2))
+    }
     @Test fun newAccountAndReturningAccountKeepTheSameResultRoute() {
         for (activity in listOf(P.ASSISTED, P.AUTH, P.LOGIN, "org.microg.gms.accountsettings.ui.MainActivity")) {
             assertTrue(P.useClientLocal(P.GMS, "${P.GMS}:ui", P.GMS, "${P.GMS}:ui", activity))

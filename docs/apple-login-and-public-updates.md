@@ -19,3 +19,15 @@ Apple 登录由游戏现有 Firebase OAuth 发起，BYBUS 不注册替代 OAuth 
 工作流每小时的 7/27/47 分钟触发，发布时间以 GitHub Actions 实际调度为准；调度可能延迟。静态信息最多接受 6 小时内的同步时间。客户端短时间重复检查使用 30 秒 HTTP 缓存，零协主页与启动复用 5 分钟的验证结果，过期后再查询。普通失败最少等待 1 分钟并逐步退避；明确限流遵守服务端更晚的截止时间。应用升级移除旧 REST 等待键和零协旧 `.retry` 文件，只清理接口状态，不清理译包、游戏数据或有效快照。ParaTranz 和用户自定义下载链接独立处理各自的网络状态。
 
 登录返回、异常回调、重复查询、缓存重启、静态数据失效和更新完整性分别验证。模拟验证与真实 Apple 账号登录明确区分。
+
+手动刷新须贯穿界面、仓库和公共缓存：跳过成功缓存及本地网络错误退避，仍遵守当前地址明确返回的限流截止时间。自动检查继续合并与退避，不能用上次失败冒充一次新的联网检查。汉化资源的手动更新也走同样入口。
+
+Apple 授权窗口独立允许登录所需 Cookie；仅跟踪允许的顶层导航，不读取 Cookie 或网页内容。回跳判定以已观察到的官方 handler 请求为准，不只依赖 WebView 尚未更新的 getUrl；结果仍须绑定原事件并交还原 Firebase SDK 验证。取消、网页故障和无效结果必须有可返回的状态，不能静默吞掉回跳。
+
+microG 添加账号可能调用 finishAndRemoveTask。若 LoginActivity 是当前游戏/登录任务中的子页面，只结束该登录页并保留真实账号回调及父页面；独立任务的退出行为不变。Android 12+ 的 ActivityClient 和旧 ActivityManager 路径须共用同一判断，不修改账号结果或自动创建账号。
+
+参考：[Firebase Android Apple 登录流程](https://firebase.google.com/docs/auth/android/apple)、
+[WebViewClient 回调边界](https://developer.android.com/reference/android/webkit/WebViewClient)、
+[每个 WebView 的第三方 Cookie 设置](https://developer.android.com/reference/android/webkit/CookieManager#setAcceptThirdPartyCookies(android.webkit.WebView,%20boolean))，
+以及固定版本 microG 的 [LoginActivity](https://github.com/microg/GmsCore/blob/v0.3.17.252432/play-services-core/src/main/java/org/microg/gms/auth/login/LoginActivity.java)
+和 [AuthSignInActivity](https://github.com/microg/GmsCore/blob/v0.3.17.252432/play-services-core/src/main/kotlin/org/microg/gms/auth/signin/AuthSignInActivity.kt)。

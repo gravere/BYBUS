@@ -173,18 +173,16 @@ class GitHubProjectRepositoryTest {
         }
     }
 
-    @Test fun repeatedManualRefreshIsThrottledEvenAfterFailure() {
+    @Test fun manualRetryAfterOfflineFailureMakesANewRequestWhileAutomaticChecksBackOff() {
         var calls = 0
         var tick = 0L
         val repository = GitHubProjectRepository(folder.root.toPath().resolve("github.json"),
-            { calls++; throw IOException() }, { now }, { tick })
-        repository.refresh(true)
-        repository.refresh(true)
-        tick = 14_999
-        repository.refresh(true)
+            { calls++; if (calls == 1) throw IOException() else downloadable }, { now }, { tick })
+        assertEquals(ProjectIssue.Network, repository.refresh(true).issue)
+        repository.refresh()
         assertEquals(1, calls)
-        tick = 15_000
-        repository.refresh(true)
+        assertTrue(repository.releaseForManualCheck().contains("2026092102"))
+        assertNull(repository.cached().issue)
         assertEquals(2, calls)
     }
 

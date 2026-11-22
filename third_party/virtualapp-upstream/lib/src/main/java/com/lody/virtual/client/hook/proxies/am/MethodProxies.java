@@ -415,9 +415,6 @@ class MethodProxies {
 
         @Override
         public int getProviderNameIndex() {
-            if (BuildCompat.isQ()) {
-                return 1;
-            }
             return 0;
         }
 
@@ -2388,6 +2385,12 @@ class MethodProxies {
         public Object call(Object who, Method method, Object... args) throws Throwable {
             int nameIdx = getProviderNameIndex();
             String name = (String) args[nameIdx];
+            int physicalUserIndex = nameIdx + 1;
+            if (physicalUserIndex < args.length && args[physicalUserIndex] instanceof Integer
+                    && method.getParameterTypes()[physicalUserIndex] == int.class) {
+                args[physicalUserIndex] = com.lody.virtual.helper.compat.PhysicalUserPolicy.systemUser(
+                        getAppPkg(), (Integer) args[physicalUserIndex], getAppUserId(), getRealUserId());
+            }
             if (LIMBUS_PACKAGE.equals(getAppPkg()) && "com.google.android.gms.chimera".equals(name)) {
                 Log.i("LimbusVA", "Allow host GMS chimera provider for Limbus dynamic service resolution");
             }
@@ -2398,7 +2401,7 @@ class MethodProxies {
                     || name.equals(getConfig().getBinderProviderAuthority())) {
                 return method.invoke(who, args);
             }
-            if (BuildCompat.isQ()) {
+            if (BuildCompat.isQ() && nameIdx >= 2) {
                 int pkgIdx = nameIdx - 1;
                 if (args[pkgIdx] instanceof String) {
                     args[pkgIdx] = getHostPkg();
@@ -3069,6 +3072,9 @@ class MethodProxies {
             if (!clientLocalActivity && VActivityManager.get().includeExcludeFromRecentsFlag(token)) {
                 //FINISH_TASK_WITH_ROOT_ACTIVITY
                 args[3] = 1;
+            }
+            if (args.length == 4 && args[3] instanceof Integer) {
+                args[3] = com.lody.virtual.helper.compat.MicrogActivityIdentity.finishTaskMode(token, (Integer) args[3]);
             }
             return super.call(who, method, args);
         }

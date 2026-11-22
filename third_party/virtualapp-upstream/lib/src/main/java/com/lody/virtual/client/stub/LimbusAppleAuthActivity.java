@@ -12,6 +12,8 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.CookieManager;
+import android.webkit.WebResourceResponse;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
@@ -19,6 +21,7 @@ import android.widget.TextView;
 import com.lody.virtual.client.ipc.VActivityManager;
 import com.lody.virtual.helper.compat.LimbusAppleAuthBridge;
 import com.lody.virtual.helper.compat.LimbusAppleAuthPolicy;
+import com.lody.virtual.helper.compat.LimbusAppleNavigation;
 
 /** Private browser for the game's Apple flow. It intercepts the package-targeted return before
  * Android would open the separately installed original game. No JS bridge or credential access. */
@@ -27,6 +30,7 @@ public final class LimbusAppleAuthActivity extends Activity {
     private TextView status;
     private String event, initialHost;
     private boolean delivered;
+    private LimbusAppleNavigation navigation;
 
     @Override protected void onCreate(Bundle saved) {
         super.onCreate(saved);
@@ -34,6 +38,9 @@ public final class LimbusAppleAuthActivity extends Activity {
         event = LimbusAppleAuthPolicy.event(url);
         if (event == null) { finish(); return; }
         initialHost = Uri.parse(url).getHost();
+        navigation = new LimbusAppleNavigation(initialHost);
+        delivered = saved != null && saved.getBoolean("resultDelivered", false);
+        if (delivered) { finish(); return; }
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.rgb(248, 248, 242));
@@ -66,6 +73,9 @@ public final class LimbusAppleAuthActivity extends Activity {
         settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setSaveFormData(false);
+        // Firebase and Apple cross sites during the POST-based OAuth return. This preference
+        // belongs only to this private authorization WebView; never inspect or export cookies.
+        CookieManager.getInstance().setAcceptThirdPartyCookies(browser, true);
         // OAuth uses a redirect in the same window; never expose a Javascript interface.
         settings.setSupportMultipleWindows(false);
         browser.setWebChromeClient(new WebChromeClient() {
@@ -74,6 +84,12 @@ public final class LimbusAppleAuthActivity extends Activity {
             }
         });
         browser.setWebViewClient(new WebViewClient() {
+            @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                // shouldOverrideUrlLoading is not called for POST. Record only the top-frame
+                // URL's allowlisted origin/path, never headers, cookies, payload or query values.
+                if (request.isForMainFrame()) navigation.requested(request.getUrl().toString());
+                return null;
+            }
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 return request.isForMainFrame() ? navigate(view, request.getUrl().toString()) : false;
             }
@@ -81,6 +97,9 @@ public final class LimbusAppleAuthActivity extends Activity {
             @Override public void onPageFinished(WebView view, String target) {
                 if (!delivered && LimbusAppleAuthPolicy.navigation(target, initialHost))
                     status.setText("Apple 账号登录 · " + Uri.parse(target).getHost());
+            }
+            @Override public void onPageStarted(WebView view, String target, android.graphics.Bitmap icon) {
+                navigation.requested(target);
             }
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 if (request.isForMainFrame()) status.setText("登录页面未能加载，请返回后重试");
@@ -95,7 +114,11 @@ public final class LimbusAppleAuthActivity extends Activity {
         });
         root.addView(browser, new LinearLayout.LayoutParams(-1, 0, 1));
         setContentView(root);
-        if (saved == null || browser.restoreState(saved) == null) browser.loadUrl(url);
+        if (saved == null || browser.restoreState(saved) == null) {
+            navigation.requested(url);
+            browser.loadUrl(url);
+        } else navigation.requested(browser.getUrl());
+        android.util.Log.i("LimbusVA", "Apple OAuth window ready");
     }
 
     private boolean navigate(WebView view, String url) {
@@ -103,12 +126,19 @@ public final class LimbusAppleAuthActivity extends Activity {
         if (url.startsWith("intent:") || url.startsWith("genericidp:")) {
             // Only the official Firebase handler may deliver a result to this bound session.
             String current = view.getUrl();
-            if (current == null || !LimbusAppleAuthPolicy.navigation(current, initialHost) ||
-                    !initialHost.equals(Uri.parse(current).getHost())) return true;
+            if (!navigation.canReturn(current)) {
+                status.setText("未能确认登录返回页面，请返回后重试");
+                android.util.Log.w("LimbusVA", "Apple OAuth callback rejected: handler not observed");
+                return true;
+            }
             try {
                 Intent incoming = Intent.parseUri(url, Intent.URI_INTENT_SCHEME);
                 Intent result = LimbusAppleAuthBridge.result(incoming, event);
-                if (result == null) { status.setText("登录结果无效，请返回后重试"); return true; }
+                if (result == null) {
+                    status.setText("登录结果无效，请返回后重试");
+                    android.util.Log.w("LimbusVA", "Apple OAuth callback rejected: event or fields invalid");
+                    return true;
+                }
                 int code = VActivityManager.get().startActivity(result, 0);
                 android.util.Log.i("LimbusVA", "Apple OAuth return forwarded result=" + code);
                 if (code == 0) { delivered = true; view.stopLoading(); finish(); }
@@ -116,12 +146,13 @@ public final class LimbusAppleAuthActivity extends Activity {
             } catch (Exception ignored) { status.setText("登录结果无效，请返回后重试"); }
             return true;
         }
-        if (LimbusAppleAuthPolicy.navigation(url, initialHost)) return false;
+        if (navigation.requested(url)) return false;
         status.setText("请在当前窗口完成 Apple 登录");
         return true;
     }
 
     @Override protected void onSaveInstanceState(Bundle state) {
+        state.putBoolean("resultDelivered", delivered);
         if (browser != null) browser.saveState(state);
         super.onSaveInstanceState(state);
     }

@@ -14,15 +14,22 @@ public final class ProviderRoutingContext extends ContextWrapper {
     private final Context transport;
     private final int physicalUser;
     private final RoutedContentResolver.Router router;
+    private final String guestPackage;
     private volatile ContentResolver resolver;
 
     public ProviderRoutingContext(Context base, Context transport, int physicalUser,
                                   RoutedContentResolver.Router router) {
+        this(base, transport, physicalUser, router, base.getPackageName());
+    }
+
+    ProviderRoutingContext(Context base, Context transport, int physicalUser,
+                           RoutedContentResolver.Router router, String guestPackage) {
         super(com.lody.virtual.client.fixer.LimbusStorageContext.wrap(base,
-                com.lody.virtual.client.VClient.get().getCurrentPackage(), android.os.Build.SUPPORTED_ABIS));
+                guestPackage, android.os.Build.SUPPORTED_ABIS));
         this.transport = transport;
         this.physicalUser = physicalUser;
         this.router = router;
+        this.guestPackage = guestPackage;
     }
 
     @Override public ContentResolver getContentResolver() {
@@ -47,7 +54,7 @@ public final class ProviderRoutingContext extends ContextWrapper {
         if (context instanceof ProviderRoutingContext) return context;
         // Explicit foreign-package contexts keep their own access boundary.
         if (!getPackageName().equals(context.getPackageName())) return context;
-        return new ProviderRoutingContext(context, transport, physicalUser, router);
+        return new ProviderRoutingContext(context, transport, physicalUser, router, guestPackage);
     }
 
     @Override public Context createConfigurationContext(Configuration config) {

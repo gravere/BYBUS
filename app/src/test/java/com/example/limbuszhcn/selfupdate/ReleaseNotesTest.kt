@@ -4,6 +4,13 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ReleaseNotesTest {
+    @Test fun labelsAreSeparatedFromBodyAndOldNotesKeepTheirMeaning() {
+        val notes = categorizedReleaseNotes("- [修复] 登录返回失败\n- 优化：更新重试\n- **新增** 分类标签\n- 更新：使用说明\n- 保留离线汉化")
+        assertEquals(listOf(ReleaseNoteCategory.Fixed, ReleaseNoteCategory.Improved, ReleaseNoteCategory.Added,
+            ReleaseNoteCategory.Updated, ReleaseNoteCategory.Updated), notes.map { it.category })
+        assertEquals(listOf("登录返回失败", "更新重试", "分类标签", "使用说明", "保留离线汉化"), notes.map { it.text })
+        assertEquals("登录流程", categorizedReleaseNotes("修复登录流程").single().text)
+    }
     @Test fun legacyPlainLinesRemainSeparatePoints() {
         assertEquals(listOf("启动按钮居中", "更新内容分点展示"),
             releaseNoteItems("启动按钮居中\r\n\r\n更新内容分点展示"))

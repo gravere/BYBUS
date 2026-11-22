@@ -48,7 +48,7 @@ public final class ProviderRouting {
                 return platformRoute().acquire(transport, authority, physicalUser,
                         user, stable, existingOnly);
             }
-        });
+        }, VClient.get().getCurrentPackage());
     }
 
     /** Called before component callbacks; Application attachment is handled by Instrumentation. */

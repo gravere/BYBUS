@@ -4,6 +4,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AppUpdateNoticeTest {
+    @Test fun successfulNoticeClearsFailedMetadataCheckButNotDownloadErrors() {
+        val offline = AppUpdateState(149, error = "连接超时", checkFailed = true, message = "更新未完成")
+        assertNull(offline.withPublishedVersion(150).error)
+        assertEquals("有新版本可用", offline.withPublishedVersion(150).message)
+        assertEquals("已是最新版本", offline.withPublishedVersion(149).message)
+        val download = AppUpdateState(149, error = "空间不足", message = "更新未完成")
+        assertEquals("空间不足", download.withPublishedVersion(150).error)
+    }
     @Test fun resumedTaskIsANewOpeningButInternalActivityAndRotationAreNot() {
         val foreground = AppForegroundOpening()
         assertFalse(foreground.started())

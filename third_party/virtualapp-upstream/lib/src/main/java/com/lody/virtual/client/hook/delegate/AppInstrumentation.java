@@ -214,6 +214,11 @@ public final class AppInstrumentation extends InstrumentationDelegate implements
             }
         }
         com.lody.virtual.helper.compat.LimbusAppleAuthBridge.created(activity);
+        MicrogActivityIdentity.rememberLogin(activity);
+        if (Build.VERSION.SDK_INT >= 31 && GMS_PACKAGE.equals(activity.getPackageName())
+                && MICROG_LOGIN_ACTIVITY.equals(activity.getClass().getName())) {
+            installActivityClientCallerProxyIfNeeded();
+        }
         com.lody.virtual.client.stub.GuestRuntimeService.bindForGame();
         super.callActivityOnCreate(activity, icicle);
         com.lody.virtual.helper.compat.MicrogActivityInsets.apply(activity);
@@ -494,6 +499,10 @@ public final class AppInstrumentation extends InstrumentationDelegate implements
             sActivityClientControllerBase = base;
             InvocationHandler handler = (proxy, method, args) -> {
                 String name = method.getName();
+                if ("finishActivity".equals(name) && args != null && args.length == 4
+                        && args[0] instanceof IBinder && args[3] instanceof Integer) {
+                    args[3] = MicrogActivityIdentity.finishTaskMode((IBinder) args[0], (Integer) args[3]);
+                }
                 ComponentName caller = args != null && args.length > 0 && args[0] instanceof IBinder
                         ? MicrogActivityIdentity.caller((IBinder) args[0]) : null;
                 if (caller != null) {

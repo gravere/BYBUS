@@ -27,8 +27,8 @@ internal class AppUpdateRepository @JvmOverloads constructor(private val directo
 
     fun checkNotice(): Long = check().versionCode
 
-    fun check(): AppRelease {
-        return AppRelease.fromManifest(JSONObject(metadata?.get()
+    fun check(force: Boolean = false): AppRelease {
+        return AppRelease.fromManifest(JSONObject(metadata?.get(force)
             ?: readJson(AppReleases.NOTICE, 32 * 1024, binary = true)))
     }
 

@@ -14,7 +14,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import com.example.limbuszhcn.selfupdate.AppUpdateState
-import com.example.limbuszhcn.selfupdate.releaseNoteItems
+import com.example.limbuszhcn.selfupdate.categorizedReleaseNotes
+import com.example.limbuszhcn.selfupdate.ReleaseNoteCategory
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import kotlinx.coroutines.delay
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
@@ -51,16 +54,15 @@ internal fun AppUpdatesPane(state: AppUpdateState, onCheck: () -> Unit, onOpenPa
             }
         }
         if (release != null && release.versionCode >= state.installedCode) {
-            val points = remember(release.notes) { releaseNoteItems(release.notes) }
+            val points = remember(release.notes) { categorizedReleaseNotes(release.notes) }
             if (points.isNotEmpty()) {
                 DetailSection("更新内容") {
                     Column(Modifier.padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         points.forEach { point ->
                             Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {},
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("•", color = C.Accent, style = MaterialTheme.typography.bodyMedium,
-                                    modifier = Modifier.width(12.dp).clearAndSetSemantics {})
-                                Text(point, color = C.Muted, style = MaterialTheme.typography.bodyMedium,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                ReleaseNoteBadge(point.category)
+                                Text(point.text, color = C.Ink, style = MaterialTheme.typography.bodyMedium,
                                     modifier = Modifier.weight(1f))
                             }
                         }
@@ -76,6 +78,22 @@ internal fun AppUpdatesPane(state: AppUpdateState, onCheck: () -> Unit, onOpenPa
             Text(error, color = if (retryAt != null && seconds == 0L) C.Muted else MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodyMedium)
         }
+    }
+}
+
+@Composable
+private fun ReleaseNoteBadge(category: ReleaseNoteCategory) {
+    val dark = C.Background.luminance() < .5f
+    val ink = when (category) {
+        ReleaseNoteCategory.Fixed -> if (dark) Color(0xFFADCAFF) else Color(0xFF315D98)
+        ReleaseNoteCategory.Improved -> if (dark) Color(0xFFD6BBEF) else Color(0xFF725191)
+        ReleaseNoteCategory.Added -> if (dark) Color(0xFFA6D4BC) else Color(0xFF2B6B50)
+        ReleaseNoteCategory.Updated -> if (dark) Color(0xFFE6CAA0) else Color(0xFF825D28)
+    }
+    Surface(color = ink.copy(alpha = if (dark) .15f else .09f), contentColor = ink,
+        shape = RoundedCornerShape(7.dp)) {
+        Text(category.label, style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
     }
 }
 

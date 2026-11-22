@@ -47,7 +47,7 @@ class GameUpdateRepositoryTest {
         assertEquals("1.115.0", success.latestVersion)
         assertNull(success.issue)
         val saved = Files.readAllBytes(cache)
-        assertEquals(success, repo.refresh(force = true))
+        assertEquals(success, repo.refresh())
         assertEquals(1, requests) // Coalesces a launch with the just-finished status request.
         now += 20_000
         fail = true
@@ -59,6 +59,9 @@ class GameUpdateRepositoryTest {
         assertTrue(failure.availableFor("1.114.0"))
         assertFalse(failure.availableFor("1.115.0")) // Re-read after Play update.
         assertEquals(success, GameUpdateRepository(cache, clock = { now }).cached())
+        fail = false
+        assertNull(repo.refresh(force = true).issue)
+        assertEquals(3, requests) // Manual retry must not reuse the failure's local cooldown.
     }
 
     @Test fun malformedNetworkAndCacheAreUnknownRatherThanLatest() {
@@ -114,7 +117,7 @@ class GameUpdateRepositoryTest {
     @Test fun installerAttributionDoesNotInventGooglePlayForUnknownOrLocalInstalls() {
         assertEquals("来源未知", GameStores.describe(null, null).label)
         assertEquals("本地安装", GameStores.describe("com.android.shell", "Shell").label)
-        assertFalse(GameStores.describe("com.example.limbuszhcn", "BYBUS").canOpen)
+        assertFalse(GameStores.describe("io.github.gravere.bybus", "BYBUS").canOpen)
         assertEquals("Uptodown", GameStores.describe("com.uptodown", null).label)
         assertEquals("其他安装来源", GameStores.describe("new.store", null).label)
         assertEquals("New Store", GameStores.describe("new.store", "New Store").label)

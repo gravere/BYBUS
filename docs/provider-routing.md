@@ -27,6 +27,12 @@ context. Explicit requests for another Android user do not enter virtual routing
 Disabled or other-virtual-user providers do not fall through to a physical provider
 with the same authority. Framework cache keys use the virtual ProviderInfo user;
 system acquisition uses the physical Android user.
+Issue #67 confirms that physical profiles other than user 0 also reach legacy
+provider and UserManager Binder calls. At these system boundaries map only the
+current virtual user's ID to the captured physical host user. Keep provider
+registration/cache keys virtual; preserve other explicit user requests and real
+permission failures. Read-only user-unlock checks must query the actual host
+profile, never return a constant unlocked result or request cross-user grants.
 Do not catch permission failures as successful results, change permission grants,
 retry mutations, or replace a working OEM service with an empty implementation.
 

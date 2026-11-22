@@ -27,7 +27,7 @@ class UpdateControlProbeActivity : ComponentActivity() {
         val case = intent.getStringExtra("case") ?: "download"
         val release = AppRelease("fixture", "界面渲染", 2, 26, "0".repeat(64),
             ReleaseAsset(1, "fixture.apk", 120_000_000),
-            "- 状态与操作合并在同一张卡片中\n- 下载进度保留在操作区域")
+            "- [修复] 部分设备登录后无法返回游戏的问题\n- [优化] 网络恢复后可立即重新检查更新\n- [新增] 更新内容按用途分类显示\n- [更新] 使用说明")
         val initial = when (case) {
             "available" -> AppUpdateState(1, release = release, message = "有新版本可用")
             "ready" -> AppUpdateState(1, release = release, ready = true, message = "已准备好安装")

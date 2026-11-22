@@ -11,6 +11,12 @@ public final class MicrogAuthUiPolicy {
 
     private MicrogAuthUiPolicy() { }
 
+    public static int finishTaskMode(String pkg, String activity, boolean taskRoot, int requested) {
+        // LoginActivity uses finishAndRemoveTask even when AccountManager launched it as a child.
+        // Keep the parent sign-in/game task and its result receiver alive.
+        return GMS.equals(pkg) && LOGIN.equals(activity) && !taskRoot && requested == 2 ? 0 : requested;
+    }
+
     public static boolean useClientLocal(String currentPackage, String currentProcess,
             String targetPackage, String targetProcess, String activity) {
         return GMS.equals(currentPackage) && GMS.equals(targetPackage)

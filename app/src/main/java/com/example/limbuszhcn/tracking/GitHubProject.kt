@@ -138,12 +138,12 @@ internal class GitHubProjectRepository(
         // A force refresh must not ignore the server's deadline, including after an app restart.
         if (current.retryAtMillis?.let { clock() < it } == true) return publish(current)
         val sinceAttempt = lastAttempt?.let { (elapsed() - it).coerceAtLeast(0) }
-        if (sinceAttempt != null && sinceAttempt < if (force) 15_000 else 60_000) return publish(current)
+        if (!force && sinceAttempt != null && sinceAttempt < 60_000) return publish(current)
         val age = current.snapshot?.let { clock() - it.fetchedAtMillis }
         if (!force && current.issue == null && age != null && age in 0 until 5 * 60_000) return publish(current)
-        publish(current.copy(loading = true))
+        publish(current.copy(loading = true, issue = null, retryAtMillis = null))
         lastAttempt = elapsed()
-        val response = try { fetch?.invoke() ?: ZeroReleaseFeed.release(publicFeed.get(), clock()) } catch (error: Exception) {
+        val response = try { fetch?.invoke() ?: ZeroReleaseFeed.release(publicFeed.get(force), clock()) } catch (error: Exception) {
             val http = error as? com.example.limbuszhcn.selfupdate.UpdateHttpException
             val failure = error as? ProjectFetchException ?: http?.takeIf { it.retryAfterMillis > 0 }?.let {
                 ProjectFetchException(ProjectIssue.RateLimited, clock() + it.retryAfterMillis)
@@ -198,6 +198,13 @@ internal class GitHubProjectRepository(
         cached()
         val hasAssets = runCatching { JSONObject(releaseMetadata ?: "{}").getJSONArray("assets").length() == 1 }.getOrDefault(false)
         val checked = refresh(force = !hasAssets)
+        checked.issue?.let { throw ProjectFetchException(it, checked.retryAtMillis) }
+        return releaseMetadata ?: throw ProjectFetchException(ProjectIssue.InvalidData)
+    }
+
+    /** User requested a new network check, including after an offline attempt. */
+    @Synchronized fun releaseForManualCheck(): String {
+        val checked = refresh(force = true)
         checked.issue?.let { throw ProjectFetchException(it, checked.retryAtMillis) }
         return releaseMetadata ?: throw ProjectFetchException(ProjectIssue.InvalidData)
     }

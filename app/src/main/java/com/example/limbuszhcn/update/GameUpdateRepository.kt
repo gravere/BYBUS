@@ -186,7 +186,7 @@ internal class GameUpdateRepository(
         val previous = cached()
         // A launch joining the just-finished home-screen check need not request the same page twice.
         val sinceAttempt = lastAttempt?.let { elapsed() - it }
-        if (sinceAttempt != null && sinceAttempt in 0 until 15_000) return previous
+        if (!force && sinceAttempt != null && sinceAttempt in 0 until 15_000) return previous
         if (!force && previous.issue == null && previous.checkedAt > 0 &&
             clock() - previous.checkedAt in 0 until 15 * 60_000) return previous
         lastAttempt = elapsed()

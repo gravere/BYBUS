@@ -16,10 +16,13 @@ internal data class AppUpdateState(val installedCode: Long, val busy: Boolean = 
     val checked: Boolean = false, val release: AppRelease? = null, val progress: Int? = null,
     val ready: Boolean = false, val message: String = "检查 BYBUS 的新版本", val error: String? = null,
     val delta: AppDelta? = null, val retryAtElapsed: Long? = null, val reuse: AppReusePlan? = null,
-    val knownVersionCode: Long = 0, val downloadPlanned: Boolean = false, val checking: Boolean = false) {
+    val knownVersionCode: Long = 0, val downloadPlanned: Boolean = false, val checking: Boolean = false,
+    val checkFailed: Boolean = false) {
     val updateAvailable: Boolean get() = maxOf(knownVersionCode, release?.versionCode ?: 0) > installedCode
 
     fun withPublishedVersion(code: Long): AppUpdateState {
+        if (checkFailed) return copy(error = null, checkFailed = false, retryAtElapsed = null,
+            message = if (code > installedCode) "有新版本可用" else "已是最新版本").withPublishedVersion(code)
         if (release?.versionCode == code) return copy(knownVersionCode = code)
         val withdrawn = ready && release != null && release.versionCode > code
         return copy(knownVersionCode = code, release = null, checked = false, ready = false,
@@ -138,7 +141,7 @@ internal class AppUpdateController(private val app: Application) {
         state = state.copy(busy = true, checking = true, ready = false, progress = null, message = "正在检查版本", error = null, retryAtElapsed = null)
         task = worker.submit {
             try {
-                val release = repository.check()
+                val release = repository.check(force)
                 val installed = AppUpdatePackage.installedCode(app)
                 if (!release.newerThan(installed)) repository.clear()
                 val reuse = if (release.newerThan(installed))
@@ -250,7 +253,7 @@ internal class AppUpdateController(private val app: Application) {
             is IllegalArgumentException, is IllegalStateException, is UpdateHttpException -> error.message ?: "更新检查未完成"
             else -> "更新暂未完成，请重试或查看 GitHub 发行页面"
         }
-        state = state.copy(busy = false, checking = false, progress = null, error = message, message = "更新未完成",
+        state = state.copy(busy = false, checking = false, checkFailed = state.checking, progress = null, error = message, message = "更新未完成",
             retryAtElapsed = checkPolicy.retryAtElapsed)
     }
     private fun showServerWait() {
