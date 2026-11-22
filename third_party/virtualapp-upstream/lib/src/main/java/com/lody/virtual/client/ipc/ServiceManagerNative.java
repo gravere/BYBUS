@@ -80,8 +80,10 @@ public class ServiceManagerNative {
                     Bundle response = new ProviderCall.Builder(context, getAuthority()).methodName("@").callSafely();
                     if (response != null) {
                         IBinder binder = BundleCompat.getBinder(response, "_VA_|_binder_");
-                        linkBinderDied(binder);
-                        sFetcher = IServiceFetcher.Stub.asInterface(binder);
+                        if (binder != null) {
+                            linkBinderDied(binder);
+                            sFetcher = IServiceFetcher.Stub.asInterface(binder);
+                        }
                     }
 
                 }

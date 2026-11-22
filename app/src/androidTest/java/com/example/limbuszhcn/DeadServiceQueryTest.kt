@@ -10,6 +10,21 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class DeadServiceQueryTest {
+    @Test fun missingServiceReacquiresOnceInsteadOfThrowingNullPointer() {
+        var calls = 0
+        var invalidations = 0
+        val value = DeadServiceQuery.run({
+            DeadServiceQuery.requireService(if (calls++ == 0) null else "connected")
+        }, { invalidations++ })
+        assertEquals("connected", value)
+        assertEquals(2, calls)
+        assertEquals(1, invalidations)
+        calls = 0
+        assertThrows(DeadObjectException::class.java) {
+            DeadServiceQuery.run<String>({ calls++; DeadServiceQuery.requireService(null) }, {})
+        }
+        assertEquals(2, calls)
+    }
     @Test fun reacquiresDeadReadOnceAndKeepsTheRealResult() {
         var calls = 0
         var invalidations = 0

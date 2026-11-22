@@ -357,7 +357,15 @@ class MethodProxies {
 
         @Override
         public Object call(Object who, Method method, Object... args) throws Throwable {
-            return "com.android.vending";
+            String pkg = (String) args[0];
+            if (pkg == null) throw new IllegalArgumentException("Package name is required");
+            boolean installed = VPackageManager.get().getPackageInfo(pkg, 0, getAppUserId()) != null;
+            boolean visible = !shouldIsolateHostPackagesForLimbus() && isVisiblePackageForCurrentApp(pkg);
+            return com.lody.virtual.helper.compat.InstallerSourcePolicy.query(
+                    installed, visible, LIMBUS_PACKAGE.equals(pkg), () -> {
+                        try { return (String) method.invoke(who, args); }
+                        catch (java.lang.reflect.InvocationTargetException error) { throw error.getCause(); }
+                    });
         }
 
         @Override
@@ -1119,12 +1127,11 @@ class MethodProxies {
                     return PackageManager.COMPONENT_ENABLED_STATE_ENABLED;
                 }
                 if (isVisiblePackageForCurrentApp(pkg)) {
-                    args[1] = 0;
                     return method.invoke(who, args);
                 }
-                return PackageManager.COMPONENT_ENABLED_STATE_DISABLED;
+                throw new IllegalArgumentException("Package is not installed");
             }
-            return false;//method.invoke(who, args);
+            throw new IllegalArgumentException("Package name is required");
         }
     }
 

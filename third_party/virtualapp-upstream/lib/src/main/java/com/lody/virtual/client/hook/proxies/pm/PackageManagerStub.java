@@ -19,7 +19,10 @@ import com.lody.virtual.helper.compat.BuildCompat;
 import com.lody.virtual.helper.utils.Reflect;
 import com.lody.virtual.helper.compat.LimbusSafetyAlert;
 import com.lody.virtual.helper.compat.PackageQueryTrace;
+import com.lody.virtual.helper.compat.PackageManagerUserScope;
 import com.lody.virtual.helper.compat.ParceledListSliceCompat;
+import com.lody.virtual.client.hook.utils.MethodParameterUtils;
+import com.lody.virtual.os.VUserHandle;
 import java.lang.reflect.Method;
 
 import mirror.android.app.ActivityThread;
@@ -31,6 +34,7 @@ import mirror.android.app.ActivityThread;
 public final class PackageManagerStub extends MethodInvocationProxy<MethodInvocationStub<IInterface>> {
     private static final String GAME = "com.ProjectMoon.LimbusCompany";
     private static final PackageQueryTrace TRACE = new PackageQueryTrace();
+    private static final java.util.concurrent.atomic.AtomicInteger SOURCE_QUERY_REPORTS = new java.util.concurrent.atomic.AtomicInteger();
 
     /** Shared with the separate permission service; does not receive or retain query arguments. */
     public static void recordQueryResult(Method method, boolean proxied, Object result, Throwable error) {
@@ -47,6 +51,12 @@ public final class PackageManagerStub extends MethodInvocationProxy<MethodInvoca
                 }
             }
             TRACE.record(method.getName(), proxied, result, error);
+            // Some exits have no Java alert. Preserve a small argument-free sample then too.
+            if ((method.getName().equals("getInstallerPackageName") || method.getName().equals("getApplicationEnabledSetting"))
+                    && SOURCE_QUERY_REPORTS.getAndIncrement() < 4) {
+                try { VirtualCore.getConfig().onLimbusPackageQueries(TRACE.snapshot()); }
+                catch (Throwable ignored) { /* Diagnostic collection must not affect this query. */ }
+            }
         }
     }
 
@@ -65,11 +75,18 @@ public final class PackageManagerStub extends MethodInvocationProxy<MethodInvoca
     }
 
     public PackageManagerStub() {
-        super(new MethodInvocationStub<IInterface>(ActivityThread.sPackageManager.get()) {
+        super(new MethodInvocationStub<IInterface>(systemPackageManager()) {
             @Override protected void onInvocationResult(Method method, boolean proxied, Object result, Throwable error) {
                 recordQueryResult(method, proxied, result, error);
             }
         });
+    }
+
+    private static IInterface systemPackageManager() {
+        IInterface original = ActivityThread.sPackageManager.get();
+        return original == null ? null : PackageManagerUserScope.wrap(original,
+                MethodParameterUtils.getAllInterface(original.getClass()),
+                VUserHandle::myUserId, VUserHandle::realUserId);
     }
 
     @Override

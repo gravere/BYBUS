@@ -18,7 +18,8 @@ public final class PackageQueryTrace {
         counts.put(route, count == Integer.MAX_VALUE ? count : count + 1);
         String outcome;
         if (error != null) {
-            outcome = error instanceof SecurityException ? "security_error" : "exception";
+            outcome = error instanceof SecurityException ? "security_error"
+                    : error instanceof IllegalArgumentException ? "argument_error" : "exception";
         } else if (result == null) {
             outcome = "null";
         } else if (result instanceof Integer) {
@@ -55,6 +56,7 @@ public final class PackageQueryTrace {
             case "getPackageInfo": case "getPackageInfoVersioned": case "getApplicationInfo":
             case "getPackageUid": case "getPackagesForUid": case "getNameForUid":
             case "getInstalledPackages": case "getInstalledApplications":
+            case "getInstallerPackageName": case "getInstallSourceInfo": case "getApplicationEnabledSetting":
             case "checkPermission": case "checkUidPermission":
             case "checkSignatures": case "checkUidSignatures": return true;
             default: return false;

@@ -44,6 +44,7 @@ import com.lody.virtual.client.env.VirtualRuntime;
 import com.lody.virtual.client.fixer.ContextFixer;
 import com.lody.virtual.client.hook.delegate.TaskDescriptionDelegate;
 import com.lody.virtual.client.ipc.LocalProxyUtils;
+import com.lody.virtual.client.ipc.DeadServiceQuery;
 import com.lody.virtual.client.ipc.ServiceManagerNative;
 import com.lody.virtual.client.ipc.VActivityManager;
 import com.lody.virtual.client.ipc.VPackageManager;
@@ -120,7 +121,7 @@ public final class VirtualCore {
     private String processName;
     private ProcessType processType;
     private boolean isHostPulginApp;
-    private IAppManager mService;
+    private volatile IAppManager mService;
     private volatile boolean isStartUp;
     private PackageInfo mHostPkgInfo;
     private volatile ConditionVariable mInitLock;
@@ -611,6 +612,16 @@ public final class VirtualCore {
                 .asInterface(ServiceManagerNative.getService(ServiceManagerNative.APP));
     }
 
+    private interface AppQuery<T> { T run(IAppManager service) throws RemoteException; }
+
+    private <T> T queryAppService(AppQuery<T> query) throws RemoteException {
+        return DeadServiceQuery.run(() -> query.run(DeadServiceQuery.requireService(getService())), () -> {
+            ServiceManagerNative.clearServerFetcher();
+            synchronized (this) { mService = null; }
+            ServiceManagerNative.ensureServerStarted();
+        });
+    }
+
     /**
      * @return If the current process is used to VA.
      */
@@ -686,7 +697,11 @@ public final class VirtualCore {
         } catch (IOException error) {
             throw new IllegalStateException("无法确认容器安装状态，请稍后重试", error);
         }
-        final com.lody.virtual.server.interfaces.IAppManager service = getService();
+        final IAppManager service;
+        try { service = DeadServiceQuery.requireService(getService()); }
+        catch (RemoteException unavailable) {
+            throw new IllegalStateException("容器安装服务暂不可用，请重试；已有数据已保留", unavailable);
+        }
         final IBinder binder = service.asBinder();
         final com.lody.virtual.helper.utils.PackageInstallGuard.Pending<InstallResult> pending =
                 new com.lody.virtual.helper.utils.PackageInstallGuard.Pending<>();
@@ -799,7 +814,7 @@ public final class VirtualCore {
 
     public boolean isOutsidePackageVisible(String pkg) {
         try {
-            return getService().isOutsidePackageVisible(pkg);
+            return queryAppService(service -> service.isOutsidePackageVisible(pkg));
         } catch (RemoteException e) {
             VLog.w(TAG, "isOutsidePackageVisible remote service unavailable pkg=%s error=%s", pkg, e);
             return false;
@@ -817,21 +832,9 @@ public final class VirtualCore {
      */
     public boolean isAppInstalled(String pkg) {
         try {
-            return getService().isAppInstalled(pkg);
-        } catch (RemoteException firstError) {
-            VLog.w(TAG, "isAppInstalled lost VirtualApp service; reconnecting once. pkg=%s error=%s",
-                    pkg, firstError);
-            // 同时清理两级缓存，否则新的 ServiceFetcher 仍可能被旧的 IAppManager 遮蔽。
-            ServiceManagerNative.clearServerFetcher();
-            synchronized (this) {
-                mService = null;
-            }
-            ServiceManagerNative.ensureServerStarted();
-            try {
-                return getService().isAppInstalled(pkg);
-            } catch (RemoteException retryError) {
-                return VirtualRuntime.crash(retryError);
-            }
+            return queryAppService(service -> service.isAppInstalled(pkg));
+        } catch (RemoteException error) {
+            return VirtualRuntime.crash(error);
         }
     }
 
@@ -1026,7 +1029,7 @@ public final class VirtualCore {
 
     public InstalledAppInfo getInstalledAppInfo(String pkg, int flags) {
         try {
-            return getService().getInstalledAppInfo(pkg, flags);
+            return queryAppService(service -> service.getInstalledAppInfo(pkg, flags));
         } catch (RemoteException e) {
             return VirtualRuntime.crash(e);
         }
@@ -1034,7 +1037,7 @@ public final class VirtualCore {
 
     public int getInstalledAppCount() {
         try {
-            return getService().getInstalledAppCount();
+            return queryAppService(IAppManager::getInstalledAppCount);
         } catch (RemoteException e) {
             return VirtualRuntime.crash(e);
         }
@@ -1120,7 +1123,7 @@ public final class VirtualCore {
 
     public List<InstalledAppInfo> getInstalledApps(int flags) {
         try {
-            return getService().getInstalledApps(flags);
+            return queryAppService(service -> service.getInstalledApps(flags));
         } catch (RemoteException e) {
             return VirtualRuntime.crash(e);
         }
@@ -1128,7 +1131,7 @@ public final class VirtualCore {
 
     public List<InstalledAppInfo> getInstalledAppsAsUser(int userId, int flags) {
         try {
-            return getService().getInstalledAppsAsUser(userId, flags);
+            return queryAppService(service -> service.getInstalledAppsAsUser(userId, flags));
         } catch (RemoteException e) {
             return VirtualRuntime.crash(e);
         }
@@ -1152,7 +1155,7 @@ public final class VirtualCore {
 
     public boolean isPackageLaunched(int userId, String packageName) {
         try {
-            return getService().isPackageLaunched(userId, packageName);
+            return queryAppService(service -> service.isPackageLaunched(userId, packageName));
         } catch (RemoteException e) {
             return VirtualRuntime.crash(e);
         }
@@ -1176,7 +1179,7 @@ public final class VirtualCore {
 
     public boolean isAppInstalledAsUser(int userId, String packageName) {
         try {
-            return getService().isAppInstalledAsUser(userId, packageName);
+            return queryAppService(service -> service.isAppInstalledAsUser(userId, packageName));
         } catch (RemoteException e) {
             return VirtualRuntime.crash(e);
         }
@@ -1184,7 +1187,7 @@ public final class VirtualCore {
 
     public int[] getPackageInstalledUsers(String packageName) {
         try {
-            return getService().getPackageInstalledUsers(packageName);
+            return queryAppService(service -> service.getPackageInstalledUsers(packageName));
         } catch (RemoteException e) {
             return VirtualRuntime.crash(e);
         }
@@ -1227,7 +1230,7 @@ public final class VirtualCore {
 
     public boolean isRun64BitProcess(String packageName) {
         try {
-            return getService().isRun64BitProcess(packageName);
+            return queryAppService(service -> service.isRun64BitProcess(packageName));
         } catch (RemoteException e) {
             return VirtualRuntime.crash(e);
         }

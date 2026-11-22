@@ -109,6 +109,10 @@ public final class PackageQueryProbe {
                 Field appInfo = boundType.getDeclaredField("appInfo"); appInfo.setAccessible(true);
                 appInfo.set(bound, game.applicationInfo);
                 boundField.set(VClient.get(), bound);
+                expectIllegalArgument(checks, "unknown_installer", new MethodProxies.GetInstallerPackageName(), ABSENT);
+                expectIllegalArgument(checks, "hidden_host_installer", new MethodProxies.GetInstallerPackageName(), context.getPackageName());
+                check(checks, "virtual_only_installer", call(new MethodProxies.GetInstallerPackageName(), OTHER) == null);
+                expectIllegalArgument(checks, "unknown_enabled_setting", new MethodProxies.GetApplicationEnabledSetting(), ABSENT, 0);
                 check(checks, "unknown_uid", call(new MethodProxies.GetPackagesForUid(), Integer.MAX_VALUE) == null);
                 check(checks, "negative_uid", call(new MethodProxies.GetPackagesForUid(), -1) == null);
                 String[] self = (String[]) call(new MethodProxies.GetPackagesForUid(), realUid);
@@ -169,6 +173,12 @@ public final class PackageQueryProbe {
     }
 
     public interface ObserverFixture { String value(); void fail(); }
+
+    private static void expectIllegalArgument(JSONObject checks, String name, MethodProxy proxy, Object... args) throws Throwable {
+        try { call(proxy, args); }
+        catch (IllegalArgumentException expected) { check(checks, name, true); return; }
+        throw new AssertionError(name + " must keep Android's unknown-package exception");
+    }
 
     private static void verifyPermissionMetadata(JSONObject checks, VPackageManagerService service,
                                                   VPackage game, VPackage other) throws Throwable {

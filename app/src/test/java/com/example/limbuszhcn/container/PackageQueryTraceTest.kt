@@ -5,6 +5,17 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PackageQueryTraceTest {
+    @Test fun installerAndMissingPackageEvidenceDoesNotContainTheSource() {
+        val trace = PackageQueryTrace()
+        trace.record("getInstallerPackageName", true, "private.store", null)
+        trace.record("getInstallerPackageName", true, null, IllegalArgumentException("private.package"))
+        trace.record("getApplicationEnabledSetting", true, null, SecurityException("private.profile"))
+        val summary = trace.snapshot()
+        assertTrue(summary.contains("getInstallerPackageName:container:present"))
+        assertTrue(summary.contains("getInstallerPackageName:container:argument_error"))
+        assertTrue(summary.contains("getApplicationEnabledSetting:container:security_error"))
+        assertFalse(summary.contains("private"))
+    }
     @Test fun installedListShapeIsRecordedWithoutReadingItsElements() {
         val trace = PackageQueryTrace()
         trace.record("getInstalledPackages", true, emptyList<Any>(), null)

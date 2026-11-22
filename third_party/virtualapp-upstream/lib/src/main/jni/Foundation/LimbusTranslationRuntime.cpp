@@ -1443,11 +1443,19 @@ void *replacement_rpg_format(void *format, void *arguments, const void *method) 
 
 typedef void (*localization_load_fn)(void *, int32_t, const void *);
 localization_load_fn g_original_localization_load[2] = {};
+std::atomic<uint32_t> g_localization_load_records{0};
 template<size_t Slot>
 void replacement_localization_load(void *instance, int32_t language, const void *method) {
     // Font owners can run inside LoadLocal/LoadRemote, before the host receipt
     // is saved. Use the verified call argument, independently of JNI storage.
     g_font_language.store(g_language_codes.count(language) ? language : INT32_MIN);
+    const bool record = g_localization_load_records.fetch_add(1) < 8;
+    if (record) {
+        char status[96];
+        snprintf(status, sizeof(status), "localization_enter slot=%zu language=%d known=%d", Slot,
+                 language, g_language_codes.count(language) != 0);
+        append_native_metadata("font-state.log", status);
+    }
     if (g_live_resources) {
         const bool ready = ensure_tmp_font();
         char status[64];
@@ -1455,6 +1463,11 @@ void replacement_localization_load(void *instance, int32_t language, const void 
         append_native_metadata("font-state.log", status);
     }
     g_original_localization_load[Slot](instance, language, method);
+    if (record) {
+        char status[64];
+        snprintf(status, sizeof(status), "localization_return slot=%zu", Slot);
+        append_native_metadata("font-state.log", status);
+    }
     observe_localization_language(language);
     if (g_live_resources) prepare_loaded_localization(instance);
 }

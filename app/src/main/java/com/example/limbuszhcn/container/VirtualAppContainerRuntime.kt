@@ -419,16 +419,19 @@ private class VirtualAppBridge(
     fun logGameLocalizeDiagnostics(packageName: String) {
         val root = localizeRoot(packageName)
         val remoteList = root.resolve("RemoteLocalizeFileList.json")
-        val localizeZip = root.resolve("localize_jp.zip")
-        val jpDir = root.resolve("jp")
-        val tempDir = root.resolve("Temp/LocalizeTemp_jp/LocalizeTemp_jp")
+        val locales = listOf("jp", "en", "kr").joinToString(" ") { locale ->
+            val archive = root.resolve("localize_$locale.zip")
+            val directory = root.resolve(locale)
+            val pending = root.resolve("Temp/LocalizeTemp_$locale/LocalizeTemp_$locale")
+            "$locale.zip=${archive.exists()}:${archive.length()} " +
+                "$locale.dir=${directory.exists()}:${directory.listFiles()?.size ?: -1} " +
+                "$locale.pending=${pending.exists()}:${pending.listFiles()?.size ?: -1}"
+        }
         Log.i(
             TAG,
             "localize diagnostics root=${root.absolutePath} rootExists=${root.exists()} " +
                 "remoteList=${remoteList.exists()}:${remoteList.length()} " +
-                "localizeZip=${localizeZip.exists()}:${localizeZip.length()} " +
-                "jpDir=${jpDir.exists()}:${jpDir.listFiles()?.size ?: -1} " +
-                "tempDir=${tempDir.exists()}:${tempDir.listFiles()?.size ?: -1}"
+                locales
         )
     }
 

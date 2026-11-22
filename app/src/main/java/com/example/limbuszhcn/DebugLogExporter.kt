@@ -62,6 +62,7 @@ internal class DebugLogExporter(private val context: Context) {
                 com.example.limbuszhcn.container.VirtualAppSession(context).snapshot().diagnostic()
             }.getOrElse { "live snapshot unavailable: ${it.javaClass.simpleName}\n" })
             zip.writeText("app-install.txt", com.example.limbuszhcn.selfupdate.AppUpdateInstaller(context).summary())
+            zip.writeText("game-install.txt", GameInstallationDiagnostics.collect(context))
             // Recover only old host/server crash records omitted by earlier diagnostic exports.
             val legacyNames = Regex("(?:null|${Regex.escape(context.packageName.replace(':', '_') + "_x")})_\\d{4}-\\d{2}-\\d{2}-\\d{2}-\\d{2}-\\d{2}\\.log")
             val legacyDirectory = File(context.filesDir, "saftySandBoxExceptionLog")
