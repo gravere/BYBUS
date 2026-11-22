@@ -30,11 +30,13 @@ void append_native_metadata(const char *,const char *) {}
 using Load=void(*)(void *,int32_t,const void *);
 Load g_original_localization_load[2];
 bool ready_before_load=false; int loads=0,models=0;
+std::atomic<uint32_t> g_localization_load_records{0};
+#include "runtime-localization-scope.inc"
 int completed_loads=0;
 void observe_localization_language(int32_t language) { assert(language==2 && loads==completed_loads+1); }
 void prepare_loaded_localization(void *) { assert(loads==completed_loads+1); ++completed_loads; }
 bool ensure_tmp_font() {ready_before_load=true;return true;}
-void load(void *,int32_t lang,const void *) {assert(ready_before_load&&lang==2&&g_font_language.load()==lang);++loads;}
+void load(void *,int32_t lang,const void *) {assert(ready_before_load&&lang==2&&g_font_language.load()==lang&&g_localization_load_depth==1);++loads;}
 struct Model {void *klass;}; Model valid{&model_class},wrong{&other_class};
 void *get_class(void *p) {return static_cast<Model *>(p)->klass;}
 auto g_object_get_class=get_class;void *g_ego_gift_text_class=&model_class;

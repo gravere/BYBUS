@@ -5,6 +5,9 @@
 #include <unordered_set>
 #include <vector>
 #include <atomic>
+bool g_live_resources = false;
+bool is_unity_main_thread() { return true; }
+std::unordered_map<int32_t, const char *> g_language_codes;
 void append_native_metadata(const char *,const char *) {}
 void *keep(void *p,bool) {return p;}
 void *target(void *p) {return p;}

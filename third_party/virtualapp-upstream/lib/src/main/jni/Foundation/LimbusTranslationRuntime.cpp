@@ -1327,16 +1327,121 @@ void prepare_loaded_localization(void *data_set) {
     }
 }
 
+// Empty startup tables are recovered through the game's own loader, never by
+// substituting a display placeholder or inventing a language/record.
+struct StartupLocalizationBinding {
+    struct Table { const void *field = nullptr; void *owner = nullptr;
+        const void *list = nullptr; const void *count = nullptr; } tables[2];
+    const void *data_instance = nullptr, *game_instance = nullptr;
+    void *data_class = nullptr, *game_class = nullptr;
+    const void *remote_loaded = nullptr, *language = nullptr, *load = nullptr, *custom = nullptr;
+    void (*static_value)(const void *, void *) = nullptr;
+    bool ready = false;
+} g_startup_localization;
+bool is_unity_main_thread();
+thread_local unsigned g_localization_load_depth = 0;
+struct LocalizationLoadScope {
+    LocalizationLoadScope() { ++g_localization_load_depth; }
+    ~LocalizationLoadScope() { --g_localization_load_depth; }
+};
+thread_local bool g_startup_localization_recovering = false;
+limbus_managed::Registry<std::unordered_set<int32_t>> g_startup_localization_attempts(g_gc, 8);
+
+void *retry_empty_startup_table(void *queried) {
+    const auto &binding = g_startup_localization;
+    if (!binding.ready || !g_live_resources || !queried || !is_unity_main_thread() ||
+            g_localization_load_depth || g_startup_localization_recovering || !g_gc.ready()) return nullptr;
+    struct Guard {
+        Guard() { g_startup_localization_recovering = true; }
+        ~Guard() { g_startup_localization_recovering = false; }
+    } guard;
+    void *data = nullptr, *game = nullptr;
+    binding.static_value(binding.data_instance, &data);
+    binding.static_value(binding.game_instance, &game);
+    if (!data || !game || g_object_get_class(data) != binding.data_class ||
+            g_object_get_class(game) != binding.game_class) return nullptr;
+    auto data_root = limbus_managed::retain(g_gc, data);
+    auto game_root = limbus_managed::retain(g_gc, game);
+    auto table_root = limbus_managed::retain(g_gc, queried);
+    if (!data_root || !game_root || !table_root) return nullptr;
+    bool remote = true;
+    g_field_get_value(data, binding.remote_loaded, &remote);
+    if (remote) return nullptr;
+    auto scalar = [&](const void *method, void *owner, void *&value) {
+        void *exception = nullptr;
+        void *boxed = g_runtime_invoke(method, owner, nullptr, &exception);
+        value = boxed && !exception ? g_object_unbox(boxed) : nullptr;
+        return value != nullptr;
+    };
+    void *value = nullptr;
+    if (!scalar(binding.custom, nullptr, value) || *static_cast<bool *>(value)) return nullptr;
+    if (!scalar(binding.language, game, value)) return nullptr;
+    const int32_t language = *static_cast<int32_t *>(value);
+    if (!g_language_codes.count(language)) return nullptr;
+    auto attempted = g_startup_localization_attempts.find(data);
+    if (attempted && attempted->count(language)) return nullptr;
+    int selected = -1;
+    for (int i = 0; i < 2; ++i) {
+        const auto &entry = binding.tables[i];
+        void *table = nullptr;
+        g_field_get_value(data, entry.field, &table);
+        if (!table || g_object_get_class(table) != entry.owner) return nullptr;
+        if (table == queried) selected = i;
+        void *exception = nullptr;
+        void *list = g_runtime_invoke(entry.list, table, nullptr, &exception);
+        if (exception || !list || !scalar(entry.count, list, value) ||
+                *static_cast<int32_t *>(value) != 0) return nullptr;
+    }
+    if (selected < 0) return nullptr;
+    if (!attempted) {
+        if (!g_startup_localization_attempts.put(data, 0, {})) return nullptr;
+        attempted = g_startup_localization_attempts.find(data);
+    }
+    attempted->insert(language); // An exception/empty retry must not loop on every label.
+    append_native_metadata("font-state.log", "startup_localization_retry=begin");
+    void *exception = nullptr;
+    int32_t argument = language;
+    void *args[] = {&argument};
+    g_runtime_invoke(binding.load, data, args, &exception);
+    if (exception) {
+        append_native_metadata("font-state.log", "startup_localization_retry=exception");
+        return nullptr;
+    }
+    const auto &entry = binding.tables[selected];
+    void *table = nullptr;
+    g_field_get_value(data, entry.field, &table);
+    if (!table || g_object_get_class(table) != entry.owner) return nullptr;
+    void *list = g_runtime_invoke(entry.list, table, nullptr, &exception);
+    const bool populated = !exception && list && scalar(entry.count, list, value) &&
+            *static_cast<int32_t *>(value) > 0;
+    append_native_metadata("font-state.log", populated ? "startup_localization_retry=populated" :
+                                                       "startup_localization_retry=empty");
+    return populated ? table : nullptr;
+}
+
 template<size_t Slot> void *replacement_table_ref(void *instance, void *key, const void *method) {
     auto &hook = g_localized_tables[0][Slot];
     auto result = reinterpret_cast<void *(*)(void *, void *, const void *)>(hook.original)(instance, key, method);
-    if (instance && hook.owners.count(g_object_get_class(instance))) prepare_localized_model(result);
+    const bool owned = instance && hook.owners.count(g_object_get_class(instance));
+    if (!result && owned) {
+        auto key_root = key ? limbus_managed::retain(g_gc, key) : limbus_managed::Ref{};
+        if (!key || key_root) {
+            if (void *retry = retry_empty_startup_table(instance))
+                result = reinterpret_cast<void *(*)(void *, void *, const void *)>(hook.original)(retry, key, method);
+        }
+    }
+    if (owned) prepare_localized_model(result);
     return result;
 }
 template<size_t Slot> void *replacement_table_int(void *instance, int32_t key, const void *method) {
     auto &hook = g_localized_tables[1][Slot];
     auto result = reinterpret_cast<void *(*)(void *, int32_t, const void *)>(hook.original)(instance, key, method);
-    if (instance && hook.owners.count(g_object_get_class(instance))) prepare_localized_model(result);
+    const bool owned = instance && hook.owners.count(g_object_get_class(instance));
+    if (!result && owned) {
+        if (void *retry = retry_empty_startup_table(instance))
+            result = reinterpret_cast<void *(*)(void *, int32_t, const void *)>(hook.original)(retry, key, method);
+    }
+    if (owned) prepare_localized_model(result);
     return result;
 }
 template<size_t Slot> void *replacement_table_list(void *instance, const void *method) {
@@ -1411,6 +1516,10 @@ void *replacement_skill_level(void *instance, int32_t level, const void *method)
 // that argument. Preserve identity before the UI model becomes an unscoped string.
 acquisition0_fn g_original_ui_text_implicit = nullptr;
 void *replacement_ui_text_implicit(void *data, const void *method) {
+    if (!data) {
+        static std::atomic<bool> missing_recorded{false};
+        if (!missing_recorded.exchange(true)) append_native_metadata("font-state.log", "startup_ui_model=missing");
+    }
     std::vector<std::string> fields;
     translate_object_graph(data, &fields);
     return finish_formatted_translation(g_original_ui_text_implicit(data, method), fields);
@@ -1446,6 +1555,7 @@ localization_load_fn g_original_localization_load[2] = {};
 std::atomic<uint32_t> g_localization_load_records{0};
 template<size_t Slot>
 void replacement_localization_load(void *instance, int32_t language, const void *method) {
+    LocalizationLoadScope loading;
     // Font owners can run inside LoadLocal/LoadRemote, before the host receipt
     // is saved. Use the verified call argument, independently of JNI storage.
     g_font_language.store(g_language_codes.count(language) ? language : INT32_MIN);
@@ -3958,6 +4068,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
     void *story_dialog_class = nullptr;
     void *story_data_class = nullptr;
     void *text_data_set_class = nullptr, *gift_popup_data_class = nullptr;
+    void *text_data_manager_class = nullptr, *custom_localize_class = nullptr;
     void *localize_model_base = nullptr;
     void *language_font_classes[kLanguageFontBindingCount] = {};
     const char *language_font_names[] = {"TextMeshProLanguageSetter", "TextMeshProLanguageSetterWithStatus",
@@ -4073,6 +4184,8 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         for (size_t slot = 0; slot < kLanguageFontBindingCount; ++slot)
             if (!language_font_classes[slot]) language_font_classes[slot] = class_from_name(image, "UtilityUI", language_font_names[slot]);
         if (!text_data_set_class) text_data_set_class = class_from_name(image, "", "TextDataSet");
+        if (!text_data_manager_class) text_data_manager_class = class_from_name(image, "", "TextDataManager");
+        if (!custom_localize_class) custom_localize_class = class_from_name(image, "", "CustomLocalizeManager");
         if (!gift_popup_data_class) gift_popup_data_class = class_from_name(image, "MainUI", "EgoGiftPopupData");
         if (!localize_resource_class)
             localize_resource_class = class_from_name(image, "TextAssetPatch", "TextAssetPatchManager");
@@ -5251,6 +5364,55 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 get_language_method, get_language_class, "GetLanguage");
         const bool global_language_valid = language_getter_valid(
                 get_global_language_method, get_global_language_class, "get_Lang");
+        if (global_language_valid && field_static_get_value && field_get_flags && field_get_type &&
+                class_from_type && class_get_fields && class_get_parent && g_original_localization_load[0]) {
+            // Resolve the existing closed Singleton<TextDataSet> field. Never call
+            // a singleton factory, infer object offsets or construct a replacement dataset.
+            auto singleton_field = [&](void *klass, void *expected) -> const void * {
+                if (!klass || !expected) return nullptr;
+                const void *found = nullptr;
+                for (int depth = 0; klass && depth < 8; ++depth, klass = class_get_parent(klass)) {
+                    void *iterator = nullptr;
+                    while (const void *field = class_get_fields(klass, &iterator)) {
+                        const int flags = field_get_flags(field);
+                        if ((flags & 0x0050) != 0x0010 || class_from_type(field_get_type(field)) != expected) continue;
+                        if (found) return nullptr;
+                        found = field;
+                    }
+                }
+                return found;
+            };
+            auto &binding = g_startup_localization;
+            binding.data_class = text_data_set_class;
+            binding.game_class = get_global_language_class;
+            binding.static_value = field_static_get_value;
+            binding.data_instance = singleton_field(text_data_manager_class, text_data_set_class);
+            binding.game_instance = singleton_field(get_global_language_class, get_global_language_class);
+            binding.remote_loaded = choice_field(text_data_set_class, "_isLoadedRemote", "System.Boolean");
+            binding.language = get_global_language_method;
+            binding.load = diagnostic_method(text_data_set_class, "LoadLocal", "LOCALIZE_LANGUAGE", "System.Void", false);
+            binding.custom = diagnostic_method(custom_localize_class, "IsUsing", "", "System.Boolean", true);
+            const char *names[] = {"_loginUIList", "_errorCodeMsgList"};
+            bool tables_valid = true;
+            for (int i = 0; i < 2; ++i) {
+                for (const auto &entry : g_localized_loads) {
+                    const char *name = field_get_name(entry.field);
+                    if (!name || strcmp(name, names[i])) continue;
+                    auto &table = binding.tables[i];
+                    table.field = entry.field;
+                    table.owner = entry.owner;
+                    table.list = entry.get_list;
+                    void *list_class = class_from_type(method_get_return_type(entry.get_list));
+                    table.count = diagnostic_method(list_class, "get_Count", "", "System.Int32", false);
+                    break;
+                }
+                tables_valid &= binding.tables[i].field && binding.tables[i].count;
+            }
+            binding.ready = tables_valid && binding.data_instance && binding.game_instance &&
+                    binding.remote_loaded && binding.load && binding.custom;
+            append_native_metadata("font-state.log", binding.ready ?
+                    "startup_localization_recovery=ready" : "startup_localization_recovery=unavailable");
+        }
         // Read the original language contract for font bindings. The game's getters stay intact.
         if (global_language_valid) {
             for (size_t slot = 0; slot < kLanguageFontBindingCount; ++slot) {
