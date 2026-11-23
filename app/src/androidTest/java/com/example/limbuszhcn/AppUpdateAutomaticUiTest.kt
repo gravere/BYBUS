@@ -39,10 +39,10 @@ class AppUpdateAutomaticUiTest {
         assertEquals(1, changes)
         compose.onNodeWithContentDescription("检查应用更新").performClick()
         assertEquals(1, checks)
-        compose.onNodeWithText("空闲时通过非计费网络下载，安装前仍需确认").assertIsDisplayed()
+        compose.onNodeWithText("自动更新").assertIsDisplayed()
         if (android.os.Build.HARDWARE in setOf("ranchu", "goldfish")) {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
-            val file = File(context.getExternalFilesDir(null), "update159.png")
+            val file = File(context.getExternalFilesDir(null), "app-update.png")
             compose.onRoot().captureToImage().asAndroidBitmap().let { bitmap ->
                 file.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
             }

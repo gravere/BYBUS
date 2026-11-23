@@ -68,6 +68,18 @@ class TranslationIndexCompilerTest {
     }
 
     @Test
+    fun unknownNameMarkersCannotRewriteProgressCounters() {
+        val result = TranslationIndexCompiler().apply {
+            for (source in listOf("?", "??", "???", "0/??", "??/??", "<color=#ebcaa2>0</color><color=#a16a3b>/??</color>")) {
+                add(TranslationIndexRecord("JP_Announcer.json", "name-$source", "name", source, "？？？", "name-$source"))
+            }
+        }.compile("v", "archive")
+        assertTrue(result.uniqueEntries.isEmpty())
+        assertTrue(result.termEntries.isEmpty())
+        assertEquals("？？？", result.contextualEntries[TranslationIndexCompiler.contextKey("name-???", "name", "???")])
+    }
+
+    @Test
     fun unchangedApprovedHanLabelsKeepFontProvenanceWithoutLatinOrKanaRules() {
         val compiled = TranslationIndexCompiler().apply {
             listOf("罪人", "特性", "NORMAL", "123", "回復する", "……").forEach {

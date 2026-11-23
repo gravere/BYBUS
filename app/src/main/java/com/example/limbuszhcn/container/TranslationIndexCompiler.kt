@@ -20,7 +20,7 @@ import kotlin.io.path.readText
 import kotlin.io.path.outputStream
 import kotlin.io.path.writeText
 
-internal const val TRANSLATION_COMPILER_REVISION = "full-locales-18"
+internal const val TRANSLATION_COMPILER_REVISION = "full-locales-19"
 internal val SOURCE_TEXT_LOCALES = listOf("jp", "en", "kr")
 
 /**
@@ -351,8 +351,10 @@ internal class TranslationIndexCompiler {
 
     private fun isNumericLiteral(value: String): Boolean {
         val text = stripDecorativeTags(value).filterNot(Char::isWhitespace)
-        return text.length in 1..64 && text.any { it in '0'..'9' } &&
-            text.all { it in '0'..'9' || it in "+-.,:/%()" }
+        // Unknown progress is numeric UI data too. Keep translated unknown names
+        // in their identified record instead of turning ?? into a global term.
+        return text.length in 1..64 && text.any { it in '0'..'9' || it == '?' } &&
+            text.all { it in '0'..'9' || it in "+-.,:/%()?" }
     }
 
     private fun String.stripPairedBrackets(): String =

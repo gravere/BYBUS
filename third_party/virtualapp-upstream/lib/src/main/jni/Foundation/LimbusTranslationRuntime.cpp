@@ -3274,6 +3274,13 @@ void *prepare_tmp_text(void *instance, void *managed_text, bool restore_untransl
             }
             if (!notice) replacement = apply_tmp_component_layout_markup(instance, replacement);
             if (instance == g_language_font_update_target) return replacement;
+            if (!notice && !choice_proof && replacement == managed_text &&
+                    limbus_font_proof::numeric_display(source)) {
+                // Counter glyph widths and alignment belong to the game, even
+                // when its language component also owns this reused TMP target.
+                restore_tmp_component_state(instance);
+                return replacement;
+            }
             bool translated = notice ? notice_proof : (is_language_font_target(instance) || choice_proof || is_translated_managed_string(replacement));
             std::vector<void *> font_targets;
             if (!translated && !notice) translated = is_translated_tmp_fragment(instance, replacement, &font_targets);

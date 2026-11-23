@@ -251,5 +251,18 @@ int main() {
     assert(translated == "<color=red>震颤爆发</color>");
     assert(!translate_embedded_terms("<noparse>Rupture Count</noparse>", &translated));
     assert(!translate_embedded_terms("[命中时] +2 破裂层数", &translated));
+    // Names in the translation source use full-width unknown-name markers.
+    // The same bytes in progress counters must not acquire those global rules.
+    g_terms = {{"??", "？？"}, {"???", "？？？"}};
+    rebuild_term_trie();
+    for (const auto *value : {"0/??", "??/??", "<color=#ebcaa2>0</color><color=#a16a3b>/??</color>"}) {
+        assert(!translate_embedded_terms(value, &translated));
+        auto input = new_managed_string(value);
+        g_index[value] = "错误的全局替换"; // Previously compiled cache must also be safe.
+        assert(translate_managed_string(input) == input);
+    }
+    auto unknown_name = new_managed_string("???");
+    g_contextual_index["speaker-unknown\x1f" "name\x1f???"] = "？？？";
+    assert(text(translate_managed_string(unknown_name, "speaker-unknown", "name")) == "？？？");
     puts("Managed provenance, Ruby formatter boundary, context order, GC/address reuse, native destruction and bounds passed");
 }

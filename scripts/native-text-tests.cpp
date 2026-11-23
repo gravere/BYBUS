@@ -173,10 +173,13 @@ int main() {
     assert(!fonts.contains("• • 初始经费 +150"));
     assert(!fonts.contains("<noparse>◆ 脑啡肽模块花费x2</noparse>"));
     assert(!fonts.contains("◆ 脑啡肽模块花费x2\n◆ 尚未翻译"));
-    for (const auto value : {"30", "04:30", "133 / 133", "251.91", "(25%)", "<color=yellow>04:30</color>"})
+    for (const auto value : {"30", "04:30", "133 / 133", "251.91", "(25%)", "<color=yellow>04:30</color>",
+                           "?", "??", "0/??", "??/??", "??%", "<color=#ebcaa2>0</color><color=#a16a3b>/??</color>"})
         assert(limbus_font_proof::numeric_display(value));
-    for (const auto value : {"30层", "在04:30后恢复1脑啡肽。", "Sinner", "", ":/", "{0}"})
+    for (const auto value : {"30层", "在04:30后恢复1脑啡肽。", "Sinner", "", ":/", "{0}", "？？？", "怎么？", "?? choices"})
         assert(!limbus_font_proof::numeric_display(value));
+    assert(!limbus_font_proof::number("??"));
+    assert(!limbus_font_proof::number("0/??"));
     fonts.add("剩余{0}次");
     fonts.add("在{0}后恢复{1}脑啡肽。");
     fonts.add("要补充{0}脑啡肽吗？");

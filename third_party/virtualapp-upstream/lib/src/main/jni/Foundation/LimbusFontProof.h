@@ -114,7 +114,17 @@ inline bool number(std::string_view value) {
     return digit;
 }
 inline bool numeric_display(std::string_view value) {
-    return value.size() <= 512 && number(canonical(value));
+    if (value.size() > 512) return false;
+    const auto text = canonical(value);
+    if (number(text)) return true;
+    // Do not widen the formatter's number() contract: ? is a display placeholder,
+    // not a valid numeric template argument. Full-width translated names stay separate.
+    if (text.empty() || text.size() > 64 || text.find('?') == text.npos) return false;
+    for (unsigned char c : text) {
+        if (c >= '0' && c <= '9') continue;
+        if (std::string_view("+-.,:/%()?").find(static_cast<char>(c)) == std::string_view::npos) return false;
+    }
+    return true;
 }
 inline bool storage_quantity(std::string_view value) {
     if (value.empty() || value.size() > 64) return false;

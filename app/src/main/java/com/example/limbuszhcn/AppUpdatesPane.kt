@@ -46,11 +46,7 @@ internal fun AppUpdatesPane(state: AppUpdateState, onCheck: () -> Unit, onOpenPa
             Row(Modifier.fillMaxWidth().toggleable(state.automaticUpdates, role = Role.Switch,
                 onValueChange = onAutomaticUpdates).padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("自动更新", style = MaterialTheme.typography.bodyLarge)
-                    Text("空闲时通过非计费网络下载，安装前仍需确认", color = C.Muted,
-                        style = MaterialTheme.typography.bodySmall)
-                }
+                Text("自动更新", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
                 Switch(checked = state.automaticUpdates, onCheckedChange = null)
             }
         }

@@ -462,6 +462,16 @@ int main() {
     }
     assert(restore_calls == restores_before_owner);
     forget(rebound);
+    // A language owner cannot turn numeric/unknown progress into wide Chinese
+    // glyphs. Even the deferred-owner path must request restoration on reuse.
+    Component counter{903, &japanese_font}; counter.language_owned = true; counter.material = &normal;
+    for (const auto *value : {"0/??", "??/??", "23/45", "<color=#ebcaa2>0</color><color=#a16a3b>/??</color>"}) {
+        auto count_text = codec.from_bytes(value); counter.text = &count_text;
+        const int before_restore = restore_calls;
+        assert(prepare_tmp_text(&counter, &count_text, false) == &count_text);
+        assert(counter.font == &japanese_font && counter.material == &normal);
+        assert(restore_calls == before_restore + 1);
+    }
     // A <material> style registers a submesh directly, bypassing the public
     // material setter. Both the stored mesh and the active parser material
     // must use the Chinese atlas, with source outline and shadow intact.
