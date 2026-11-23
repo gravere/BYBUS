@@ -1349,8 +1349,10 @@ limbus_managed::Registry<std::unordered_set<int32_t>> g_startup_localization_att
 
 void *retry_empty_startup_table(void *queried) {
     const auto &binding = g_startup_localization;
-    if (!binding.ready || !g_live_resources || !queried || !is_unity_main_thread() ||
+    if (!binding.ready || !g_live_resources || !is_unity_main_thread() ||
             g_localization_load_depth || g_startup_localization_recovering || !g_gc.ready()) return nullptr;
+    if (queried && g_object_get_class(queried) != binding.tables[0].owner &&
+            g_object_get_class(queried) != binding.tables[1].owner) return nullptr;
     struct Guard {
         Guard() { g_startup_localization_recovering = true; }
         ~Guard() { g_startup_localization_recovering = false; }
@@ -1362,8 +1364,8 @@ void *retry_empty_startup_table(void *queried) {
             g_object_get_class(game) != binding.game_class) return nullptr;
     auto data_root = limbus_managed::retain(g_gc, data);
     auto game_root = limbus_managed::retain(g_gc, game);
-    auto table_root = limbus_managed::retain(g_gc, queried);
-    if (!data_root || !game_root || !table_root) return nullptr;
+    auto table_root = queried ? limbus_managed::retain(g_gc, queried) : limbus_managed::Ref{};
+    if (!data_root || !game_root || (queried && !table_root)) return nullptr;
     bool remote = true;
     g_field_get_value(data, binding.remote_loaded, &remote);
     if (remote) return nullptr;
@@ -1380,7 +1382,7 @@ void *retry_empty_startup_table(void *queried) {
     if (!g_language_codes.count(language)) return nullptr;
     auto attempted = g_startup_localization_attempts.find(data);
     if (attempted && attempted->count(language)) return nullptr;
-    int selected = -1;
+    int selected = queried ? -1 : 0; // Verified UI loaders may run before any table getter.
     for (int i = 0; i < 2; ++i) {
         const auto &entry = binding.tables[i];
         void *table = nullptr;
@@ -1421,26 +1423,24 @@ void *retry_empty_startup_table(void *queried) {
 
 template<size_t Slot> void *replacement_table_ref(void *instance, void *key, const void *method) {
     auto &hook = g_localized_tables[0][Slot];
-    auto result = reinterpret_cast<void *(*)(void *, void *, const void *)>(hook.original)(instance, key, method);
     const bool owned = instance && hook.owners.count(g_object_get_class(instance));
-    if (!result && owned) {
-        auto key_root = key ? limbus_managed::retain(g_gc, key) : limbus_managed::Ref{};
+    void *source = instance;
+    auto key_root = owned && key ? limbus_managed::retain(g_gc, key) : limbus_managed::Ref{};
+    if (owned) {
         if (!key || key_root) {
-            if (void *retry = retry_empty_startup_table(instance))
-                result = reinterpret_cast<void *(*)(void *, void *, const void *)>(hook.original)(retry, key, method);
+            if (void *retry = retry_empty_startup_table(instance)) source = retry;
         }
     }
+    auto result = reinterpret_cast<void *(*)(void *, void *, const void *)>(hook.original)(source, key, method);
     if (owned) prepare_localized_model(result);
     return result;
 }
 template<size_t Slot> void *replacement_table_int(void *instance, int32_t key, const void *method) {
     auto &hook = g_localized_tables[1][Slot];
-    auto result = reinterpret_cast<void *(*)(void *, int32_t, const void *)>(hook.original)(instance, key, method);
     const bool owned = instance && hook.owners.count(g_object_get_class(instance));
-    if (!result && owned) {
-        if (void *retry = retry_empty_startup_table(instance))
-            result = reinterpret_cast<void *(*)(void *, int32_t, const void *)>(hook.original)(retry, key, method);
-    }
+    void *source = instance;
+    if (owned) if (void *retry = retry_empty_startup_table(instance)) source = retry;
+    auto result = reinterpret_cast<void *(*)(void *, int32_t, const void *)>(hook.original)(source, key, method);
     if (owned) prepare_localized_model(result);
     return result;
 }
@@ -1527,10 +1527,12 @@ void *replacement_ui_text_implicit(void *data, const void *method) {
 typedef void (*ui_loader_fn)(void *, const void *);
 ui_loader_fn g_original_ui_loader = nullptr, g_original_ui_parameter_loader = nullptr;
 void replacement_ui_loader(void *instance, const void *method) {
+    retry_empty_startup_table(nullptr);
     limbus_text_provenance::ScopedTextKey scope(g_ui_text_key, read_text_object_id(instance, "key"));
     g_original_ui_loader(instance, method);
 }
 void replacement_ui_parameter_loader(void *instance, const void *method) {
+    retry_empty_startup_table(nullptr);
     limbus_text_provenance::ScopedTextKey scope(g_ui_text_key, read_text_object_id(instance, "key"));
     g_original_ui_parameter_loader(instance, method);
 }
@@ -4547,7 +4549,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             material_class, "GetTexture", "System.String");
     const void *material_compute_crc_method = find_method_by_signature(material_class, "ComputeCRC", "");
     auto diagnostic_method = [&](void *klass, const char *name, const char *parameters,
-                                 const char *return_type, bool inherited) -> const void * {
+                                 const char *return_type, bool inherited, bool is_static = false) -> const void * {
         if (!method_get_flags || !method_is_generic || !method_get_return_type || !type_get_name || !il2cpp_free)
             return nullptr;
         for (unsigned depth = 0; klass && depth < 8; ++depth) {
@@ -4556,7 +4558,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 uint32_t implementation = 0;
                 char *actual = type_get_name(method_get_return_type(candidate));
                 bool valid = actual && strcmp(actual, return_type) == 0 && !method_is_generic(candidate) &&
-                        !(method_get_flags(candidate, &implementation) & 0x0010u);
+                        ((method_get_flags(candidate, &implementation) & 0x0010u) != 0) == is_static;
                 if (actual) il2cpp_free(actual);
                 return valid ? candidate : nullptr;
             }
@@ -5391,7 +5393,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             binding.remote_loaded = choice_field(text_data_set_class, "_isLoadedRemote", "System.Boolean");
             binding.language = get_global_language_method;
             binding.load = diagnostic_method(text_data_set_class, "LoadLocal", "LOCALIZE_LANGUAGE", "System.Void", false);
-            binding.custom = diagnostic_method(custom_localize_class, "IsUsing", "", "System.Boolean", true);
+            binding.custom = diagnostic_method(custom_localize_class, "IsUsing", "", "System.Boolean", false, true);
             const char *names[] = {"_loginUIList", "_errorCodeMsgList"};
             bool tables_valid = true;
             for (int i = 0; i < 2; ++i) {
@@ -5412,6 +5414,12 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                     binding.remote_loaded && binding.load && binding.custom;
             append_native_metadata("font-state.log", binding.ready ?
                     "startup_localization_recovery=ready" : "startup_localization_recovery=unavailable");
+            char contract[192];
+            snprintf(contract, sizeof(contract),
+                    "startup_localization_binding data=%d game=%d tables=%d remote=%d load=%d custom=%d",
+                    binding.data_instance != nullptr, binding.game_instance != nullptr, tables_valid,
+                    binding.remote_loaded != nullptr, binding.load != nullptr, binding.custom != nullptr);
+            append_native_metadata("font-state.log", contract);
         }
         // Read the original language contract for font bindings. The game's getters stay intact.
         if (global_language_valid) {

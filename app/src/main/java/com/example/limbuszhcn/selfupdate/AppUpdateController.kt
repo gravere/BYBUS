@@ -17,7 +17,7 @@ internal data class AppUpdateState(val installedCode: Long, val busy: Boolean = 
     val ready: Boolean = false, val message: String = "检查 BYBUS 的新版本", val error: String? = null,
     val delta: AppDelta? = null, val retryAtElapsed: Long? = null, val reuse: AppReusePlan? = null,
     val knownVersionCode: Long = 0, val downloadPlanned: Boolean = false, val checking: Boolean = false,
-    val checkFailed: Boolean = false) {
+    val checkFailed: Boolean = false, val automaticUpdates: Boolean = false) {
     val updateAvailable: Boolean get() = maxOf(knownVersionCode, release?.versionCode ?: 0) > installedCode
 
     fun withPublishedVersion(code: Long): AppUpdateState {
@@ -60,11 +60,17 @@ internal class AppUpdateController(private val app: Application) {
     private var checkingNotice = false
     private var installAfterNotice = false
     private val noticeSession = AppUpdateNoticeSession()
+    private val automaticPolicy = AutomaticUpdatePolicy()
+    private var automaticEligible = false
+    private var automaticOperation = false
+    private var automaticFailure = false
+    private var automaticNoticeVerified = false
     var openingGeneration by mutableStateOf(0L)
         private set
     private var readyFile: File? = null
     private var closed = false
-    var state by mutableStateOf(AppUpdateState(AppUpdatePackage.installedCode(app), knownVersionCode = notice.versionCode))
+    var state by mutableStateOf(AppUpdateState(AppUpdatePackage.installedCode(app), knownVersionCode = notice.versionCode,
+        automaticUpdates = preferences.getBoolean("automaticUpdates", false)))
         private set
     var installRequest by mutableStateOf<File?>(null)
         private set
@@ -85,7 +91,59 @@ internal class AppUpdateController(private val app: Application) {
 
     fun onAppOpened() {
         noticeSession.opened()
+        automaticNoticeVerified = false
+        automaticPolicy.opened()
+        if (automaticFailure) {
+            automaticFailure = false
+            state = state.copy(error = null)
+        }
         openingGeneration++
+    }
+
+    fun setAutomaticUpdates(enabled: Boolean) {
+        preferences.edit().putBoolean("automaticUpdates", enabled).apply()
+        state = state.copy(automaticUpdates = enabled)
+        automaticPolicy.opened()
+        if (!enabled) deferAutomaticUpdate() else {
+            if (automaticFailure) { automaticFailure = false; state = state.copy(error = null) }
+            noticeSession.opened()
+            automaticNoticeVerified = false
+            openingGeneration++
+            checkForNotice()
+            maybeAutomaticUpdate()
+        }
+    }
+
+    fun updateAutomaticContext(eligible: Boolean) {
+        automaticEligible = eligible
+        if (!eligible) deferAutomaticUpdate() else maybeAutomaticUpdate()
+    }
+
+    private fun deferAutomaticUpdate() {
+        if (!automaticOperation || !state.busy) return
+        generation.incrementAndGet()
+        task?.cancel(true)
+        automaticOperation = false
+        automaticPolicy.defer()
+        if (state.checking) {
+            noticeSession.opened()
+            openingGeneration++
+        }
+        state = state.copy(busy = false, checking = false, progress = null, error = null,
+            message = "自动更新已暂停，可手动下载")
+    }
+
+    private fun maybeAutomaticUpdate() {
+        if (closed || noticeSession.shouldCheck(notice, System.currentTimeMillis())) return
+        when (automaticPolicy.next(state.automaticUpdates, automaticEligible, state.installedCode,
+            state.knownVersionCode, state.release?.versionCode,
+            state.busy || checkingNotice || installRequest != null, state.ready, state.error != null,
+            automaticNoticeVerified)) {
+            // A newer publication invalidates the metadata reused by the manual check window.
+            AutomaticUpdatePolicy.Action.Check -> startCheck(force = true, automatic = true)
+            AutomaticUpdatePolicy.Action.Download -> startDownload(automatic = true)
+            AutomaticUpdatePolicy.Action.None -> Unit
+        }
     }
 
     fun nextNoticeDelay(): Long = maxOf(noticeSession.nextDelay(notice, System.currentTimeMillis()),
@@ -109,13 +167,18 @@ internal class AppUpdateController(private val app: Application) {
                 // A user request started meanwhile owns the state. Never replace its progress or result.
                 if (closed || id != generation.get() || state.busy) return@post
                 result.fold(onSuccess = { code ->
+                    automaticNoticeVerified = true
                     checkPolicy.succeeded()
                     saveNotice(notice.checked(code, System.currentTimeMillis()))
                     android.util.Log.i("BYBUSUpdate", "Notice checked: $code")
                     state = state.withPublishedVersion(code)
                     if (!state.ready) readyFile = null
-                }, onFailure = { if (it is Exception) checkPolicy.failed(it) })
+                }, onFailure = {
+                    automaticNoticeVerified = false
+                    if (it is Exception) checkPolicy.failed(it)
+                })
                 if (installRequested && state.ready) install()
+                else maybeAutomaticUpdate()
             }
         }
     }
@@ -126,7 +189,9 @@ internal class AppUpdateController(private val app: Application) {
             .putLong("noticeAttemptedAt", value.attemptedAt).apply()
     }
 
-    fun check(force: Boolean = false) {
+    fun check(force: Boolean = false) = startCheck(force, automatic = false)
+
+    private fun startCheck(force: Boolean, automatic: Boolean) {
         if (closed || state.busy) return
         when (checkPolicy.beforeCheck(force)) {
             UpdateCheckDecision.Cached -> if (state.release != null) return
@@ -138,6 +203,9 @@ internal class AppUpdateController(private val app: Application) {
         noticeSession.attempted()
         saveNotice(notice.attempted(System.currentTimeMillis()))
         val id = generation.incrementAndGet()
+        automaticOperation = automatic
+        automaticFailure = false
+        automaticNoticeVerified = false
         state = state.copy(busy = true, checking = true, ready = false, progress = null, message = "正在检查版本", error = null, retryAtElapsed = null)
         task = worker.submit {
             try {
@@ -149,11 +217,15 @@ internal class AppUpdateController(private val app: Application) {
                 val delta = if (release.newerThan(installed) && reuse == null)
                     repository.selectDelta(release, installed, File(app.applicationInfo.sourceDir)) else null
                 publish(id) {
+                    automaticNoticeVerified = true
                     checkPolicy.succeeded()
                     saveNotice(notice.checked(release.versionCode, System.currentTimeMillis()))
                     state = AppUpdateState(installed, checked = true, release = release, delta = delta, reuse = reuse,
                         knownVersionCode = notice.versionCode, downloadPlanned = true,
+                        automaticUpdates = state.automaticUpdates,
                         message = if (release.newerThan(installed)) "有新版本可用" else "已是最新版本")
+                    automaticOperation = false
+                    maybeAutomaticUpdate()
                 }
             } catch (error: Exception) {
                 publish(id) { failed(error) }
@@ -161,7 +233,9 @@ internal class AppUpdateController(private val app: Application) {
         }
     }
 
-    fun download() {
+    fun download() = startDownload(automatic = false)
+
+    private fun startDownload(automatic: Boolean) {
         val release = state.release ?: return
         if (closed || state.busy || !release.newerThan(state.installedCode)) return
         if (checkPolicy.beforeCheck(force = true) == UpdateCheckDecision.Wait) { showServerWait(); return }
@@ -170,6 +244,8 @@ internal class AppUpdateController(private val app: Application) {
             return
         }
         val id = generation.incrementAndGet()
+        automaticOperation = automatic
+        automaticFailure = false
         val planned = state.downloadPlanned
         val installedCode = state.installedCode
         val selectedDelta = state.delta
@@ -187,7 +263,11 @@ internal class AppUpdateController(private val app: Application) {
                 }
                 publish(id) { state = state.copy(progress = null, message = "正在校验安装包") }
                 AppUpdatePackage.verify(app, file, release)
-                publish(id) { readyFile = file; state = state.copy(busy = false, ready = true, message = "已准备好安装") }
+                publish(id) {
+                    automaticOperation = false
+                    readyFile = file
+                    state = state.copy(busy = false, ready = true, message = "已下载，等待安装")
+                }
             } catch (error: Exception) { publish(id) { failed(error) } }
         }
     }
@@ -232,6 +312,8 @@ internal class AppUpdateController(private val app: Application) {
         state = state.copy(message = "允许安装后，返回此页点击「安装更新」")
     }
     fun cancel() {
+        automaticPolicy.pause()
+        automaticOperation = false
         installAfterNotice = false
         generation.incrementAndGet()
         task?.cancel(true)
@@ -241,6 +323,8 @@ internal class AppUpdateController(private val app: Application) {
         main.post { if (!closed && id == generation.get()) action() }
     }
     private fun failed(error: Exception) {
+        automaticFailure = automaticOperation
+        automaticOperation = false
         if (error is java.util.concurrent.CancellationException) {
             state = state.copy(busy = false, checking = false, progress = null, message = "已取消，可重试", error = null)
             return

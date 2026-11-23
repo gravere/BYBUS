@@ -25,8 +25,9 @@ Object left_list{&list_class},right_list{&list_class},new_list{&list_class};
 void *data_instance=&data,*game_instance=&game;
 Object *left_table=&left;
 bool remote_loaded=false,custom=false,main_thread=true,g_live_resources=true;
-bool throws=false,populates=true,replaces=false;
+bool throws=false,populates=true,replaces=false,placeholder=false;
 int32_t language=20;
+Object placeholder_model{&other_class};
 int loads=0,translated=0,retry_events=0;
 std::unordered_map<int32_t,const char *> g_language_codes{{10,"jp"},{20,"en"},{30,"kr"}};
 bool is_unity_main_thread() { return main_thread; }
@@ -81,7 +82,7 @@ void *invoke(const void *m,void *p,void **args,void **exception) {
 void *get_ref(void *p,void *key,const void *method) {
     assert(key==&key_identity&&method==&method_identity);
     if (p==&replacement) return new_list.count?&model:nullptr;
-    if (p==&left) return left_list.count?&model:nullptr;
+    if (p==&left) return left_list.count?&model:placeholder?&placeholder_model:nullptr;
     if (p==&right) return right_list.count?&model:nullptr;
     return nullptr;
 }
@@ -93,7 +94,7 @@ void reset() {
     g_startup_localization_attempts.take(&data,0,&previous);
     left_list.count=right_list.count=new_list.count=0;
     left_table=&left; data_instance=&data; game_instance=&game;
-    remote_loaded=custom=throws=replaces=false;
+    remote_loaded=custom=throws=replaces=placeholder=false;
     populates=main_thread=g_live_resources=true;
     language=20; loads=retry_events=0;
 }
@@ -115,6 +116,12 @@ int main() {
         assert(query()==&model&&loads==1);
     }
     reset();replaces=true;assert(query()==&model&&left_table==&replacement&&loads==1);
+    reset();assert(retry_empty_startup_table(nullptr)==&left&&loads==1);
+    assert(query()==&model&&loads==1);
+    reset();right_list.count=1;assert(!retry_empty_startup_table(nullptr)&&loads==0);
+    reset();placeholder=true;assert(query()==&model&&loads==1);
+    reset();placeholder=true;populates=false;assert(query()==&placeholder_model&&loads==1);
+    assert(query()==&placeholder_model&&loads==1);
     reset();assert(replacement_table_int<0>(&left,27,&method_identity)==&model&&loads==1);
     reset();throws=true;assert(!query()&&loads==1);assert(!query()&&loads==1);
     reset();populates=false;assert(!query()&&loads==1);assert(!query()&&loads==1);

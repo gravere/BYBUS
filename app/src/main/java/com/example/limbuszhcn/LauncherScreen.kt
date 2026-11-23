@@ -61,7 +61,8 @@ internal fun LauncherScreen(
     homeProjectSourceId: String? = null,
     onHomeProjectSource: (String?) -> Unit = {},
     onDismissAiCancellation: () -> Unit = {},
-    onConfirmAiCancellation: () -> Unit = {}
+    onConfirmAiCancellation: () -> Unit = {},
+    onAutomaticAppUpdates: (Boolean) -> Unit = {}
 ) {
     var sheet by rememberSaveable { mutableStateOf<String?>(null) }
     var parentSheets by rememberSaveable { mutableStateOf(emptyList<String>()) }
@@ -227,7 +228,7 @@ internal fun LauncherScreen(
                         GameUpdatesPane(state, onCheckGameUpdate, onSelectGameSource, onOpenGamePage,
                             onOpenInstallSource, onImportGame, onInstallGame, onCancelGameInstall)
                     } else if (active == "app-update") {
-                        AppUpdatesPane(appUpdateState, onCheckAppUpdate, onOpenAppRelease)
+                        AppUpdatesPane(appUpdateState, onCheckAppUpdate, onOpenAppRelease, onAutomaticAppUpdates)
                     } else if (active == "translation") {
                         TranslationSourcesPane(state, translationActions, onProject = { openChild("project") }, onCoverage = ::openCoverage,
                             onBaseUpdate = { id -> translationActions.inspectBaseUpdate(id); openChild("ai-base-update") }) {

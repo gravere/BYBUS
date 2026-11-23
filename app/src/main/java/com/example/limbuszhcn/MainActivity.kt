@@ -110,6 +110,19 @@ class MainActivity : ComponentActivity() {
             }
             val resumed = rememberLifecycleAtLeast(lifecycle, androidx.lifecycle.Lifecycle.State.RESUMED)
             val visible = rememberLifecycleAtLeast(lifecycle, androidx.lifecycle.Lifecycle.State.STARTED)
+            val unmeteredNetwork = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+            androidx.compose.runtime.DisposableEffect(appUpdater) {
+                var observing = true
+                val network = com.example.limbuszhcn.selfupdate.AutomaticUpdateNetwork(this@MainActivity) { allowed ->
+                    runOnUiThread { if (observing) unmeteredNetwork.value = allowed }
+                }
+                onDispose { observing = false; network.close(); appUpdater.updateAutomaticContext(false) }
+            }
+            androidx.compose.runtime.LaunchedEffect(resumed.value, unmeteredNetwork.value, state.busy,
+                state.ai.running, state.canResumeGame, state.container, state.gameInstallPending) {
+                appUpdater.updateAutomaticContext(resumed.value && unmeteredNetwork.value && !state.busy &&
+                    !state.ai.running && !state.canResumeGame && state.container != null && !state.gameInstallPending)
+            }
             val askingNotification = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
             val taskNotificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { askingNotification.value = false }
             androidx.compose.runtime.LaunchedEffect(state.ai.running, resumed.value, askingNotification.value) {
@@ -188,6 +201,7 @@ class MainActivity : ComponentActivity() {
                     onCheckAppUpdate = { appUpdater.check(force = true) },
                     onDownloadAppUpdate = appUpdater::download,
                     onCancelAppUpdate = appUpdater::cancel,
+                    onAutomaticAppUpdates = appUpdater::setAutomaticUpdates,
                     onInstallAppUpdate = {
                         if (!packageManager.canRequestPackageInstalls()) {
                             appUpdater.installationPermissionNeeded()

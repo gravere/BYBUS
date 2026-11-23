@@ -1,6 +1,7 @@
 package com.example.limbuszhcn
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -11,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import com.example.limbuszhcn.selfupdate.AppUpdateState
@@ -22,7 +24,8 @@ import kotlinx.coroutines.delay
 import com.example.limbuszhcn.ui.theme.LauncherColors as C
 
 @Composable
-internal fun AppUpdatesPane(state: AppUpdateState, onCheck: () -> Unit, onOpenPage: () -> Unit) {
+internal fun AppUpdatesPane(state: AppUpdateState, onCheck: () -> Unit, onOpenPage: () -> Unit,
+    onAutomaticUpdates: (Boolean) -> Unit = {}) {
     val release = state.release
     val available = release?.newerThan(state.installedCode) == true
     val retryAt = state.retryAtElapsed
@@ -38,6 +41,18 @@ internal fun AppUpdatesPane(state: AppUpdateState, onCheck: () -> Unit, onOpenPa
             ActionIconButton(Glyph.Refresh, "检查应用更新", onCheck,
                 enabled = !state.busy && retryRemaining == 0L, busy = state.busy && state.checking)
             ActionIconButton(Glyph.External, "GitHub 发行页面", onOpenPage)
+        }
+        Surface(color = C.AccentSoft.copy(alpha = .45f), shape = RoundedCornerShape(20.dp)) {
+            Row(Modifier.fillMaxWidth().toggleable(state.automaticUpdates, role = Role.Switch,
+                onValueChange = onAutomaticUpdates).padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("自动更新", style = MaterialTheme.typography.bodyLarge)
+                    Text("空闲时通过非计费网络下载，安装前仍需确认", color = C.Muted,
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                Switch(checked = state.automaticUpdates, onCheckedChange = null)
+            }
         }
         if (available) {
             Surface(color = C.AccentSoft, contentColor = C.OnAccentSoft, shape = RoundedCornerShape(20.dp)) {
