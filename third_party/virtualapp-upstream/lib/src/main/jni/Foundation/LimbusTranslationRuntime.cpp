@@ -6,6 +6,7 @@
 #error "Localization scopes require C++ exception cleanup across game calls"
 #endif
 #include "LimbusFontProof.h"
+#include "LimbusTermTrie.h"
 #include "LimbusFlowTextProof.h"
 #include "LimbusManagedState.h"
 #include "LimbusFontMaterials.h"
@@ -146,12 +147,7 @@ std::atomic<uint64_t> g_contextual_hits{0};
 // 推导出的原始分行，让运行时兼容不同页面，而无需硬编码任何人格名称或译文。
 std::unordered_map<std::string, std::string> g_package_line_breaks;
 limbus_font_proof::Catalogue g_font_catalogue;
-struct TermTrieNode {
-    std::unordered_map<unsigned char, size_t> children;
-    const std::string *source = nullptr;
-    const std::string *translation = nullptr;
-};
-std::vector<TermTrieNode> g_term_trie;
+limbus_terms::Trie g_term_trie;
 std::unordered_map<std::string, std::string> g_model_fields;
 bool g_configured = false;
 bool g_resolver_reported = false;
@@ -529,7 +525,8 @@ void *new_managed_string(const std::string &value) {
 
 void rebuild_term_trie() {
     g_term_trie.clear();
-    g_term_trie.emplace_back();
+    std::vector<limbus_terms::Trie::Value> values;
+    values.reserve(g_terms.size());
     for (const auto &entry : g_terms) {
         if (!is_usable_display_text(entry.first) ||
             !is_usable_display_text(entry.second) ||
@@ -537,21 +534,9 @@ void rebuild_term_trie() {
             entry.first == entry.second) {
             continue;
         }
-        size_t node = 0;
-        for (unsigned char byte : entry.first) {
-            auto child = g_term_trie[node].children.find(byte);
-            if (child == g_term_trie[node].children.end()) {
-                size_t next = g_term_trie.size();
-                g_term_trie[node].children[byte] = next;
-                g_term_trie.emplace_back();
-                node = next;
-            } else {
-                node = child->second;
-            }
-        }
-        g_term_trie[node].source = &entry.first;
-        g_term_trie[node].translation = &entry.second;
+        values.emplace_back(&entry.first, &entry.second);
     }
+    if (!g_term_trie.build(std::move(values))) LT_LOGW("Unable to build bounded term index");
 }
 
 bool translate_embedded_terms(const std::string &source, std::string *output) {
@@ -569,18 +554,18 @@ bool translate_embedded_terms(const std::string &source, std::string *output) {
             offset = tag_end;
             continue;
         }
-        size_t node = 0;
+        uint32_t node = 0;
         size_t best_end = offset;
         const std::string *best_source = nullptr;
         const std::string *best = nullptr;
         for (size_t cursor = offset; cursor < source.size(); ++cursor) {
             unsigned char byte = static_cast<unsigned char>(source[cursor]);
-            auto child = g_term_trie[node].children.find(byte);
-            if (child == g_term_trie[node].children.end()) break;
-            node = child->second;
-            if (g_term_trie[node].translation != nullptr) {
-                best_source = g_term_trie[node].source;
-                best = g_term_trie[node].translation;
+            const uint32_t child = g_term_trie.child(node, byte);
+            if (child == limbus_terms::Trie::missing) break;
+            node = child;
+            if (const auto *value = g_term_trie.value(node)) {
+                best_source = value->source;
+                best = value->translation;
                 best_end = cursor + 1;
             }
         }
@@ -3877,7 +3862,8 @@ bool read_string(FILE *file, std::string *value) {
 }
 
 void rebuild_package_line_break_index(
-        const std::unordered_map<std::string, std::string> &translations) {
+        const std::unordered_map<std::string, std::string> &translations,
+        const std::unordered_set<std::string> *identity_labels = nullptr) {
     g_package_line_breaks.clear();
     std::unordered_set<std::string> ambiguous;
     const auto register_variant = [&ambiguous](const std::string &variant,
@@ -3892,15 +3878,21 @@ void rebuild_package_line_break_index(
             ambiguous.insert(variant);
         }
     };
-    for (const auto &entry : translations) {
-        const std::string &translation = entry.second;
-        if (translation.find('\n') == std::string::npos) continue;
+    const auto register_translation = [&register_variant](const std::string &translation) {
+        if (translation.find('\n') == std::string::npos) return;
         std::string spaced = translation;
         std::replace(spaced.begin(), spaced.end(), '\n', ' ');
         register_variant(spaced, translation);
         std::string compact = translation;
         compact.erase(std::remove(compact.begin(), compact.end(), '\n'), compact.end());
         register_variant(compact, translation);
+    };
+    if (identity_labels) for (const auto &label : *identity_labels) register_translation(label);
+    for (const auto &entry : translations) {
+        // The previous merged map inserted identity labels first. Preserve that
+        // key precedence and one shared ambiguity set without copying the map.
+        if (!identity_labels || identity_labels->count(entry.first) == 0)
+            register_translation(entry.second);
     }
 }
 
@@ -4062,17 +4054,19 @@ bool load_live_font_catalogue() {
     uint32_t count = 0;
     bool valid = read_exact(file, magic, sizeof(magic)) && memcmp(magic, expected, sizeof(magic)) == 0 &&
             read_u32(file, &count) && count <= kMaxEntries;
-    std::unordered_map<std::string, std::string> labels;
+    std::unordered_set<std::string> labels;
+    if (valid) labels.reserve(count);
     size_t bytes = 0;
     for (uint32_t n = 0; valid && n < count; ++n) {
         std::string text;
         valid = read_string(file, &text) && is_usable_display_text(text) && !text.empty() &&
                 (bytes += text.size()) <= 64u * 1024u * 1024u;
-        if (valid) labels.emplace(text, text);
+        if (valid) labels.emplace(std::move(text));
     }
     uint32_t model_count = 0;
     std::unordered_map<std::string, std::string> models;
     valid = valid && labels.size() == count && read_u32(file, &model_count) && model_count <= kMaxEntries;
+    if (valid) models.reserve(model_count);
     for (uint32_t n = 0; valid && n < model_count; ++n) {
         std::string key, value;
         valid = read_string(file, &key) && read_string(file, &value);
@@ -4088,9 +4082,8 @@ bool load_live_font_catalogue() {
     fclose(file);
     if (!valid) return false;
     g_model_fields = std::move(models);
-    for (const auto &entry : labels) g_font_catalogue.add(entry.second);
-    labels.insert(g_index.begin(), g_index.end());
-    rebuild_package_line_break_index(labels);
+    for (const auto &label : labels) g_font_catalogue.add(label);
+    rebuild_package_line_break_index(g_index, &labels);
     LT_LOGI("Prepared live resource font catalogue labels=%u models=%u", count, model_count);
     return true;
 }

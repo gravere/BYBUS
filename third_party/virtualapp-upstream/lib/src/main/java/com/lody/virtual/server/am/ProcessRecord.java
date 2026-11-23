@@ -9,6 +9,7 @@ import android.text.TextUtils;
 
 import com.lody.virtual.client.IVClient;
 import com.lody.virtual.client.stub.StubManifest;
+import com.lody.virtual.helper.compat.ContainerRuntimeEvent;
 import com.lody.virtual.os.VUserHandle;
 import com.lody.virtual.remote.ClientConfig;
 import com.lody.virtual.server.bit64.V64BitHelper;
@@ -81,8 +82,12 @@ final class ProcessRecord extends Binder {
     }
 
     public void kill() {
+        kill(ContainerRuntimeEvent.GAME_STOP_REQUESTED);
+    }
+
+    public void kill(ContainerRuntimeEvent reason) {
         if(pid > 0) {
-            VActivityManagerService.get().beforeProcessKilled(this);
+            VActivityManagerService.get().beforeProcessKilled(this, reason);
             if (is64bit) {
                 V64BitHelper.forceStop64(pid);
             } else {

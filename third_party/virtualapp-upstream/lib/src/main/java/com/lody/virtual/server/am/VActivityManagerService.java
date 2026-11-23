@@ -635,7 +635,7 @@ public class VActivityManagerService extends IActivityManager.Stub {
     private void runProcessGC() {
         if (VActivityManagerService.get().getFreeStubCount() < 3) {
             // run GC
-            killAllApps();
+            killAllApps(com.lody.virtual.helper.compat.ContainerRuntimeEvent.GAME_STOP_CAPACITY);
         }
     }
 
@@ -830,6 +830,10 @@ public class VActivityManagerService extends IActivityManager.Stub {
 
     @Override
     public void killAllApps() {
+        killAllApps(com.lody.virtual.helper.compat.ContainerRuntimeEvent.GAME_STOP_ALL);
+    }
+
+    private void killAllApps(com.lody.virtual.helper.compat.ContainerRuntimeEvent reason) {
         synchronized (mProcessLock) {
             for (int i = 0; i < mPidsSelfLocked.size(); i++) {
                 ProcessRecord r = mPidsSelfLocked.get(i);
@@ -850,7 +854,7 @@ public class VActivityManagerService extends IActivityManager.Stub {
                 r.client.clearSettingProvider();
                 finishAllActivity(r);
                 */
-                r.kill();
+                r.kill(reason);
                 if(CANCEL_ALL_NOTIFICATION_BY_KILL_APP){
                     VNotificationManagerService.get().cancelAllNotification(r.getPackageName(), -1);
                 }
@@ -877,6 +881,8 @@ public class VActivityManagerService extends IActivityManager.Stub {
                             }
                         }
                         if (r.pkgList.contains(pkg) || r.info.packageName.equals(pkg)) {
+                            if ("com.ProjectMoon.LimbusCompany".equals(r.info.packageName))
+                                com.lody.virtual.helper.compat.ContainerRuntimeEvent.GAME_FINISH_PACKAGE.record(r.pid);
                             //xdja
                             try {
                                 Log.e("wxd", " killAppByPkg  " + r.processName + r.pkgList.toString());
@@ -899,7 +905,7 @@ public class VActivityManagerService extends IActivityManager.Stub {
                                             // The client or its OS PID may have been replaced during the grace period.
                                             if (mProcessNames.get(r.processName, r.vuid) != r || r.client == null
                                                     || !r.client.asBinder().isBinderAlive()) return;
-                                            r.kill();
+                                            r.kill(com.lody.virtual.helper.compat.ContainerRuntimeEvent.GAME_STOP_PACKAGE);
                                             if (CANCEL_ALL_NOTIFICATION_BY_KILL_APP) {
                                                 VNotificationManagerService.get().cancelAllNotification(pkg, userId);
                                             }
@@ -981,11 +987,7 @@ public class VActivityManagerService extends IActivityManager.Stub {
         synchronized (mProcessLock) {
             ProcessRecord r = mProcessNames.get(processName, uid);
             if (r != null) {
-                if (r.is64bit) {
-                    V64BitHelper.forceStop64(r.pid);
-                } else {
-                    r.kill();
-                }
+                r.kill(com.lody.virtual.helper.compat.ContainerRuntimeEvent.GAME_STOP_DIRECT);
             }
         }
     }
@@ -1208,8 +1210,10 @@ public class VActivityManagerService extends IActivityManager.Stub {
     }
 
 
-    public void beforeProcessKilled(ProcessRecord processRecord) {
+    public void beforeProcessKilled(ProcessRecord processRecord,
+                                   com.lody.virtual.helper.compat.ContainerRuntimeEvent reason) {
         if ("com.ProjectMoon.LimbusCompany".equals(processRecord.getPackageName())) {
+            reason.record(processRecord.pid);
             Log.i("LimbusVA", "Container requested game process stop pid=" + processRecord.pid);
         }
     }

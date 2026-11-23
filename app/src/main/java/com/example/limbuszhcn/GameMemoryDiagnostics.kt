@@ -1,0 +1,97 @@
+package com.example.limbuszhcn
+
+import android.app.ActivityManager
+import android.app.Application
+import android.content.ComponentCallbacks2
+import android.content.Context
+import android.content.res.Configuration
+import android.os.Build
+import android.os.Debug
+import android.os.Process
+import android.os.SystemClock
+import java.io.File
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+
+/** Numeric, own-process observations only. No foreground service or wake lock. */
+internal object GameMemoryDiagnostics {
+    private var started = false
+
+    @Synchronized
+    fun start(context: Context, guest: Application) {
+        if (started) return
+        val since = SystemClock.elapsedRealtime()
+        val executor = Executors.newSingleThreadScheduledExecutor { task ->
+            Thread({
+                Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+                task.run()
+            }, "bybus-memory").apply { isDaemon = true }
+        }
+        val pendingTrim = AtomicBoolean()
+        val trimLevel = AtomicInteger()
+        fun sample(cause: String) {
+            runCatching {
+                PersistentDiagnosticLog.info("GameMemory",
+                    "cause=$cause ageMs=${SystemClock.elapsedRealtime() - since} ${snapshot(context)}")
+            } // Diagnostic failures must not end the task or affect the game.
+        }
+        val callbacks = object : ComponentCallbacks2 {
+            override fun onConfigurationChanged(newConfig: Configuration) = Unit
+            override fun onLowMemory() = onTrimMemory(-1)
+            override fun onTrimMemory(level: Int) {
+                trimLevel.set(level)
+                if (!pendingTrim.compareAndSet(false, true)) return
+                runCatching {
+                    executor.execute {
+                        try { sample("trim_${trimLevel.get()}") }
+                        finally { pendingTrim.set(false) }
+                    }
+                }.onFailure { pendingTrim.set(false) }
+            }
+        }
+        try {
+            guest.registerComponentCallbacks(callbacks)
+            executor.scheduleWithFixedDelay({ sample("periodic") }, 0, 30, TimeUnit.SECONDS)
+            started = true
+        } catch (_: RuntimeException) {
+            guest.unregisterComponentCallbacks(callbacks)
+            executor.shutdownNow()
+        }
+    }
+
+    internal fun snapshot(context: Context): String {
+        val memory = Debug.MemoryInfo()
+        Debug.getMemoryInfo(memory)
+        val runtime = Runtime.getRuntime()
+        val importance = ActivityManager.RunningAppProcessInfo().also(ActivityManager::getMyMemoryState).importance
+        return "pid=${Process.myPid()} importance=$importance pssKb=${memory.totalPss} " +
+            "privateDirtyKb=${memory.totalPrivateDirty} rssKb=${rssKb()} " +
+            "nativeAllocatedBytes=${Debug.getNativeHeapAllocatedSize()} " +
+            "javaUsedBytes=${runtime.totalMemory() - runtime.freeMemory()} javaLimitBytes=${runtime.maxMemory()} " +
+            systemSnapshot(context)
+    }
+
+    internal fun systemSnapshot(context: Context): String = runCatching {
+        val manager = context.getSystemService(ActivityManager::class.java)
+        val memory = ActivityManager.MemoryInfo().also(manager::getMemoryInfo)
+        val reports = if (Build.VERSION.SDK_INT >= 30) ActivityManager.isLowMemoryKillReportSupported().toString()
+            else "unavailable"
+        "systemTotalBytes=${memory.totalMem} systemAvailableBytes=${memory.availMem} " +
+            "systemThresholdBytes=${memory.threshold} systemLowMemory=${memory.lowMemory} lowMemoryKillReportSupported=$reports"
+    }.getOrDefault("systemMemory=unavailable")
+
+    private fun rssKb(): Long = runCatching {
+        File("/proc/self/status").bufferedReader().use { reader ->
+            repeat(128) {
+                val line = reader.readLine() ?: return@use -1L
+                if (line.startsWith("VmRSS:")) {
+                    return@use line.removePrefix("VmRSS:").trim().substringBefore(' ')
+                        .toLongOrNull()?.takeIf { it >= 0 } ?: -1L
+                }
+            }
+            -1L
+        }
+    }.getOrDefault(-1L)
+}

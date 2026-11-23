@@ -14,6 +14,7 @@ output.mkdir(parents=True, exist_ok=True)
 (output / "runtime-translation-under-test.inc").write_text("\n\n".join(pieces), encoding="utf-8")
 catalogue = []
 for signature in ("bool utf8_to_utf16(", "bool is_usable_display_text(", "bool is_display_string_field(",
+                  "void rebuild_package_line_break_index(",
                   "bool read_exact(", "bool read_u32(", "bool read_string(", "bool load_live_font_catalogue("):
     start = source.index(signature)
     end = source.index("\n}", start) + 2
@@ -94,7 +95,7 @@ end = source.index("\nthread_local bool g_startup_localization_recovering", star
 start = source.index("template<size_t Slot>\nvoid replacement_localization_load(")
 end = source.index("\ntypedef void *(*acquisition1_fn)", start)
 (output / "runtime-loading-boundaries-under-test.inc").write_text(source[start:end], encoding="utf-8")
-start = source.index("struct TermTrieNode {")
+start = source.index("limbus_terms::Trie g_term_trie;")
 end = source.index("\nbool g_configured", start)
 pieces = [source[start:end]]
 for signature in ("bool contains_japanese_kana(", "void rebuild_term_trie(", "bool translate_embedded_terms("):

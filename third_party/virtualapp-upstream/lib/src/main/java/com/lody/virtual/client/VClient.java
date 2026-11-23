@@ -883,6 +883,10 @@ public final class VClient extends IVClient.Stub {
         });
         Log.i("LimbusVA", "VClient.bindApplication after register lifecycle");
         VirtualCore.get().getAppCallback().afterApplicationCreate(packageName, processName, mInitialApplication);
+        if (LIMBUS_PACKAGE_NAME.equals(packageName) && LIMBUS_PACKAGE_NAME.equals(processName)) {
+            try { VirtualCore.getConfig().onLimbusApplicationCreated(mInitialApplication); }
+            catch (RuntimeException ignored) { /* Diagnostics cannot affect application startup. */ }
+        }
         Log.i("LimbusVA", "VClient.bindApplication after afterApplicationCreate");
         VActivityManager.get().appDoneExecuting(info.packageName);
         Log.i("LimbusVA", "VClient.bindApplication done package=" + packageName + " process=" + processName);

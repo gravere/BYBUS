@@ -147,6 +147,7 @@ internal class DebugLogExporter(private val context: Context) {
             appendLine("compatibilityWarnings=${compatibility.warnings.joinToString("|")}")
             appendLine("runtimeMaxBytes=${runtime.maxMemory()}")
             appendLine("runtimeFreeBytes=${runtime.freeMemory()}")
+            GameMemoryDiagnostics.systemSnapshot(context).split(' ').forEach { appendLine(it) }
             appendLine("appStorageFreeBytes=${files.freeSpace}")
             appendLine("translationSource=GitHub Releases")
             appendLine("containerAvailable=${containerStatus.available}")
@@ -199,7 +200,7 @@ internal class DebugLogExporter(private val context: Context) {
             // Upstream Google components may log billing arguments. Export only our metadata
             // and crash tags; regex redaction alone cannot safely strip arbitrary receipts.
             "LimbusZhCNApp:I", "LimbusLauncher:I", "LimbusContainer:I", "LimbusVA:I",
-            "LimbusZhCN:I", "LimbusSIG:I", "NativeEngine:I", "AndroidRuntime:E", "libc:F", "*:S"
+            "LimbusZhCN:I", "LimbusSIG:I", "GameMemory:I", "NativeEngine:I", "AndroidRuntime:E", "libc:F", "*:S"
         )
         return runCatching {
             val process = ProcessBuilder(command).redirectErrorStream(true).start()

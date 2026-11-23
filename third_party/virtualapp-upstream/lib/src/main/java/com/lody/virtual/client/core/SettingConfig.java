@@ -26,6 +26,8 @@ import com.lody.virtual.helper.compat.NotificationChannelCompat;
 public abstract class SettingConfig {
     public void onContainerRuntimeEvent(com.lody.virtual.helper.compat.ContainerRuntimeEvent event, int value) { }
 
+    public void onLimbusApplicationCreated(android.app.Application application) { }
+
     public boolean prepareLimbusTranslationResources() { return false; }
 
     public String translateLimbusNotice(String language, String original) { return null; }

@@ -93,6 +93,10 @@ class LimbusZhCNApplication : Application() {
             PersistentDiagnosticLog.info("ContainerLifecycle", "stage=${event.name} value=$value")
         }
 
+        override fun onLimbusApplicationCreated(application: Application) {
+            GameMemoryDiagnostics.start(VirtualCore.get().context, application)
+        }
+
         override fun prepareLimbusTranslationResources(): Boolean {
             liveTranslation = com.example.limbuszhcn.container.LiveTranslationStore(
                 VirtualCore.get().context.filesDir.toPath().resolve("translation-cache")).open()

@@ -1,4 +1,5 @@
 #include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusManagedState.h"
+#include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusTermTrie.h"
 #include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusFontProof.h"
 #include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusTextProvenance.h"
 #include <atomic>
@@ -8,6 +9,7 @@
 #include <locale>
 #include <mutex>
 #include <unordered_set>
+#define LT_LOGW(...) ((void)0)
 
 struct FakeHandle { void *object; bool weak; };
 std::unordered_map<limbus_managed::Handle, FakeHandle> handles;
