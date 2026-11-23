@@ -5,12 +5,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MicrogUpgradePolicyTest {
-    private val target = MicrogPackageIdentity("com.google.android.gms", 252432034,
+    private val target = MicrogPackageIdentity("com.google.android.gms", 252432036,
         setOf(MicrogUpgradePolicy.CERTIFICATE))
 
     @Test fun installsMissingComponentAndUpgradesOlderSignedComponent() {
         assertTrue(MicrogUpgradePolicy.needsInstall(target, null))
-        assertTrue(MicrogUpgradePolicy.needsInstall(target, target.copy(versionCode = 250932030)))
+        assertTrue(MicrogUpgradePolicy.needsInstall(target, target.copy(versionCode = 252432034)))
     }
 
     @Test fun doesNotReinstallCurrentComponentOnEveryLaunch() {

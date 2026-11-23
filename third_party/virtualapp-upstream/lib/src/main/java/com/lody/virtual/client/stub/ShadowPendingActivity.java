@@ -12,7 +12,6 @@ import com.lody.virtual.client.core.VirtualCore;
 import com.lody.virtual.client.hook.delegate.AppInstrumentation;
 import com.lody.virtual.client.ipc.VActivityManager;
 import com.lody.virtual.helper.compat.BundleCompat;
-import com.lody.virtual.helper.compat.IntentCompat;
 import com.lody.virtual.helper.compat.LimbusActivityCompat;
 import com.lody.virtual.helper.compat.LimbusBillingUiPolicy;
 import com.lody.virtual.helper.compat.LimbusBillingDiagnostics;
@@ -124,15 +123,8 @@ public class ShadowPendingActivity extends Activity {
                 finish();
                 return;
             }
-            Intent fillIn = ext.fillIn;
-            if (fillIn != null) {
-                finalIntent.fillIn(fillIn, data.flags);
-            }
-            int flagsMask = ext.flagsMask;
-            int flagsValues = ext.flagsValues;
-            flagsMask &= ~IntentCompat.IMMUTABLE_FLAGS;
-            flagsValues &= flagsMask;
-            finalIntent.setFlags((finalIntent.getFlags() & ~flagsMask) | flagsValues);
+            // Forwarding through a server-side record must not make an immutable request mutable.
+            data.applyFillIn(finalIntent, ext);
             restoreLimbusGoogleOAuthClient(finalIntent);
             if (isGoogleIdentityUi(finalIntent)) {
                 Log.i("LimbusVA", "Dispatch filled Google Identity UI through VAMS ext=" + ext
@@ -170,6 +162,21 @@ public class ShadowPendingActivity extends Activity {
                     return;
                 }
                 pendingUi.finish(GOOGLE_IDENTITY_UI_REQUEST);
+            }
+            if (info != null && com.lody.virtual.helper.compat.MicrogAuthUiPolicy.isConsentTarget(
+                    data.creator, info.packageName, info.name)) {
+                String caller = ext.resultTo == null ? null
+                        : VActivityManager.get().getPackageForToken(ext.resultTo);
+                if (com.lody.virtual.helper.compat.MicrogAuthUiPolicy.canRelayConsent(
+                        caller, ext.resultTo != null, ext.requestCode)) {
+                    pendingUi.begin(PendingUiState.GOOGLE_CONSENT);
+                    if (startVirtualPendingUiForResult(finalIntent, info, data.userId, ext,
+                            PendingUiState.GOOGLE_CONSENT)) return;
+                    pendingUi.finish(PendingUiState.GOOGLE_CONSENT);
+                    setResult(RESULT_CANCELED);
+                    finish();
+                    return;
+                }
             }
             int res = VActivityManager.get().startActivity(finalIntent, info, ext.resultTo, ext.options, ext.resultWho, ext.requestCode, data.userId);
             if (res != 0 && ext.resultTo != null && ext.requestCode > 0) {
@@ -210,7 +217,7 @@ public class ShadowPendingActivity extends Activity {
             finish();
             return;
         }
-        if (requestCode == GOOGLE_IDENTITY_UI_REQUEST) {
+        if (requestCode == GOOGLE_IDENTITY_UI_REQUEST || requestCode == PendingUiState.GOOGLE_CONSENT) {
             Log.i("LimbusVA", "Relay Google Identity UI result resultCode=" + resultCode
                     + " dataPresent=" + (data != null));
             setResult(resultCode, data);
@@ -249,7 +256,7 @@ public class ShadowPendingActivity extends Activity {
                 return false;
             }
             IBinder token = mirror.android.app.Activity.mToken.get(this);
-            if (requestCode == BILLING_UI_REQUEST) {
+            if (requestCode == BILLING_UI_REQUEST || requestCode == PendingUiState.GOOGLE_CONSENT) {
                 intent = new Intent(intent);
                 intent.removeFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             }

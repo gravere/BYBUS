@@ -40,6 +40,13 @@ public class IntentSenderData implements Parcelable {
         return readPendingIntent(token);
     }
 
+    public void applyFillIn(Intent target, IntentSenderExtData ext) {
+        if ((flags & PendingIntent.FLAG_IMMUTABLE) != 0) return;
+        if (ext.fillIn != null) target.fillIn(ext.fillIn, flags);
+        int mask = ext.flagsMask & ~com.lody.virtual.helper.compat.IntentCompat.IMMUTABLE_FLAGS;
+        target.setFlags((target.getFlags() & ~mask) | (ext.flagsValues & mask));
+    }
+
     public void updateResult(Intent fillIn, IBinder resultTo, String resultWho, int requestCode,
                              Bundle options, int flagsMask, int flagsValues) {
         this.fillIn = fillIn;

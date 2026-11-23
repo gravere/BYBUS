@@ -97,8 +97,8 @@ with zipfile.ZipFile(apk) as archive:
         libraries.append({"path": item.filename, "load_alignment": segments, "compression": item.compress_type, "data_offset": data_offset})
     result['native_libraries'] = libraries
     expected_assets = {
-        'microG Services': (['assets/microg/com.google.android.gms-252432034.apk.part00','assets/microg/com.google.android.gms-252432034.apk.part01'], 'e5e6cba078bdec812b5450599350e5c1a12c8b7438da5bf77123af170f8c1a35'),
-        'microG Companion': (['assets/microg/com.android.vending-84022634.apk'], '9b8616011cc8f026bcbbe094df850794abb9d6d9f23214d7a8f8c4d1033ea012'),
+        'microG Services': (['assets/microg/com.google.android.gms-252432036.apk.part00','assets/microg/com.google.android.gms-252432036.apk.part01'], '1094fa60ace2367ac52bd08d1bd4f33fa8144ba930e355121b28234b8ebbf382'),
+        'microG Companion': (['assets/microg/com.android.vending-84022636.apk'], '3f1bde2f72bca746fbb53b61a32c2a85fcb026f886ee96d6fe9a05de9a6c6d5b'),
         'Chinese font': (['assets/runtime/ChineseFont.ttf.xz'], 'a56a06f1af27726bc5def015b61deecbbdf5ae6d954a91b1131d8a17290def35')
     }
     result['bundled_asset_hashes'] = {}

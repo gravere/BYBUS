@@ -130,7 +130,7 @@ internal class AppUpdateController(private val app: Application) {
             openingGeneration++
         }
         state = state.copy(busy = false, checking = false, progress = null, error = null,
-            message = "自动更新已暂停，可手动下载")
+            message = "自动下载已暂停，可手动下载")
     }
 
     private fun maybeAutomaticUpdate() {

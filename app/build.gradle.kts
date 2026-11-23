@@ -117,8 +117,8 @@ androidComponents.onVariants(androidComponents.selector().withBuildType("debug")
 }
 
 val verifyBundledGoogleAssets = tasks.register("verifyBundledGoogleAssets") {
-    val assets = listOf("com.google.android.gms-252432034.apk.part00",
-        "com.google.android.gms-252432034.apk.part01", "com.android.vending-84022634.apk")
+    val assets = listOf("com.google.android.gms-252432036.apk.part00",
+        "com.google.android.gms-252432036.apk.part01", "com.android.vending-84022636.apk")
         .map { layout.projectDirectory.file("src/main/assets/microg/$it").asFile }
     inputs.files(assets).optional()
     val marker = layout.buildDirectory.file("verified-microg.txt")
@@ -133,8 +133,8 @@ val verifyBundledGoogleAssets = tasks.register("verifyBundledGoogleAssets") {
             } }
             return sha.digest().joinToString("") { "%02x".format(it) }
         }
-        check(digest(assets.take(2)) == "e5e6cba078bdec812b5450599350e5c1a12c8b7438da5bf77123af170f8c1a35") { "microG Services changed; run fetch-build-assets.py" }
-        check(digest(assets.takeLast(1)) == "9b8616011cc8f026bcbbe094df850794abb9d6d9f23214d7a8f8c4d1033ea012") { "microG Companion changed; run fetch-build-assets.py" }
+        check(digest(assets.take(2)) == "1094fa60ace2367ac52bd08d1bd4f33fa8144ba930e355121b28234b8ebbf382") { "microG Services changed; run fetch-build-assets.py" }
+        check(digest(assets.takeLast(1)) == "3f1bde2f72bca746fbb53b61a32c2a85fcb026f886ee96d6fe9a05de9a6c6d5b") { "microG Companion changed; run fetch-build-assets.py" }
         marker.get().asFile.writeText("Verified pinned microG assets\n")
     }
 }

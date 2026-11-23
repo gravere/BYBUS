@@ -5,6 +5,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MicrogAuthUiPolicyTest {
+    @Test fun consentResultRequiresGoogleOwnedRequestAndParent() {
+        for (page in listOf("org.microg.gms.auth.AskPermissionActivity", "org.microg.gms.auth.AskPackageOverrideActivity")) {
+            assertTrue(P.isConsentTarget(P.GMS, P.GMS, page))
+            assertFalse(P.isConsentTarget(P.GAME, P.GMS, page))
+            assertFalse(P.isConsentTarget(P.GMS, P.GAME, page))
+        }
+        assertFalse(P.isConsentTarget(P.GMS, P.GMS, P.LOGIN))
+        assertTrue(P.canRelayConsent(P.GMS, true, 0))
+        assertFalse(P.canRelayConsent(P.GMS, true, -1))
+        assertFalse(P.canRelayConsent(P.GMS, false, 1))
+        assertFalse(P.canRelayConsent(P.GAME, true, 1))
+    }
     @Test fun finishingAnAddedAccountCannotRemoveItsParentGameTask() {
         assertEquals(0, P.finishTaskMode(P.GMS, P.LOGIN, false, 2))
         assertEquals(2, P.finishTaskMode(P.GMS, P.LOGIN, true, 2))

@@ -39,7 +39,7 @@ class AppUpdateAutomaticUiTest {
         assertEquals(1, changes)
         compose.onNodeWithContentDescription("检查应用更新").performClick()
         assertEquals(1, checks)
-        compose.onNodeWithText("自动更新").assertIsDisplayed()
+        compose.onNodeWithText("自动下载").assertIsDisplayed()
         if (android.os.Build.HARDWARE in setOf("ranchu", "goldfish")) {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             val file = File(context.getExternalFilesDir(null), "app-update.png")

@@ -6,7 +6,7 @@ import org.junit.Test
 
 class PendingUiStateTest {
     @Test fun recreationWaitsForEachExistingChildAndAcceptsItsResultOnce() {
-        listOf(PendingUiState.GOOGLE_IDENTITY, PendingUiState.BILLING).forEach { code ->
+        listOf(PendingUiState.GOOGLE_IDENTITY, PendingUiState.BILLING, PendingUiState.GOOGLE_CONSENT).forEach { code ->
             val original = PendingUiState().apply { begin(code) }
             val restored = PendingUiState().apply { restore(original.savedRequest()) }
             assertTrue(restored.waiting())

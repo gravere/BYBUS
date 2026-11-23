@@ -222,20 +222,13 @@ public final class AppInstrumentation extends InstrumentationDelegate implements
         com.lody.virtual.client.stub.GuestRuntimeService.bindForGame();
         super.callActivityOnCreate(activity, icicle);
         com.lody.virtual.helper.compat.MicrogActivityInsets.apply(activity);
-        exposeMicrogLoginWebViewIfBridgeStalls(activity);
+        prepareMicrogLoginWebView(activity);
     }
 
-    /**
-     * 为容器内 microG 登录页安装 WebView 可见性兜底。
-     *
-     * <p>microG 默认先隐藏登录 WebView，等待 Google 页面通过 {@code mm.showView()} 显示内容。
-     * 某些国产 WebView 在 VirtualApp 进程中会完成主文档加载，却不执行该桥接回调，界面因而永久停留在
-     * “正在建立连接”。这里等待五秒；只有 WebView 仍不可见时才显示它，不干扰正常的登录流程。
-     * 同时仅记录页面路径、加载状态和桥接对象是否存在，不采集账号、Cookie 或页面正文。</p>
-     *
-     * @param activity 已完成 {@code onCreate()} 的目标 Activity
+    /** Prepare network access without reloading, revealing, or modifying an active login page.
+     * microG owns WebView visibility and consent navigation; elapsed time is not a network error.
      */
-    private void exposeMicrogLoginWebViewIfBridgeStalls(Activity activity) {
+    private void prepareMicrogLoginWebView(Activity activity) {
         if (activity == null
                 || !GMS_PACKAGE.equals(VClient.get().getCurrentPackage())
                 || !MICROG_LOGIN_ACTIVITY.equals(activity.getClass().getName())) {
@@ -268,83 +261,7 @@ public final class AppInstrumentation extends InstrumentationDelegate implements
         // 调试开关只作用于宿主的 debug 构建，便于在仍失败时读取 WebView 网络错误。
         WebView.setWebContentsDebuggingEnabled((VirtualCore.get().getContext()
                 .getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0);
-        monitorMicrogLoginNavigation(loginWebView, settings, 180);
-    }
 
-    /**
-     * 等待用户确认登录并由 microG 真正发起 Google 页面导航。
-     *
-     * <p>确认页创建 WebView 时 URL 仍为空，WebView 也应保持隐藏。如果此时提前显示透明 WebView，
-     * 它会覆盖底部“登录”按钮并吞掉触摸。这里最多轮询三分钟；只有检测到 Google 登录 URL 后，
-     * 才等待页面正常桥接并执行错误恢复。</p>
-     *
-     * @param loginWebView microG 登录 WebView
-     * @param settings 登录 WebView 的设置对象
-     * @param remainingChecks 剩余的一秒轮询次数
-     */
-    private void monitorMicrogLoginNavigation(
-            WebView loginWebView,
-            WebSettings settings,
-            int remainingChecks) {
-        loginWebView.postDelayed(() -> {
-            if (!loginWebView.isAttachedToWindow() || remainingChecks <= 0) {
-                return;
-            }
-            String currentUrl = loginWebView.getUrl();
-            if (currentUrl == null
-                    || !currentUrl.startsWith("https://accounts.google.com/")) {
-                monitorMicrogLoginNavigation(loginWebView, settings, remainingChecks - 1);
-                return;
-            }
-
-            Log.i("LimbusVA", "Observed microG Google login navigation; scheduling bridge check");
-            loginWebView.postDelayed(
-                    () -> recoverMicrogLoginWebViewIfNeeded(loginWebView, settings),
-                    5000L);
-        }, 1000L);
-    }
-
-    /**
-     * 在 Google 页面开始导航后检查桥接状态，并恢复被错误设置为仅缓存的 WebView。
-     *
-     * @param loginWebView 已开始加载 Google URL 的 WebView
-     * @param settings 登录 WebView 的设置对象
-     */
-    private void recoverMicrogLoginWebViewIfNeeded(WebView loginWebView, WebSettings settings) {
-        if (!loginWebView.isAttachedToWindow()) {
-            return;
-        }
-        boolean bridgeStalled = loginWebView.getVisibility() != View.VISIBLE;
-        if (bridgeStalled) {
-            Log.w("LimbusVA", "microG login bridge did not reveal WebView; applying visibility fallback");
-            loginWebView.setVisibility(View.VISIBLE);
-        }
-        int delayedCacheMode = settings.getCacheMode();
-        boolean delayedBlockNetworkLoads = settings.getBlockNetworkLoads();
-        // 首次设置后厂商 WebView 仍可能在导航阶段恢复仅缓存标志；此处改用显式不读缓存模式。
-        settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
-        try {
-            settings.setBlockNetworkLoads(false);
-        } catch (SecurityException error) {
-            Log.w("LimbusVA", "Unable to restore delayed microG WebView network loads", error);
-        }
-        Log.i("LimbusVA", "Rechecked microG login WebView network settings delayedCacheMode="
-                + delayedCacheMode + " delayedBlockNetworkLoads=" + delayedBlockNetworkLoads
-                + " forcedCacheMode=" + settings.getCacheMode()
-                + " forcedBlockNetworkLoads=" + settings.getBlockNetworkLoads());
-
-        String currentUrl = loginWebView.getUrl();
-        if (bridgeStalled && currentUrl != null
-                && currentUrl.startsWith("https://accounts.google.com/")) {
-            // ERR_CACHE_MISS 发生时原始导航从未进入网络栈，重新 loadUrl 才能应用新的加载策略。
-            Log.i("LimbusVA", "Retrying microG login URL with cache bypass");
-            loginWebView.loadUrl(currentUrl);
-        }
-        loginWebView.evaluateJavascript(
-                "(function(){return JSON.stringify({readyState:document.readyState,"
-                        + "hasBridge:typeof window.mm!=='undefined',"
-                        + "bodyChildren:document.body?document.body.childElementCount:-1});})()",
-                value -> Log.i("LimbusVA", "microG login WebView state=" + value));
     }
 
     /**

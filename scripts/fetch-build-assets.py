@@ -3,14 +3,14 @@ from pathlib import Path
 from contextlib import ExitStack
 import argparse, hashlib, os, urllib.request, urllib.parse
 
-BASE = 'https://github.com/microg/GmsCore/releases/download/v0.3.17.252432/'
+BASE = 'https://github.com/microg/GmsCore/releases/download/v0.3.18.252432/'
 ASSETS = [
-    ('com.google.android.gms-252432034.apk', 108113833,
-     'e5e6cba078bdec812b5450599350e5c1a12c8b7438da5bf77123af170f8c1a35',
-     ['com.google.android.gms-252432034.apk.part00', 'com.google.android.gms-252432034.apk.part01']),
-    ('com.android.vending-84022634.apk', 4210169,
-     '9b8616011cc8f026bcbbe094df850794abb9d6d9f23214d7a8f8c4d1033ea012',
-     ['com.android.vending-84022634.apk']),
+    ('com.google.android.gms-252432036.apk', 108520063,
+     '1094fa60ace2367ac52bd08d1bd4f33fa8144ba930e355121b28234b8ebbf382',
+     ['com.google.android.gms-252432036.apk.part00', 'com.google.android.gms-252432036.apk.part01']),
+    ('com.android.vending-84022636.apk', 4212484,
+     '3f1bde2f72bca746fbb53b61a32c2a85fcb026f886ee96d6fe9a05de9a6c6d5b',
+     ['com.android.vending-84022636.apk']),
 ]
 PART = 64 * 1024 * 1024
 

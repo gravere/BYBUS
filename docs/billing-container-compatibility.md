@@ -1,5 +1,19 @@
 # 容器内计费兼容
 
+## Google 授权组件与页面恢复
+
+内置 Google 组件使用官方签名的 microG / Companion v0.3.18.252432 成对升级，保留账号、注册信息和用户设置。
+该版本修正额外授权中转页的主题及 Activity 回传；不能用自动开启全部权限或跳过用户授权代替修复。
+升级验证须覆盖需要额外授权、取消和返回，不能只验证设置页或登录入口能打开。
+
+授权 PendingIntent 的来源必须与容器记录的真实创建者一致。Android 新接口返回的创建者信息按同一 Binder token
+和虚拟用户核对，仅恢复容器内的逻辑包名；未知或来自其他应用的 PendingIntent 保留系统结果。
+同一授权请求的不可变属性、唯一标识和原始结果不得更改。
+
+Google 登录页加载慢或暂时隐藏不构成网络错误。页面恢复须依据明确的主文档网络错误及仍在当前页面的证据，
+不按固定五秒强制重载，不清除账号、Cookie 或设备注册。服务器拒绝身份验证时保留真实提示，
+不把设备已注册或组件检查通过表示为账号验证成功。
+
 ## 注册就绪与首次商品查询
 
 应用内购买开关、设备注册开关和服务器注册成功是三个不同状态。启用开关后，须显式启动容器内已安装的 `CheckinService`，由 microG 完成真实注册；不能把广播已发送或能力检查返回 0 当成付款准备完成。
@@ -90,7 +104,7 @@ Android 17 另将 Google 设置所属进程置于冻结状态，读取内核 `cg
 1. 将游戏计费保留在容器 microG Companion 内，取消对此业务的宿主 Play 强制转发。
    容器计费使用真实游戏包名，不把能力检查成功当作商店就绪。
 2. 优先采用 microG 正式签名的固定版本；校验官方资产哈希、证书、包名与版本，
-   不重签或修改 Google Play、microG 或游戏 APK。固定版本为 v0.3.17.252432，
+   不重签或修改 Google Play、microG 或游戏 APK。固定版本为 v0.3.18.252432，
    官方发布记录包含计费协议、回调、付款方式切换及安全修复。
 3. Google 组件以保留数据的升级处理；不通过卸载清空账号。升级前核对当前虚拟包
    的签名及版本，失败保留可恢复状态；游戏安装包、下载资源、存档不迁移或清理。
@@ -102,7 +116,7 @@ Android 17 另将 Google 设置所属进程置于冻结状态，读取内核 `cg
 
 ## 来源
 
-- [microG 固定版本及变更](https://github.com/microg/GmsCore/releases/tag/v0.3.17.252432)
+- [microG 固定版本及变更](https://github.com/microg/GmsCore/releases/tag/v0.3.18.252432)
 - [Android Binder 调用身份](https://developer.android.com/reference/android/os/Binder#getCallingUid())
 - [Google Play Billing 错误定义](https://developer.android.com/google/play/billing/errors)
 - [Android 16 的 PermissionEnforcer](https://github.com/aosp-mirror/platform_frameworks_base/blob/android16-release/core/java/android/os/PermissionEnforcer.java)

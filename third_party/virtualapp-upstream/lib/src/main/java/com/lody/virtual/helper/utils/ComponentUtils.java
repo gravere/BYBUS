@@ -227,11 +227,20 @@ public class ComponentUtils {
             newIntent.setClipData(intent.getClipData());
         }
         newIntent.addFlags(intent.getFlags() & IntentCompat.IMMUTABLE_FLAGS);
-        String originType = newIntent.getType();
-        ComponentName component = newIntent.getComponent();
+        String originType = intent.getType();
+        ComponentName component = intent.getComponent();
         String newType = originType != null ? originType + ":" + creator : creator;
         if (component != null) {
             newType = newType + ":" + component.flattenToString();
+        }
+        if (intent.getPackage() != null) {
+            newType += ":package=" + intent.getPackage();
+        }
+        newType += ":user=" + VUserHandle.myUserId();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // microG uses a unique identifier for each consent request. Extras do not
+            // participate in PendingIntent equality, so preserve filter identity here.
+            newIntent.setIdentifier(intent.getIdentifier());
         }
         if (intent.getAction() != null) {
             newIntent.setAction(intent.getAction());

@@ -548,8 +548,10 @@ class MethodProxies {
                 }
                 ComponentName pendingComponent = intent.getComponent();
                 if (type == ActivityManagerCompat.INTENT_SENDER_ACTIVITY && pendingComponent != null
-                        && com.lody.virtual.helper.compat.LimbusBillingUiPolicy.isCheckoutTarget(creator,
-                                pendingComponent.getPackageName(), pendingComponent.getClassName())) {
+                        && (com.lody.virtual.helper.compat.LimbusBillingUiPolicy.isCheckoutTarget(creator,
+                                pendingComponent.getPackageName(), pendingComponent.getClassName())
+                        || com.lody.virtual.helper.compat.MicrogAuthUiPolicy.isConsentTarget(creator,
+                                pendingComponent.getPackageName(), pendingComponent.getClassName()))) {
                     // A NEW_TASK child cancels Android's original for-result relationship.
                     // Retain FLAG_IMMUTABLE; the result destination is kept by the server bridge.
                     targetIntent.removeFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -1224,7 +1226,8 @@ class MethodProxies {
             IInterface sender = (IInterface) args[0];
             if (sender != null) {
                 IntentSenderData data = VActivityManager.get().getIntentSender(sender.asBinder());
-                if (data != null) {
+                if (com.lody.virtual.helper.compat.PendingIntentCreatorCompat.matches(
+                        data, sender.asBinder(), VUserHandle.myUserId())) {
                     return data.creator;
                 }
             }
@@ -1235,6 +1238,42 @@ class MethodProxies {
         public boolean isEnable() {
             return isAppProcess();
         }
+    }
+
+    static class GetInfoForIntentSender extends MethodProxy {
+        @Override public String getMethodName() { return "getInfoForIntentSender"; }
+
+        @Override public Object call(Object who, Method method, Object... args) throws Throwable {
+            Object info = method.invoke(who, args);
+            if (args.length == 0 || !(args[0] instanceof IInterface)) return info;
+            IBinder token = ((IInterface) args[0]).asBinder();
+            IntentSenderData data = VActivityManager.get().getIntentSender(token);
+            int user = VUserHandle.myUserId();
+            if (!com.lody.virtual.helper.compat.PendingIntentCreatorCompat.matches(data, token, user)) return info;
+            int uid = VPackageManager.get().getPackageUid(data.creator, user);
+            return com.lody.virtual.helper.compat.PendingIntentCreatorCompat.restoreInfo(
+                    info, getHostPkg(), getRealUid(), data, token, user, uid);
+        }
+
+        @Override public boolean isEnable() { return isAppProcess(); }
+    }
+
+    static class GetUidForIntentSender extends MethodProxy {
+        @Override public String getMethodName() { return "getUidForIntentSender"; }
+
+        @Override public Object call(Object who, Method method, Object... args) throws Throwable {
+            Object result = method.invoke(who, args);
+            if (!(result instanceof Integer) || ((Integer) result) != getRealUid()
+                    || args.length == 0 || !(args[0] instanceof IInterface)) return result;
+            IBinder token = ((IInterface) args[0]).asBinder();
+            IntentSenderData data = VActivityManager.get().getIntentSender(token);
+            int user = VUserHandle.myUserId();
+            if (!com.lody.virtual.helper.compat.PendingIntentCreatorCompat.matches(data, token, user)) return result;
+            int uid = VPackageManager.get().getPackageUid(data.creator, user);
+            return uid >= 0 ? uid : result;
+        }
+
+        @Override public boolean isEnable() { return isAppProcess(); }
     }
 
 

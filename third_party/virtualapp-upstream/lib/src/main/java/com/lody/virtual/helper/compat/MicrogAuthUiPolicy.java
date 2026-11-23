@@ -11,6 +11,16 @@ public final class MicrogAuthUiPolicy {
 
     private MicrogAuthUiPolicy() { }
 
+    public static boolean isConsentTarget(String creator, String targetPackage, String activity) {
+        return GMS.equals(creator) && GMS.equals(targetPackage)
+                && ("org.microg.gms.auth.AskPermissionActivity".equals(activity)
+                    || "org.microg.gms.auth.AskPackageOverrideActivity".equals(activity));
+    }
+
+    public static boolean canRelayConsent(String caller, boolean hasResultToken, int requestCode) {
+        return GMS.equals(caller) && hasResultToken && requestCode >= 0;
+    }
+
     public static int finishTaskMode(String pkg, String activity, boolean taskRoot, int requested) {
         // LoginActivity uses finishAndRemoveTask even when AccountManager launched it as a child.
         // Keep the parent sign-in/game task and its result receiver alive.
