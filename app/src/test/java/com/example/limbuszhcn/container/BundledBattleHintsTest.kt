@@ -9,6 +9,23 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class BundledBattleHintsTest {
+    @Test fun acceptsUnityAlignmentButNeverTrailingPayloadOrTruncation() {
+        for (padding in 0..3) {
+            var text = """{"dataList":[{"id":1,"content":"Login"}]}"""
+            while ((4 - fixture(text, "EN_LoginUIText").size % 4) % 4 != padding) text += " "
+            val raw = fixture(text, "EN_LoginUIText")
+            val aligned = raw.copyOf(raw.size + padding)
+            // The serialized file/object sizes include padding; script length does not.
+            ByteBuffer.wrap(aligned).order(ByteOrder.BIG_ENDIAN).putLong(24, aligned.size.toLong())
+            ByteBuffer.wrap(aligned).order(ByteOrder.LITTLE_ENDIAN).putInt(112, aligned.size - 144)
+            assertEquals("EN_LoginUIText.json" to text, BundledBattleHints.parse(aligned))
+            if (padding > 0) {
+                assertNull(BundledBattleHints.parse(aligned.copyOf().apply { this[lastIndex] = 1 }))
+                assertNull(BundledBattleHints.parse(aligned.copyOf(aligned.size - 1)))
+            }
+        }
+    }
+
     @Test fun readsOnlyBoundedHintTextAssetsAndRejectsCorruption() {
         val text = """{"dataList":[{"id":1,"content":"旧版のヒント"}]}"""
         val valid = fixture(text)

@@ -51,6 +51,7 @@ internal object BundledBattleHints {
     }
 
     private fun decodeText(bytes: ByteArray, header: Header): String? = runCatching {
+        require((header.textOffset + header.textSize until bytes.size).all { bytes[it] == 0.toByte() })
         Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
             .onUnmappableCharacter(CodingErrorAction.REPORT)
             .decode(ByteBuffer.wrap(bytes, header.textOffset, header.textSize)).toString()
@@ -95,7 +96,9 @@ internal object BundledBattleHints {
         require(name in names)
         b.position((b.position() + 3) and -4)
         val textSize = b.int
-        require(textSize > 0 && textSize.toLong() + b.position() == fileSize.toLong())
+        val textEnd = textSize.toLong() + b.position()
+        require(textSize > 0 && (textEnd == fileSize.toLong() ||
+            (textEnd < fileSize && ((textEnd + 3L) and -4L) == fileSize.toLong())))
         Header(name, b.position(), textSize)
     }.getOrNull()
 }

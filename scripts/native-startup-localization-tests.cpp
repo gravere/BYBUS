@@ -47,7 +47,8 @@ auto g_field_get_value=field_value;
 void *get_class(void *p) { return static_cast<Object *>(p)->klass; }
 auto g_object_get_class=get_class;
 bool ensure_tmp_font() { return true; }
-void translate_object_graph(void *p,void *) { assert(p==&model); ++translated; }
+std::string read_text_object_id(void *) { return "model"; }
+void translate_object_graph(void *p,void *,const std::string & = {}) { assert(p==&model); ++translated; }
 const void *get_method(void *k,const char *name,int) {
     assert(k==&list_class); return !strcmp(name,"get_Count")?&count_method:&item_method;
 }

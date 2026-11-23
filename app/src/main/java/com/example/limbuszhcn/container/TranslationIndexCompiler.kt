@@ -20,7 +20,7 @@ import kotlin.io.path.readText
 import kotlin.io.path.outputStream
 import kotlin.io.path.writeText
 
-internal const val TRANSLATION_COMPILER_REVISION = "full-locales-19"
+internal const val TRANSLATION_COMPILER_REVISION = "full-locales-20"
 internal val SOURCE_TEXT_LOCALES = listOf("jp", "en", "kr")
 
 /**

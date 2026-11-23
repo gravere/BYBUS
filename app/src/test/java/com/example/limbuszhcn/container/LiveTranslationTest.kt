@@ -13,6 +13,27 @@ import kotlin.io.path.writeText
 import kotlin.io.path.readText
 
 class LiveTranslationTest {
+    @Test fun firstRunTutorialAndSpeakerModelsAreAvailableWithoutOriginalResources() {
+        val fields = ReleasedModelFields().apply {
+            add("jp/JP_TutorialRenewalDesc.json", """{"dataList":[{"id":"tuto_00_01_01_02","content":"首先请确认仪表盘。"}]}""")
+            add("jp/JP_TutorialDesc0.json", """{"dataList":[{"id":"old_tutorial","content":"教程。"}]}""")
+            add("jp/JP_Characters.json", """{"dataList":[{"id":2,"name":"浮士德"}]}""")
+            add("jp/JP_ScenarioModelCodes-AutoCreated.json", """{"dataList":[{"id":"파우스트","name":"浮士德","nickName":"2号罪人","model":"原始模型"}]}""")
+            add("jp/JP_MainUIText.json", """{"dataList":[{"id":"tuto_00_01_01_02","content":"其他表。"},{"id":2,"name":"其他名字"}]}""")
+        }.fields()
+        assertEquals("首先请确认仪表盘。", fields["@tutorial:tuto_00_01_01_02\u001fcontent"])
+        assertEquals("教程。", fields["@tutorial:old_tutorial\u001fcontent"])
+        assertEquals("浮士德", fields["@character:2\u001fname"])
+        assertEquals("浮士德", fields["@scenario-model:파우스트\u001fname"])
+        assertEquals("2号罪人", fields["@scenario-model:파우스트\u001fnickName"])
+        assertEquals(5, fields.size)
+        val conflicts = ReleasedModelFields().apply {
+            add("jp/JP_TutorialDesc.json", """{"dataList":[{"id":"same","content":"甲"}]}""")
+            add("jp/JP_TutorialRenewalDesc.json", """{"dataList":[{"id":"same","content":"乙"}]}""")
+        }
+        assertTrue(conflicts.fields().isEmpty())
+    }
+
     @Test fun typedModelFieldsDoNotDependOnPageSourceOrResourceOrder() {
         val a = """{"dataList":[{"id":"Burn","name":"烧伤","desc":"获得[Burn]。","icon":"internal"}]}"""
         val b = a.replace("烧伤", "技能标签")

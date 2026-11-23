@@ -360,6 +360,7 @@ internal object TranslationJsonPairer {
 
     private fun String.isSkillNumber(): Boolean = length in 1..18 && all { it in '0'..'9' }
     private val SKILL_CHILD_FIELDS = setOf("levellist", "coinlist", "coindescs")
+    private val NUMBERED_TUTORIAL_DESC = Regex("TutorialDesc[0-9]+\\.json")
 
     private fun tableIdentity(path: String, id: String): String {
         return when {
@@ -367,6 +368,13 @@ internal object TranslationJsonPairer {
             belongsTo(path, "BattleKeywords") -> "@battle-keyword:$id"
             belongsTo(path, "SkillTag") -> "@skill-tag:$id"
             belongsTo(path, "EgoGiftCategory") -> "@gift-category:$id"
+            belongsTo(path, "Characters") -> "@character:$id"
+            belongsTo(path, "ScenarioModelCodes") -> "@scenario-model:$id"
+            sourceTableName(path).let { name ->
+                name == "TutorialRenewalDesc.json" || name == "TutorialDesc.json" ||
+                    name.startsWith("TutorialDesc_") ||
+                    NUMBERED_TUTORIAL_DESC.matches(name)
+            } -> "@tutorial:$id"
             else -> id
         }
     }

@@ -142,6 +142,8 @@ void *g_buf_text_class = nullptr;
 void *g_battle_keyword_text_class = nullptr;
 void *g_skill_tag_text_class = nullptr;
 void *g_gift_category_text_class = nullptr;
+void *g_character_text_class = nullptr;
+void *g_scenario_model_text_class = nullptr;
 std::atomic<uint64_t> g_contextual_hits{0};
 // 部分人格列表会把汉化包标题中的换行压成空格或直接移除；该索引只保存由包内译文
 // 推导出的原始分行，让运行时兼容不同页面，而无需硬编码任何人格名称或译文。
@@ -1043,6 +1045,10 @@ void translate_object_string_fields(void *instance, bool story_dialog = false,
             stable_id = "@skill-tag:" + stable_id;
         else if (g_gift_category_text_class && klass == g_gift_category_text_class)
             stable_id = "@gift-category:" + stable_id;
+        else if (g_character_text_class && klass == g_character_text_class)
+            stable_id = "@character:" + stable_id;
+        else if (g_scenario_model_text_class && klass == g_scenario_model_text_class)
+            stable_id = "@scenario-model:" + stable_id;
     }
     for (void *klass = g_object_get_class(instance); klass != nullptr;
          klass = g_class_get_parent(klass)) {
@@ -1232,9 +1238,10 @@ void translate_object_graph_impl(void *instance, int depth,
     }
 }
 
-void translate_object_graph(void *instance, std::vector<std::string> *translated_fields) {
+void translate_object_graph(void *instance, std::vector<std::string> *translated_fields,
+                            const std::string &object_context = {}) {
     std::unordered_set<void *> visited;
-    translate_object_graph_impl(instance, 0, &visited, translated_fields);
+    translate_object_graph_impl(instance, 0, &visited, translated_fields, object_context);
 }
 
 // Typed table retrieval precedes tiny getters, formatting and every UI consumer.
@@ -1247,21 +1254,39 @@ struct LocalizedTableHook {
 constexpr size_t kLocalizedTableSlots = 32;
 LocalizedTableHook g_localized_tables[3][kLocalizedTableSlots]; // reference, int32, list
 std::unordered_set<void *> g_localized_models;
-limbus_managed::Registry<bool> g_prepared_models(g_gc, 131072);
-struct LocalizedTableLoad { const void *field; void *owner; const void *get_list; };
+enum class LocalizedModelScope : uint8_t { Generic, Tutorial };
+limbus_managed::Registry<LocalizedModelScope> g_prepared_models(g_gc, 131072);
+limbus_managed::Registry<LocalizedModelScope> g_localized_table_scopes(g_gc, 256);
+struct LocalizedTableLoad {
+    const void *field; void *owner; const void *get_list;
+    LocalizedModelScope scope;
+    LocalizedTableLoad(const void *field, void *owner, const void *get_list,
+                       LocalizedModelScope scope = LocalizedModelScope::Generic)
+        : field(field), owner(owner), get_list(get_list), scope(scope) {}
+};
 std::vector<LocalizedTableLoad> g_localized_loads;
 
-void prepare_localized_model(void *value) {
+LocalizedModelScope localized_table_scope(void *table) {
+    pthread_mutex_lock(&g_font_state_lock);
+    const auto saved = g_localized_table_scopes.find(table);
+    const auto scope = saved ? *saved : LocalizedModelScope::Generic;
+    pthread_mutex_unlock(&g_font_state_lock);
+    return scope;
+}
+
+void prepare_localized_model(void *value, LocalizedModelScope scope = LocalizedModelScope::Generic) {
     if (!value || !g_object_get_class || !g_localized_models.count(g_object_get_class(value))) return;
     pthread_mutex_lock(&g_font_state_lock);
-    const bool prepared = g_prepared_models.find(value) != nullptr;
+    const auto previous = g_prepared_models.find(value);
+    const bool prepared = previous && (*previous == scope || scope == LocalizedModelScope::Generic);
     pthread_mutex_unlock(&g_font_state_lock);
     if (prepared || !ensure_tmp_font()) return;
     auto root = limbus_managed::retain(g_gc, value);
     if (!root) return;
-    translate_object_graph(value, nullptr);
+    const auto id = scope == LocalizedModelScope::Tutorial ? read_text_object_id(value) : std::string();
+    translate_object_graph(value, nullptr, id.empty() ? std::string() : "@tutorial:" + id);
     pthread_mutex_lock(&g_font_state_lock);
-    g_prepared_models.put(value, 0, true);
+    g_prepared_models.put(value, 0, scope);
     pthread_mutex_unlock(&g_font_state_lock);
     static std::atomic<uint64_t> prepared_count{0};
     const auto count = prepared_count.fetch_add(1) + 1;
@@ -1271,7 +1296,7 @@ void prepare_localized_model(void *value) {
     }
 }
 
-void prepare_localized_list(void *value) {
+void prepare_localized_list(void *value, LocalizedModelScope scope = LocalizedModelScope::Generic) {
     if (!value || !g_object_get_class || !g_class_get_method || !g_runtime_invoke || !g_object_unbox) return;
     if (!ensure_tmp_font()) return;
     auto root = limbus_managed::retain(g_gc, value);
@@ -1291,7 +1316,7 @@ void prepare_localized_list(void *value) {
         void *args[] = {&i}; exception = nullptr;
         void *model = g_runtime_invoke(item_method, value, args, &exception);
         if (exception) return;
-        prepare_localized_model(model);
+        prepare_localized_model(model, scope);
     }
 }
 
@@ -1299,16 +1324,30 @@ void prepare_loaded_localization(void *data_set) {
     if (!data_set || !g_field_get_value || !g_runtime_invoke || !g_object_get_class || !ensure_tmp_font()) return;
     auto root = limbus_managed::retain(g_gc, data_set);
     if (!root) return;
+    struct LoadedTable { const LocalizedTableLoad *binding; LocalizedModelScope scope; };
+    std::unordered_map<void *, LoadedTable> tables;
     for (const auto &entry : g_localized_loads) {
         void *table = nullptr;
         g_field_get_value(data_set, entry.field, &table);
         if (!table || g_object_get_class(table) != entry.owner) continue;
+        auto added = tables.emplace(table, LoadedTable{&entry, entry.scope});
+        // A table aliased by unrelated fields has no unambiguous namespace.
+        if (!added.second && added.first->second.scope != entry.scope)
+            added.first->second.scope = LocalizedModelScope::Generic;
+    }
+    for (const auto &item : tables) {
+        void *table = item.first;
+        const auto &entry = *item.second.binding;
+        const auto scope = item.second.scope;
+        pthread_mutex_lock(&g_font_state_lock);
+        g_localized_table_scopes.put(table, 0, scope);
+        pthread_mutex_unlock(&g_font_state_lock);
         void *exception = nullptr;
         // Calling a verified getter through runtime_invoke is safe even when
         // its native body is too short to patch. Direct list consumers see the
         // same prepared models as GetData/Find consumers.
         void *list = g_runtime_invoke(entry.get_list, table, nullptr, &exception);
-        if (!exception) prepare_localized_list(list);
+        if (!exception) prepare_localized_list(list, scope);
     }
 }
 
@@ -1417,7 +1456,7 @@ template<size_t Slot> void *replacement_table_ref(void *instance, void *key, con
         }
     }
     auto result = reinterpret_cast<void *(*)(void *, void *, const void *)>(hook.original)(source, key, method);
-    if (owned) prepare_localized_model(result);
+    if (owned) prepare_localized_model(result, localized_table_scope(source));
     return result;
 }
 template<size_t Slot> void *replacement_table_int(void *instance, int32_t key, const void *method) {
@@ -1426,13 +1465,14 @@ template<size_t Slot> void *replacement_table_int(void *instance, int32_t key, c
     void *source = instance;
     if (owned) if (void *retry = retry_empty_startup_table(instance)) source = retry;
     auto result = reinterpret_cast<void *(*)(void *, int32_t, const void *)>(hook.original)(source, key, method);
-    if (owned) prepare_localized_model(result);
+    if (owned) prepare_localized_model(result, localized_table_scope(source));
     return result;
 }
 template<size_t Slot> void *replacement_table_list(void *instance, const void *method) {
     auto &hook = g_localized_tables[2][Slot];
     auto result = reinterpret_cast<void *(*)(void *, const void *)>(hook.original)(instance, method);
-    if (instance && hook.owners.count(g_object_get_class(instance))) prepare_localized_list(result);
+    if (instance && hook.owners.count(g_object_get_class(instance)))
+        prepare_localized_list(result, localized_table_scope(instance));
     return result;
 }
 #define LOCALIZED_TABLE_SLOTS(X) \
@@ -4321,6 +4361,8 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             g_battle_keyword_text_class = class_from_name(image, "", "TextData_BattleKeywords");
         if (!g_skill_tag_text_class) g_skill_tag_text_class = class_from_name(image, "", "TextData_SkillTag");
         if (!g_gift_category_text_class) g_gift_category_text_class = class_from_name(image, "", "TextData_EgoGiftCategory");
+        if (!g_character_text_class) g_character_text_class = class_from_name(image, "", "TextData_Character");
+        if (!g_scenario_model_text_class) g_scenario_model_text_class = class_from_name(image, "", "TextData_ScenarioModelCode");
         if (!localize_model_base) localize_model_base = class_from_name(image, "", "LocalizeTextData");
         for (size_t slot = 0; slot < kLanguageFontBindingCount; ++slot)
             if (!language_font_classes[slot]) language_font_classes[slot] = class_from_name(image, "UtilityUI", language_font_names[slot]);
@@ -4434,7 +4476,8 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
     struct TableTarget { void *owner; void *declaring; const void *method; int abi; };
     std::vector<TableTarget> table_targets;
     std::vector<std::pair<const void *, void *>> table_fields;
-    if (text_data_set_class && localize_model_base && class_get_fields && field_get_type &&
+    std::unordered_map<void *, void *> table_models;
+    if (text_data_set_class && localize_model_base && class_get_fields && field_get_type && field_get_name &&
         field_get_flags && class_from_type && class_get_parent && class_get_methods &&
         method_get_name && method_get_class && method_get_flags && method_get_return_type &&
         method_get_param_count && method_get_param && method_is_generic && type_get_name && il2cpp_free) {
@@ -4469,6 +4512,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             }
             if (!model) continue;
             g_localized_models.insert(model);
+            table_models.emplace(owner, model);
             for (const void *entry : methods) {
                 uint32_t flags = 0;
                 if (method_is_generic(entry) || method_get_class(entry) != table ||
@@ -4499,7 +4543,11 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         for (const auto &field : table_fields) {
             for (const auto &target : table_targets) {
                 if (target.abi == 2 && target.owner == field.second) {
-                    g_localized_loads.push_back({field.first, target.owner, target.method});
+                    const char *field_name = field_get_name(field.first);
+                    const bool tutorial = field_name && strcmp(field_name, "_tutorialDesc") == 0 &&
+                            table_models.at(target.owner) == ui_text_data_class;
+                    g_localized_loads.push_back({field.first, target.owner, target.method,
+                            tutorial ? LocalizedModelScope::Tutorial : LocalizedModelScope::Generic});
                     break;
                 }
             }

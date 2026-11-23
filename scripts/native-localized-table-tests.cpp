@@ -34,7 +34,11 @@ void *get_class(void *p) {return static_cast<Object *>(p)->klass;}
 auto g_object_get_class=get_class;
 bool font_ready=true;
 bool ensure_tmp_font() {return font_ready;}
-void translate_object_graph(void *p,void *) {++static_cast<Object *>(p)->translations;}
+std::unordered_map<void *, std::string> contexts;
+std::string read_text_object_id(void *) { return "same"; }
+void translate_object_graph(void *p,void *,const std::string &context={}) {
+    ++static_cast<Object *>(p)->translations; contexts[p]=context;
+}
 const void *get_method(void *k,const char *name,int) {
     assert(k==&list_class);return std::string(name)=="get_Count"?&count_method:&item_method;
 }
@@ -77,5 +81,19 @@ int main() {
     font_ready=true;prepare_loaded_localization(&set);
     assert(c.translations==1&&d.translations==1);
     prepare_loaded_localization(&set);assert(c.translations==1&&d.translations==1);
+    // Gaining a verified table identity must supersede an earlier unscoped read.
+    g_localized_loads[0].scope=LocalizedModelScope::Tutorial;
+    prepare_loaded_localization(&set);
+    assert(c.translations==2&&d.translations==2);
+    assert(contexts[&c]=="@tutorial:same"&&contexts[&d]=="@tutorial:same");
+    assert(localized_table_scope(&table)==LocalizedModelScope::Tutorial);
+    assert(localized_table_scope(&other)==LocalizedModelScope::Generic);
+    replacement_table_ref<0>(&table,&key_identity,&method_identity);
+    assert(a.translations==2&&contexts[&a]=="@tutorial:same");
+    prepare_localized_model(&a);assert(a.translations==2);
+    // Two fields sharing one table must not assign it a tutorial-only scope.
+    set.second=&table;
+    prepare_loaded_localization(&set);
+    assert(localized_table_scope(&table)==LocalizedModelScope::Generic);
     puts("Production typed retrieval: pre-getter processing, shared-body isolation, repeat order, font failure and load completion passed");
 }

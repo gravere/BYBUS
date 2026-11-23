@@ -24,6 +24,13 @@ UtilityUI 的语言字体组件。以下是 BYBUS 对这些共用边界的适配
   所有相邻函数空间与模块边界检查保留，不能覆盖 8 字节 getter。
   TextDataSet 加载结束后，通过已核对的 GetList 返回类型遍历相同模型；直接枚举列表的
   使用方同样拿到译文。短 getter 仅通过 runtime_invoke 调用，不 inline patch。
+- 首次游戏资源尚未缓存时，教程和说话者名称也须能直接使用已校验包的模型目录。
+  `Characters` 对应 `TextData_Character`，`ScenarioModelCodes` 对应
+  `TextData_ScenarioModelCode`；各自独立命名空间，不将韩文模型键当作待翻译正文。
+  教程说明沿 `TextDataSet._tutorialDesc` 的已核验 `TextData_UI` 表实例传递命名空间；
+  不能仅凭共享的 `TextData_UI` 类型或裸编号把教程译文用于其他 UI 表。
+  表实例登记使用弱引用，加载完成和后续取词共用相同边界；之前仅做过无上下文处理的
+  模型允许在获得确切表身份后重新处理，其他表与未匹配条目保持原有行为。
 - UtilityUI 的语言字体组件给目标 TMP 提供明确归属，选中状态、逐字片段和
   重复绑定不再改变字体归属。字体设置与材质、颜色、原字号分开；数字专用和图标
   字体类别不被登记为语言正文。归属使用弱引用与 Unity instance ID 防止对象池地址误用。
