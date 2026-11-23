@@ -235,6 +235,7 @@ uint64_t g_translation_hits = 0;
 #define __atomic_add_fetch(p, n, order) (*(p) += (n))
 #define __ATOMIC_RELAXED 0
 bool is_language_font_target(void *p) { return static_cast<Component *>(p)->language_owned; }
+void refresh_localized_layout(void *, void *) {}
 #include "runtime-prepare-text-under-test.inc"
 #include "runtime-font-refresh-under-test.inc"
 

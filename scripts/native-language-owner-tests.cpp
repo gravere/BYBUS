@@ -64,6 +64,7 @@ void restore_tmp_component_state(void *p) {
 }
 bool is_translated_managed_string(void *s) {return s==&empty_text;}
 bool is_choice_text(void *,void *) {return false;}
+bool is_notice_text(void *,void *,bool) {return false;}
 bool is_translated_tmp_fragment(void *,void *) {return false;}
 void set_font(void *p,void *font,const void *) {static_cast<Component *>(p)->font=static_cast<Font *>(font);}
 auto g_tmp_set_font=set_font;

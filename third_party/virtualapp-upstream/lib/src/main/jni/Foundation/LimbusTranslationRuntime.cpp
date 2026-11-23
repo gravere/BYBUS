@@ -3142,6 +3142,140 @@ void *apply_tmp_component_layout_markup(void *instance, void *managed_text) {
     return retained ? replacement : managed_text;
 }
 
+struct LocalizedLayoutBinding {
+    const void *target = nullptr, *profiles = nullptr, *language = nullptr;
+    const void *count = nullptr, *item = nullptr, *method = nullptr;
+    void *original = nullptr;
+};
+LocalizedLayoutBinding g_localized_layout_bindings[2];
+struct LocalizedLayoutOwner {
+    limbus_managed::Ref owner;
+    int32_t id = 0, language = INT32_MIN, applied = INT32_MIN;
+};
+struct LocalizedLayoutState { LocalizedLayoutOwner owners[2]; };
+limbus_managed::Registry<LocalizedLayoutState> g_localized_layout_targets(g_gc, 16384);
+thread_local void *g_localized_layout_replaying = nullptr;
+
+bool is_proven_chinese_layout(void *target, void *text) {
+    if (!g_live_resources || !g_font_ready || !text || !g_string_length || !g_string_chars) return false;
+    int32_t count = g_string_length(text);
+    if (count <= 0 || count > 65536) return false;
+    const auto *chars = g_string_chars(text);
+    bool han = false;
+    for (int32_t i = 0; chars && i < count; ++i) {
+        const uint16_t c = chars[i];
+        if ((c >= 0x3400 && c <= 0x9fff) || (c >= 0xf900 && c <= 0xfaff)) { han = true; break; }
+    }
+    return han && (is_translated_managed_string(text) || is_choice_text(target, text)
+            || is_translated_tmp_fragment(target, text));
+}
+
+bool has_localized_layout_profile(void *owner, const LocalizedLayoutBinding &binding, int32_t language) {
+    if (!owner || !binding.profiles || !binding.language || !binding.count || !binding.item ||
+            !g_field_get_value || !g_runtime_invoke || !g_object_unbox) return false;
+    void *list = nullptr; g_field_get_value(owner, binding.profiles, &list);
+    if (!list) return false;
+    void *error = nullptr;
+    void *boxed = g_runtime_invoke(binding.count, list, nullptr, &error);
+    const auto *value = !error && boxed ? static_cast<int32_t *>(g_object_unbox(boxed)) : nullptr;
+    if (!value || *value < 1 || *value > 16) return false;
+    const int32_t count = *value;
+    for (int32_t index = 0; index < count; ++index) {
+        void *args[] = {&index}; error = nullptr;
+        void *item = g_runtime_invoke(binding.item, list, args, &error);
+        if (error || !item) return false;
+        int32_t item_language = INT32_MIN;
+        g_field_get_value(item, binding.language, &item_language);
+        if (item_language == language) return true;
+    }
+    return false;
+}
+
+int32_t localized_layout_language(void *owner, size_t slot, int32_t language, bool chinese) {
+    const auto found = g_language_codes.find(language);
+    if (!chinese || found == g_language_codes.end() || strcmp(found->second, "en") != 0) return language;
+    // Select the game's existing CJK layout, never a guessed font size or global language change.
+    for (const auto &entry : g_language_codes) {
+        if (strcmp(entry.second, "jp") == 0 &&
+                has_localized_layout_profile(owner, g_localized_layout_bindings[slot], entry.first)) return entry.first;
+    }
+    return language;
+}
+
+void apply_localized_layout(void *owner, size_t slot, int32_t language) {
+    const auto &binding = g_localized_layout_bindings[slot];
+    if (!binding.original || !owner) return;
+    struct Scope {
+        void *previous;
+        explicit Scope(void *owner) : previous(g_localized_layout_replaying) { g_localized_layout_replaying = owner; }
+        ~Scope() { g_localized_layout_replaying = previous; }
+    } scope(owner);
+    reinterpret_cast<void (*)(void *, int32_t, const void *)>(binding.original)(owner, language, binding.method);
+}
+
+void refresh_localized_layout(void *target, void *text) {
+    // A size or margin setter can invalidate the same TMP mesh. Do not let a
+    // nested refresh read its previous text and restore the other profile.
+    if (!target || g_localized_layout_replaying) return;
+    LocalizedLayoutState state;
+    const int32_t id = component_id(target);
+    pthread_mutex_lock(&g_font_state_lock);
+    const auto *saved = g_localized_layout_targets.find(target, id);
+    const bool found = saved != nullptr;
+    if (saved) state = *saved;
+    pthread_mutex_unlock(&g_font_state_lock);
+    if (!found) return;
+    const bool chinese = is_proven_chinese_layout(target, text);
+    for (size_t slot = 0; slot < 2; ++slot) {
+        auto &entry = state.owners[slot];
+        void *owner = entry.owner ? entry.owner->get() : nullptr;
+        if (!owner || owner == g_localized_layout_replaying || !unity_object_alive(owner) ||
+                component_id(owner) != entry.id) continue;
+        bool enabled = false;
+        if (!invoke_bool_getter(g_behaviour_get_active_info, owner, &enabled) || !enabled) continue;
+        void *actual_target = nullptr;
+        g_field_get_value(owner, g_localized_layout_bindings[slot].target, &actual_target);
+        if (actual_target != target) continue;
+        const int32_t chosen = localized_layout_language(owner, slot, entry.language, chinese);
+        if (chosen == entry.applied) continue;
+        apply_localized_layout(owner, slot, chosen);
+        pthread_mutex_lock(&g_font_state_lock);
+        auto *current = g_localized_layout_targets.find(target, id);
+        if (current && current->owners[slot].owner == entry.owner) current->owners[slot].applied = chosen;
+        pthread_mutex_unlock(&g_font_state_lock);
+    }
+}
+
+template<size_t Slot>
+void replacement_localized_layout(void *owner, int32_t language, const void *method) {
+    auto &binding = g_localized_layout_bindings[Slot];
+    if (owner == g_localized_layout_replaying) {
+        reinterpret_cast<void (*)(void *, int32_t, const void *)>(binding.original)(owner, language, method);
+        return;
+    }
+    void *target = nullptr;
+    if (owner && binding.target && g_field_get_value) g_field_get_value(owner, binding.target, &target);
+    const int32_t id = target && g_live_resources ? component_id(target) : 0;
+    const int32_t owner_id = owner && id ? component_id(owner) : 0;
+    LocalizedLayoutState state;
+    if (id && owner_id) {
+        pthread_mutex_lock(&g_font_state_lock);
+        if (auto saved = g_localized_layout_targets.find(target, id)) state = *saved;
+        auto ref = std::make_shared<limbus_managed::Reference>(g_gc, owner, true);
+        auto &entry = state.owners[Slot];
+        entry.owner = ref;
+        entry.id = owner_id;
+        entry.language = entry.applied = language;
+        bool retained = ref->get() == owner && g_localized_layout_targets.put(target, id, state);
+        pthread_mutex_unlock(&g_font_state_lock);
+        if (!retained) target = nullptr;
+    } else target = nullptr;
+    // The game's requested profile is always applied first. Replay only for verified Chinese;
+    // manual later layout writes remain untouched until a new text/profile change requires it.
+    apply_localized_layout(owner, Slot, language);
+    if (target) refresh_localized_layout(target, invoke_object_getter(g_tmp_get_text_info, target));
+}
+
 limbus_managed::Registry<bool> g_language_font_targets(g_gc, 16384);
 struct LanguageFontBinding {
     const void *target = nullptr;
@@ -3279,6 +3413,7 @@ void *prepare_tmp_text(void *instance, void *managed_text, bool restore_untransl
                 // Counter glyph widths and alignment belong to the game, even
                 // when its language component also owns this reused TMP target.
                 restore_tmp_component_state(instance);
+                refresh_localized_layout(instance, replacement);
                 return replacement;
             }
             bool translated = notice ? notice_proof : (is_language_font_target(instance) || choice_proof || is_translated_managed_string(replacement));
@@ -3328,6 +3463,7 @@ void *prepare_tmp_text(void *instance, void *managed_text, bool restore_untransl
             }
         }
     }
+    refresh_localized_layout(instance, replacement);
     return replacement;
 }
 
@@ -4082,6 +4218,9 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
     void *language_font_classes[kLanguageFontBindingCount] = {};
     const char *language_font_names[] = {"TextMeshProLanguageSetter", "TextMeshProLanguageSetterWithStatus",
                                         "FontSetter", "FontTypesCategorySetter", "FixedFontSetter", "PretendardFontSetter"};
+    void *localized_layout_classes[2] = {}, *localized_layout_item_classes[2] = {};
+    const char *localized_layout_names[] = {"TextSizeByLocalize", "TextMarginByLocalize"};
+    const char *localized_layout_item_names[] = {"TextChangeInfoByLocalize", "TextMarginInfoByLocalize"};
     void *announcer_ui_class = nullptr;
     void *choice_scroll_class = nullptr;
     void *choice_gift_class = nullptr;
@@ -4192,6 +4331,12 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         if (!localize_model_base) localize_model_base = class_from_name(image, "", "LocalizeTextData");
         for (size_t slot = 0; slot < kLanguageFontBindingCount; ++slot)
             if (!language_font_classes[slot]) language_font_classes[slot] = class_from_name(image, "UtilityUI", language_font_names[slot]);
+        for (size_t slot = 0; slot < 2; ++slot) {
+            if (!localized_layout_classes[slot]) localized_layout_classes[slot] =
+                    class_from_name(image, "UtilityUI", localized_layout_names[slot]);
+            if (!localized_layout_item_classes[slot]) localized_layout_item_classes[slot] =
+                    class_from_name(image, "UtilityUI", localized_layout_item_names[slot]);
+        }
         if (!text_data_set_class) text_data_set_class = class_from_name(image, "", "TextDataSet");
         if (!text_data_manager_class) text_data_manager_class = class_from_name(image, "", "TextDataManager");
         if (!custom_localize_class) custom_localize_class = class_from_name(image, "", "CustomLocalizeManager");
@@ -5373,6 +5518,33 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 get_language_method, get_language_class, "GetLanguage");
         const bool global_language_valid = language_getter_valid(
                 get_global_language_method, get_global_language_class, "get_Lang");
+        if (global_language_valid && class_from_type && g_runtime_invoke && g_object_unbox &&
+                g_behaviour_get_active_info && g_gc.ready()) {
+            for (size_t slot = 0; slot < 2; ++slot) {
+                auto &binding = g_localized_layout_bindings[slot];
+                void *klass = localized_layout_classes[slot];
+                const std::string element = std::string("UtilityUI.") + localized_layout_item_names[slot];
+                binding.target = choice_field(klass, "_text", "TMPro.TextMeshProUGUI");
+                for (const char *prefix : {"System.Collections.Generic.List<", "System.Collections.Generic.List`1<"}) {
+                    const std::string type = std::string(prefix) + element + ">";
+                    if (!binding.profiles) binding.profiles = choice_field(klass, "_fontInformation", type.c_str());
+                }
+                binding.language = choice_field(localized_layout_item_classes[slot], "lang", "LOCALIZE_LANGUAGE");
+                void *list_class = binding.profiles ? class_from_type(field_get_type(binding.profiles)) : nullptr;
+                binding.count = diagnostic_method(list_class, "get_Count", "", "System.Int32", false);
+                binding.item = diagnostic_method(list_class, "get_Item", "System.Int32", element.c_str(), false);
+                binding.method = diagnostic_method(klass, "UpdateTMP", "LOCALIZE_LANGUAGE", "System.Void", false);
+                if (binding.target && binding.profiles && binding.language && binding.count && binding.item && binding.method)
+                    hook_choice_method(klass, "UpdateTMP", "LOCALIZE_LANGUAGE", "System.Void", slot == 0 ?
+                            reinterpret_cast<void *>(replacement_localized_layout<0>) :
+                            reinterpret_cast<void *>(replacement_localized_layout<1>), &binding.original);
+            }
+            g_localized_layout_targets.set_alive(unity_object_alive);
+        }
+        char localized_layout_status[96];
+        snprintf(localized_layout_status, sizeof(localized_layout_status), "localized_layout size=%d margin=%d",
+                g_localized_layout_bindings[0].original != nullptr, g_localized_layout_bindings[1].original != nullptr);
+        append_native_metadata("font-state.log", localized_layout_status);
         if (global_language_valid && field_static_get_value && field_get_flags && field_get_type &&
                 class_from_type && class_get_fields && class_get_parent && g_original_localization_load[0]) {
             // Resolve the existing closed Singleton<TextDataSet> field. Never call
