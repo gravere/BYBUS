@@ -91,3 +91,14 @@ Android 17 的 `IPackageManager.getInstalledPackages` 返回 `PackageInfoList`�
 JNI 后备类加载只保存类别和成功/失败类型，最多 32 次。启动首分钟增加有限内存采样，
 随后恢复原频率；已读取的游戏退出事件即刻去重保存，避免导出时 logcat 已滚动而丢失时间。
 诊断包列出采集范围和不可用项，不把 Android 未提供的信号发送者或系统栈伪装成已获取。
+
+引用系统 APK 的虚拟安装还必须保留真实安装包的现代签名及分包元数据。返回 `PackageInfo`
+时，使用未接管的系统 PackageManager 读取同包信息，并核对缓存版本、当前签名、base 路径
+以及有序分包路径；任何一项不一致都不能拼接两次安装的数据。只补充已核对的分包名称、
+修订号和请求标志要求的签名信息，不替换虚拟 ApplicationInfo、组件、权限或用户状态。
+签名历史由 Android 的 SigningInfo 原样提供；未请求签名时不返回它。不将容器内独立安装
+或已配置不同签名的组件套用系统另一份安装，查询失败也不伪造签名或检查成功结果。
+这条路径按每次实际安装查询，不持久化系统路径，避免系统更新后复用旧分包与证书。
+
+依据：[PackageInfo 的签名与分包约定](https://developer.android.com/reference/android/content/pm/PackageInfo)、
+[SigningInfo](https://developer.android.com/reference/android/content/pm/SigningInfo)。

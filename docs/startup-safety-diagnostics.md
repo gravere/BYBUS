@@ -23,3 +23,22 @@
 上述改动保留短暂提示并修复启动表部分配对被整表丢弃的问题，不代表已确定或修复
 某台设备的安全检查失败。真实闪退原因仍需本次错误编号；不得根据系统版本或品牌
 推测并关闭检查。测试限于来源约束、日志最小化、启动记录隔离和索引激活边界。
+
+## 原生日志自身不得阻断启动
+
+部分系统的日志实现会在持有 ART 非递归日志锁时读取进程文件，或连接本地日志套接字。
+这些路径上的容器回调不能再次调用 Android 日志，否则会在同一线程重新等待日志锁，
+导致辅助服务启动超时。文件处理成功、临时文件创建失败、路径缓冲区不足及 readlink
+都遵守同一约束；只有明确的 IPv4/IPv6 目标进入网络诊断，并保留原始返回值和 errno。
+仅限制日志次数、或只给文件回调加重入标志，无法解决进入回调前就发生的日志锁等待。
+
+`scripts/native-io-logging-tests.cpp` 将生产文件处理代码与非递归日志锁组合测试，
+覆盖正常读取、失败路径与本地套接字；网络包装器使用生产源文件提取的完整函数。
+这项回归验证日志不会自锁，不等同于游戏的全部设备启动验收。
+
+设置 `ANDROID_SDK_ROOT` 后，运行
+`python scripts/build-native-io-logging-tests.py --output <临时编译目录>`。
+在自有一次性 Android x86_64 模拟器运行 `io-logging <用例> <可写临时目录>`。
+用例为 `/proc/self/cmdline`、`/proc/self/status`、`/proc/self/comm`、`/proc/self/maps`、
+`/proc/modules`、`cache_failure`、`forward_overflow`、`reverse_overflow`、
+`connect_unix`、`sendto_unix`、`connect_inet`。执行器用三秒闹钟终止死锁，正常退出码为零。

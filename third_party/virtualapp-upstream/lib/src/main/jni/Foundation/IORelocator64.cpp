@@ -1089,13 +1089,6 @@ static int reverse_readlink_result(char *buf, size_t bufsiz, int ret) {
         reversed_len = bufsiz;
     }
     memcpy(buf, reversed, reversed_len);
-    if (strstr(link_temp, "io.github.gravere.bybus") != nullptr
-            || strstr(link_temp, "/virtual/") != nullptr) {
-        ALOGI("Limbus readlink reverse %s -> %.*s",
-              link_temp,
-              static_cast<int>(reversed_len),
-              buf);
-    }
     return static_cast<int>(reversed_len);
 }
 
@@ -2329,7 +2322,6 @@ HOOK_DEF(DIR *, opendir, const char *pathname) {
     char module_temp[PATH_MAX];
     const char *module_path = limbus_module_directory(pathname, module_temp, sizeof(module_temp));
     if (module_path != nullptr) {
-        ALOGI("Limbus module view >>> redirect directory %s -> %s", pathname, module_path);
         return orig_opendir(module_path);
     }
     char temp[PATH_MAX];
@@ -4142,7 +4134,13 @@ HOOK_DEF(ssize_t, sendto, int fd, const void *buf, size_t n, int flags, struct s
     ssize_t ret = -1;
     if (is_limbus_container_process() && getNetWorkState()) {
         ret = syscall(__NR_sendto, fd, buf, n, flags, dst_addr, dst_addr_length);
-        log_limbus_network_bypass("sendto", "socket");
+        // liblog uses local sockets while its logger mutex is held.
+        int saved_errno = errno;
+        if (dst_addr != nullptr && dst_addr_length >= sizeof(sa_family_t)
+                && (dst_addr->sa_family == AF_INET || dst_addr->sa_family == AF_INET6)) {
+            log_limbus_network_bypass("sendto", "socket");
+        }
+        errno = saved_errno;
         return ret;
     }
     if (getNetWorkState()) {
@@ -4176,11 +4174,16 @@ HOOK_DEF(ssize_t, sendto, int fd, const void *buf, size_t n, int flags, struct s
 HOOK_DEF(int, connect, int sd, struct sockaddr *addr, socklen_t socklen) {
     int ret = -1;
     if (is_limbus_container_process()) {
-        char target[INET6_ADDRSTRLEN + 24] = {};
-        format_limbus_socket_target(addr, target, sizeof(target));
         ret = static_cast<int>(syscall(__NR_connect, sd, addr, socklen));
-        int error = ret < 0 ? errno : 0;
-        log_limbus_network_io("connect", target, ret, error);
+        int saved_errno = errno;
+        if (addr != nullptr && socklen >= sizeof(sa_family_t)
+                && ((addr->sa_family == AF_INET && socklen >= sizeof(sockaddr_in))
+                || (addr->sa_family == AF_INET6 && socklen >= sizeof(sockaddr_in6)))) {
+            char target[INET6_ADDRSTRLEN + 24] = {};
+            format_limbus_socket_target(addr, target, sizeof(target));
+            log_limbus_network_io("connect", target, ret, ret < 0 ? saved_errno : 0);
+        }
+        errno = saved_errno;
         return ret;
     }
     if (getNetWorkState()) {
@@ -4291,7 +4294,6 @@ static long limbus_direct_openat(int dirfd, const char *pathname, int flags, mod
     }
     int fake_fd = redirect_proc_file_guarded(relocated_path, flags, mode);
     if (fake_fd != 0) {
-        ALOGE("Limbus direct openat >>> redirected path=%s fd=%d", pathname, fake_fd);
         limbus_record_localize_open("direct_openat_fake", pathname, relocated_path, fake_fd, flags, __builtin_return_address(0));
         return fake_fd;
     }

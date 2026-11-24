@@ -19,13 +19,14 @@ class PackageQueryProbeReceiver : BroadcastReceiver() {
                         "framework-prepare" -> PackageQueryProbe.frameworkRegistry(context, true)
                         "framework-cleanup" -> PackageQueryProbe.frameworkRegistry(context, false)
                         "physical-profile" -> FrameworkProfileProbe.inspect(context)
+                        "package-metadata" -> com.lody.virtual.server.pm.parser.PackageMetadataProbe.inspect(context)
                         else -> PackageQueryProbe.inspect(context)
                     }
                 }.getOrElse {
                     JSONObject().put("passed", false).put("error", it.stackTraceToString().take(8000))
                 }
                 val stem = when (stage) {
-                    "framework-prepare", "framework-cleanup", "physical-profile" -> stage
+                    "framework-prepare", "framework-cleanup", "physical-profile", "package-metadata" -> stage
                     else -> "package-query"
                 }
                 File(context.filesDir, "$stem-result.json").writeText(result.toString())

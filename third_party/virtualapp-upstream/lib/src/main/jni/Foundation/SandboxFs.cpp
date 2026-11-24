@@ -184,7 +184,7 @@ const char *relocate_path_internal(const char *path, char *const buffer, const s
             } else {
                 const size_t remain_size = len - item.orig_size + 1u;
                 if (size < item.new_size + remain_size) {
-                    ALOGE("buffer overflow %u", static_cast<unsigned int>(size));
+                    // May be called by liblog itself; never log inside path resolution.
                     return NULL;
                 }
 
@@ -232,7 +232,7 @@ const char *reverse_relocate_path(const char *path, char *const buffer, const si
             } else {
                 const size_t remain_size = len - item.new_size + 1u;
                 if (size < item.orig_size + remain_size) {
-                    ALOGE("reverse buffer overflow %u", static_cast<unsigned int>(size));
+                    // May be called by liblog itself; never log inside path resolution.
                     return NULL;
                 }
 

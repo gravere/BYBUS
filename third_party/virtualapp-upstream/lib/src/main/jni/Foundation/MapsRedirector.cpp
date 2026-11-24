@@ -9,10 +9,12 @@
 #include <sys/stat.h>
 #include <ctype.h>
 #include "MapsRedirector.h"
-#include "Log.h"
 #include "SandboxFs.h"
 #include "RuntimePage.h"
 
+// liblog may read these files while holding ART's non-recursive logging lock.
+// Never log from this file, including failure paths: a file recursion guard cannot
+// prevent a second __android_log_print from deadlocking before it reaches open().
 static int create_temp_file() {
     char pattern[PATH_MAX] = {0};
     char *cache_dir = getenv("V_NATIVE_PATH");
@@ -29,7 +31,6 @@ static int create_temp_file() {
     fd = static_cast<int>(syscall(__NR_openat, AT_FDCWD, pattern,
                                   O_CREAT | O_RDWR | O_TRUNC | O_CLOEXEC, 0600));
     if (fd == -1) {
-        ALOGE("fake_maps: cannot create tmp file, errno = %d", errno);
         return -1;
     }
     unlink(pattern);
@@ -152,27 +153,6 @@ static bool is_proc_modules_file(const char *relative) {
     return strcmp(relative, "modules") == 0;
 }
 
-static bool should_log_fake_proc(const char *pathname) {
-    static int cmdline_logs = 0;
-    static int comm_logs = 0;
-    static int status_logs = 0;
-    static int other_logs = 0;
-    const char *relative = NULL;
-    if (!is_proc_path(pathname, &relative)) {
-        return other_logs++ < 8;
-    }
-    if (is_proc_cmdline_file(relative)) {
-        return cmdline_logs++ < 4;
-    }
-    if (is_proc_comm_file(relative)) {
-        return comm_logs++ < 4;
-    }
-    if (is_proc_status_file(relative)) {
-        return status_logs++ < 4;
-    }
-    return other_logs++ < 8;
-}
-
 static void redirect_proc_maps_internal(const int fd, const int fake_fd) {
     char line[PATH_MAX];
     char *p = line, *e;
@@ -186,10 +166,6 @@ static void redirect_proc_maps_internal(const int fd, const int fake_fd) {
             e[0] = '\0';
 
             if (is_limbus_anonymous_exec_trampoline(p)) {
-                static int trampoline_logs = 0;
-                if (trampoline_logs++ < 8) {
-                    ALOGE("fake_maps: remove anonymous executable trampoline: %s", p);
-                }
                 p = e + 1;
                 continue;
             }
@@ -220,7 +196,6 @@ static void redirect_proc_maps_internal(const int fd, const int fake_fd) {
             p = e + 1;
         }
         if (p == line) { // !any_entry
-            ALOGE("fake_maps: cannot process line larger than %u bytes!", PATH_MAX);
             goto __break;
         } //if
 
@@ -253,7 +228,6 @@ int redirect_proc_maps(const char *const pathname, const int flags, const int mo
 
     int fake_fd = create_temp_file();
     if (fake_fd == -1) {
-        ALOGE("fake_maps: create_temp_file failed, errno = %d", errno);
         syscall(__NR_close, fd);
         errno = EACCES;
         return -1;
@@ -263,24 +237,17 @@ int redirect_proc_maps(const char *const pathname, const int flags, const int mo
     lseek(fake_fd, 0, SEEK_SET);
     syscall(__NR_close, fd);
 
-    static unsigned redirect_logs = 0;
-    if (__atomic_fetch_add(&redirect_logs, 1u, __ATOMIC_RELAXED) < 4)
-        ALOGI("fake_maps: faked %s -> fd %d", pathname, fake_fd);
     return fake_fd;
 }
 
 static int fake_proc_small_file(const char *pathname, const char *content, size_t content_len) {
     int fake_fd = create_temp_file();
     if (fake_fd == -1) {
-        ALOGE("fake_proc: create_temp_file failed for %s, errno = %d", pathname, errno);
         errno = EACCES;
         return -1;
     }
     write(fake_fd, content, content_len);
     lseek(fake_fd, 0, SEEK_SET);
-    if (should_log_fake_proc(pathname)) {
-        ALOGI("fake_proc: faked %s -> fd %d", pathname, fake_fd);
-    }
     return fake_fd;
 }
 
@@ -318,9 +285,6 @@ static int redirect_proc_status(const char *pathname, const int flags, const int
     }
     syscall(__NR_close, fd);
     lseek(fake_fd, 0, SEEK_SET);
-    if (should_log_fake_proc(pathname)) {
-        ALOGI("fake_proc: faked %s -> fd %d", pathname, fake_fd);
-    }
     return fake_fd;
 }
 
@@ -338,8 +302,6 @@ int redirect_proc_file(const char *const pathname, const int flags, const int mo
         if (!is_current_process_path(relative)) return 0;
         const char *cmdline = getenv("V_LIMBUS_PROCESS_NAME");
         if (cmdline == nullptr || cmdline[0] == '\0') return 0;
-        static int identity_logs = 0;
-        if (identity_logs++ < 2) ALOGI("fake_proc: cmdline identity=%s", cmdline);
         return fake_proc_small_file(pathname, cmdline, strlen(cmdline) + 1);
     }
     if (is_proc_comm_file(relative)) {

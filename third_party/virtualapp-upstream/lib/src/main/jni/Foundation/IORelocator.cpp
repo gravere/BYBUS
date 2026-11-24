@@ -142,13 +142,6 @@ static int reverse_readlink_result(char *buf, size_t bufsiz, int ret) {
         reversed_len = bufsiz;
     }
     memcpy(buf, reversed, reversed_len);
-    if (strstr(link_temp, "io.github.gravere.bybus") != nullptr
-            || strstr(link_temp, "/virtual/") != nullptr) {
-        ALOGI("Limbus readlink reverse %s -> %.*s",
-              link_temp,
-              static_cast<int>(reversed_len),
-              buf);
-    }
     return static_cast<int>(reversed_len);
 }
 
@@ -492,7 +485,6 @@ HOOK_DEF(long, syscall, long number, ...) {
             if (relocated_path != NULL) {
                 int fake_fd = redirect_proc_file_guarded(relocated_path, static_cast<int>(a3), static_cast<int>(a4));
                 if (fake_fd != 0) {
-                    ALOGI("syscall >>> faked proc openat : %s", relocated_path);
                     return fake_fd;
                 }
             }

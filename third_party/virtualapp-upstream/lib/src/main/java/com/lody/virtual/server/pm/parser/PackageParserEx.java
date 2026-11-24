@@ -676,6 +676,7 @@ public class PackageParserEx {
                 }
             }
         }
+        InstalledPackageMetadata.apply(p, pi, flags);
         return pi;
     }
 
