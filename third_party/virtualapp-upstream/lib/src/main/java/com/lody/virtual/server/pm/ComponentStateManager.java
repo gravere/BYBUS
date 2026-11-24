@@ -1,6 +1,8 @@
 package com.lody.virtual.server.pm;
 
 import android.content.ComponentName;
+import android.content.pm.PackageManager;
+import android.os.BadParcelableException;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.util.SparseArray;
@@ -8,6 +10,7 @@ import android.util.SparseArray;
 import com.lody.virtual.helper.PersistenceLayer;
 import com.lody.virtual.os.VEnvironment;
 
+import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -24,13 +27,20 @@ public class ComponentStateManager extends PersistenceLayer {
     }
 
     public ComponentStateManager() {
-        super(VEnvironment.getComponentStateFile());
+        this(VEnvironment.getComponentStateFile());
+    }
+
+    ComponentStateManager(File persistenceFile) {
+        super(persistenceFile);
+        read();
     }
 
 
     public int getComponentState(ComponentName component, int userId) {
         synchronized (this) {
-            return getOrCreate(userId).getOrCreate(component).state;
+            UserComponentState user = states.get(userId);
+            ComponentState state = user == null ? null : user.states.get(component);
+            return state == null ? PackageManager.COMPONENT_ENABLED_STATE_DEFAULT : state.state;
         }
     }
 
@@ -102,7 +112,11 @@ public class ComponentStateManager extends PersistenceLayer {
         }
 
         protected UserComponentState(Parcel in) {
+            // Schema 1 writes a count before writeMap's own size. Consume both, without
+            // changing existing files or discarding previously saved component choices.
+            int count = in.readInt();
             in.readMap(states, ComponentState.class.getClassLoader());
+            if (count != states.size()) throw new BadParcelableException("Component state count mismatch");
         }
 
         public static final Parcelable.Creator<UserComponentState> CREATOR = new Parcelable.Creator<UserComponentState>() {

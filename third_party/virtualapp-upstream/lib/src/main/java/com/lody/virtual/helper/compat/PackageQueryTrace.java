@@ -57,6 +57,7 @@ public final class PackageQueryTrace {
             case "getPackageUid": case "getPackagesForUid": case "getNameForUid":
             case "getInstalledPackages": case "getInstalledApplications":
             case "getInstallerPackageName": case "getInstallSourceInfo": case "getApplicationEnabledSetting":
+            case "getComponentEnabledSetting":
             case "checkPermission": case "checkUidPermission":
             case "checkSignatures": case "checkUidSignatures": return true;
             default: return false;

@@ -35,6 +35,7 @@ public final class PackageManagerStub extends MethodInvocationProxy<MethodInvoca
     private static final String GAME = "com.ProjectMoon.LimbusCompany";
     private static final PackageQueryTrace TRACE = new PackageQueryTrace();
     private static final java.util.concurrent.atomic.AtomicInteger SOURCE_QUERY_REPORTS = new java.util.concurrent.atomic.AtomicInteger();
+    private static final java.util.concurrent.atomic.AtomicInteger COMPONENT_QUERY_REPORTS = new java.util.concurrent.atomic.AtomicInteger();
 
     /** Shared with the separate permission service; does not receive or retain query arguments. */
     public static void recordQueryResult(Method method, boolean proxied, Object result, Throwable error) {
@@ -52,8 +53,11 @@ public final class PackageManagerStub extends MethodInvocationProxy<MethodInvoca
             }
             TRACE.record(method.getName(), proxied, result, error);
             // Some exits have no Java alert. Preserve a small argument-free sample then too.
-            if ((method.getName().equals("getInstallerPackageName") || method.getName().equals("getApplicationEnabledSetting"))
-                    && SOURCE_QUERY_REPORTS.getAndIncrement() < 4) {
+            boolean sourceSample = (method.getName().equals("getInstallerPackageName") || method.getName().equals("getApplicationEnabledSetting"))
+                    && SOURCE_QUERY_REPORTS.getAndIncrement() < 4;
+            boolean componentSample = method.getName().equals("getComponentEnabledSetting")
+                    && COMPONENT_QUERY_REPORTS.getAndIncrement() < 4;
+            if (sourceSample || componentSample) {
                 try { VirtualCore.getConfig().onLimbusPackageQueries(TRACE.snapshot()); }
                 catch (Throwable ignored) { /* Diagnostic collection must not affect this query. */ }
             }

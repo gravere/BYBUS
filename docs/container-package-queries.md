@@ -72,3 +72,16 @@ Android 17 的 `IPackageManager.getInstalledPackages` 返回 `PackageInfoList`�
 
 参考：[Android PackageManager](https://developer.android.com/reference/android/content/pm/PackageManager)、
 [AOSP ApplicationPackageManager](https://github.com/aosp-mirror/platform_frameworks_base/blob/master/core/java/android/app/ApplicationPackageManager.java)。
+
+组件启用状态查询按实际注册的包及虚拟用户读取。`null` 组件保留平台的默认值；未知或该用户
+未安装的包抛出 `IllegalArgumentException`，不能创建一条默认状态后返回成功。已安装包中
+没有显式设置的组件返回 DEFAULT，这与组件在 manifest 中是否 enabled 是两个概念；
+不能额外要求查询的类名必须存在。允许访问的系统组件仍查询系统，其异常原样传回。
+
+状态管理器创建时加载已有持久文件，单次状态查询不创建记录。文件在每个用户的 Map 前有单独的条目数，读取时必须
+消费并核对该整数，再读 Map；文件格式保持不变，避免重启后丢失组件开关。
+
+依据为固定版本的 [Android 15 ComputerEngine](https://android.googlesource.com/platform/frameworks/base/+/refs/tags/android-15.0.0_r1/services/core/java/com/android/server/pm/ComputerEngine.java)
+及 [Settings](https://android.googlesource.com/platform/frameworks/base/+/refs/tags/android-15.0.0_r1/services/core/java/com/android/server/pm/Settings.java)。
+这些查询约定在 Android 14 已存在，不能仅凭设备使用 Android 15 就把退出归因于新增限制。
+诊断只增加组件查询的结果分类，以及带时间和 PID 的固定退出事件，不导出参数或原始安全日志。

@@ -10,6 +10,20 @@ import org.junit.Test
  * 验证公开诊断包写入前的敏感信息脱敏与长度限制。
  */
 class DebugLogExporterTest {
+    @Test fun timelinePreservesExitTimeAndProcessWithoutRawPayloadsOrMainProcessAttribution() {
+        val error = "1795452524.130 9760 9761 E AppSealing: !!! Kill Process ........[70107]"
+        assertEquals("time=1795452524.130 pid=9760 event=game_reported_exit code=70107", safeGameTimelineMarker(error))
+        assertEquals(null, safeGameTimelineMarker("$error account=private@example.com"))
+        assertEquals(null, safeGameTimelineMarker(error.replace("9760", "999999999999999")))
+        val game = "com.ProjectMoon.LimbusCompany"
+        val bound = "1795452524.001 9905 9905 I LimbusVA: VClient.bindApplication before makeApplication package=$game process=$game info=private@example.com"
+        assertEquals("time=1795452524.001 pid=9905 event=game_process_bound role=main", safeGameTimelineMarker(bound))
+        assertEquals("time=1795452524.001 pid=9905 event=game_process_bound role=helper",
+            safeGameTimelineMarker(bound.replace("process=$game", "process=$game:private-helper")))
+        assertEquals(null, safeGameTimelineMarker(bound.replace("package=$game", "package=other.app")))
+        assertEquals(null, safeGameTimelineMarker(bound.replace("process=$game", "process=other.app")))
+        assertEquals(null, safeGameTimelineMarker("1795452524.130 9760 9761 E AppSealing: private account payload"))
+    }
     @Test fun engineMarkersContainNoFreeTextOrAccountPayload() {
         val prefix = "1795004706.847  8909  8958 E Unity : "
         assertEquals("time=1795004706.847 pid=8909 event=intro_complete", safeGameStartupMarker(prefix + "PlayDone"))

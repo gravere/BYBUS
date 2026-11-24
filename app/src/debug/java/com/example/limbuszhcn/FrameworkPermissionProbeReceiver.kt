@@ -15,8 +15,11 @@ class FrameworkPermissionProbeReceiver : BroadcastReceiver() {
         Thread {
             try {
                 val result = runCatching {
-                    if (intent.getStringExtra("stage") == "package-jni") NativePackageQueryProbe.inspect(context)
-                    else FrameworkPermissionProbe.inspect(context)
+                    when (intent.getStringExtra("stage")) {
+                        "package-jni" -> NativePackageQueryProbe.inspect(context)
+                        "component-settings" -> com.lody.virtual.client.hook.proxies.pm.ComponentSettingsProbe.inspect(context)
+                        else -> FrameworkPermissionProbe.inspect(context)
+                    }
                 }.getOrElse {
                     JSONObject().put("passed", false).put("error", it.stackTraceToString().take(8000))
                 }

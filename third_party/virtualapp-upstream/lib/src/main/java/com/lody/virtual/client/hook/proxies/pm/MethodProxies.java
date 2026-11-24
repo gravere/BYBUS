@@ -399,7 +399,13 @@ class MethodProxies {
         @Override
         public Object call(Object who, Method method, Object... args) throws Throwable {
             ComponentName component = (ComponentName) args[0];
-            return VPackageManager.get().getComponentEnabledSetting(component, getAppUserId());
+            if (component == null || isAppPkg(component.getPackageName())) {
+                return VPackageManager.get().getComponentEnabledSetting(component, getAppUserId());
+            }
+            if (!shouldIsolateHostPackagesForLimbus() && isVisiblePackageForCurrentApp(component.getPackageName())) {
+                return method.invoke(who, args);
+            }
+            throw new IllegalArgumentException("Unknown component");
         }
     }
 

@@ -217,20 +217,20 @@ internal class DebugLogExporter(private val context: Context) {
         }
     }
 
-    /** Export fixed engine-stage/error categories, never arbitrary Unity logs or payloads. */
+    /** Export fixed engine/bind/exit events, never arbitrary SDK logs or payloads. */
     private fun collectGameStartup(): String {
         val command = listOf("logcat", "-d", "-b", "main", "-v", "epoch",
-            "--uid=${Process.myUid()}", "-t", "6000", "Unity:I", "*:S")
+            "--uid=${Process.myUid()}", "-t", "6000", "Unity:I", "LimbusVA:I", "AppSealing:E", "*:S")
         return runCatching {
             val process = ProcessBuilder(command).redirectErrorStream(true).start()
             val read = FutureTask {
                 process.inputStream.bufferedReader().useLines { lines ->
-                    lines.take(6000).mapNotNull(::safeGameStartupMarker).take(256).joinToString("\n")
+                    lines.take(6000).mapNotNull(::safeGameTimelineMarker).toList().takeLast(256).joinToString("\n")
                 }
             }
             try {
                 Thread(read, "bybus-startup-markers").apply { isDaemon = true; start() }
-                "scope=own-uid; engine markers only; missing markers do not prove success\n" +
+                "scope=own-uid; fixed events only; correlate time and pid; missing events do not prove success\n" +
                     read.get(2, TimeUnit.SECONDS).ifEmpty { "no_markers" } + "\n"
             } finally { process.destroy(); read.cancel(true) }
         }.getOrElse { "startup_markers_unavailable\n" }
@@ -513,6 +513,26 @@ internal fun safeGameStartupMarker(line: String): String? {
 private const val EARLY_GAME_EXIT_MS = 30_000L
 private const val GAME_BIND_EVENT = "VClient.bindApplication before makeApplication"
 private val GAME_BIND_LOG = Regex("""(\d{1,11})\.(\d{3,9})\s+(\d+)\s+\d+\s+I\s+LimbusVA\s*:\s*VClient\.bindApplication before makeApplication package=(\S+) process=(\S+) info=.*""")
+
+/** This timeline may span launches; it does not assign a helper's error to the main game. */
+internal fun safeGameTimelineMarker(line: String): String? {
+    safeGameStartupMarker(line)?.let { return it }
+    val value = line.trim()
+    GAME_EXIT_LOG.matchEntire(value)?.let { match ->
+        val pid = match.groupValues[3].toIntOrNull()?.takeIf { it > 0 } ?: return null
+        return "time=${match.groupValues[1]}.${match.groupValues[2]} pid=$pid event=game_reported_exit code=${match.groupValues[4]}"
+    }
+    val match = GAME_BIND_LOG.matchEntire(value) ?: return null
+    val pid = match.groupValues[3].toIntOrNull()?.takeIf { it > 0 } ?: return null
+    val game = LocalContainerRuntime.GAME_PACKAGE
+    if (match.groupValues[4] != game) return null
+    val role = when {
+        match.groupValues[5] == game -> "main"
+        match.groupValues[5].startsWith("$game:") -> "helper"
+        else -> return null
+    }
+    return "time=${match.groupValues[1]}.${match.groupValues[2]} pid=$pid event=game_process_bound role=$role"
+}
 
 internal fun readGameExitCodes(context: Context, pid: Int, started: Long, until: Long): List<String> {
     val direct = readGameLog(started, listOf("--pid=$pid", "AppSealing:E")) { lines ->

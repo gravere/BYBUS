@@ -5,6 +5,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PackageQueryTraceTest {
+    @Test fun componentStateErrorsAndDefaultsAreDistinctWithoutKeepingNames() {
+        val trace = PackageQueryTrace()
+        trace.record("getComponentEnabledSetting", true, 0, null)
+        trace.record("getComponentEnabledSetting", true, null, IllegalArgumentException("private.package/Class"))
+        val summary = trace.snapshot()
+        assertTrue(summary.contains("getComponentEnabledSetting:container:code_0"))
+        assertTrue(summary.contains("getComponentEnabledSetting:container:argument_error"))
+        assertFalse(summary.contains("private"))
+    }
     @Test fun installerAndMissingPackageEvidenceDoesNotContainTheSource() {
         val trace = PackageQueryTrace()
         trace.record("getInstallerPackageName", true, "private.store", null)

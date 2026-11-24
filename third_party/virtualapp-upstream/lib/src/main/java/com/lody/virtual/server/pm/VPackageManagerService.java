@@ -970,10 +970,19 @@ public class VPackageManagerService extends IPackageManager.Stub {
     @Override
     public int getComponentEnabledSetting(ComponentName component, int userId) {
         if (component == null) {
-            return 0;
+            return PackageManager.COMPONENT_ENABLED_STATE_DEFAULT;
         }
-        checkUserId(userId);
+        if (!VUserManagerService.get().exists(userId)) {
+            return PackageManager.COMPONENT_ENABLED_STATE_DISABLED;
+        }
         synchronized (mPackages) {
+            VPackage pkg = mPackages.get(component.getPackageName());
+            PackageSetting setting = pkg == null ? null : (PackageSetting) pkg.mExtras;
+            if (setting == null || !setting.isInstalled(userId) || setting.isHidden(userId)) {
+                throw new IllegalArgumentException("Unknown component");
+            }
+            // AOSP queries the package's override, not whether the class exists or is
+            // enabled in its manifest. An unset class in an installed package is DEFAULT.
             return ComponentStateManager.get().getComponentState(component, userId);
         }
     }
