@@ -51,6 +51,8 @@ class StartupDiagnosticsExportTest {
         Log.i("LimbusVA", "VClient.bindApplication before makeApplication package=$game process=$game info=diagnostic-fixture")
         Log.e("AppSealing", "!!! Kill Process ........[99001]")
         Log.e("AppSealing", "PRIVATE_TEST_SENTINEL_ACCOUNT")
+        Log.e("chromium", "[ERROR:jni_android.cc(306)] java.lang.SecurityException: PRIVATE_JAVA_SENTINEL_ACCOUNT does not belong to uid 123")
+        Log.w("System.err", "    at android.app.IActivityManager\$Stub\$Proxy.bindServiceInstance(IActivityManager.java:5219)")
         val started = SystemClock.elapsedRealtime()
         val archive = DebugLogExporter(context).export(ContainerStatus(true, false, "diagnostic fixture"), null)
         try {
@@ -64,6 +66,11 @@ class StartupDiagnosticsExportTest {
                 assertTrue(status.contains("gameEvents=collected_bounded"))
                 assertTrue(status.contains("signalSender=not_exposed_by_ApplicationExitInfo"))
                 assertTrue(status.contains("missingEvidence=not_a_success_result"))
+                val javaFaults = zip.getInputStream(zip.getEntry("java-faults.txt")).bufferedReader().use { it.readText() }
+                assertTrue(javaFaults, javaFaults.contains("collection=available"))
+                assertTrue(javaFaults.contains("type=java.lang.SecurityException category=package_uid_mismatch"))
+                assertTrue(javaFaults.contains("method=android.app.IActivityManager\$Stub\$Proxy.bindServiceInstance"))
+                assertFalse(javaFaults.contains("PRIVATE_JAVA_SENTINEL_ACCOUNT"))
             }
             assertTrue("Export must not wait indefinitely for logcat", SystemClock.elapsedRealtime() - started < 20_000)
         } finally { archive.delete() }

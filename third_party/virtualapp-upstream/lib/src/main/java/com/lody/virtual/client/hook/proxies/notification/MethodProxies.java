@@ -355,21 +355,32 @@ class MethodProxies {
         @Override
         public Object call(Object who, Method method, Object... args) throws Throwable {
             String packageName = (String) args[0];
-            String pkg = MethodParameterUtils.replaceFirstAppPkg(args);
-            if (getHostPkg().equals(pkg)) {
+            String pkg = packageName;
+            if (getHostPkg().equals(pkg) || !VirtualCore.get().isAppInstalled(pkg)) {
                 return method.invoke(who, args);
             }
-            String tag = (String) args[1];
-            int id = (int) args[2];
+            Class<?>[] paramTypes = method.getParameterTypes();
+            int tagIndex = -1;
+            int idIndex = -1;
+            if (java.util.Arrays.equals(paramTypes,
+                    new Class<?>[]{String.class, String.class, String.class, int.class, int.class})) {
+                // Current AIDL includes opPkg; the nullable tag is not an integer ID.
+                tagIndex = 2;
+                idIndex = 3;
+            } else if (java.util.Arrays.equals(paramTypes,
+                    new Class<?>[]{String.class, String.class, int.class, int.class})) {
+                // API26: cancelNotificationWithTag(String pkg, String tag, int id, int user)
+                tagIndex = 1;
+                idIndex = 2;
+            } else {
+                return method.invoke(who, args);
+            }
+            String tag = (String) args[tagIndex];
+            int id = (int) args[idIndex];
             id = VNotificationManager.get().dealNotificationId(id, pkg, tag, getAppUserId());
             tag = VNotificationManager.get().dealNotificationTag(id, pkg, tag, getAppUserId());
-            args[1] = tag;
-            args[2] = id;
-            if (VirtualCore.get().isAppInstalled(pkg)) {
-                VNotificationManager.get().cancelNotification(packageName, tag, id, getAppUserId());
-                return 0;
-            }
-            return method.invoke(who, args);
+            VNotificationManager.get().cancelNotification(packageName, tag, id, getAppUserId());
+            return 0;
         }
     }
 
@@ -385,8 +396,8 @@ class MethodProxies {
 
         @Override
         public Object call(Object who, Method method, Object... args) throws Throwable {
-            String pkg = MethodParameterUtils.replaceFirstAppPkg(args);
-            if (VirtualCore.get().isAppInstalled(pkg)) {
+            String pkg = (String) args[0];
+            if (!getHostPkg().equals(pkg) && VirtualCore.get().isAppInstalled(pkg)) {
                 VNotificationManager.get().cancelAllNotification(pkg, getAppUserId());
                 return 0;
             }

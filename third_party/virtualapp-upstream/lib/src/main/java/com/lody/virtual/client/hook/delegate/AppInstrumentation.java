@@ -430,7 +430,13 @@ public final class AppInstrumentation extends InstrumentationDelegate implements
                         return caller;
                     }
                 }
-                return method.invoke(sActivityClientControllerBase, args);
+                try {
+                    return method.invoke(sActivityClientControllerBase, args);
+                } catch (java.lang.reflect.InvocationTargetException error) {
+                    // Keep Binder's original checked/runtime exception contract. A reflection
+                    // wrapper otherwise becomes UndeclaredThrowableException at the Proxy boundary.
+                    throw error.getTargetException();
+                }
             };
             Object proxy = Proxy.newProxyInstance(
                     controllerInterface.getClassLoader(),

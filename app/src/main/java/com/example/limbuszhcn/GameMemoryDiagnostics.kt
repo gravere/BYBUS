@@ -59,13 +59,23 @@ internal object GameMemoryDiagnostics {
             for (seconds in listOf(5L, 10L, 15L, 20L, 25L, 35L, 40L, 45L, 50L, 55L)) {
                 executor.schedule({ sample("startup") }, seconds, TimeUnit.SECONDS)
             }
-            val faults = GameFaultDiagnostics(context)
-            executor.scheduleWithFixedDelay({ runCatching { faults.sample() } }, 0, 5, TimeUnit.SECONDS)
             started = true
         } catch (_: RuntimeException) {
             guest.unregisterComponentCallbacks(callbacks)
             executor.shutdownNow()
         }
+        if (!started) return
+        // Log-service or file-pruning failures must not stop numeric memory samples.
+        val faultExecutor = Executors.newSingleThreadScheduledExecutor { task ->
+            Thread({
+                Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+                task.run()
+            }, "bybus-fault").apply { isDaemon = true }
+        }
+        runCatching {
+            val faults = GameFaultDiagnostics(context)
+            faultExecutor.scheduleWithFixedDelay({ runCatching { faults.sample() } }, 0, 5, TimeUnit.SECONDS)
+        }.onFailure { faultExecutor.shutdownNow() }
     }
 
     internal fun snapshot(context: Context): String {

@@ -9,6 +9,8 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/syscall.h>
+#include <sys/mman.h>
+#include <new>
 
 namespace limbus_termination {
 enum Event { Ready = 0, Kill = 1, Raise = 2, Tkill = 3, Tgkill = 4,
@@ -17,8 +19,11 @@ enum Event { Ready = 0, Kill = 1, Raise = 2, Tkill = 3, Tgkill = 4,
 // Existing hooks only observe; return values and signal handling stay unchanged.
 class Trace {
     std::atomic<int> fd_{-1};
-    std::atomic<unsigned> total_{0};
-    std::atomic<unsigned> events_[10]{};
+    struct SharedCounters {
+        std::atomic<unsigned> total;
+        std::atomic<unsigned> events[10];
+    };
+    SharedCounters *shared_ = nullptr;
     static char *text(char *p, const char *value) {
         while (*value) *p++ = *value++;
         return p;
@@ -35,9 +40,22 @@ public:
     // Called once, before game code is loaded, with a private per-process path.
     bool open(const char *path) {
         if (fd_.load() >= 0) return true;
+        // Allocate shared counters BEFORE opening fd to avoid fd/mapping leak on failure.
+        void *mem = mmap(nullptr, sizeof(SharedCounters),
+                         PROT_READ | PROT_WRITE,
+                         MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        if (mem == MAP_FAILED) return false;
+        SharedCounters *counters = new (mem) SharedCounters{};
+        counters->total.store(0, std::memory_order_relaxed);
+        for (int i = 0; i < 10; ++i) counters->events[i].store(0, std::memory_order_relaxed);
+        shared_ = counters;
         int fd = ::open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
-        if (fd < 0) return false;
-        fd_.store(fd);
+        if (fd < 0) {
+            shared_ = nullptr;
+            munmap(mem, sizeof(SharedCounters));
+            return false;
+        }
+        fd_.store(fd, std::memory_order_release);
         record(Ready, 0, 0, 0, 0);
         return true;
     }
@@ -48,11 +66,17 @@ public:
     void record(Event event, int value, int target, uintptr_t caller, int disposition) {
         static_assert(ATOMIC_INT_LOCK_FREE == 2, "Trace must not lock inside a signal handler");
         const int saved_errno = errno;
-        const int fd = fd_.load(std::memory_order_relaxed);
+        const int fd = fd_.load(std::memory_order_acquire);
+        if (fd < 0) {
+            errno = saved_errno;
+            return;
+        }
+        // Quota is per trace family (shared across fork descendants), not per child process.
+        // Shared counters survive fork so children inherit sequence and category limits.
         // Reserve space across event classes: a noisy forwarded signal cannot
         // consume the slots needed to record exit/abort or a native fault.
-        if (fd >= 0 && events_[event].fetch_add(1, std::memory_order_relaxed) < 8) {
-            const unsigned sequence = total_.fetch_add(1, std::memory_order_relaxed);
+        if (shared_->events[event].fetch_add(1, std::memory_order_relaxed) < 8) {
+            const unsigned sequence = shared_->total.fetch_add(1, std::memory_order_relaxed);
             if (sequence < 80) {
                 struct timespec wall{}, mono{};
                 clock_gettime(CLOCK_REALTIME, &wall);

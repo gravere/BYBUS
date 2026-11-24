@@ -88,6 +88,13 @@ their respective rights holders. This is an unofficial community project and is
 not endorsed by or affiliated with Project Moon. No ownership of third-party
 trademarks or artwork is claimed.
 
+## DexMaker
+
+- Component: `com.linkedin.dexmaker:dexmaker:2.28.6`
+- Source: https://github.com/linkedin/dexmaker
+- License: Apache License 2.0
+- Generates an in-memory implementation of the device's package-manager interface; existing container calls remain the delegate.
+
 ## Android apksig
 
 - Component: `com.android.tools.build:apksig:8.8.0` (Android Open Source Project)

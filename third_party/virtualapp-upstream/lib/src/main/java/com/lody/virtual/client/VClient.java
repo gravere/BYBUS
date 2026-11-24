@@ -479,6 +479,7 @@ public final class VClient extends IVClient.Stub {
         VLog.i(TAG, "Binding application %s (%s [%d])", data.appInfo.packageName, data.processName, Process.myPid());
         mBoundApplication = data;
         VirtualRuntime.setupRuntime(data.processName, data.appInfo);
+        PackageManagerStub.prepareGameInterface(packageName);
         if (VirtualCore.get().isPluginEngine()) {
             File apkFile = new File(info.getApkPath());
             File libDir = new File(data.appInfo.nativeLibraryDir);

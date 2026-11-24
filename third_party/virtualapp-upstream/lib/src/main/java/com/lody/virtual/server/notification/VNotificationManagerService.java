@@ -175,7 +175,7 @@ public class VNotificationManagerService extends INotificationManager.Stub {
                 int count = list.size();
                 for (int i = count - 1; i >= 0; i--) {
                     NotificationInfo info = list.get(i);
-                    if (info.userId == userId && info.id == id) {
+                    if (info.userId == userId && info.id == id && TextUtils.equals(info.tag, tag)) {
                         infos.add(info);
                         list.remove(i);
                     }

@@ -6,10 +6,13 @@ import android.content.ComponentName;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.os.IInterface;
+import android.os.Build;
+import android.util.Log;
 
 import com.lody.virtual.client.VClient;
 import com.lody.virtual.client.env.VirtualRuntime;
 import com.lody.virtual.client.core.VirtualCore;
+import com.lody.virtual.client.core.InvocationStubManager;
 import com.lody.virtual.client.hook.annotations.Inject;
 import com.lody.virtual.client.hook.base.BinderInvocationStub;
 import com.lody.virtual.client.hook.base.MethodInvocationProxy;
@@ -21,6 +24,7 @@ import com.lody.virtual.helper.utils.Reflect;
 import com.lody.virtual.helper.compat.LimbusSafetyAlert;
 import com.lody.virtual.helper.compat.PackageQueryTrace;
 import com.lody.virtual.helper.compat.PackageManagerUserScope;
+import com.lody.virtual.helper.compat.RuntimeInterfaceAdapter;
 import com.lody.virtual.helper.compat.ParceledListSliceCompat;
 import com.lody.virtual.client.hook.utils.MethodParameterUtils;
 import com.lody.virtual.os.VUserHandle;
@@ -34,6 +38,30 @@ import mirror.android.app.ActivityThread;
 @Inject(MethodProxies.class)
 public final class PackageManagerStub extends MethodInvocationProxy<MethodInvocationStub<IInterface>> {
     private static final String GAME = "com.ProjectMoon.LimbusCompany";
+    private IInterface mConcreteInterface;
+    private Class<IInterface> mRuntimeContract;
+
+    /** Run before the game's Application is created, never in the host or Google processes. */
+    @SuppressWarnings("unchecked")
+    public static void prepareGameInterface(String packageName) {
+        if (!GAME.equals(packageName) || Build.VERSION.SDK_INT < 26) return;
+        PackageManagerStub stub = InvocationStubManager.getInstance().findInjector(PackageManagerStub.class);
+        if (stub == null || stub.mConcreteInterface != null) return;
+        try {
+            Class<IInterface> contract = (Class<IInterface>) Class.forName("android.content.pm.IPackageManager");
+            IInterface adapted = RuntimeInterfaceAdapter.wrap(contract, stub.getInvocationStub().getProxyInterface());
+            stub.mRuntimeContract = contract;
+            stub.mConcreteInterface = adapted;
+            stub.inject();
+            Log.i("LimbusVA", "Package interface ready sdk=" + Build.VERSION.SDK_INT
+                    + " methods=" + contract.getMethods().length);
+        } catch (Throwable error) {
+            stub.mConcreteInterface = null;
+            stub.mRuntimeContract = null;
+            // A generation failure must not abort binding or expose the unvirtualized system PM.
+            Log.w("LimbusVA", "Package interface retained existing dispatch: " + error.getClass().getName());
+        }
+    }
     private static final PackageQueryTrace TRACE = new PackageQueryTrace();
     private static final java.util.concurrent.atomic.AtomicInteger SOURCE_QUERY_REPORTS = new java.util.concurrent.atomic.AtomicInteger();
     private static final java.util.concurrent.atomic.AtomicInteger COMPONENT_QUERY_REPORTS = new java.util.concurrent.atomic.AtomicInteger();
@@ -156,9 +184,12 @@ public final class PackageManagerStub extends MethodInvocationProxy<MethodInvoca
 
     @Override
     public void inject() throws Throwable {
-        final IInterface hookedPM = getInvocationStub().getProxyInterface();
-        ActivityThread.sPackageManager.set(hookedPM);
+        final IInterface hookedPM = mConcreteInterface != null
+                ? mConcreteInterface : getInvocationStub().getProxyInterface();
         BinderInvocationStub pmHookBinder = new BinderInvocationStub(getInvocationStub().getBaseInterface()) {
+            private final IInterface exposed = mRuntimeContract == null ? getProxyInterface()
+                    : RuntimeInterfaceAdapter.wrap(mRuntimeContract, getProxyInterface());
+            @Override public IInterface queryLocalInterface(String descriptor) { return exposed; }
             @Override protected Object onInvocationStart(Method method, boolean proxied) { return beginQuery(method, proxied); }
             @Override protected void onInvocationEnd(Object observation, Method method, Object result, Throwable error) {
                 endQuery(observation, method, result, error);
@@ -168,6 +199,7 @@ public final class PackageManagerStub extends MethodInvocationProxy<MethodInvoca
             }
         };
         pmHookBinder.copyMethodProxies(getInvocationStub());
+        ActivityThread.sPackageManager.set(hookedPM);
         pmHookBinder.replaceService("package");
         try {
             Context systemContext = Reflect.on(VirtualCore.mainThread()).call("getSystemContext").get();
@@ -182,6 +214,8 @@ public final class PackageManagerStub extends MethodInvocationProxy<MethodInvoca
 
     @Override
     public boolean isEnvBad() {
-        return getInvocationStub().getProxyInterface() != ActivityThread.sPackageManager.get();
+        IInterface expected = mConcreteInterface != null
+                ? mConcreteInterface : getInvocationStub().getProxyInterface();
+        return expected != ActivityThread.sPackageManager.get();
     }
 }

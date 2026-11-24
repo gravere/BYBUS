@@ -18,8 +18,6 @@ import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.util.concurrent.FutureTask
-import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -59,6 +57,7 @@ internal class DebugLogExporter(private val context: Context) {
             val startup = collectGameStartup()
             zip.writeText("logcat.txt", logcat)
             zip.writeText("game-startup.txt", startup)
+            zip.writeText("java-faults.txt", collectJavaFaults())
             zip.writeText("process-starts.txt", SystemStartupDiagnostics.collect(context))
             zip.writeText("game-session.txt", runCatching {
                 com.example.limbuszhcn.container.VirtualAppSession(context).snapshot().diagnostic()
@@ -96,7 +95,7 @@ internal class DebugLogExporter(private val context: Context) {
             zip.writeText("native/termination-format.txt", "event: 0=ready 1=kill 2=raise 3=tkill 4=tgkill 5=pthread_kill 6=exit 7=libc_syscall 8=fault 9=unhandled_fault\n" +
                 "disposition: -1=observed_handler_entry 0=forwarded 1=existing_block 2=existing_exit_handler 3=unconsumed_fault\n" +
                 "scope: existing libc hooks only; direct kernel calls and external SIGKILL senders are not intercepted\n" +
-                "limit: first 8 records per event class per process; fixed 384-byte slots; at most 6 process files\n")
+                "limit: first 8 records per event class per trace family (including fork children); fixed 384-byte slots; at most 6 trace files\n")
             zip.writeText("capture-files.txt", buildString {
                 appendLine("nativeTerminationFiles=${nativeTraces.size}")
                 nativeTraces.forEach { appendLine("native/${it.name} bytes=${it.length()} modified=${Instant.ofEpochMilli(it.lastModified())} truncated=${it.length() > 32 * 1024}") }
@@ -111,7 +110,7 @@ internal class DebugLogExporter(private val context: Context) {
                 zip.writeBytes("exit-trace-${index + 1}.pb", trace.bytes)
             }
             zip.writeText("capture-status.txt", buildString {
-                appendLine("schema=3")
+                appendLine("schema=4")
                 appendLine("captureStarted=$captureStarted")
                 appendLine("captureFinished=${Instant.now()}")
                 appendLine("scope=own_uid_only")
@@ -132,6 +131,7 @@ internal class DebugLogExporter(private val context: Context) {
                 appendLine("classLookup=first_32_fallback_results_per_process")
                 appendLine("memory=5_second_startup_samples_then_30_seconds_with_summary_categories")
                 appendLine("gameFaultPersistence=5_second_current_process_fixed_marker_capture")
+                appendLine("javaFaults=own_uid_exception_types_and_stack_methods_only")
                 appendLine("nativeTerminationFiles=${nativeTraces.size}")
                 appendLine("logPersistence=bounded_per_process_rotation")
                 appendLine("signalSender=not_exposed_by_ApplicationExitInfo")
@@ -190,6 +190,9 @@ internal class DebugLogExporter(private val context: Context) {
             appendLine("buildIncremental=${Build.VERSION.INCREMENTAL}")
             appendLine("androidSdk=${Build.VERSION.SDK_INT}")
             appendLine("androidRelease=${Build.VERSION.RELEASE}")
+            val webView = runCatching { android.webkit.WebView.getCurrentWebViewPackage() }.getOrNull()
+            appendLine("webViewPackage=${webView?.packageName ?: "unavailable"}")
+            appendLine("webViewVersion=${webView?.versionName ?: "unavailable"}")
             appendLine("androidSecurityPatch=${Build.VERSION.SECURITY_PATCH}")
             appendLine("abis=${Build.SUPPORTED_ABIS.joinToString(",")}")
             appendLine("abis64=${Build.SUPPORTED_64_BIT_ABIS.joinToString(",")}")
@@ -257,42 +260,42 @@ internal class DebugLogExporter(private val context: Context) {
             "LimbusZhCN:I", "LimbusSIG:I", "GameMemory:I", "PackageQueries:I", "LimbusJNI:I", "GameExit:I", "GameFault:I",
             "NativeEngine:I", "AndroidRuntime:E", "libc:F", "*:S"
         )
-        return runCatching {
-            val process = ProcessBuilder(command).redirectErrorStream(true).start()
-            val read = FutureTask { process.inputStream.use { it.readBounded(MAX_LOGCAT_BYTES) } }
-            try {
-                Thread(read, "bybus-export-logcat").apply { isDaemon = true; start() }
-                val bytes = read.get(2, TimeUnit.SECONDS)
-                val exited = process.waitFor(200, TimeUnit.MILLISECONDS)
-                buildString {
-                    appendLine("command=${command.joinToString(" ")}")
-                    appendLine("exitCode=${if (exited) process.exitValue().toString() else "bounded_read"}")
-                    append(String(bytes, Charsets.UTF_8))
-                }.redactedAndBounded(MAX_LOGCAT_BYTES)
-            } finally { process.destroy(); read.cancel(true) }
-        }.getOrElse { error ->
-            "logcat collection failed: ${error.javaClass.simpleName}: ${error.message}"
-                .redactedAndBounded(MAX_SUMMARY_BYTES)
+        val result = exportLogReader.read({ ProcessBuilder(command).redirectErrorStream(true).start() }) {
+            boundedDiagnosticTail(it, MAX_LOGCAT_BYTES, MAX_LOG_LINES)
         }
+        if (result.status !in setOf("available", "incomplete")) return "logcat collection failed: ${result.status}\n"
+        return buildString {
+            appendLine("command=${command.joinToString(" ")}")
+            appendLine("collection=${result.status}")
+            appendLine("exitCode=${result.exitCode ?: "not_observed"}")
+            append(result.lines.joinToString("\n"))
+        }.redactedAndBounded(MAX_LOGCAT_BYTES)
     }
 
     /** Export fixed engine/bind/exit events, never arbitrary SDK logs or payloads. */
     private fun collectGameStartup(): String {
         val command = listOf("logcat", "-d", "-b", "main", "-v", "epoch",
             "--uid=${Process.myUid()}", "-t", "6000", "Unity:I", "LimbusVA:I", "AppSealing:E", "*:S")
-        return runCatching {
-            val process = ProcessBuilder(command).redirectErrorStream(true).start()
-            val read = FutureTask {
-                process.inputStream.bufferedReader().useLines { lines ->
-                    lines.take(6000).mapNotNull(::safeGameTimelineMarker).toList().takeLast(256).joinToString("\n")
-                }
-            }
-            try {
-                Thread(read, "bybus-startup-markers").apply { isDaemon = true; start() }
-                "scope=own-uid; fixed events only; correlate time and pid; missing events do not prove success\n" +
-                    read.get(2, TimeUnit.SECONDS).ifEmpty { "no_markers" } + "\n"
-            } finally { process.destroy(); read.cancel(true) }
-        }.getOrElse { "startup_markers_unavailable\n" }
+        val result = startupLogReader.read({ ProcessBuilder(command).redirectErrorStream(true).start() }) { lines ->
+            lines.take(6000).mapNotNull(::safeGameTimelineMarker).toList().takeLast(256)
+        }
+        if (result.status !in setOf("available", "incomplete")) return "startup_markers_unavailable status=${result.status}\n"
+        return "scope=own-uid; fixed events only; correlate time and pid; missing events do not prove success\n" +
+            "collection=${result.status}\n" + result.lines.joinToString("\n").ifEmpty { "no_markers" } + "\n"
+    }
+
+    private fun collectJavaFaults(): String {
+        // Chromium may describe and clear a Java exception before its native fatal handler runs.
+        // Keep only typed evidence; login URLs, consent data and SDK payloads never leave the parser.
+        val command = listOf("logcat", "-d", "-b", "main", "-b", "crash", "-v", "epoch",
+            "--uid=${Process.myUid()}", "-t", "6000", "chromium:E", "cr_JniAndroid:E",
+            "System.err:W", "AndroidRuntime:E", "*:S")
+        val result = javaFaultLogReader.read({ ProcessBuilder(command).redirectErrorStream(true).start() }) { lines ->
+            lines.take(6000).mapNotNull(::safeJavaFaultMarker).toList().takeLast(512)
+        }
+        return "scope=own-uid; types, fixed categories and methods only; correlate pid and time\n" +
+            "collection=${result.status}\nexitCode=${result.exitCode ?: "not_observed"}\n" +
+            result.lines.joinToString("\n").ifEmpty { "no_retained_markers" } + "\n"
     }
 
     private fun collectExitReasons(): ExitDiagnostics {
@@ -472,6 +475,10 @@ internal class DebugLogExporter(private val context: Context) {
     private data class BoundedBinary(val bytes: ByteArray, val exceededLimit: Boolean)
 
     companion object {
+        // Shared across exporter instances so a stuck child cannot accumulate threads on retries.
+        private val exportLogReader = BoundedDiagnosticRead()
+        private val startupLogReader = BoundedDiagnosticRead()
+        private val javaFaultLogReader = BoundedDiagnosticRead()
         private const val FILE_PREFIX = "limbus-diagnostics-"
         private const val MAX_ARCHIVE_BYTES = 8L * 1024L * 1024L
         private const val MAX_LOGCAT_BYTES = 3 * 1024 * 1024
@@ -617,26 +624,15 @@ internal fun readGameExitCodes(context: Context, pid: Int, started: Long, until:
     }
 }
 
+private val gameLogReader = BoundedDiagnosticRead()
+
 internal fun readGameLog(started: Long, filters: List<String>, onStatus: (String) -> Unit = {},
-    parse: (Sequence<String>) -> List<String>): List<String> = runCatching {
+    parse: (Sequence<String>) -> List<String>): List<String> {
     val since = "${started / 1000}.${(started % 1000).toString().padStart(3, '0')}"
     val args = listOf("logcat", "-d", "-b", "main", "-v", "epoch", "-T", since, "--uid=${Process.myUid()}") + filters + "*:S"
-    val process = ProcessBuilder(args).redirectErrorStream(true).start()
-    val read = FutureTask {
-        process.inputStream.bufferedReader().useLines(parse)
-    }
-    try {
-        Thread(read, "bybus-game-exit-log").apply { isDaemon = true; start() }
-        read.get(2, TimeUnit.SECONDS).also {
-            onStatus(if (process.waitFor(100, TimeUnit.MILLISECONDS) && process.exitValue() == 0) "available" else "incomplete")
-        }
-    } finally {
-        process.destroy()
-        read.cancel(true)
-    }
-}.getOrElse {
-    onStatus(if (it is java.util.concurrent.TimeoutException) "timeout" else "unavailable")
-    emptyList()
+    val result = gameLogReader.read({ ProcessBuilder(args).redirectErrorStream(true).start() }, parse)
+    onStatus(result.status)
+    return result.lines
 }
 
 /** Android can recreate a game activity under a new PID before it returns to BYBUS. */

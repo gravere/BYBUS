@@ -41,21 +41,43 @@ int main() {
     assert(symlink("index.bin", "link.bin") == 0);
     assert(!limbus_index::File::open("link.bin"));
 
+    // Regression: open BEFORE fork so child inherits shared counters.
+    // Child writes first, then parent writes; both PIDs must appear.
+    limbus_termination::Trace fork_trace;
+    assert(fork_trace.open("fork_coverage.log"));
+    int pipe_fds[2];
+    assert(pipe(pipe_fds) == 0);
     const pid_t child = fork(); assert(child >= 0);
     if (child == 0) {
-        limbus_termination::Trace trace;
-        assert(trace.open("termination.log"));
+        close(pipe_fds[0]);
         errno = EAGAIN;
-        trace.record(limbus_termination::Kill, SIGKILL, getpid(), 123, 0);
+        fork_trace.record(limbus_termination::Kill, SIGKILL, getpid(), 123, 0);
         assert(errno == EAGAIN);
+        // Signal parent that child record is complete.
+        close(pipe_fds[1]);
         ::kill(getpid(), SIGKILL);
         _exit(99);
     }
+    close(pipe_fds[1]);
+    // Wait for child to finish writing before parent writes.
+    char dummy;
+    assert(read(pipe_fds[0], &dummy, 1) == 0);
+    close(pipe_fds[0]);
     int status = 0; assert(waitpid(child, &status, 0) == child);
     assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL);
-    const auto persisted = read("termination.log");
-    assert(persisted.size() == 2 * 384 && persisted.find("event=1 value=9") != std::string::npos);
+    // Parent writes AFTER child, using inherited shared sequence counter.
+    fork_trace.record(limbus_termination::Exit, 42, getpid(), 456, 1);
+    const auto persisted = read("fork_coverage.log");
+    // Both child and parent records must coexist with distinct PIDs.
+    assert(persisted.find("pid=" + std::to_string(child) + " tid=") != std::string::npos);
+    assert(persisted.find("pid=" + std::to_string(getpid()) + " tid=") != std::string::npos);
     assert(persisted.find("target=" + std::to_string(child)) != std::string::npos);
+    assert(persisted.find("target=" + std::to_string(getpid())) != std::string::npos);
+    assert(persisted.find("event=1 value=9") != std::string::npos);
+    assert(persisted.find("event=6 value=42") != std::string::npos);
+    // Shared sequence ensures no overwrite: child seq < parent seq.
+    assert(persisted.size() == 3 * 384);
+    unlink("fork_coverage.log");
 
     limbus_termination::Trace bounded; assert(bounded.open("bounded.log"));
     for (int n = 0; n < 10000; ++n) bounded.record(limbus_termination::Kill, SIGTERM, 1, 0, 0);
@@ -65,7 +87,7 @@ int main() {
     for (int n = 0; n < 100; ++n) bounded.record(limbus_termination::Fault, SIGSEGV, 1, 0, -1);
     bounded.record(limbus_termination::UnhandledFault, SIGSEGV, 1, 456, 3);
     assert(read("bounded.log").find("event=9 value=11 target=1 caller=456 disposition=3") != std::string::npos);
-    for (const char *name : {"index.bin", "bad.bin", "short.bin", "link.bin", "termination.log", "bounded.log"}) unlink(name);
+    for (const char *name : {"index.bin", "bad.bin", "short.bin", "link.bin", "termination.log", "bounded.log", "fork_coverage.log"}) unlink(name);
     assert(chdir("/") == 0); rmdir(directory);
     puts("mapped index atomic replacement/bounds passed; native evidence survived SIGKILL; errno and event limits passed");
 }
