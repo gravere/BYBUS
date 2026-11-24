@@ -93,12 +93,22 @@ JNI 后备类加载只保存类别和成功/失败类型，最多 32 次。启�
 诊断包列出采集范围和不可用项，不把 Android 未提供的信号发送者或系统栈伪装成已获取。
 
 引用系统 APK 的虚拟安装还必须保留真实安装包的现代签名及分包元数据。返回 `PackageInfo`
-时，使用未接管的系统 PackageManager 读取同包信息，并核对缓存版本、当前签名、base 路径
+时，使用注入前保存的原始 IPackageManager 接口读取同包信息，并核对缓存版本、当前签名、base 路径
 以及有序分包路径；任何一项不一致都不能拼接两次安装的数据。只补充已核对的分包名称、
 修订号和请求标志要求的签名信息，不替换虚拟 ApplicationInfo、组件、权限或用户状态。
 签名历史由 Android 的 SigningInfo 原样提供；未请求签名时不返回它。不将容器内独立安装
 或已配置不同签名的组件套用系统另一份安装，查询失败也不伪造签名或检查成功结果。
 这条路径按每次实际安装查询，不持久化系统路径，避免系统更新后复用旧分包与证书。
+
+不能使用名为 `getUnHookPackageManager()` 的 ApplicationPackageManager 对象代替原始接口：
+平台的包信息缓存未命中时仍会通过全局 ActivityThread PackageManager 查询，重新进入容器代理。
+即使对象是在注入前取得的，也不能保证这条调用绕开代理。元数据读取只调用已有代理保存的
+原始接口；接口不可用时保留原虚拟记录。线程内检测到异常重入时丢弃该次补充结果，不能
+继续递归，也不能把递归生成的虚拟记录当成真实系统来源。验证必须包括缓存未命中与
+正式 APK 恢复已安装应用的启动路径，不能只在先读过同一个包的测试夹具中比较返回值。
+缓存记录缺少证书时不能借同包名系统应用的证书补齐；缺失的身份保持未知，避免另一条
+旧式 GET_SIGNATURES 后备路径再次进入相同递归。原始系统查询在 Android 8–12L 使用
+`int` flags，在 Android 13–17 使用 `long` flags，两者均保留真实 Android 用户参数。
 
 依据：[PackageInfo 的签名与分包约定](https://developer.android.com/reference/android/content/pm/PackageInfo)、
 [SigningInfo](https://developer.android.com/reference/android/content/pm/SigningInfo)。

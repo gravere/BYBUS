@@ -437,6 +437,53 @@ def install_component_probe(release, verifier, name="bybus-ui-probe.apk"):
     return digest
 
 
+def inspect_package_metadata(release, verifier):
+    """Actual release startup, then cold-cache production queries in a disposable Debug process."""
+    adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
+    first_pid = adb("shell", "pidof", PACKAGE).strip()
+    time.sleep(10)
+    if not first_pid or adb("shell", "pidof", PACKAGE).strip() != first_pid:
+        raise RuntimeError("Release host did not stay running")
+    tree = hierarchy("release-host-startup")
+    if not any(node.get("package") == PACKAGE for node in tree.iter("node")):
+        raise RuntimeError("Release host did not reach its own visible UI")
+    REPORT["checks"].append("signed release host stays running and visible for 10 seconds")
+    adb("root")
+    adb("wait-for-device", timeout=30)
+    if adb("shell", "id", "-u").strip() != "0":
+        raise RuntimeError("Disposable emulator cannot retrieve private test results")
+    adb("shell", "am", "force-stop", PACKAGE)
+    digest = install_component_probe(release, verifier)
+    remote = f"/data/user/0/{PACKAGE}/files/package-metadata-result.json"
+    adb("shell", "rm", "-f", remote)
+    adb("shell", "am", "broadcast", "--receiver-foreground", "-n",
+        f"{PACKAGE}/{NAMESPACE}.PackageQueryProbeReceiver", "--es", "stage", "package-metadata", timeout=45)
+    deadline = time.monotonic() + 45
+    while time.monotonic() < deadline:
+        raw = adb("shell", "cat", remote, check=False)
+        if raw.lstrip().startswith("{"):
+            try: result = json.loads(raw)
+            except json.JSONDecodeError:
+                time.sleep(.5)
+                continue
+            (OUT / "package-metadata.json").write_text(raw, encoding="utf-8")
+            required = ("cold_facade_reaches_injected_service", "metadata_never_reenters_framework",
+                        "reentry_stopped", "reentry_not_used_as_system_metadata", "query_recovers_after_reentry",
+                        "missing_cached_signer_stays_unknown")
+            if not result.get("passed") or not result.get("registry_restored") or not result.get("ordinary_app_uid"):
+                raise RuntimeError("Package metadata regression failed: " + str(result.get("error")))
+            if result.get("sdk") != {"android11": 30, "android17": 37}[REPORT["profile"]]:
+                raise RuntimeError("Wrong platform used for package metadata inspection")
+            if not all(result.get("checks", {}).get(key) is True for key in required):
+                raise RuntimeError("Cold-cache and recursive boundary cases were not all exercised")
+            REPORT["package_metadata"] = dict(result, probe_sha256=digest)
+            REPORT["result"] = "release host and cold-cache package metadata passed; no game or account tested"
+            adb("shell", "am", "force-stop", PACKAGE)
+            return
+        time.sleep(.5)
+    raise RuntimeError("Package metadata regression timed out")
+
+
 def inspect_permissions(release, verifier, package_queries=False):
     """Run production permission services under an ordinary app UID with synthetic packages."""
     # Root is used only by this disposable emulator's shell to retrieve the private result.
@@ -1389,6 +1436,9 @@ def main():
     if "Success" not in installed:
         raise RuntimeError("APK installation did not succeed: " + installed[-1000:])
     REPORT["checks"].append("published APK signature/hash and installation")
+    if os.environ.get("RUNTIME_MODE") == "package-metadata":
+        inspect_package_metadata(release, verifier)
+        return
     if os.environ.get("RUNTIME_MODE") in ("google-readiness", "google-window", "google-settings", "session-resume", "provider-login"):
         import importlib.util
         spec = importlib.util.spec_from_file_location("google_readiness", "scripts/inspect-google-readiness.py")

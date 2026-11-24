@@ -7,16 +7,24 @@ import android.content.pm.Signature;
 import android.content.pm.SigningInfo;
 import android.os.Build;
 
-import com.lody.virtual.client.core.VirtualCore;
+import com.lody.virtual.client.core.InvocationStubManager;
+import com.lody.virtual.client.hook.base.MethodInvocationStub;
+import com.lody.virtual.client.hook.proxies.pm.PackageManagerStub;
 import com.lody.virtual.helper.utils.VLog;
+import com.lody.virtual.os.VUserHandle;
 import com.lody.virtual.remote.InstalledAppInfo;
 import com.lody.virtual.server.pm.PackageSetting;
 
 import java.util.Arrays;
 import java.util.HashSet;
+import java.lang.reflect.Method;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** Metadata from the exact installed APK referenced by a virtual installation. */
 final class InstalledPackageMetadata {
+    private static final ThreadLocal<ReadGuard> READING = new ThreadLocal<>();
+    private static final AtomicInteger FAILURE_LOGS = new AtomicInteger();
+    private static final class ReadGuard { boolean reentered; }
     private InstalledPackageMetadata() { }
 
     static void apply(VPackage pkg, PackageInfo result, int flags) {
@@ -26,14 +34,38 @@ final class InstalledPackageMetadata {
         }
         int sourceFlags = PackageManager.GET_SIGNATURES;
         if (Build.VERSION.SDK_INT >= 28) sourceFlags |= PackageManager.GET_SIGNING_CERTIFICATES;
-        try {
-            PackageInfo installed = VirtualCore.get().getUnHookPackageManager()
-                    .getPackageInfo(pkg.packageName, sourceFlags);
-            copyVerified(result, installed, pkg.mSignatures, flags);
-        } catch (PackageManager.NameNotFoundException | RuntimeException error) {
-            // A concurrent uninstall/update must not invent metadata from another installation.
-            VLog.w("PackageMetadata", "Installed metadata unavailable: %s", error.getClass().getSimpleName());
+        ReadGuard previous = READING.get();
+        if (previous != null) {
+            previous.reentered = true;
+            return;
         }
+        ReadGuard guard = new ReadGuard();
+        READING.set(guard);
+        try {
+            PackageInfo installed = readInstalled(pkg.packageName, sourceFlags);
+            if (!guard.reentered) copyVerified(result, installed, pkg.mSignatures, flags);
+        } catch (ReflectiveOperationException | RuntimeException error) {
+            // A concurrent uninstall/update must not invent metadata from another installation.
+            if (FAILURE_LOGS.getAndIncrement() < 4) {
+                VLog.w("PackageMetadata", "Installed metadata unavailable: %s", error.getClass().getSimpleName());
+            }
+        } finally {
+            READING.remove();
+        }
+    }
+
+    static PackageInfo readInstalled(String packageName, int flags) throws ReflectiveOperationException {
+        MethodInvocationStub<?> stub = InvocationStubManager.getInstance().getInvocationStub(PackageManagerStub.class);
+        if (stub == null || stub.getBaseInterface() == null) return null;
+        // ApplicationPackageManager uses a global cache backed by the injected service.
+        // Invoke the captured system boundary directly, never that cached facade.
+        Class<?> service = Class.forName("android.content.pm.IPackageManager");
+        if (Build.VERSION.SDK_INT >= 33) {
+            Method method = service.getMethod("getPackageInfo", String.class, long.class, int.class);
+            return (PackageInfo) method.invoke(stub.getBaseInterface(), packageName, (long) flags, VUserHandle.realUserId());
+        }
+        Method method = service.getMethod("getPackageInfo", String.class, int.class, int.class);
+        return (PackageInfo) method.invoke(stub.getBaseInterface(), packageName, flags, VUserHandle.realUserId());
     }
 
     static boolean copyVerified(PackageInfo target, PackageInfo installed,

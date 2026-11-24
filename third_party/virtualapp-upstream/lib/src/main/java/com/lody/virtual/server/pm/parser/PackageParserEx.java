@@ -667,14 +667,10 @@ public class PackageParserEx {
             if (N > 0) {
                 pi.signatures = new Signature[N];
                 System.arraycopy(p.mSignatures, 0, pi.signatures, 0, N);
-            } else {
-                try {
-                    PackageInfo outInfo = VirtualCore.get().getUnHookPackageManager().getPackageInfo(p.packageName, PackageManager.GET_SIGNATURES);
-                    pi.signatures = outInfo.signatures;
-                } catch (PackageManager.NameNotFoundException e) {
-                    e.printStackTrace();
-                }
             }
+            // Missing cached identity is not proof that a same-name system APK is
+            // this installation. Do not recurse through the hooked framework facade
+            // or borrow its certificate. Verified outside metadata is handled below.
         }
         InstalledPackageMetadata.apply(p, pi, flags);
         return pi;
