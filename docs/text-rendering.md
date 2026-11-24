@@ -64,6 +64,13 @@
 
 ## 中文图集与原材质的尺度
 
+富文本解析后的 `m_currentMaterial` 是托管引用字段。调用
+`il2cpp_field_set_value` 时直接传材质对象，不能传局部指针变量的地址；后者会把栈地址
+保存在 TMP 对象里，解析返回后的网格生成或动画刷新可能读取失效对象。
+回归桩须遵循 Unity `Field::SetValue` 的引用字段语义，并验证解析返回后字段读回的对象
+与子网格持有的对象一致，不能用错误的指针解引用桩替实现兜底。
+参考 [Unity IL2CPP 字段赋值实现](https://github.com/Unity-Technologies/SimpleUIDemo/blob/master/Tiny3D/Library/DotsRuntimeBuild/artifacts/Stevedore/il2cpp/libil2cpp/vm/Field.cpp)。
+
 游戏 488 安装资源中的 `HigashiOme-Gothic-C-1` 和 `Corporate-Logo-Bold-ver2 SDF`
 均使用 34 点采样、5 像素 padding，材质 GradientScale 为 6。中文图集沿用这组尺度，
 继续使用零协 Sarasa Gothic SC Bold、4096² 多图集。此前 32 点采样、9 像素 padding

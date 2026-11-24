@@ -1,4 +1,5 @@
 #include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusFontProof.h"
+#include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusMappedIndex.h"
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
@@ -15,7 +16,9 @@
 #endif
 const uint32_t kMaxEntries = 1000000, kMaxStringBytes = 16 * 1024 * 1024;
 std::string g_active_pointer;
-std::unordered_map<std::string, std::string> g_index, g_model_fields, g_package_line_breaks;
+limbus_index::Table g_index, g_model_fields;
+std::shared_ptr<limbus_index::File> g_live_mapping;
+std::unordered_map<std::string, std::string> g_package_line_breaks;
 limbus_font_proof::Catalogue g_font_catalogue;
 #define LT_LOGI(...) ((void)0)
 #include "runtime-live-catalogue-under-test.inc"
@@ -28,8 +31,11 @@ int main(int argc, char **argv) {
     g_active_pointer = "catalogue-roundtrip-active.json";
     // Keep corruption tests in the test working directory; never alter the source.
     auto write = [&](size_t count) {
-        std::ofstream out("live-fonts.bin", std::ios::binary | std::ios::trunc);
+        std::ofstream out("live-fonts.pending", std::ios::binary | std::ios::trunc);
         out.write(bytes.data(), count);
+        out.close();
+        std::remove("live-fonts.bin");
+        assert(std::rename("live-fonts.pending", "live-fonts.bin") == 0);
     };
     write(bytes.size());
     assert(load_live_font_catalogue());

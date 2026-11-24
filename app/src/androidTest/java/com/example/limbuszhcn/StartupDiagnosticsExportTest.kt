@@ -9,11 +9,42 @@ import com.example.limbuszhcn.container.ContainerStatus
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 import java.util.zip.ZipFile
 
 /** Synthetic events on a disposable emulator; never starts or diagnoses a real guest game. */
 @RunWith(AndroidJUnit4::class)
 class StartupDiagnosticsExportTest {
+    @Test fun runtimeFaultsRemainInPersistentExportAfterTheCollectorAdvances() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        PersistentDiagnosticLog.install(context)
+        val sampler = GameFaultDiagnostics(context)
+        val privateMessage = "PRIVATE_FAULT_TEST_SENTINEL_ACCOUNT"
+        Log.e("Unity", "NullReferenceException: $privateMessage")
+        Log.e("Unity", "at StageScript_Cromer.CheckTrigger (System.String $privateMessage)")
+        sampler.sample()
+        sampler.sample() // overlapping windows must not duplicate the event
+        val native = File(context.filesDir, "translation-cache/translation-index/termination-99999999.log")
+        native.parentFile!!.mkdirs()
+        native.writeText("seq=1 unixMs=1795512936987 pid=99999999 event=1 value=9 target=99999999 caller=123 disposition=0\n")
+        val archive = DebugLogExporter(context).export(ContainerStatus(true, false, "diagnostic fixture"), null)
+        try {
+            ZipFile(archive).use { zip ->
+                val entries = zip.entries().asSequence().toList()
+                val persistent = entries.filter { it.name.startsWith("persistent/") }.joinToString("\n") {
+                    zip.getInputStream(it).bufferedReader().use { reader -> reader.readText() }
+                }
+                assertTrue(persistent.contains("event=managed_exception type=NullReferenceException"))
+                assertTrue(persistent.contains("event=managed_frame method=StageScript_Cromer.CheckTrigger"))
+                assertFalse(persistent.contains(privateMessage))
+                val trace = zip.getInputStream(zip.getEntry("native/${native.name}")).bufferedReader().use { it.readText() }
+                assertTrue(trace.contains("event=1 value=9"))
+                val manifest = zip.getInputStream(zip.getEntry("capture-files.txt")).bufferedReader().use { it.readText() }
+                assertTrue(manifest.contains(native.name))
+            }
+        } finally { archive.delete(); native.delete() }
+    }
+
     @Test fun ownUidEventsAndCollectionStatusReachOneArchiveWithoutRawSdkPayloads() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val game = "com.ProjectMoon.LimbusCompany"

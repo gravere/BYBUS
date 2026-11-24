@@ -375,6 +375,29 @@ cannot exhaust storage. Android's document picker owns the final destination;
 temporary archives remain in the application cache and are replaced on the next
 export.
 
+Game processes retain bounded error categories and managed method identifiers
+from their own Unity/AppSealing log stream every five seconds. The sampler never
+stores message arguments or SDK payloads. Failed reads retain a bounded retry
+window, and export records collection status separately from the absence of
+errors. Process-exit code matching uses the complete PID/launch interval, rather
+than discarding events after five minutes. Persistent-log export keeps the recent
+tail so a long battle cannot hide its final records behind startup messages.
+
+Existing native signal/exit wrappers also write fixed-size numeric records to a
+preopened private file. They preserve signal handling, return values and errno;
+unconsumed native faults have a separate record budget from expected signal
+entries. The six most recent process files are exported with a format description
+and collection manifest. These records cover calls through those wrappers only:
+they cannot identify an external SIGKILL sender or guarantee capture of direct
+kernel calls. SIGKILL without such evidence is not proof of memory exhaustion.
+
+Translation index generations are immutable and the live catalogue is replaced
+atomically. Native lookup tables retain read-only mappings of the opened files,
+so keys and values do not require another owning heap copy. Validation completes
+before publication; incomplete files keep the previous catalogue. The initial
+scan pages can then be reclaimed and loaded on demand without changing matching,
+font atlas size, resource files or game rendering settings.
+
 ### Bundled microG bootstrap
 
 The production application packages the exact microG Services and Companion

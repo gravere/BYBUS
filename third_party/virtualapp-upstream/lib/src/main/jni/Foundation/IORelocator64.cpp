@@ -1,3 +1,4 @@
+#include "LimbusTerminationTrace.h"
 //
 // VirtualApp Native Project
 //
@@ -385,6 +386,9 @@ static bool should_patch_limbus_known_exit_point(const char *api, int status, vo
 }
 
 static bool handle_limbus_process_exit(const char *api, int status, void *caller) {
+    if (is_limbus_container_process())
+        limbus_termination::trace.record(limbus_termination::Exit, status, getpid(),
+                reinterpret_cast<uintptr_t>(caller), 2);
     pid_t tid = static_cast<pid_t>(syscall(__NR_gettid));
     char thread_name[64];
     read_limbus_thread_name(tid, thread_name, sizeof(thread_name));
@@ -1286,6 +1290,10 @@ HOOK_DEF(int, fstatat64, int dirfd, const char *pathname, struct stat *buf, int 
 
 // int kill(pid_t pid, int sig);
 HOOK_DEF(int, kill, pid_t pid, int sig) {
+    if (is_limbus_container_process() && limbus_termination::Trace::interesting(sig))
+        limbus_termination::trace.record(limbus_termination::Kill, sig, pid,
+                reinterpret_cast<uintptr_t>(__builtin_return_address(0)),
+                should_block_limbus_terminating_signal(sig) ? 1 : 0);
     pid_t self = getpid();
     ALOGE("kill >>> pid : %d, sig : %d, self : %d", pid, sig, self);
     if (should_block_limbus_terminating_signal(sig)) {
@@ -1332,6 +1340,10 @@ HOOK_DEF(int, setitimer, int which, const struct itimerval *new_value, struct it
 
 // int raise(int sig);
 HOOK_DEF(int, raise, int sig) {
+    if (is_limbus_container_process() && limbus_termination::Trace::interesting(sig))
+        limbus_termination::trace.record(limbus_termination::Raise, sig, getpid(),
+                reinterpret_cast<uintptr_t>(__builtin_return_address(0)),
+                should_block_limbus_terminating_signal(sig) ? 1 : 0);
     if (should_block_limbus_terminating_signal(sig)) {
         ALOGE("raise >>> blocked Limbus container signal : %d", sig);
         return block_limbus_signal_int();
@@ -1345,6 +1357,10 @@ HOOK_DEF(int, raise, int sig) {
 
 // int tkill(pid_t tid, int sig);
 HOOK_DEF(int, tkill, pid_t tid, int sig) {
+    if (is_limbus_container_process() && limbus_termination::Trace::interesting(sig))
+        limbus_termination::trace.record(limbus_termination::Tkill, sig, tid,
+                reinterpret_cast<uintptr_t>(__builtin_return_address(0)),
+                should_block_limbus_terminating_signal(sig) ? 1 : 0);
     ALOGE("tkill >>> tid : %d, sig : %d", tid, sig);
     log_limbus_signal_diagnostic("tkill", tid, sig);
     if (should_block_limbus_terminating_signal(sig)) {
@@ -1360,6 +1376,10 @@ HOOK_DEF(int, tkill, pid_t tid, int sig) {
 
 // int tgkill(pid_t tgid, pid_t tid, int sig);
 HOOK_DEF(int, tgkill, pid_t tgid, pid_t tid, int sig) {
+    if (is_limbus_container_process() && limbus_termination::Trace::interesting(sig))
+        limbus_termination::trace.record(limbus_termination::Tgkill, sig, tgid,
+                reinterpret_cast<uintptr_t>(__builtin_return_address(0)),
+                should_block_limbus_terminating_signal(sig) ? 1 : 0);
     pid_t self = getpid();
     if (!is_limbus_allowed_signal_noise(sig)) {
         ALOGE("tgkill >>> tgid : %d, tid : %d, sig : %d, self : %d", tgid, tid, sig, self);
@@ -1378,6 +1398,10 @@ HOOK_DEF(int, tgkill, pid_t tgid, pid_t tid, int sig) {
 
 // int pthread_kill(pthread_t thread, int sig);
 HOOK_DEF(int, pthread_kill, pthread_t thread, int sig) {
+    if (is_limbus_container_process() && limbus_termination::Trace::interesting(sig))
+        limbus_termination::trace.record(limbus_termination::PthreadKill, sig, 0,
+                reinterpret_cast<uintptr_t>(__builtin_return_address(0)),
+                should_block_limbus_terminating_signal(sig) ? 1 : 0);
     if (!is_limbus_allowed_signal_noise(sig)) {
         ALOGE("pthread_kill >>> sig : %d", sig);
     }
@@ -1812,6 +1836,10 @@ HOOK_DEF(int, sigaction, int signum, const struct sigaction *act, struct sigacti
 }
 
 static void limbus_sigsegv_guard(int sig, siginfo_t *info, void *context) {
+#if defined(__aarch64__)
+    limbus_termination::trace.record(limbus_termination::Fault, sig, info ? info->si_code : 0,
+            context ? static_cast<ucontext_t *>(context)->uc_mcontext.pc : 0, -1);
+#endif
     if (info != nullptr && info->si_code <= 0) return;
     uintptr_t pc = 0;
     uintptr_t lr = 0;
@@ -1922,6 +1950,10 @@ static void limbus_sigsegv_guard(int sig, siginfo_t *info, void *context) {
 #endif
     }
 
+    // Expected ART implicit checks may have filled the handler-entry slots.
+    // Give an unconsumed native fault its own reserved evidence budget.
+    limbus_termination::trace.record(limbus_termination::UnhandledFault, sig,
+            info ? info->si_code : 0, pc, 3);
     // Only unconsumed synchronous faults need the expensive maps/register diagnostic.
     char diagnostic[2048];
     char *cursor = diagnostic;
@@ -2058,6 +2090,10 @@ static void maintain_limbus_sigsegv_guard() {
 
 static void limbus_sigill_guard(int sig, siginfo_t *info, void *context) {
 #if defined(__aarch64__)
+    limbus_termination::trace.record(limbus_termination::Fault, sig, info ? info->si_code : 0,
+            context ? static_cast<ucontext_t *>(context)->uc_mcontext.pc : 0, -1);
+#endif
+#if defined(__aarch64__)
     if (context != nullptr && info != nullptr && info->si_code == ILL_ILLOPC) {
         auto *ucontext = reinterpret_cast<ucontext_t *>(context);
         uintptr_t base = g_limbus_appsealing_base;
@@ -2140,6 +2176,33 @@ HOOK_DEF(long, syscall, long number, ...) {
     va_end(args);
 
     if (is_limbus_container_process()) {
+        int observed_signal = 0;
+        if (number == __NR_kill) observed_signal = static_cast<int>(a2);
+#ifdef __NR_tkill
+        if (number == __NR_tkill) observed_signal = static_cast<int>(a2);
+#endif
+#ifdef __NR_tgkill
+        if (number == __NR_tgkill) observed_signal = static_cast<int>(a3);
+#endif
+#ifdef __NR_rt_sigqueueinfo
+        if (number == __NR_rt_sigqueueinfo) observed_signal = static_cast<int>(a2);
+#endif
+#ifdef __NR_rt_tgsigqueueinfo
+        if (number == __NR_rt_tgsigqueueinfo) observed_signal = static_cast<int>(a3);
+#endif
+#ifdef __NR_pidfd_send_signal
+        if (number == __NR_pidfd_send_signal) observed_signal = static_cast<int>(a2);
+#endif
+        if (limbus_termination::Trace::interesting(observed_signal))
+            limbus_termination::trace.record(limbus_termination::Syscall, observed_signal,
+                    static_cast<int>(a1), reinterpret_cast<uintptr_t>(__builtin_return_address(0)),
+                    should_block_limbus_terminating_signal(observed_signal) ? 1 : 0);
+#ifdef __NR_exit
+        if (number == __NR_exit || number == __NR_exit_group)
+            limbus_termination::trace.record(limbus_termination::Exit, static_cast<int>(a1),
+                    getpid(), reinterpret_cast<uintptr_t>(__builtin_return_address(0)), 1);
+#endif
+
 #ifdef __NR_openat
         if (number == __NR_openat && a2 != 0) {
             char temp[PATH_MAX];

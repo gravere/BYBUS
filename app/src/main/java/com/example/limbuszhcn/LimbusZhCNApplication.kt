@@ -98,6 +98,9 @@ class LimbusZhCNApplication : Application() {
         }
 
         override fun prepareLimbusTranslationResources(): Boolean {
+            // Run before the guest Application too: repeatedly failing early
+            // launches must not accumulate native trace files indefinitely.
+            runCatching { pruneNativeTerminationTraces(VirtualCore.get().context) }
             liveTranslation = com.example.limbuszhcn.container.LiveTranslationStore(
                 VirtualCore.get().context.filesDir.toPath().resolve("translation-cache")).open()
             val cache = VirtualCore.get().context.filesDir.toPath().resolve("translation-cache")

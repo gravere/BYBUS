@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.ComponentName;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageInfo;
 import android.os.IInterface;
 
 import com.lody.virtual.client.VClient;
@@ -36,6 +37,7 @@ public final class PackageManagerStub extends MethodInvocationProxy<MethodInvoca
     private static final PackageQueryTrace TRACE = new PackageQueryTrace();
     private static final java.util.concurrent.atomic.AtomicInteger SOURCE_QUERY_REPORTS = new java.util.concurrent.atomic.AtomicInteger();
     private static final java.util.concurrent.atomic.AtomicInteger COMPONENT_QUERY_REPORTS = new java.util.concurrent.atomic.AtomicInteger();
+    private static final java.util.concurrent.atomic.AtomicInteger LATE_ERRORS = new java.util.concurrent.atomic.AtomicInteger();
 
     private static Object beginQuery(Method method, boolean proxied) {
         ApplicationInfo current = VClient.get().getCurrentApplicationInfo();
@@ -46,11 +48,29 @@ public final class PackageManagerStub extends MethodInvocationProxy<MethodInvoca
     }
 
     private static void endQuery(Object observation, Method method, Object result, Throwable error) {
-        if (!(observation instanceof PackageQueryTrace.PendingQuery)) return;
+        if (!(observation instanceof PackageQueryTrace.PendingQuery)) {
+            ApplicationInfo current = VClient.get().getCurrentApplicationInfo();
+            if (error != null && current != null && GAME.equals(current.packageName) &&
+                    LATE_ERRORS.getAndIncrement() < 8) {
+                VirtualCore.getConfig().onLimbusPackageQueries("late_query_error method=" + method.getName() +
+                        " kind=" + (error instanceof SecurityException ? "security" :
+                        error instanceof ClassCastException ? "type" : "exception"));
+            }
+            return;
+        }
         PackageQueryTrace.PendingQuery query = (PackageQueryTrace.PendingQuery) observation;
         String summary = query.finished(result, error, android.os.SystemClock.elapsedRealtime());
         if (error == null && result != null && !method.getReturnType().isPrimitive()
                 && !method.getReturnType().isInstance(result)) summary += " declaredTypeMismatch=true";
+        ApplicationInfo app = result instanceof ApplicationInfo ? (ApplicationInfo) result :
+                result instanceof PackageInfo ? ((PackageInfo) result).applicationInfo : null;
+        if (app != null && GAME.equals(app.packageName)) {
+            // No arbitrary package names, paths, account data or recursive PM queries.
+            summary += " role=game flags=0x" + Integer.toHexString(app.flags) +
+                    " enabled=" + app.enabled + " targetSdk=" + app.targetSdkVersion +
+                    " sourcePresent=" + (app.sourceDir != null) +
+                    " splits=" + (app.splitSourceDirs == null ? 0 : app.splitSourceDirs.length);
+        }
         VirtualCore.getConfig().onLimbusPackageQueries(summary);
     }
 

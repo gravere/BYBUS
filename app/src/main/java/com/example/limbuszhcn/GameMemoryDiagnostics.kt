@@ -59,6 +59,8 @@ internal object GameMemoryDiagnostics {
             for (seconds in listOf(5L, 10L, 15L, 20L, 25L, 35L, 40L, 45L, 50L, 55L)) {
                 executor.schedule({ sample("startup") }, seconds, TimeUnit.SECONDS)
             }
+            val faults = GameFaultDiagnostics(context)
+            executor.scheduleWithFixedDelay({ runCatching { faults.sample() } }, 0, 5, TimeUnit.SECONDS)
             started = true
         } catch (_: RuntimeException) {
             guest.unregisterComponentCallbacks(callbacks)

@@ -2,6 +2,7 @@
 #include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusTermTrie.h"
 #include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusFontProof.h"
 #include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusTextProvenance.h"
+#include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusMappedIndex.h"
 #include <atomic>
 #include <cassert>
 #include <codecvt>
@@ -28,7 +29,7 @@ limbus_managed::GcApi g_gc{fake_retain, fake_weak, fake_target, fake_release};
 limbus_managed::Registry<bool> g_translated_objects(g_gc, 262144);
 limbus_managed::RecentOutputs g_recent_font_outputs;
 limbus_font_proof::Catalogue g_font_catalogue;
-std::unordered_map<std::string, std::string> g_index, g_contextual_index;
+limbus_index::Table g_index, g_contextual_index;
 std::unordered_map<std::string, std::string> g_terms;
 bool g_live_resources = false;
 thread_local std::string g_ui_text_key;
@@ -137,13 +138,13 @@ int main() {
         assert(scene == "@story:outer");
     }
     g_index["共通の台詞"] = "全局译文";
-    g_contextual_index[std::string("@story:A") + '\x1f' + "content" + '\x1f' + "共通の台詞"] = "剧情译文";
-    g_contextual_index[std::string("@story:A/dialog:8") + '\x1f' + "content" + '\x1f' + "共通の台詞"] = "本行译文";
+    g_contextual_index["@story:A\x1f" "content\x1f" "共通の台詞"] = "剧情译文";
+    g_contextual_index["@story:A/dialog:8\x1f" "content\x1f" "共通の台詞"] = "本行译文";
     assert(text(translate_managed_string(new_managed_string("共通の台詞"), "@story:A/dialog:8", "content")) == "本行译文");
     assert(text(translate_managed_string(new_managed_string("共通の台詞"), "@story:A/dialog:9", "content")) == "剧情译文");
     assert(text(translate_managed_string(new_managed_string("共通の台詞"), "@story:B/dialog:9", "content")) == "全局译文");
     g_index["入場"] = "进入战斗";
-    g_contextual_index[std::string("enter") + '\x1f' + "content" + '\x1f' + "入場"] = "进入";
+    g_contextual_index["enter\x1f" "content\x1f" "入場"] = "进入";
     {
         limbus_text_provenance::ScopedTextKey outer(g_ui_text_key, "enter");
         assert(text(translate_managed_string(new_managed_string("入場"))) == "进入");
@@ -157,14 +158,14 @@ int main() {
         assert(text(translate_managed_string(new_managed_string("入場"), "other", "content")) == "进入战斗");
     }
     assert(g_ui_text_key.empty());
-    g_model_fields[std::string("@tutorial:intro") + '\x1f' + "content"] = "仪表盘";
+    g_model_fields["@tutorial:intro\x1f" "content"] = "仪表盘";
     g_original_tutorial_loader = tutorial_original;
     try { replacement_tutorial_loader(new_managed_string("intro"), nullptr); }
     catch (int error) { assert(error == 9); }
     assert(g_ui_text_key.empty());
     assert(text(translate_managed_string(new_managed_string("Dashboard"))) == "Dashboard");
-    g_model_fields[std::string("@scenario-model:파우스트") + '\x1f' + "name"] = "浮士德";
-    g_model_fields[std::string("@scenario-model:파우스트") + '\x1f' + "nickName"] = "2号罪人";
+    g_model_fields["@scenario-model:파우스트\x1f" "name"] = "浮士德";
+    g_model_fields["@scenario-model:파우스트\x1f" "nickName"] = "2号罪人";
     g_original_story_asset_name = story_asset_original;
     g_original_story_asset_title = story_asset_original;
     auto story_key = new_managed_string("파우스트");
@@ -182,8 +183,8 @@ int main() {
     assert(text(translate_managed_string(new_managed_string("Faust"))) == "Faust");
     // Identical visible source text has different names in different typed tables.
     // Stable release identity must win even after a previous pass or cache eviction.
-    g_model_fields[std::string("@skill-tag:X") + '\x1f' + "name"] = "技能特性";
-    g_model_fields[std::string("@battle-keyword:X") + '\x1f' + "name"] = "战斗特性";
+    g_model_fields["@skill-tag:X\x1f" "name"] = "技能特性";
+    g_model_fields["@battle-keyword:X\x1f" "name"] = "战斗特性";
     for (const auto source : {"特性", "<color=red>特性</color>", "技能特性"}) {
         auto input = new_managed_string(source);
         assert(remember_translated_text(input, source));
@@ -196,7 +197,7 @@ int main() {
     font_ready = true;
     assert(text(translate_managed_string(new_managed_string("入場"))) == "进入战斗");
     g_index = {{"ガード", "防御"}, {"防御", "抵御"}};
-    g_contextual_index[std::string("defense") + '\x1f' + "name" + '\x1f' + "防御"] = "抵御";
+    g_contextual_index["defense\x1f" "name\x1f" "防御"] = "抵御";
     g_font_catalogue.add("防御"); g_font_catalogue.add("抵御");
     assert(text(translate_managed_string(new_managed_string("防御"), "defense", "name")) == "抵御");
     g_live_resources = true;

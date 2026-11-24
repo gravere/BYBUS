@@ -246,7 +246,10 @@ void inline_get_field(void *object, const void *field, void *out) {
 }
 void inline_set_field(void *object, const void *field, void *value) {
     assert(field==&inline_material_field);
-    static_cast<Component *>(object)->inline_material=*static_cast<void **>(value);
+    // IL2CPP Field::SetValue uses deref_pointer=false for reference fields.
+    // The previous mock incorrectly accepted the address of a local variable,
+    // hiding a dangling stack pointer in TMP's m_currentMaterial.
+    static_cast<Component *>(object)->inline_material=value;
 }
 auto g_field_get_value=inline_get_field;
 auto g_field_set_value=inline_set_field;
@@ -487,6 +490,9 @@ int main() {
     int32_t end=0;
     assert(replacement_tmp_validate_tag(&inline_text,nullptr,4,&end,nullptr)&&end==7);
     auto inline_painted=static_cast<Converted *>(inline_text.inline_material);
+    void *stored_material=nullptr;
+    inline_get_field(&inline_text,&inline_material_field,&stored_material);
+    assert(stored_material==inline_text.mesh_material); // Must outlive the parser's local variable.
     assert(inline_text.mesh_material==inline_painted&&inline_painted->chinese_atlas);
     assert(inline_painted->outline_width==.15f&&inline_painted->underlay_alpha==.4f&&inline_painted->keywords==5);
     assert(!red.chinese_atlas&&inline_text.material!=&red&&g_inline_material_target==nullptr);

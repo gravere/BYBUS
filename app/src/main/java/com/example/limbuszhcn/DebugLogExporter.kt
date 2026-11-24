@@ -51,9 +51,8 @@ internal class DebugLogExporter(private val context: Context) {
                 .take(MAX_PERSISTENT_LOG_FILES)
                 .sortedBy(File::getName)
                 .forEach { logFile ->
-                    val content = logFile.inputStream().use { input ->
-                        String(input.readBounded(MAX_PERSISTENT_LOG_BYTES), Charsets.UTF_8)
-                    }.redactedAndBounded(MAX_PERSISTENT_LOG_BYTES)
+                    val content = diagnosticTail(logFile, MAX_PERSISTENT_LOG_BYTES)
+                        .redactedAndBounded(MAX_PERSISTENT_LOG_BYTES)
                     zip.writeText("persistent/${logFile.name}", content)
                 }
             val logcat = collectLogcat()
@@ -86,6 +85,25 @@ internal class DebugLogExporter(private val context: Context) {
                     zip.writeText("native/$name", text.redactedAndBounded(32 * 1024))
                 }
             }
+            val nativeRoot = File(context.filesDir, "translation-cache/translation-index")
+            val nativeTraces = nativeRoot.listFiles().orEmpty().filter {
+                it.name.matches(Regex("termination-[0-9]{1,10}\\.log")) &&
+                    java.nio.file.Files.isRegularFile(it.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)
+            }.sortedByDescending(File::lastModified).take(6)
+            nativeTraces.forEach { file ->
+                zip.writeText("native/${file.name}", diagnosticTail(file, 32 * 1024).redactedAndBounded(32 * 1024))
+            }
+            zip.writeText("native/termination-format.txt", "event: 0=ready 1=kill 2=raise 3=tkill 4=tgkill 5=pthread_kill 6=exit 7=libc_syscall 8=fault 9=unhandled_fault\n" +
+                "disposition: -1=observed_handler_entry 0=forwarded 1=existing_block 2=existing_exit_handler 3=unconsumed_fault\n" +
+                "scope: existing libc hooks only; direct kernel calls and external SIGKILL senders are not intercepted\n" +
+                "limit: first 8 records per event class per process; fixed 384-byte slots; at most 6 process files\n")
+            zip.writeText("capture-files.txt", buildString {
+                appendLine("nativeTerminationFiles=${nativeTraces.size}")
+                nativeTraces.forEach { appendLine("native/${it.name} bytes=${it.length()} modified=${Instant.ofEpochMilli(it.lastModified())} truncated=${it.length() > 32 * 1024}") }
+                PersistentDiagnosticLog.files(context).sortedByDescending(File::lastModified).take(MAX_PERSISTENT_LOG_FILES).forEach {
+                    appendLine("persistent/${it.name} bytes=${it.length()} modified=${Instant.ofEpochMilli(it.lastModified())} truncated=${it.length() > MAX_PERSISTENT_LOG_BYTES}")
+                }
+            })
             val exits = collectExitReasons()
             zip.writeText("process-exits.txt", exits.summary)
             exits.traces.forEachIndexed { index, trace ->
@@ -93,7 +111,7 @@ internal class DebugLogExporter(private val context: Context) {
                 zip.writeBytes("exit-trace-${index + 1}.pb", trace.bytes)
             }
             zip.writeText("capture-status.txt", buildString {
-                appendLine("schema=2")
+                appendLine("schema=3")
                 appendLine("captureStarted=$captureStarted")
                 appendLine("captureFinished=${Instant.now()}")
                 appendLine("scope=own_uid_only")
@@ -110,9 +128,11 @@ internal class DebugLogExporter(private val context: Context) {
                 }}")
                 appendLine("systemExitHistory=${if (exits.summary.startsWith("count=")) "collected" else "unavailable"}")
                 appendLine("systemExitTraces=${exits.traces.size}")
-                appendLine("packageQueries=first_64_supported_calls_per_process_within_90_seconds")
+                appendLine("packageQueries=first_64_supported_calls_with_game_metadata_plus_first_8_late_errors")
                 appendLine("classLookup=first_32_fallback_results_per_process")
-                appendLine("memory=5_second_startup_samples_then_30_seconds")
+                appendLine("memory=5_second_startup_samples_then_30_seconds_with_summary_categories")
+                appendLine("gameFaultPersistence=5_second_current_process_fixed_marker_capture")
+                appendLine("nativeTerminationFiles=${nativeTraces.size}")
                 appendLine("logPersistence=bounded_per_process_rotation")
                 appendLine("signalSender=not_exposed_by_ApplicationExitInfo")
                 appendLine("systemWideLogs=not_accessible_to_app")
@@ -234,7 +254,7 @@ internal class DebugLogExporter(private val context: Context) {
             // Upstream Google components may log billing arguments. Export only our metadata
             // and crash tags; regex redaction alone cannot safely strip arbitrary receipts.
             "LimbusZhCNApp:I", "LimbusLauncher:I", "LimbusContainer:I", "LimbusVA:I",
-            "LimbusZhCN:I", "LimbusSIG:I", "GameMemory:I", "PackageQueries:I", "LimbusJNI:I", "GameExit:I",
+            "LimbusZhCN:I", "LimbusSIG:I", "GameMemory:I", "PackageQueries:I", "LimbusJNI:I", "GameExit:I", "GameFault:I",
             "NativeEngine:I", "AndroidRuntime:E", "libc:F", "*:S"
         )
         return runCatching {
@@ -524,6 +544,18 @@ internal fun String.redactedAndBounded(maxBytes: Int): String {
     return "[truncated to recent data]\n" + String(suffix, Charsets.UTF_8)
 }
 
+internal fun diagnosticTail(file: File, limit: Int): String = runCatching {
+    java.io.RandomAccessFile(file, "r").use { input ->
+        val size = input.length()
+        val offset = maxOf(0L, size - limit)
+        input.seek(offset)
+        val bytes = ByteArray(minOf(size, limit.toLong()).toInt())
+        input.readFully(bytes)
+        val text = String(bytes, Charsets.UTF_8)
+        if (offset == 0L) text else "[truncated to recent data]\n" + text.substringAfter('\n', "")
+    }
+}.getOrElse { "unavailable: ${it.javaClass.simpleName}" }
+
 private val GAME_EXIT_LOG = Regex("""(\d{1,11})\.(\d{3,9})\s+(\d+)\s+\d+\s+[EF]\s+AppSealing\s*:\s*[! ]*Kill\s+Process[. ]*\[([1-9]\d{4})\]""")
 
 private val GAME_STARTUP_LOG = Regex("""(\d{1,11}\.\d{3,9})\s+(\d{1,10})\s+\d+\s+[VDIWEF]\s+Unity\s*:\s*(.{0,8192})""")
@@ -585,7 +617,8 @@ internal fun readGameExitCodes(context: Context, pid: Int, started: Long, until:
     }
 }
 
-private fun readGameLog(started: Long, filters: List<String>, parse: (Sequence<String>) -> List<String>): List<String> = runCatching {
+internal fun readGameLog(started: Long, filters: List<String>, onStatus: (String) -> Unit = {},
+    parse: (Sequence<String>) -> List<String>): List<String> = runCatching {
     val since = "${started / 1000}.${(started % 1000).toString().padStart(3, '0')}"
     val args = listOf("logcat", "-d", "-b", "main", "-v", "epoch", "-T", since, "--uid=${Process.myUid()}") + filters + "*:S"
     val process = ProcessBuilder(args).redirectErrorStream(true).start()
@@ -594,12 +627,17 @@ private fun readGameLog(started: Long, filters: List<String>, parse: (Sequence<S
     }
     try {
         Thread(read, "bybus-game-exit-log").apply { isDaemon = true; start() }
-        read.get(2, TimeUnit.SECONDS)
+        read.get(2, TimeUnit.SECONDS).also {
+            onStatus(if (process.waitFor(100, TimeUnit.MILLISECONDS) && process.exitValue() == 0) "available" else "incomplete")
+        }
     } finally {
         process.destroy()
         read.cancel(true)
     }
-}.getOrDefault(emptyList())
+}.getOrElse {
+    onStatus(if (it is java.util.concurrent.TimeoutException) "timeout" else "unavailable")
+    emptyList()
+}
 
 /** Android can recreate a game activity under a new PID before it returns to BYBUS. */
 internal fun launchGameExitCodes(
@@ -658,7 +696,7 @@ internal fun gameReportedExitCode(line: String, pid: Int, started: Long, until: 
     val match = GAME_EXIT_LOG.matchEntire(line.trim()) ?: return null
     if (match.groupValues[3].toIntOrNull() != pid) return null
     val time = logTimeMillis(match)
-    return match.groupValues[4].takeIf { time in started..until && time - started <= 5 * 60_000L }
+    return match.groupValues[4].takeIf { time in started..until }
 }
 
 private val URL_CREDENTIAL = Regex("(https?://)[^\\s/@:]+(?::[^\\s/@]*)?@", RegexOption.IGNORE_CASE)

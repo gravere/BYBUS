@@ -58,7 +58,7 @@ class DebugLogExporterTest {
         assertEquals("50025", gameReportedExitCode(line, 8909, time - 1200))
         assertEquals(null, gameReportedExitCode(line, 8958, time))
         assertEquals(null, gameReportedExitCode(line, 8909, time + 1))
-        assertEquals(null, gameReportedExitCode(line, 8909, time - 300_001))
+        assertEquals("50025", gameReportedExitCode(line, 8909, time - 660_000))
         assertEquals(null, gameReportedExitCode(line, 8909, time - 2000, time - 1))
         assertEquals("50025", gameReportedExitCode(line, 8909, time - 2000, time))
         assertEquals(null, gameReportedExitCode(line.replace("AppSealing", "Unity"), 8909, time))

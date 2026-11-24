@@ -7,6 +7,8 @@
 #endif
 #include "LimbusFontProof.h"
 #include "LimbusTermTrie.h"
+#include "LimbusMappedIndex.h"
+#include "LimbusTerminationTrace.h"
 #include "LimbusFlowTextProof.h"
 #include "LimbusManagedState.h"
 #include "LimbusFontMaterials.h"
@@ -43,6 +45,8 @@
 #define LT_TAG "LimbusTranslation"
 #define LT_LOGI(...) __android_log_print(ANDROID_LOG_INFO, LT_TAG, __VA_ARGS__)
 #define LT_LOGW(...) __android_log_print(ANDROID_LOG_WARN, LT_TAG, __VA_ARGS__)
+
+namespace limbus_termination { Trace trace; }
 
 namespace {
 
@@ -124,9 +128,10 @@ void append_native_metadata(const char *name, const char *entry) {
     }
     pthread_mutex_unlock(&g_diagnostic_lock);
 }
-std::unordered_map<std::string, std::string> g_index;
+limbus_index::Table g_index;
+std::shared_ptr<limbus_index::File> g_index_mapping, g_live_mapping;
 std::unordered_map<std::string, std::string> g_terms;
-std::unordered_map<std::string, std::string> g_contextual_index;
+limbus_index::Table g_contextual_index;
 thread_local std::string g_ui_text_key;
 thread_local std::string g_story_scene_key;
 void *g_skill_text_class = nullptr;
@@ -150,7 +155,7 @@ std::atomic<uint64_t> g_contextual_hits{0};
 std::unordered_map<std::string, std::string> g_package_line_breaks;
 limbus_font_proof::Catalogue g_font_catalogue;
 limbus_terms::Trie g_term_trie;
-std::unordered_map<std::string, std::string> g_model_fields;
+limbus_index::Table g_model_fields;
 bool g_configured = false;
 bool g_resolver_reported = false;
 bool g_probe_started = false;
@@ -796,7 +801,7 @@ void *translate_managed_string(void *managed_text, const std::string &stable_id 
     auto model = context_id.empty() || !context_field ? g_model_fields.end() :
             g_model_fields.find(context_id + '\x1f' + context_field);
     if (already_translated && model == g_model_fields.end()) return managed_text;
-    std::unordered_map<std::string, std::string>::const_iterator match = g_index.find(source);
+    auto match = g_index.find(source);
     std::string translated;
     auto context = context_id.empty() || context_field == nullptr ? g_contextual_index.end() :
             g_contextual_index.find(context_id + '\x1f' + context_field + '\x1f' + source);
@@ -833,7 +838,7 @@ void *translate_managed_string(void *managed_text, const std::string &stable_id 
             match = g_index.find(normalized);
         }
         if (line_height_normalized && match != g_index.end()) {
-            translated = apply_dante_line_height(match->second);
+            translated = apply_dante_line_height(std::string(match->second));
         } else if (!translate_embedded_terms(source, &translated)) {
             return managed_text;
         }
@@ -2954,7 +2959,10 @@ bool replacement_tmp_validate_tag(void *instance, void *text, int32_t start, int
         g_field_get_value(instance, g_tmp_current_material_field, &material);
         if (font && font == g_tmp_font_asset) {
             void *converted = inline_tmp_material(instance, material);
-            if (converted != material) g_field_set_value(instance, g_tmp_current_material_field, &converted);
+            // IL2CPP reference fields receive the object, not its address.
+            // Passing &converted stores a dangling stack pointer in TMP's
+            // m_currentMaterial, which its later mesh/animation pass dereferences.
+            if (converted != material) g_field_set_value(instance, g_tmp_current_material_field, converted);
         }
     }
     return valid;
@@ -3931,7 +3939,7 @@ bool read_string(FILE *file, std::string *value) {
 }
 
 void rebuild_package_line_break_index(
-        const std::unordered_map<std::string, std::string> &translations,
+        const limbus_index::Table &translations,
         const std::unordered_set<std::string> *identity_labels = nullptr) {
     g_package_line_breaks.clear();
     std::unordered_set<std::string> ambiguous;
@@ -3960,8 +3968,8 @@ void rebuild_package_line_break_index(
     for (const auto &entry : translations) {
         // The previous merged map inserted identity labels first. Preserve that
         // key precedence and one shared ambiguity set without copying the map.
-        if (!identity_labels || identity_labels->count(entry.first) == 0)
-            register_translation(entry.second);
+        if (!identity_labels || identity_labels->count(std::string(entry.first)) == 0)
+            register_translation(std::string(entry.second));
     }
 }
 
@@ -3987,6 +3995,8 @@ void write_runtime_receipt(const char *state) {
     fprintf(output, "request=%s\nstate=%s\npid=%d\nentries=%zu\nterms=%zu\nnativeProfile=%s\n",
             request, state, getpid(), g_index.size(), g_terms.size(), profile);
     fprintf(output, "liveResources=%d\nliveResourceMerges=%llu\n", g_live_resources, static_cast<unsigned long long>(g_live_resource_hits.load()));
+    fprintf(output, "indexBacking=read_only_file_pages\nindexMappedBytes=%zu\nliveMappedBytes=%zu\n",
+            g_index_mapping ? g_index_mapping->size() : 0, g_live_mapping ? g_live_mapping->size() : 0);
     fprintf(output, "fontState=%s\nfontAttempts=%u\n",
             g_font_ready ? "ready" : g_font_attempts >= 3 ? "failed" : "pending", g_font_attempts);
     fflush(output);
@@ -3996,11 +4006,12 @@ void write_runtime_receipt(const char *state) {
 }
 
 bool load_index_file(const char *path) {
-    FILE *file = fopen(path, "rb");
-    if (file == nullptr) {
+    auto backing = limbus_index::File::open(path);
+    if (!backing) {
         LT_LOGW("Index file is not readable path=%s errno=%d", path, errno);
         return false;
     }
+    limbus_index::Reader file(backing);
     unsigned char magic[sizeof(kIndexMagic)] = {};
     uint32_t schema = 0;
     uint32_t count = 0;
@@ -4012,14 +4023,14 @@ bool load_index_file(const char *path) {
                  read_u32(file, &count) && count <= kMaxEntries &&
                  read_u32(file, &term_count) && term_count <= kMaxEntries &&
                  read_u32(file, &contextual_count) && contextual_count <= kMaxEntries;
-    std::unordered_map<std::string, std::string> loaded;
+    limbus_index::Table loaded;
     std::unordered_map<std::string, std::string> loaded_terms;
-    std::unordered_map<std::string, std::string> loaded_contextual;
+    limbus_index::Table loaded_contextual;
     if (valid) {
         loaded.reserve(count);
         for (uint32_t i = 0; i < count; ++i) {
-            std::string source;
-            std::string translation;
+            std::string_view source;
+            std::string_view translation;
             if (!read_string(file, &source) || !read_string(file, &translation) || source.empty()) {
                 valid = false;
                 break;
@@ -4038,8 +4049,8 @@ bool load_index_file(const char *path) {
         }
         loaded_contextual.reserve(contextual_count);
         for (uint32_t i = 0; valid && i < contextual_count; ++i) {
-            std::string key;
-            std::string translation;
+            std::string_view key;
+            std::string_view translation;
             if (!read_string(file, &key) || !read_string(file, &translation) || key.empty()) {
                 valid = false;
                 break;
@@ -4047,8 +4058,7 @@ bool load_index_file(const char *path) {
             loaded_contextual[key] = translation;
         }
     }
-    if (valid && fgetc(file) != EOF) valid = false;
-    fclose(file);
+    valid = valid && file.at_end();
     if (!valid || loaded.size() != count || loaded_terms.size() != term_count ||
         loaded_contextual.size() != contextual_count) {
         LT_LOGW("Reject invalid translation index path=%s schema=%u declared=%u/%u/%u loaded=%zu/%zu/%zu",
@@ -4060,15 +4070,16 @@ bool load_index_file(const char *path) {
     g_index.swap(loaded);
     g_terms.swap(loaded_terms);
     g_contextual_index.swap(loaded_contextual);
+    g_index_mapping = std::move(backing);
     for (const auto *table : {&g_index, &g_contextual_index}) {
         for (const auto &entry : *table) {
             const auto separator = entry.first.rfind('\x1f');
-            const std::string source = table == &g_contextual_index && separator != std::string::npos
-                    ? entry.first.substr(separator + 1) : entry.first;
+            const std::string source(table == &g_contextual_index && separator != std::string::npos
+                    ? entry.first.substr(separator + 1) : entry.first);
             // Identity guards may contain untranslated kana or placeholder
             // metadata. They block a wrong replacement, not authorize a font.
             if (source != entry.second || !contains_japanese_kana(source))
-                g_font_catalogue.add(entry.second);
+                g_font_catalogue.add(std::string(entry.second));
         }
     }
     LT_LOGI("Font provenance catalogue labels=%zu templates=%zu",
@@ -4116,8 +4127,9 @@ bool load_live_font_catalogue() {
     std::string path(g_active_pointer);
     path.resize(path.rfind('/') + 1);
     path += "live-fonts.bin";
-    FILE *file = fopen(path.c_str(), "rb");
-    if (!file) return false;
+    auto backing = limbus_index::File::open(path.c_str());
+    if (!backing) return false;
+    limbus_index::Reader file(backing);
     const unsigned char expected[] = {'L', 'Z', 'F', 'C', '2', 0};
     unsigned char magic[sizeof(expected)] = {};
     uint32_t count = 0;
@@ -4133,24 +4145,24 @@ bool load_live_font_catalogue() {
         if (valid) labels.emplace(std::move(text));
     }
     uint32_t model_count = 0;
-    std::unordered_map<std::string, std::string> models;
+    limbus_index::Table models;
     valid = valid && labels.size() == count && read_u32(file, &model_count) && model_count <= kMaxEntries;
     if (valid) models.reserve(model_count);
     for (uint32_t n = 0; valid && n < model_count; ++n) {
-        std::string key, value;
+        std::string_view key, value;
         valid = read_string(file, &key) && read_string(file, &value);
         const auto separator = key.find('\x1f');
         valid = valid && !key.empty() && key.front() == '@' && key.size() <= 320 &&
                 separator != std::string::npos && separator == key.rfind('\x1f') &&
-                is_display_string_field(key.c_str() + separator + 1) &&
-                is_usable_display_text(value) && !value.empty() &&
+                is_display_string_field(std::string(key.substr(separator + 1)).c_str()) &&
+                is_usable_display_text(std::string(value)) && !value.empty() &&
                 (bytes += key.size() + value.size()) <= 64u * 1024u * 1024u &&
                 models.emplace(key, value).second;
     }
-    valid = valid && fgetc(file) == EOF;
-    fclose(file);
+    valid = valid && file.at_end();
     if (!valid) return false;
     g_model_fields = std::move(models);
+    g_live_mapping = std::move(backing);
     for (const auto &label : labels) g_font_catalogue.add(label);
     rebuild_package_line_break_index(g_index, &labels);
     LT_LOGI("Prepared live resource font catalogue labels=%u models=%u", count, model_count);
@@ -6080,9 +6092,20 @@ void configure_limbus_translation_runtime(const char *active_index_pointer, bool
     g_contextual_index.clear();
     g_terms.clear();
     g_model_fields.clear();
+    g_index_mapping.reset();
+    g_live_mapping.reset();
     g_package_line_breaks.clear();
     g_term_trie.clear();
     const bool loaded = load_active_index();
+    {
+        std::string trace_path(g_active_pointer);
+        const auto slash = trace_path.rfind('/');
+        if (slash != std::string::npos) {
+            trace_path.resize(slash + 1);
+            trace_path += "termination-" + std::to_string(getpid()) + ".log";
+            limbus_termination::trace.open(trace_path.c_str());
+        }
+    }
     g_live_resources = false;
     g_resource_bridge_method = nullptr;
     g_notice_bridge_method = nullptr;
@@ -6102,6 +6125,8 @@ void configure_limbus_translation_runtime(const char *active_index_pointer, bool
             if (jni.env->ExceptionCheck()) jni.env->ExceptionClear();
         }
     }
+    if (g_index_mapping) g_index_mapping->release_scan_pages();
+    if (g_live_mapping) g_live_mapping->release_scan_pages();
     write_runtime_receipt((loaded || g_live_resources) ? "index_loaded" : "no_index");
     pthread_mutex_unlock(&g_lock);
 }
