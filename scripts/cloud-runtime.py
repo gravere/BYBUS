@@ -479,7 +479,8 @@ def inspect_package_metadata(release, verifier):
             if not all(result.get("checks", {}).get(key) is True for key in required):
                 raise RuntimeError("Cold-cache and recursive boundary cases were not all exercised")
             REPORT["package_metadata"] = dict(result, probe_sha256=digest)
-            REPORT["result"] = "release host and cold-cache package metadata passed; no game or account tested"
+            inspect_framework_permissions(component_settings=True)
+            REPORT["result"] = "release host, cold-cache metadata and component state contracts passed; no game or account tested"
             adb("shell", "am", "force-stop", PACKAGE)
             return
         time.sleep(.5)
@@ -540,7 +541,7 @@ def inspect_permissions(release, verifier, package_queries=False):
     raise RuntimeError("Permission contract inspection timed out")
 
 
-def inspect_framework_permissions(package_jni=False):
+def inspect_framework_permissions(package_jni=False, component_settings=False):
     """Use public Android APIs in a real guest process; keep the temporary registry in the server."""
     def probe(receiver, stem, stage=None):
         result_file = f"/data/user/0/{PACKAGE}/files/{stem}-result.json"
@@ -569,7 +570,19 @@ def inspect_framework_permissions(package_jni=False):
         prepared = probe("PackageQueryProbeReceiver", "framework-prepare", "framework-prepare")
         if not prepared.get("prepared"):
             raise RuntimeError("Framework permission fixture was not prepared")
-        result = probe("FrameworkPermissionProbeReceiver", "framework-permission", "package-jni" if package_jni else None)
+        stage = "component-settings" if component_settings else "package-jni" if package_jni else None
+        result = probe("FrameworkPermissionProbeReceiver", "framework-permission", stage)
+        if component_settings:
+            REPORT["component_settings"] = result
+            expected_sdk = {"android11": 30, "android17": 37}[REPORT["profile"]]
+            if result.get("sdk") != expected_sdk or result.get("game_started") is not False:
+                raise RuntimeError("Component state fixture used an unexpected platform or game")
+            if not all(result.get(key) for key in ("ordinary_app_uid", "public_framework_api", "server_over_binder", "client_restored")):
+                raise RuntimeError("Component state fixture did not use the real process boundary")
+            if not result.get("mutation", {}).get("passed") or not result.get("persistence", {}).get("passed"):
+                raise RuntimeError("Component mutation or settings persistence differs from Android")
+            REPORT["checks"].append("Component state writes and exceptions match the platform for all component kinds; existing valid settings retained")
+            return
         REPORT["jni_package_queries" if package_jni else "framework_permissions"] = result
         if package_jni:
             expected = {"android11": (30, 8), "android17": (37, 13)}[REPORT["profile"]]

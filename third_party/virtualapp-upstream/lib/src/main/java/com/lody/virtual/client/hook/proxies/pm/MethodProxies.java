@@ -1563,7 +1563,7 @@ class MethodProxies {
             int newState = (int) args[1];
             int flags = readPackageFlags(args[2]);
             VPackageManager.get().setComponentEnabledSetting(componentName, newState, flags, getAppUserId());
-            return 0;
+            return null;
         }
 
         @Override

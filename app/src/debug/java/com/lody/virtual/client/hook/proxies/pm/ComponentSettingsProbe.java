@@ -40,6 +40,18 @@ public final class ComponentSettingsProbe {
         results.put("platform_missing_package", missingPlatform);
         results.put("platform_null", nullPlatform);
         results.put("platform_known_package_unset_class", defaultPlatform);
+        android.content.pm.PackageInfo manifest = platform.getPackageInfo(context.getPackageName(),
+                PackageManager.GET_ACTIVITIES | PackageManager.GET_SERVICES
+                        | PackageManager.GET_RECEIVERS | PackageManager.GET_PROVIDERS
+                        | PackageManager.MATCH_DISABLED_COMPONENTS);
+        JSONObject mutation = new JSONObject();
+        ComponentName platformMissing = new ComponentName(context.getPackageName(), context.getPackageName() + ".Missing");
+        String platformMissingWrite = outcome(() -> {
+            platform.setComponentEnabledSetting(platformMissing, 1, PackageManager.DONT_KILL_APP); return 0;
+        });
+        String platformNullWrite = outcome(() -> {
+            platform.setComponentEnabledSetting(null, 1, PackageManager.DONT_KILL_APP); return 0;
+        });
         Field configField = VClient.class.getDeclaredField("clientConfig"); configField.setAccessible(true);
         Field boundField = VClient.class.getDeclaredField("mBoundApplication"); boundField.setAccessible(true);
         Object savedConfig = configField.get(VClient.get()), savedBound = boundField.get(VClient.get());
@@ -65,10 +77,55 @@ public final class ComponentSettingsProbe {
             results.put("container_known_package_unset_class", defaultVirtual);
             results.put("container_hidden_host", hidden);
             results.put("container_missing_user", missingUser);
+            String virtualMissingWrite = outcome(() -> {
+                pm.setComponentEnabledSetting(known, 1, PackageManager.DONT_KILL_APP); return 0;
+            });
+            mutation.put("platform_missing_class", platformMissingWrite);
+            mutation.put("container_missing_class", virtualMissingWrite);
+            boolean mutationPassed = "IllegalArgumentException".equals(platformMissingWrite)
+                    && platformMissingWrite.equals(virtualMissingWrite)
+                    && defaultVirtual.equals(outcome(() -> pm.getComponentEnabledSetting(known)));
+            String virtualNullWrite = outcome(() -> {
+                pm.setComponentEnabledSetting(null, 1, PackageManager.DONT_KILL_APP); return 0;
+            });
+            mutation.put("null_component", new JSONObject().put("platform", platformNullWrite).put("container", virtualNullWrite));
+            mutationPassed &= platformNullWrite.equals(virtualNullWrite);
+            String absentUserWrite = outcome(() -> {
+                VPackageManager.get().setComponentEnabledSetting(known, 1, PackageManager.DONT_KILL_APP, 9999); return 0;
+            });
+            mutation.put("absent_user_no_op", "state_0".equals(absentUserWrite));
+            mutationPassed &= "state_0".equals(absentUserWrite);
+            java.util.LinkedHashMap<String,String> classes = new java.util.LinkedHashMap<>();
+            for (android.content.pm.ActivityInfo a : manifest.activities) {
+                classes.putIfAbsent(a.targetActivity == null ? "activity" : "alias", a.name);
+            }
+            classes.put("receiver", manifest.receivers[0].name);
+            classes.put("service", manifest.services[0].name);
+            classes.put("provider", manifest.providers[0].name);
+            require(classes.size() == 5, "all component kinds and activity alias");
+            for (java.util.Map.Entry<String,String> entry : classes.entrySet()) {
+                ComponentName original = new ComponentName(context.getPackageName(), entry.getValue());
+                ComponentName virtual = new ComponentName(GAME, entry.getValue());
+                int savedOriginal = platform.getComponentEnabledSetting(original);
+                int savedVirtual = pm.getComponentEnabledSetting(virtual);
+                try {
+                    for (int next : new int[]{1, 2, 3, 4, -1, 99, 0}) {
+                        String expected = writeThenRead(platform, original, next);
+                        String actual = writeThenRead(pm, virtual, next);
+                        mutation.put(entry.getKey() + "_" + next,
+                                new JSONObject().put("platform", expected).put("container", actual));
+                        mutationPassed &= expected.equals(actual);
+                    }
+                } finally {
+                    platform.setComponentEnabledSetting(original, savedOriginal, PackageManager.DONT_KILL_APP);
+                    pm.setComponentEnabledSetting(virtual, savedVirtual, PackageManager.DONT_KILL_APP);
+                }
+            }
+            mutation.put("passed", mutationPassed);
             passed = "IllegalArgumentException".equals(missingPlatform) && missingPlatform.equals(missingVirtual)
                     && "state_0".equals(nullPlatform) && nullPlatform.equals(nullVirtual)
                     && "state_0".equals(defaultPlatform) && defaultPlatform.equals(defaultVirtual)
-                    && "IllegalArgumentException".equals(hidden) && "state_2".equals(missingUser);
+                    && "IllegalArgumentException".equals(hidden) && "state_2".equals(missingUser) && mutationPassed;
         } finally {
             boundField.set(VClient.get(), savedBound); configField.set(VClient.get(), savedConfig);
         }
@@ -77,7 +134,14 @@ public final class ComponentSettingsProbe {
                 .put("sdk", Build.VERSION.SDK_INT).put("ordinary_app_uid", true)
                 .put("public_framework_api", true).put("server_over_binder", true)
                 .put("game_started", false).put("client_restored", VClient.get().getCurrentApplicationInfo() == null)
-                .put("results", results).put("persistence", persistence);
+                .put("results", results).put("mutation", mutation).put("persistence", persistence);
+    }
+
+    private static String writeThenRead(PackageManager pm, ComponentName component, int state) {
+        String outcome = outcome(() -> {
+            pm.setComponentEnabledSetting(component, state, PackageManager.DONT_KILL_APP); return 0;
+        });
+        return outcome + ";after=" + pm.getComponentEnabledSetting(component);
     }
 
     private interface Query { int get() throws Exception; }

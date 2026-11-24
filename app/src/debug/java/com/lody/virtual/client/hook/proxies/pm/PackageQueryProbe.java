@@ -34,8 +34,9 @@ public final class PackageQueryProbe {
     private static final String OTHER = "io.github.gravere.query.fixture.other";
     private static final String ABSENT = "io.github.gravere.query.fixture.absent";
     private static VPackage frameworkGame, frameworkOther;
+    private static byte[] frameworkComponentStates;
 
-    /** Held only until the separate guest-process public-API probe completes. No files or installs. */
+    /** Temporary package registry and component-state snapshot for the cross-process probe. */
     public static JSONObject frameworkRegistry(Context context, boolean prepare) throws Exception {
         require(VActivityManager.get().getSystemPid() == Process.myPid(), "server process");
         Field registry = VPackageManagerService.class.getDeclaredField("mPackages");
@@ -54,6 +55,19 @@ public final class PackageQueryProbe {
                 frameworkGame.requestedPermissions.addAll(Arrays.asList(
                         "android.permission.INTERNET", "android.permission.ACCOUNT_MANAGER"));
                 frameworkOther = fixture(context, OTHER, uid + 1, new byte[]{3, 4});
+                try {
+                    VPackage manifest = com.lody.virtual.server.pm.parser.PackageParserEx.parsePackage(
+                            new java.io.File(context.getApplicationInfo().sourceDir));
+                    frameworkGame.activities = manifest.activities;
+                    frameworkGame.receivers = manifest.receivers;
+                    frameworkGame.services = manifest.services;
+                    frameworkGame.providers = manifest.providers;
+                } catch (Throwable error) { throw new IllegalStateException("Fixture manifest", error); }
+                android.os.Parcel states = android.os.Parcel.obtain();
+                try {
+                    com.lody.virtual.server.pm.ComponentStateManager.get().writePersistenceData(states);
+                    frameworkComponentStates = states.marshall();
+                } finally { states.recycle(); }
                 packages.put(GAME, frameworkGame); packages.put(OTHER, frameworkOther);
                 return new JSONObject().put("passed", true).put("prepared", true);
             }
@@ -62,6 +76,15 @@ public final class PackageQueryProbe {
                         "framework fixture ownership");
                 packages.remove(GAME); packages.remove(OTHER);
                 frameworkGame = null; frameworkOther = null;
+                android.os.Parcel states = android.os.Parcel.obtain();
+                try {
+                    states.unmarshall(frameworkComponentStates, 0, frameworkComponentStates.length);
+                    states.setDataPosition(0);
+                    com.lody.virtual.server.pm.ComponentStateManager manager = com.lody.virtual.server.pm.ComponentStateManager.get();
+                    manager.readPersistenceData(states, manager.getCurrentVersion());
+                    manager.save();
+                    frameworkComponentStates = null;
+                } finally { states.recycle(); }
             }
             require(!packages.containsKey(GAME) && !packages.containsKey(OTHER), "framework registry restored");
             return new JSONObject().put("passed", true).put("registry_restored", true);

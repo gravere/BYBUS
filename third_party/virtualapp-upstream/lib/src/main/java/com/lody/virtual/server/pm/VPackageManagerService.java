@@ -960,11 +960,45 @@ public class VPackageManagerService extends IPackageManager.Stub {
 
     @Override
     public void setComponentEnabledSetting(ComponentName component, int newState, int flags, int userId) {
-        if (component == null) {
-            return;
+        if (!VUserManagerService.get().exists(userId)) return;
+        if (component == null) throw new NullPointerException("componentName");
+        if (newState < PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
+                || newState > PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED) {
+            throw new IllegalArgumentException("Invalid new component state: " + newState);
         }
-        checkUserId(userId);
-        ComponentStateManager.get().setComponentState(component, newState, userId);
+        synchronized (mPackages) {
+            VPackage pkg = mPackages.get(component.getPackageName());
+            PackageSetting setting = pkg == null ? null : (PackageSetting) pkg.mExtras;
+            if (setting == null || !setting.isInstalled(userId) || setting.isHidden(userId)) {
+                throw new IllegalArgumentException("Unknown component");
+            }
+            String name = component.getClassName();
+            boolean declared = hasComponentClass(pkg.activities, name)
+                    || hasComponentClass(pkg.receivers, name)
+                    || hasComponentClass(pkg.services, name)
+                    || hasComponentClass(pkg.providers, name);
+            if (!declared) {
+                if (pkg.applicationInfo.targetSdkVersion >= Build.VERSION_CODES.JELLY_BEAN) {
+                    throw new IllegalArgumentException("Component class does not exist in package");
+                }
+                return;
+            }
+            // Android accepts these application states at the API boundary, but does not
+            // apply them to individual components. Validate the component before this no-op.
+            if (newState > PackageManager.COMPONENT_ENABLED_STATE_DISABLED) return;
+            ComponentStateManager manager = ComponentStateManager.get();
+            if (manager.getComponentState(component, userId) != newState) {
+                manager.setComponentState(component, newState, userId);
+            }
+        }
+    }
+
+    private static boolean hasComponentClass(List<? extends VPackage.Component<?>> components, String name) {
+        if (components == null) return false;
+        for (VPackage.Component<?> component : components) {
+            if (component != null && name.equals(component.className)) return true;
+        }
+        return false;
     }
 
     @Override

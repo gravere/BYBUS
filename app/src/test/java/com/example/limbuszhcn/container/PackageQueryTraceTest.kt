@@ -5,6 +5,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PackageQueryTraceTest {
+    @Test fun failedComponentWritesAreRetainedWithoutArguments() {
+        val trace = PackageQueryTrace()
+        val event = trace.begin("setComponentEnabledSetting", true, 0)!!
+        val error = IllegalArgumentException("private.package/private.component")
+        assertTrue(event.finished(null, error, 2).endsWith("result=argument_error"))
+        trace.record("setComponentEnabledSetting", true, null, error)
+        assertTrue(trace.snapshot().contains("setComponentEnabledSetting:container:argument_error"))
+        assertFalse(trace.snapshot().contains("private"))
+    }
     @Test fun startupTimelineCapturesBeginEndAndStopsAtItsBudget() {
         val trace = PackageQueryTrace()
         assertNull(trace.begin("private_method", true, 0))

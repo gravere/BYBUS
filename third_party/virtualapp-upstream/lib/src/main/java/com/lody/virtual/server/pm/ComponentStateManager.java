@@ -45,6 +45,10 @@ public class ComponentStateManager extends PersistenceLayer {
     }
 
     public void setComponentState(ComponentName component, int state, int userId) {
+        if (state < PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
+                || state > PackageManager.COMPONENT_ENABLED_STATE_DISABLED) {
+            throw new IllegalArgumentException("Unsupported component state: " + state);
+        }
         synchronized (this) {
             getOrCreate(userId).getOrCreate(component).state = state;
             save();

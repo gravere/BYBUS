@@ -25,7 +25,12 @@ public class ComponentState implements Parcelable {
     }
 
     protected ComponentState(Parcel in) {
-        this.state = in.readInt();
+        int stored = in.readInt();
+        // Older containers accepted application-only and invalid component states.
+        // Preserve real choices; an unsupported legacy override means no override.
+        this.state = stored >= PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
+                && stored <= PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+                ? stored : PackageManager.COMPONENT_ENABLED_STATE_DEFAULT;
     }
 
     public static final Creator<ComponentState> CREATOR = new Creator<ComponentState>() {

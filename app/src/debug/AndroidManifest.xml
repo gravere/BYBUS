@@ -2,6 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application android:networkSecurityConfig="@xml/debug_network_security">
         <activity android:name=".NewIntentProbeActivity" android:exported="false" />
+        <activity-alias android:name=".ComponentSettingsProbeAlias" android:targetActivity=".NewIntentProbeActivity" android:exported="false" />
         <activity android:name=".AiTaskVisualProbeActivity" android:exported="true" />
         <activity android:name=".GoogleReadinessProbeActivity" android:exported="true" />
         <activity android:name=".GoogleWindowProbeActivity" android:theme="@style/GoogleWindowProbeTheme" android:exported="true" />
