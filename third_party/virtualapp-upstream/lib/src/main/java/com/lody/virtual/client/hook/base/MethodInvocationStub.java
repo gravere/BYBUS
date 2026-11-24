@@ -164,6 +164,10 @@ public class MethodInvocationStub<T> {
     protected void onInvocationResult(Method method, boolean proxied, Object result, Throwable error) {
     }
 
+    /** Optional bounded observation. Neither hook receives invocation arguments. */
+    protected Object onInvocationStart(Method method, boolean proxied) { return null; }
+    protected void onInvocationEnd(Object observation, Method method, Object result, Throwable error) { }
+
     private class HookInvocationHandler implements InvocationHandler {
         @Override
         public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
@@ -176,6 +180,7 @@ public class MethodInvocationStub<T> {
             Object res = null;
             Throwable exception = null;
             boolean invokedProxy = false;
+            Object observation = null;
             if (mightLog) {
                 // Arguments to string is done before the method is called because the method might actually change it
                 try {
@@ -188,7 +193,10 @@ public class MethodInvocationStub<T> {
 
 
             try {
-                if (useProxy && methodProxy.beforeCall(mBaseInterface, method, args)) {
+                boolean dispatchProxy = useProxy && methodProxy.beforeCall(mBaseInterface, method, args);
+                try { observation = onInvocationStart(method, dispatchProxy); }
+                catch (Throwable ignored) { /* Never block or replace a business invocation. */ }
+                if (dispatchProxy) {
                     invokedProxy = true;
                     res = methodProxy.call(mBaseInterface, method, args);
                     res = methodProxy.afterCall(mBaseInterface, method, args, res);
@@ -205,6 +213,8 @@ public class MethodInvocationStub<T> {
                 throw exception;
 
             } finally {
+                try { onInvocationEnd(observation, method, res, exception); }
+                catch (Throwable ignored) { /* Keep the original result and pending exception. */ }
                 try {
                     onInvocationResult(method, invokedProxy, res, exception);
                 } catch (Throwable ignored) {

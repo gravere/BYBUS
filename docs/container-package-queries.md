@@ -85,3 +85,9 @@ Android 17 的 `IPackageManager.getInstalledPackages` 返回 `PackageInfoList`�
 及 [Settings](https://android.googlesource.com/platform/frameworks/base/+/refs/tags/android-15.0.0_r1/services/core/java/com/android/server/pm/Settings.java)。
 这些查询约定在 Android 14 已存在，不能仅凭设备使用 Android 15 就把退出归因于新增限制。
 诊断只增加组件查询的结果分类，以及带时间和 PID 的固定退出事件，不导出参数或原始安全日志。
+
+启动诊断为每个游戏进程保存前 90 秒、最多 64 次支持的包查询的开始和结束，包含顺序号、
+方法、容器/系统路径、耗时和固定结果类别。观察器失败不能改变原结果；不读取查询参数。
+JNI 后备类加载只保存类别和成功/失败类型，最多 32 次。启动首分钟增加有限内存采样，
+随后恢复原频率；已读取的游戏退出事件即刻去重保存，避免导出时 logcat 已滚动而丢失时间。
+诊断包列出采集范围和不可用项，不把 Android 未提供的信号发送者或系统栈伪装成已获取。

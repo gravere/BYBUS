@@ -28,6 +28,9 @@ public abstract class SettingConfig {
 
     public void onLimbusApplicationCreated(android.app.Application application) { }
 
+    /** Bounded class family/result only; never class-loader contents or exception messages. */
+    public void onLimbusClassLookup(String summary) { }
+
     public boolean prepareLimbusTranslationResources() { return false; }
 
     public String translateLimbusNotice(String language, String original) { return null; }

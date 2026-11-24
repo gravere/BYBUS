@@ -5,6 +5,22 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PackageQueryTraceTest {
+    @Test fun startupTimelineCapturesBeginEndAndStopsAtItsBudget() {
+        val trace = PackageQueryTrace()
+        assertNull(trace.begin("private_method", true, 0))
+        repeat(64) { number ->
+            val ticket = trace.begin("getComponentEnabledSetting", true, 10L + number)!!
+            assertTrue(ticket.beginning().contains("seq=${number + 1} "))
+            assertTrue(ticket.beginning().endsWith("phase=begin"))
+            val line = ticket.finished(null, IllegalArgumentException("private@example.test"), 20L + number)
+            assertTrue(line.endsWith("durationMs=10 result=argument_error"))
+            assertFalse(line.contains("private"))
+        }
+        assertNull(trace.begin("getPackageInfo", true, 80))
+        val timed = PackageQueryTrace()
+        assertNotNull(timed.begin("getPackageInfo", true, 0))
+        assertNull(timed.begin("getPackageInfo", true, 90_001))
+    }
     @Test fun componentStateErrorsAndDefaultsAreDistinctWithoutKeepingNames() {
         val trace = PackageQueryTrace()
         trace.record("getComponentEnabledSetting", true, 0, null)

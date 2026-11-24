@@ -129,6 +129,10 @@ class LimbusZhCNApplication : Application() {
             PersistentDiagnosticLog.warn("PackageQueries", summary)
         }
 
+        override fun onLimbusClassLookup(summary: String) {
+            PersistentDiagnosticLog.info("LimbusJNI", summary)
+        }
+
         override fun onLimbusSafetyAlert(callerPid: Int, summary: com.lody.virtual.helper.compat.LimbusSafetyAlert.Summary) {
             val root = VirtualCore.get().context.filesDir.toPath().resolve("translation-cache/translation-index")
             val recorded = runCatching {

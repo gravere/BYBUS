@@ -34,6 +34,7 @@ internal class DebugLogExporter(private val context: Context) {
         }
         val stamp = LocalDateTime.now().format(FILE_STAMP)
         val output = File(outputDirectory, "$FILE_PREFIX$stamp.zip")
+        val captureStarted = Instant.now()
         ZipOutputStream(BufferedOutputStream(FileOutputStream(output))).use { zip ->
             zip.writeText("README.txt", README)
             zip.writeText(
@@ -55,8 +56,10 @@ internal class DebugLogExporter(private val context: Context) {
                     }.redactedAndBounded(MAX_PERSISTENT_LOG_BYTES)
                     zip.writeText("persistent/${logFile.name}", content)
                 }
-            zip.writeText("logcat.txt", collectLogcat())
-            zip.writeText("game-startup.txt", collectGameStartup())
+            val logcat = collectLogcat()
+            val startup = collectGameStartup()
+            zip.writeText("logcat.txt", logcat)
+            zip.writeText("game-startup.txt", startup)
             zip.writeText("process-starts.txt", SystemStartupDiagnostics.collect(context))
             zip.writeText("game-session.txt", runCatching {
                 com.example.limbuszhcn.container.VirtualAppSession(context).snapshot().diagnostic()
@@ -89,6 +92,32 @@ internal class DebugLogExporter(private val context: Context) {
                 // Native tombstone 是 protobuf 二进制；按 UTF-8 写回会破坏地址和字段长度。
                 zip.writeBytes("exit-trace-${index + 1}.pb", trace.bytes)
             }
+            zip.writeText("capture-status.txt", buildString {
+                appendLine("schema=2")
+                appendLine("captureStarted=$captureStarted")
+                appendLine("captureFinished=${Instant.now()}")
+                appendLine("scope=own_uid_only")
+                appendLine("logcat=${when {
+                    logcat.startsWith("[truncated to recent data]") -> "collected_truncated"
+                    logcat.startsWith("command=") && logcat.contains("\nexitCode=0\n") -> "collected_bounded"
+                    logcat.startsWith("command=") && logcat.contains("\nexitCode=bounded_read\n") -> "collected_truncated"
+                    else -> "unavailable"
+                }}")
+                appendLine("gameEvents=${when {
+                    startup.contains("unavailable") -> "unavailable"
+                    startup.contains("no_markers") -> "no_retained_events"
+                    else -> "collected_bounded"
+                }}")
+                appendLine("systemExitHistory=${if (exits.summary.startsWith("count=")) "collected" else "unavailable"}")
+                appendLine("systemExitTraces=${exits.traces.size}")
+                appendLine("packageQueries=first_64_supported_calls_per_process_within_90_seconds")
+                appendLine("classLookup=first_32_fallback_results_per_process")
+                appendLine("memory=5_second_startup_samples_then_30_seconds")
+                appendLine("logPersistence=bounded_per_process_rotation")
+                appendLine("signalSender=not_exposed_by_ApplicationExitInfo")
+                appendLine("systemWideLogs=not_accessible_to_app")
+                appendLine("missingEvidence=not_a_success_result")
+            })
         }
         require(output.length() <= MAX_ARCHIVE_BYTES) {
             output.delete()
@@ -120,6 +149,10 @@ internal class DebugLogExporter(private val context: Context) {
             appendLine("buildType=${BuildConfig.BUILD_TYPE}")
             appendLine("package=${context.packageName}")
             appendLine("uid=${Process.myUid()}")
+            appendLine("androidUserId=${Process.myUid() / 100000}")
+            appendLine("elapsedRealtimeMillis=${android.os.SystemClock.elapsedRealtime()}")
+            appendLine("hostTargetSdk=${context.applicationInfo.targetSdkVersion}")
+            appendLine("hostAppFlags=0x${Integer.toHexString(context.applicationInfo.flags)}")
             appendLine("lastUpdateTime=${Instant.ofEpochMilli(packageInfo.lastUpdateTime)}")
             appendLine("hostExceptionHandlerInstalled=${PersistentDiagnosticLog.ownsExceptionHandler()}")
             val launcher = runCatching { context.packageManager.getLaunchIntentForPackage(context.packageName) }.getOrNull()
@@ -200,17 +233,22 @@ internal class DebugLogExporter(private val context: Context) {
             // Upstream Google components may log billing arguments. Export only our metadata
             // and crash tags; regex redaction alone cannot safely strip arbitrary receipts.
             "LimbusZhCNApp:I", "LimbusLauncher:I", "LimbusContainer:I", "LimbusVA:I",
-            "LimbusZhCN:I", "LimbusSIG:I", "GameMemory:I", "NativeEngine:I", "AndroidRuntime:E", "libc:F", "*:S"
+            "LimbusZhCN:I", "LimbusSIG:I", "GameMemory:I", "PackageQueries:I", "LimbusJNI:I", "GameExit:I",
+            "NativeEngine:I", "AndroidRuntime:E", "libc:F", "*:S"
         )
         return runCatching {
             val process = ProcessBuilder(command).redirectErrorStream(true).start()
-            val bytes = process.inputStream.readBounded(MAX_LOGCAT_BYTES)
-            val exitCode = process.waitFor()
-            buildString {
-                appendLine("command=${command.joinToString(" ")}")
-                appendLine("exitCode=$exitCode")
-                append(String(bytes, Charsets.UTF_8))
-            }.redactedAndBounded(MAX_LOGCAT_BYTES)
+            val read = FutureTask { process.inputStream.use { it.readBounded(MAX_LOGCAT_BYTES) } }
+            try {
+                Thread(read, "bybus-export-logcat").apply { isDaemon = true; start() }
+                val bytes = read.get(2, TimeUnit.SECONDS)
+                val exited = process.waitFor(200, TimeUnit.MILLISECONDS)
+                buildString {
+                    appendLine("command=${command.joinToString(" ")}")
+                    appendLine("exitCode=${if (exited) process.exitValue().toString() else "bounded_read"}")
+                    append(String(bytes, Charsets.UTF_8))
+                }.redactedAndBounded(MAX_LOGCAT_BYTES)
+            } finally { process.destroy(); read.cancel(true) }
         }.getOrElse { error ->
             "logcat collection failed: ${error.javaClass.simpleName}: ${error.message}"
                 .redactedAndBounded(MAX_SUMMARY_BYTES)
@@ -536,11 +574,13 @@ internal fun safeGameTimelineMarker(line: String): String? {
 
 internal fun readGameExitCodes(context: Context, pid: Int, started: Long, until: Long): List<String> {
     val direct = readGameLog(started, listOf("--pid=$pid", "AppSealing:E")) { lines ->
-        lines.take(256).mapNotNull { gameReportedExitCode(it, pid, started, until) }.distinct().take(8).toList()
+        exitCodesWithEvents(lines.take(256).toList(), pid, started, until, RetainedExitEvidence::record)
     }
     if (direct.isNotEmpty() || until - started !in 0..EARLY_GAME_EXIT_MS) return direct
     return readGameLog(started, listOf("LimbusVA:I", "AppSealing:E")) { lines ->
-        launchGameExitCodes(lines, pid, started, until) { SystemStartupDiagnostics.gameSlotExitTime(context, it) }
+        launchGameExitCodes(lines, pid, started, until, RetainedExitEvidence::record) {
+            SystemStartupDiagnostics.gameSlotExitTime(context, it)
+        }
     }
 }
 
@@ -562,10 +602,11 @@ private fun readGameLog(started: Long, filters: List<String>, parse: (Sequence<S
 
 /** Android can recreate a game activity under a new PID before it returns to BYBUS. */
 internal fun launchGameExitCodes(
-    lines: Sequence<String>, pid: Int, started: Long, until: Long, exitTime: (Int) -> Long?
+    lines: Sequence<String>, pid: Int, started: Long, until: Long,
+    onEvent: (String) -> Unit = {}, exitTime: (Int) -> Long?
 ): List<String> {
     val logs = lines.take(4096).filter { GAME_BIND_EVENT in it || "AppSealing" in it }.take(256).toList()
-    val direct = logs.mapNotNull { gameReportedExitCode(it, pid, started, until) }.distinct().take(8)
+    val direct = exitCodesWithEvents(logs, pid, started, until, onEvent)
     if (direct.isNotEmpty() || until - started !in 0..EARLY_GAME_EXIT_MS) return direct
 
     val bindings = logs.mapNotNull { GAME_BIND_LOG.matchEntire(it.trim()) }
@@ -581,10 +622,31 @@ internal fun launchGameExitCodes(
         val boundAt = logTimeMillis(binding)
         if (logs.none { gameReportedExitCode(it, priorPid, boundAt, until) != null }) continue
         val endedAt = exitTime(priorPid)?.takeIf { it in boundAt..until } ?: continue
-        logs.mapNotNullTo(codes) { gameReportedExitCode(it, priorPid, boundAt, endedAt) }
+        codes.addAll(exitCodesWithEvents(logs, priorPid, boundAt, endedAt, onEvent))
         if (codes.size >= 8) break
     }
     return codes.take(8)
+}
+
+private fun exitCodesWithEvents(logs: List<String>, pid: Int, started: Long, until: Long, onEvent: (String) -> Unit): List<String> =
+    logs.mapNotNull { line ->
+        val code = gameReportedExitCode(line, pid, started, until) ?: return@mapNotNull null
+        safeGameTimelineMarker(line)?.let { runCatching { onEvent(it) } }
+        code
+    }.distinct().take(8)
+
+/** Retain the original event time before logcat rotates; repeated status reads do not spam disk. */
+private object RetainedExitEvidence {
+    private val seen = linkedSetOf<String>()
+    fun record(event: String) {
+        val fresh = synchronized(seen) {
+            if (event in seen) false else {
+                if (seen.size >= 32) seen.remove(seen.first())
+                seen.add(event)
+            }
+        }
+        if (fresh) PersistentDiagnosticLog.info("GameExit", event)
+    }
 }
 
 private fun logTimeMillis(match: MatchResult): Long =

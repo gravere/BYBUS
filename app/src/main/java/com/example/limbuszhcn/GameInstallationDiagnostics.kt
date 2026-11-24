@@ -17,7 +17,7 @@ internal object GameInstallationDiagnostics {
     fun collect(context: Context): String = buildString {
         val pkg = LocalContainerRuntime.GAME_PACKAGE
         val pm = context.packageManager
-        val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES
+        val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES or PackageManager.GET_SIGNATURES
             else PackageManager.GET_SIGNATURES
         fun section(label: String, load: () -> PackageInfo?) {
             try {
@@ -25,15 +25,26 @@ internal object GameInstallationDiagnostics {
                 if (info == null) { appendLine("$label=absent"); return }
                 appendLine("$label.version=${info.versionName}")
                 appendLine("$label.code=${if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()}")
-                val signers = if (Build.VERSION.SDK_INT >= 28) info.signingInfo?.apkContentsSigners else info.signatures
+                val modernSigners = if (Build.VERSION.SDK_INT >= 28) info.signingInfo?.apkContentsSigners else null
+                val signers = modernSigners?.takeIf { it.isNotEmpty() } ?: info.signatures
+                appendLine("$label.signerSource=${when {
+                    !modernSigners.isNullOrEmpty() -> "apk_signing_info"
+                    !info.signatures.isNullOrEmpty() -> "legacy_signature_array"
+                    else -> "unavailable"
+                }}")
                 appendLine("$label.signers=${signers.orEmpty().take(4).joinToString(",") {
                     MessageDigest.getInstance("SHA-256").digest(it.toByteArray()).toLowerHex()
                 }}")
                 appendLine("$label.splits=${info.splitNames.orEmpty().take(32).joinToString(",")}")
                 info.applicationInfo?.let { app ->
+                    appendLine("$label.targetSdk=${app.targetSdkVersion}")
+                    appendLine("$label.minSdk=${app.minSdkVersion}")
+                    appendLine("$label.appFlags=0x${Integer.toHexString(app.flags)}")
+                    appendLine("$label.enabled=${app.enabled}")
                     // Report only lengths, never the source paths or private storage layout.
                     val paths = listOfNotNull(app.sourceDir) + app.splitSourceDirs.orEmpty()
                     appendLine("$label.apkBytes=${paths.take(33).joinToString(",") { File(it).length().toString() }}")
+                    appendLine("$label.apkReadable=${paths.take(33).joinToString(",") { File(it).canRead().toString() }}")
                 }
             } catch (error: Exception) {
                 appendLine("$label=unavailable:${error.javaClass.simpleName}")

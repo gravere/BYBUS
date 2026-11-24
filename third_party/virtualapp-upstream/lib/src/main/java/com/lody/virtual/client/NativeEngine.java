@@ -305,6 +305,22 @@ public class NativeEngine {
             VirtualCore.getConfig().onLimbusTextLanguage(language);
     }
 
+    private static final java.util.concurrent.atomic.AtomicInteger LIMBUS_CLASS_REPORTS = new java.util.concurrent.atomic.AtomicInteger();
+
+    private static void recordLimbusClassLookup(String slashName, Throwable error) {
+        try {
+            if (LIMBUS_CLASS_REPORTS.getAndIncrement() >= 32) return;
+            String family = slashName.startsWith("com/google/firebase/") ? "firebase"
+                    : slashName.equals("com/google/android/gms/common/GoogleApiAvailability") ? "gms_availability" : "other";
+            String result = error == null ? "loaded" : error instanceof ClassNotFoundException ? "class_missing"
+                    : error instanceof NoClassDefFoundError ? "definition_missing"
+                    : error instanceof ExceptionInInitializerError ? "initializer_error"
+                    : error instanceof UnsatisfiedLinkError ? "native_link_error"
+                    : error instanceof LinkageError ? "linkage_error" : error instanceof SecurityException ? "security_error" : "exception";
+            VirtualCore.getConfig().onLimbusClassLookup("family=" + family + " result=" + result);
+        } catch (Throwable ignored) { /* Observation must never turn a loaded class into a miss. */ }
+    }
+
     @Keep
     public static Class<?> findLimbusClassFromNative(String slashName) {
         if (slashName == null || !"com.ProjectMoon.LimbusCompany".equals(VClient.get().getCurrentPackage())) {
@@ -314,9 +330,11 @@ public class NativeEngine {
         try {
             ClassLoader classLoader = VClient.get().getClassLoader();
             Class<?> clazz = loadLimbusClass(className, classLoader);
+            recordLimbusClassLookup(slashName, null);
             VLog.i(TAG, "Limbus native FindClass fallback loaded %s with %s", className, clazz.getClassLoader());
             return clazz;
         } catch (Throwable e) {
+            recordLimbusClassLookup(slashName, e);
             VLog.w(TAG, "Limbus native FindClass fallback failed for %s: %s", className, e.toString());
             return null;
         }

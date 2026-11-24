@@ -10,6 +10,20 @@ import org.junit.Test
  * 验证公开诊断包写入前的敏感信息脱敏与长度限制。
  */
 class DebugLogExporterTest {
+    @Test fun savedExitEvidenceUsesOriginalTimeAndCannotChangeTheSelectedCodes() {
+        val line = "1795452524.130 9760 9761 E AppSealing: !!! Kill Process ........[70107]"
+        val observed = mutableListOf<String>()
+        val start = 1_795_452_500_000L
+        assertEquals(listOf("70107"), launchGameExitCodes(sequenceOf(line), 9760, start, start + 30_000,
+            onEvent = { observed += it }, exitTime = { null }))
+        assertEquals(listOf("time=1795452524.130 pid=9760 event=game_reported_exit code=70107"), observed)
+        assertEquals(listOf("70107"), launchGameExitCodes(sequenceOf(line), 9760, start, start + 30_000,
+            onEvent = { error("diagnostic writer failed") }, exitTime = { null }))
+        observed.clear()
+        assertTrue(launchGameExitCodes(sequenceOf(line), 9999, start, start + 30_000,
+            onEvent = { observed += it }, exitTime = { null }).isEmpty())
+        assertTrue(observed.isEmpty())
+    }
     @Test fun timelinePreservesExitTimeAndProcessWithoutRawPayloadsOrMainProcessAttribution() {
         val error = "1795452524.130 9760 9761 E AppSealing: !!! Kill Process ........[70107]"
         assertEquals("time=1795452524.130 pid=9760 event=game_reported_exit code=70107", safeGameTimelineMarker(error))

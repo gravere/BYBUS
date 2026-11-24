@@ -255,6 +255,12 @@ public final class PackageQueryProbe {
             public void fail() { throw original; }
         };
         MethodInvocationStub<ObserverFixture> stub = new MethodInvocationStub<ObserverFixture>(target, ObserverFixture.class) {
+            @Override protected Object onInvocationStart(Method method, boolean proxied) {
+                throw new IllegalStateException("start observer failed");
+            }
+            @Override protected void onInvocationEnd(Object observation, Method method, Object value, Throwable error) {
+                throw new IllegalStateException("end observer failed");
+            }
             @Override protected void onInvocationResult(Method method, boolean proxied, Object value, Throwable error) {
                 throw new IllegalStateException("observer failed");
             }

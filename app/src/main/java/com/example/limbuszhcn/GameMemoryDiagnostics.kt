@@ -54,6 +54,11 @@ internal object GameMemoryDiagnostics {
         try {
             guest.registerComponentCallbacks(callbacks)
             executor.scheduleWithFixedDelay({ sample("periodic") }, 0, 30, TimeUnit.SECONDS)
+            // A repeatable ~19-second exit used to fall between the first two samples.
+            // Add only ten startup samples; retain the original long-running cadence.
+            for (seconds in listOf(5L, 10L, 15L, 20L, 25L, 35L, 40L, 45L, 50L, 55L)) {
+                executor.schedule({ sample("startup") }, seconds, TimeUnit.SECONDS)
+            }
             started = true
         } catch (_: RuntimeException) {
             guest.unregisterComponentCallbacks(callbacks)

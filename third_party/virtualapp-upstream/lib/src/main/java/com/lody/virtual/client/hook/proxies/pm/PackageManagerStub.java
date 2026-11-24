@@ -37,6 +37,23 @@ public final class PackageManagerStub extends MethodInvocationProxy<MethodInvoca
     private static final java.util.concurrent.atomic.AtomicInteger SOURCE_QUERY_REPORTS = new java.util.concurrent.atomic.AtomicInteger();
     private static final java.util.concurrent.atomic.AtomicInteger COMPONENT_QUERY_REPORTS = new java.util.concurrent.atomic.AtomicInteger();
 
+    private static Object beginQuery(Method method, boolean proxied) {
+        ApplicationInfo current = VClient.get().getCurrentApplicationInfo();
+        if (current == null || !GAME.equals(current.packageName)) return null;
+        PackageQueryTrace.PendingQuery query = TRACE.begin(method.getName(), proxied, android.os.SystemClock.elapsedRealtime());
+        if (query != null) VirtualCore.getConfig().onLimbusPackageQueries(query.beginning());
+        return query;
+    }
+
+    private static void endQuery(Object observation, Method method, Object result, Throwable error) {
+        if (!(observation instanceof PackageQueryTrace.PendingQuery)) return;
+        PackageQueryTrace.PendingQuery query = (PackageQueryTrace.PendingQuery) observation;
+        String summary = query.finished(result, error, android.os.SystemClock.elapsedRealtime());
+        if (error == null && result != null && !method.getReturnType().isPrimitive()
+                && !method.getReturnType().isInstance(result)) summary += " declaredTypeMismatch=true";
+        VirtualCore.getConfig().onLimbusPackageQueries(summary);
+    }
+
     /** Shared with the separate permission service; does not receive or retain query arguments. */
     public static void recordQueryResult(Method method, boolean proxied, Object result, Throwable error) {
         ApplicationInfo current = VClient.get().getCurrentApplicationInfo();
@@ -80,6 +97,10 @@ public final class PackageManagerStub extends MethodInvocationProxy<MethodInvoca
 
     public PackageManagerStub() {
         super(new MethodInvocationStub<IInterface>(systemPackageManager()) {
+            @Override protected Object onInvocationStart(Method method, boolean proxied) { return beginQuery(method, proxied); }
+            @Override protected void onInvocationEnd(Object observation, Method method, Object result, Throwable error) {
+                endQuery(observation, method, result, error);
+            }
             @Override protected void onInvocationResult(Method method, boolean proxied, Object result, Throwable error) {
                 recordQueryResult(method, proxied, result, error);
             }
@@ -118,6 +139,10 @@ public final class PackageManagerStub extends MethodInvocationProxy<MethodInvoca
         final IInterface hookedPM = getInvocationStub().getProxyInterface();
         ActivityThread.sPackageManager.set(hookedPM);
         BinderInvocationStub pmHookBinder = new BinderInvocationStub(getInvocationStub().getBaseInterface()) {
+            @Override protected Object onInvocationStart(Method method, boolean proxied) { return beginQuery(method, proxied); }
+            @Override protected void onInvocationEnd(Object observation, Method method, Object result, Throwable error) {
+                endQuery(observation, method, result, error);
+            }
             @Override protected void onInvocationResult(Method method, boolean proxied, Object result, Throwable error) {
                 recordQueryResult(method, proxied, result, error);
             }
