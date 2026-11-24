@@ -541,7 +541,7 @@ def inspect_permissions(release, verifier, package_queries=False):
     raise RuntimeError("Permission contract inspection timed out")
 
 
-def inspect_framework_permissions(package_jni=False, component_settings=False):
+def inspect_framework_permissions(package_jni=False, component_settings=False, package_interface=False):
     """Use public Android APIs in a real guest process; keep the temporary registry in the server."""
     def probe(receiver, stem, stage=None):
         result_file = f"/data/user/0/{PACKAGE}/files/{stem}-result.json"
@@ -570,8 +570,18 @@ def inspect_framework_permissions(package_jni=False, component_settings=False):
         prepared = probe("PackageQueryProbeReceiver", "framework-prepare", "framework-prepare")
         if not prepared.get("prepared"):
             raise RuntimeError("Framework permission fixture was not prepared")
-        stage = "component-settings" if component_settings else "package-jni" if package_jni else None
+        stage = ("package-interface" if package_interface else "component-settings" if component_settings
+                 else "package-jni" if package_jni else None)
         result = probe("FrameworkPermissionProbeReceiver", "framework-permission", stage)
+        if package_interface:
+            REPORT["package_interface"] = result
+            expected_sdk = {"android11": 30, "android17": 37}[REPORT["profile"]]
+            if result.get("sdk") != expected_sdk or result.get("game_started") is not False:
+                raise RuntimeError("Package interface fixture used an unexpected platform or game")
+            if result.get("runtime_methods", 0) <= 0 or not all(result.get(key) for key in (
+                    "activity_thread_concrete", "binder_concrete", "reinjection_stable", "metadata_query_preserved")):
+                raise RuntimeError("Package interface forwarding or reinjection failed")
+            return
         if component_settings:
             REPORT["component_settings"] = result
             expected_sdk = {"android11": 30, "android17": 37}[REPORT["profile"]]
@@ -1464,17 +1474,27 @@ def main():
                            provider_only=os.environ.get("RUNTIME_MODE") == "provider-login",
                            session_only=os.environ.get("RUNTIME_MODE") == "session-resume")
         return
-    if os.environ.get("RUNTIME_MODE") == "package-jni":
+    if os.environ.get("RUNTIME_MODE") in ("package-jni", "package-interface"):
+        concrete_interface = os.environ.get("RUNTIME_MODE") == "package-interface"
+        if concrete_interface:
+            adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
+            first_pid = adb("shell", "pidof", PACKAGE).strip()
+            time.sleep(10)
+            if not first_pid or adb("shell", "pidof", PACKAGE).strip() != first_pid:
+                raise RuntimeError("Release host did not stay running")
+            locate(hierarchy("release-home"), "设置与工具")
+            REPORT["checks"].append("signed release main activity stays visible and running")
         adb("root")
         adb("wait-for-device", timeout=30)
         if adb("shell", "id", "-u").strip() != "0":
             raise RuntimeError("Disposable emulator cannot retrieve the private fixture report")
         adb("shell", "am", "force-stop", PACKAGE)
         digest = install_component_probe(release, verifier)
-        REPORT["jni_probe_sha256"] = digest
-        inspect_framework_permissions(package_jni=True)
-        REPORT["checks"].append("Public Java/JNI package-list and concrete parcel checks across server Binder and attached native thread")
-        REPORT["result"] = "JNI package API inspection completed; no game or protection library started"
+        REPORT["package_probe_sha256"] = digest
+        inspect_framework_permissions(package_jni=not concrete_interface, package_interface=concrete_interface)
+        REPORT["checks"].append("Concrete package interface, Binder forwarding and reinjection preserve package queries"
+                                if concrete_interface else "Public Java/JNI package-list and concrete parcel checks across server Binder and attached native thread")
+        REPORT["result"] = "package API inspection completed; no game or protection library started"
         return
     if os.environ.get("RUNTIME_MODE") in ("game-startup", "live-translation"):
         import importlib.util

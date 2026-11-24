@@ -33,6 +33,7 @@ internal object PackageInterfaceProbe {
             check(info.packageName == context.packageName && info.applicationInfo!!.uid == Process.myUid())
         }
         return JSONObject().put("passed", true).put("runtime_methods", contract.methods.size)
+            .put("sdk", android.os.Build.VERSION.SDK_INT).put("game_started", false)
             .put("activity_thread_concrete", true).put("binder_concrete", true)
             .put("reinjection_stable", true).put("metadata_query_preserved", true)
     }
