@@ -448,8 +448,10 @@ def inspect_package_metadata(release, verifier):
     if not any(node.get("package") == PACKAGE for node in tree.iter("node")):
         raise RuntimeError("Release host did not reach its own visible UI")
     REPORT["checks"].append("signed release host stays running and visible for 10 seconds")
-    adb("root")
-    adb("wait-for-device", timeout=30)
+    # adbd can close its connection while applying root even when the switch
+    # succeeded. Verify the reconnected shell identity instead of that exit code.
+    adb("root", check=False)
+    adb("wait-for-device", timeout=45)
     if adb("shell", "id", "-u").strip() != "0":
         raise RuntimeError("Disposable emulator cannot retrieve private test results")
     adb("shell", "am", "force-stop", PACKAGE)
