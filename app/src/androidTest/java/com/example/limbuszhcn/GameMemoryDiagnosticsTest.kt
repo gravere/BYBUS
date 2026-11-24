@@ -47,8 +47,11 @@ class GameMemoryDiagnosticsTest {
         val total = values.getValue("systemTotalBytes").toLong()
         assertTrue(total > 0)
         assertTrue(values.getValue("systemAvailableBytes").toLong() in 1..total)
+        val buckets = setOf("memoryJavaKb", "memoryNativeKb", "memoryCodeKb", "memoryStackKb",
+            "memoryGraphicsKb", "memoryPrivateOtherKb", "memorySystemKb", "memorySwapKb")
+        buckets.forEach { assertTrue("Android memory summary $it must be present", values.getValue(it).toLong() >= 0) }
         assertEquals(setOf("pid", "importance", "pssKb", "privateDirtyKb", "rssKb", "nativeAllocatedBytes",
             "javaUsedBytes", "javaLimitBytes", "systemTotalBytes", "systemAvailableBytes", "systemThresholdBytes",
-            "systemLowMemory", "lowMemoryKillReportSupported"), values.keys)
+            "systemLowMemory", "lowMemoryKillReportSupported") + buckets, values.keys)
     }
 }

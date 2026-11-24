@@ -167,6 +167,7 @@ internal class DebugLogExporter(private val context: Context) {
             appendLine("deviceProduct=${Build.PRODUCT}")
             appendLine("deviceName=${Build.DEVICE}")
             appendLine("buildDisplay=${Build.DISPLAY}")
+            appendLine("buildIncremental=${Build.VERSION.INCREMENTAL}")
             appendLine("androidSdk=${Build.VERSION.SDK_INT}")
             appendLine("androidRelease=${Build.VERSION.RELEASE}")
             appendLine("androidSecurityPatch=${Build.VERSION.SECURITY_PATCH}")

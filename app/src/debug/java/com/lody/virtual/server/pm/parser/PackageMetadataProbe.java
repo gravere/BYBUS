@@ -32,6 +32,74 @@ import mirror.android.app.ActivityThread;
 
 /** Disposable emulator only: actual platform metadata and production virtual-package queries. */
 public final class PackageMetadataProbe {
+    /** Parse the real APK instead of seeding the fixture with already-installed framework flags. */
+    public static JSONObject inspectApplicationState(Context context) throws Throwable {
+        checkServer();
+        PackageInfo source = VirtualCore.get().getUnHookPackageManager().getPackageInfo(context.getPackageName(), 0);
+        VPackage pkg = PackageParserEx.parsePackage(new java.io.File(source.applicationInfo.sourceDir));
+        PackageSetting settings = new PackageSetting();
+        settings.packageName = pkg.packageName;
+        settings.appId = 19019;
+        settings.appMode = InstalledAppInfo.MODE_APP_USE_OUTSIDE_APK;
+        settings.setInstalled(0, true);
+        pkg.mExtras = settings;
+        Field field = VPackageManagerService.class.getDeclaredField("mPackages");
+        field.setAccessible(true);
+        @SuppressWarnings("unchecked") Map<String,VPackage> registry = (Map<String,VPackage>) field.get(VPackageManagerService.get());
+        JSONObject checks = new JSONObject();
+        int parsedFlags = pkg.applicationInfo.flags;
+        synchronized (registry) {
+            require(!registry.containsKey(pkg.packageName), "fixture namespace must be unused");
+            registry.put(pkg.packageName, pkg);
+            try {
+                VPackageManagerService service = VPackageManagerService.get();
+                ApplicationInfo application = service.getApplicationInfo(pkg.packageName, 0, 0);
+                PackageInfo info = service.getPackageInfo(pkg.packageName, 0, 0);
+                checks.put("platform_installed", installed(source.applicationInfo));
+                checks.put("parsed_not_yet_installed", !installed(pkg.applicationInfo));
+                checks.put("application_query_installed", installed(application));
+                checks.put("package_query_installed", installed(info.applicationInfo));
+                checks.put("parcel_installed", installed(parcel(info).applicationInfo));
+                checks.put("application_list_installed", service.getInstalledApplications(0, 0).getList().stream()
+                        .filter(a -> pkg.packageName.equals(a.packageName)).anyMatch(PackageMetadataProbe::installed));
+                checks.put("package_list_installed", service.getInstalledPackages(0, 0).getList().stream()
+                        .filter(p -> pkg.packageName.equals(p.packageName)).anyMatch(p -> installed(p.applicationInfo)));
+                checks.put("other_flags_preserved", (application.flags & ~ApplicationInfo.FLAG_INSTALLED)
+                        == (parsedFlags & ~ApplicationInfo.FLAG_INSTALLED));
+                checks.put("parsed_flags_unchanged", pkg.applicationInfo.flags == parsedFlags);
+                settings.setHidden(0, true);
+                checks.put("hidden_stays_absent", service.getApplicationInfo(pkg.packageName, 0, 0) == null);
+                checks.put("hidden_included_still_installed", installed(service.getApplicationInfo(pkg.packageName,
+                        PackageManager.MATCH_UNINSTALLED_PACKAGES, 0)));
+                settings.setHidden(0, false);
+                settings.setInstalled(0, false);
+                // A cached or copied ApplicationInfo may carry a stale installed bit.
+                pkg.applicationInfo.flags |= ApplicationInfo.FLAG_INSTALLED;
+                checks.put("uninstalled_stays_absent", service.getApplicationInfo(pkg.packageName, 0, 0) == null);
+                checks.put("uninstalled_included_flag_cleared", !installed(service.getApplicationInfo(pkg.packageName,
+                        PackageManager.MATCH_UNINSTALLED_PACKAGES, 0)));
+                checks.put("uninstalled_package_flag_cleared", !installed(service.getPackageInfo(pkg.packageName,
+                        PackageManager.MATCH_UNINSTALLED_PACKAGES, 0).applicationInfo));
+                checks.put("return_to_installed", installedAfterReinstall(service, pkg, settings));
+            } finally {
+                registry.remove(pkg.packageName);
+            }
+        }
+        boolean passed = true;
+        for (java.util.Iterator<String> keys = checks.keys(); keys.hasNext();) passed &= checks.getBoolean(keys.next());
+        return new JSONObject().put("passed", passed).put("checks", checks).put("check_count", checks.length())
+                .put("sdk", Build.VERSION.SDK_INT).put("parsed_apk", true).put("registry_restored", true);
+    }
+
+    private static boolean installed(ApplicationInfo info) {
+        return info != null && (info.flags & ApplicationInfo.FLAG_INSTALLED) != 0;
+    }
+
+    private static boolean installedAfterReinstall(VPackageManagerService service, VPackage pkg, PackageSetting settings) {
+        settings.setInstalled(0, true);
+        return installed(service.getApplicationInfo(pkg.packageName, 0, 0));
+    }
+
     public static JSONObject inspect(Context context) throws Exception {
         checkServer();
         boolean modern = Build.VERSION.SDK_INT >= 28;

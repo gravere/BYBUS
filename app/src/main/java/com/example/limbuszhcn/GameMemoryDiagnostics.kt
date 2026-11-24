@@ -73,9 +73,23 @@ internal object GameMemoryDiagnostics {
         val importance = ActivityManager.RunningAppProcessInfo().also(ActivityManager::getMyMemoryState).importance
         return "pid=${Process.myPid()} importance=$importance pssKb=${memory.totalPss} " +
             "privateDirtyKb=${memory.totalPrivateDirty} rssKb=${rssKb()} " +
+            "${breakdown(memory)} " +
             "nativeAllocatedBytes=${Debug.getNativeHeapAllocatedSize()} " +
             "javaUsedBytes=${runtime.totalMemory() - runtime.freeMemory()} javaLimitBytes=${runtime.maxMemory()} " +
             systemSnapshot(context)
+    }
+
+    // Reuse the same Debug snapshot: no extra /proc scan or faster polling.
+    // These are Android's summary buckets, not allocator live-byte counters.
+    private fun breakdown(memory: Debug.MemoryInfo): String = listOf(
+        "java-heap" to "memoryJavaKb", "native-heap" to "memoryNativeKb",
+        "code" to "memoryCodeKb", "stack" to "memoryStackKb",
+        "graphics" to "memoryGraphicsKb", "private-other" to "memoryPrivateOtherKb",
+        "system" to "memorySystemKb", "total-swap" to "memorySwapKb"
+    ).joinToString(" ") { (stat, field) ->
+        val value = runCatching { memory.getMemoryStat("summary.$stat")?.toLongOrNull() }
+            .getOrNull()?.takeIf { it >= 0 } ?: -1L
+        "$field=$value"
     }
 
     internal fun systemSnapshot(context: Context): String = runCatching {

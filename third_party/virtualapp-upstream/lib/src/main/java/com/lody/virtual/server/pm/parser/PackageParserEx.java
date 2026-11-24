@@ -684,6 +684,12 @@ public class PackageParserEx {
         }
         // Make shallow copy so we can store the metadata/libraries safely
         ApplicationInfo ai = new ApplicationInfo(p.applicationInfo);
+        // Parsing an APK does not install it for a user. Derive this flag from
+        // the virtual user's state, including MATCH_UNINSTALLED_PACKAGES reads.
+        // Do not copy the physical app's stopped/installed state into the guest.
+        ai.flags = state.installed
+                ? ai.flags | ApplicationInfo.FLAG_INSTALLED
+                : ai.flags & ~ApplicationInfo.FLAG_INSTALLED;
 
         //xdja mdm能否卸载盒内应用需要判断FLAG_SYSTEM标志，龙剑邮箱添加该标志so加载失败，黑龙江项目中无mdm
         if(InstallerSettingManager.get().isSystemApp(p.packageName) && (!p.packageName.equals("com.xdja.HDSafeEMailClient"))){
