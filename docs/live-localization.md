@@ -5,6 +5,12 @@
 
 ## 文本读取边界
 
+剧情的 `StoryAssetLoader.GetTellerName/GetTellerTitle` 还会从角色资源直接取得本地化
+名字和称号，不保证经过 `TextDataSet`。这两个入口核验实例方法、字符串和 Int32
+语言枚举签名后，按其角色键匹配同一包的 `@scenario-model` 名字/称号。保持原方法、
+空结果和未知键，不把英文人名单独注册为全局替换。教程的 `TutorialTextDataLoader`
+在 `SetText` 期间携带 `@tutorial` 键，退出或抛异常后恢复上下文；普通 UI 不能继承它。
+
 - 游戏主进程在现有 IL2CPP 初始化完成边界安装文本读取接管。核对类、方法、
   静态/实例签名和相邻函数空间；只使用原有已登记的 hook 安装器。
 - 接管 `TextAssetPatch.TextAssetPatchManager.LoadLocalizeFileSync(String)` 和
@@ -57,6 +63,10 @@
 启动语言表恢复限定在已知 `TextDataSet` 的登录 UI、错误提示表：两张表的条目数均为零、远程文本尚未加载，且当前不在语言加载或恢复过程中，才允许重试。检查在原取词之前执行，不依赖原方法返回空对象还是占位模型。通过现有单例读取游戏原语言，严格核验 JP/EN/KR 枚举和方法签名，再由 Unity 主线程调用游戏自己的 `LoadLocal`。同一数据集的同一语言至多尝试一次；自定义语言模式、未知语言、已有条目、其他表和工作线程都不处理。
 
 方法查找将“是否查找父类”和“是否静态调用”分别核验：`CustomLocalizeManager.IsUsing()` 是无参数静态方法，`TextDataSet.LoadLocal` 与语言、列表访问器是实例方法。绑定不完整时记录缺失契约的布尔摘要；回归同时覆盖实际绑定规则和运行时空表恢复，不能仅手工将绑定设置为可用。
+
+`CustomLocalizeManager` 的完整类名为 `ProjectMoon.CustomLocalization.CustomLocalizeManager`。
+类解析也必须与当前游戏元数据核对；仅验证 `IsUsing` 的静态签名不足以证明恢复路径已启用。
+取错命名空间会使整个空表恢复入口保持不可用，而其它文本 hook 仍显示已安装。
 
 已核验的普通及参数化 UI 加载入口也执行同一空表检查，覆盖游戏内部直接取字典或内联 getter 的路径；仍只加载现有数据集，不创建新对象，不以替换占位字符串作为恢复。取词参数在可能触发 GC 的加载期间保留，重新加载替换表对象时使用新的表。
 

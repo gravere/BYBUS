@@ -142,19 +142,29 @@ static jclass new_limbus_FindClass(JNIEnv *env, const char *name) {
     if (clazz != nullptr || !isLimbusFindClassFallbackTarget(name)) {
         return clazz;
     }
-    if (env->ExceptionCheck()) {
-        env->ExceptionClear();
-    }
     if (patchEnv.method_onLimbusFindClass == nullptr) {
         return nullptr;
     }
+    jthrowable original_exception = env->ExceptionOccurred();
+    if (original_exception != nullptr) env->ExceptionClear();
     jstring javaName = env->NewStringUTF(name);
-    jobject loaded = env->CallStaticObjectMethod(nativeEngineClass, patchEnv.method_onLimbusFindClass, javaName);
-    if (javaName != nullptr) {
-        env->DeleteLocalRef(javaName);
+    if (javaName == nullptr) {
+        // Preserve an allocation failure. If the VM did not raise one, retain
+        // the original FindClass contract instead of returning an unexplained null.
+        if (!env->ExceptionCheck() && original_exception != nullptr) env->Throw(original_exception);
+        if (original_exception != nullptr) env->DeleteLocalRef(original_exception);
+        return nullptr;
     }
-    if (env->ExceptionCheck()) {
-        env->ExceptionClear();
+    jobject loaded = env->CallStaticObjectMethod(nativeEngineClass, patchEnv.method_onLimbusFindClass, javaName);
+    env->DeleteLocalRef(javaName);
+    const bool fallback_failed = env->ExceptionCheck();
+    if ((fallback_failed || loaded == nullptr) && original_exception != nullptr) {
+        if (fallback_failed) env->ExceptionClear();
+        env->Throw(original_exception);
+    }
+    if (original_exception != nullptr) env->DeleteLocalRef(original_exception);
+    if (fallback_failed) {
+        if (loaded != nullptr) env->DeleteLocalRef(loaded);
         ALOGE("FindClass >>> Limbus fallback threw for %s", name);
         return nullptr;
     }

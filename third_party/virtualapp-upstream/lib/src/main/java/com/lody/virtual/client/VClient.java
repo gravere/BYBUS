@@ -1110,6 +1110,12 @@ public final class VClient extends IVClient.Stub {
             if (vsDirectory.exists() || vsDirectory.mkdirs()) {
                 HashSet<String> mountPoints = getMountPoints();
                 boolean isLimbus = "com.ProjectMoon.LimbusCompany".equals(info.packageName);
+                if (isLimbus) {
+                    // Context exposes virtual user 0, including when the host runs in a
+                    // secondary Android user. Never map another user's entire storage.
+                    com.lody.virtual.helper.compat.LimbusStoragePaths.redirectPackageDirectories(
+                            info.packageName, vsDirectory, NativeEngine::redirectDirectory);
+                }
                 for (String mountPoint : mountPoints) {
                     //xdja
                     boolean skipRemovableProbe = isLimbus && "/mnt/sdcard/".equals(mountPoint);

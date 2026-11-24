@@ -6,6 +6,7 @@ import android.content.ContextWrapper;
 import com.lody.virtual.client.NativeEngine;
 import com.lody.virtual.client.VClient;
 import com.lody.virtual.helper.compat.ContainerAbiCompat;
+import com.lody.virtual.helper.compat.LimbusStoragePaths;
 
 import java.io.File;
 import java.io.IOException;
@@ -30,7 +31,7 @@ public final class LimbusStorageContext extends ContextWrapper {
     }
 
     private File directory(String area, String child, String type) {
-        String visible = "/storage/emulated/0/Android/" + area + "/" + GAME + "/";
+        String visible = LimbusStoragePaths.visiblePackageDirectory(area);
         String mapped = NativeEngine.getRedirectedPath(visible);
         // An absent mapping must not expose or write into the separately installed official app.
         if (mapped == null || mapped.equals(visible)) return unavailable("mapping_missing");

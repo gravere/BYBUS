@@ -29,6 +29,18 @@ int main() {
     Method custom{"IsUsing", "", "System.Boolean", 150};
     Method load{"LoadLocal", "LOCALIZE_LANGUAGE", "System.Void", 134};
     Class custom_class{&custom}, load_class{&load}, derived{nullptr, &load_class};
+    // Full name from the official 494 metadata. A valid method contract is not
+    // enough if the production class lookup never finds its declaring class.
+    void *image = &custom_class;
+    void *custom_localize_class = nullptr;
+    auto class_from_name = [&](void *actual_image, const char *space, const char *name) -> void * {
+        assert(actual_image == image);
+        return !strcmp(space, "ProjectMoon.CustomLocalization") && !strcmp(name, "CustomLocalizeManager")
+                ? &custom_class : nullptr;
+    };
+#include "runtime-custom-class-under-test.inc"
+    assert(custom_localize_class == &custom_class);
+    assert(diagnostic_method(custom_localize_class, "IsUsing", "", "System.Boolean", false, true) == &custom);
     assert(!diagnostic_method(&custom_class, "IsUsing", "", "System.Boolean", true));
     assert(diagnostic_method(&custom_class, "IsUsing", "", "System.Boolean", false, true) == &custom);
     assert(diagnostic_method(&load_class, "LoadLocal", "LOCALIZE_LANGUAGE", "System.Void", false) == &load);

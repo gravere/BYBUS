@@ -88,6 +88,22 @@ void *prepare_tmp_text(void *, void *value) {
     return translate_managed_string(value);
 }
 #include "runtime-ruby-under-test.inc"
+std::string read_text_object_id(void *instance, const char *) { return text(instance); }
+#include "runtime-story-assets-under-test.inc"
+int story_asset_calls = 0;
+const void *story_asset_method = reinterpret_cast<void *>(UINT64_C(0x123400000123));
+void *story_asset_original(void *instance, void *key, int32_t language, const void *method) {
+    assert(instance == key && method == story_asset_method);
+    assert(language >= 0 && language <= 2);
+    ++story_asset_calls;
+    return new_managed_string(language == 0 ? "ファウスト" : language == 1 ? "Faust" : "파우스트");
+}
+void tutorial_original(void *, const void *) {
+    assert(text(translate_managed_string(new_managed_string("Dashboard"))) == "仪表盘");
+    // Explicit identities override the enclosing loader, even for the same bytes.
+    assert(text(translate_managed_string(new_managed_string("Dashboard"), "unrelated", "content")) == "Dashboard");
+    throw 9;
+}
 void *format_ruby(void *, void *value, const void *) {
     assert(ruby_prepared); // Font preparation must precede the formatter's measurements.
     assert(ruby_layout_prepared);
@@ -141,6 +157,29 @@ int main() {
         assert(text(translate_managed_string(new_managed_string("入場"), "other", "content")) == "进入战斗");
     }
     assert(g_ui_text_key.empty());
+    g_model_fields[std::string("@tutorial:intro") + '\x1f' + "content"] = "仪表盘";
+    g_original_tutorial_loader = tutorial_original;
+    try { replacement_tutorial_loader(new_managed_string("intro"), nullptr); }
+    catch (int error) { assert(error == 9); }
+    assert(g_ui_text_key.empty());
+    assert(text(translate_managed_string(new_managed_string("Dashboard"))) == "Dashboard");
+    g_model_fields[std::string("@scenario-model:파우스트") + '\x1f' + "name"] = "浮士德";
+    g_model_fields[std::string("@scenario-model:파우스트") + '\x1f' + "nickName"] = "2号罪人";
+    g_original_story_asset_name = story_asset_original;
+    g_original_story_asset_title = story_asset_original;
+    auto story_key = new_managed_string("파우스트");
+    for (int language = 0; language < 3; ++language) {
+        assert(text(replacement_story_asset_name(story_key, story_key, language, story_asset_method)) == "浮士德");
+        assert(text(replacement_story_asset_title(story_key, story_key, language, story_asset_method)) == "2号罪人");
+    }
+    assert(story_asset_calls == 6);
+    assert(text(translate_story_asset_display(new_managed_string("Faust"), new_managed_string("unknown"), "name")) == "Faust");
+    assert(text(translate_story_asset_display(new_managed_string(""), story_key, "name")).empty());
+    assert(translate_story_asset_display(nullptr, story_key, "name") == nullptr);
+    font_ready = false;
+    assert(text(translate_story_asset_display(new_managed_string("Faust"), story_key, "name")) == "Faust");
+    font_ready = true;
+    assert(text(translate_managed_string(new_managed_string("Faust"))) == "Faust");
     // Identical visible source text has different names in different typed tables.
     // Stable release identity must win even after a previous pass or cache eviction.
     g_model_fields[std::string("@skill-tag:X") + '\x1f' + "name"] = "技能特性";

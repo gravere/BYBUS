@@ -788,15 +788,16 @@ void *translate_managed_string(void *managed_text, const std::string &stable_id 
     pthread_mutex_lock(&g_font_state_lock);
     bool already_translated = g_translated_objects.find(managed_text) != nullptr;
     pthread_mutex_unlock(&g_font_state_lock);
-    // A typed model lookup has stronger identity than a previous unscoped pass.
-    auto model = stable_id.empty() || !display_field ? g_model_fields.end() :
-            g_model_fields.find(stable_id + '\x1f' + display_field);
-    if (already_translated && model == g_model_fields.end()) return managed_text;
-    std::unordered_map<std::string, std::string>::const_iterator match = g_index.find(source);
-    std::string translated;
     const bool scoped_ui = stable_id.empty() && display_field == nullptr && !g_ui_text_key.empty();
     const std::string &context_id = scoped_ui ? g_ui_text_key : stable_id;
     const char *context_field = scoped_ui ? "content" : display_field;
+    // Typed models and scoped loaders use the same released identity, including
+    // before a complete source-language index can be built.
+    auto model = context_id.empty() || !context_field ? g_model_fields.end() :
+            g_model_fields.find(context_id + '\x1f' + context_field);
+    if (already_translated && model == g_model_fields.end()) return managed_text;
+    std::unordered_map<std::string, std::string>::const_iterator match = g_index.find(source);
+    std::string translated;
     auto context = context_id.empty() || context_field == nullptr ? g_contextual_index.end() :
             g_contextual_index.find(context_id + '\x1f' + context_field + '\x1f' + source);
     if (context == g_contextual_index.end() && context_field != nullptr) {
@@ -1551,6 +1552,34 @@ void *replacement_ui_text_implicit(void *data, const void *method) {
 }
 typedef void (*ui_loader_fn)(void *, const void *);
 ui_loader_fn g_original_ui_loader = nullptr, g_original_ui_parameter_loader = nullptr;
+ui_loader_fn g_original_tutorial_loader = nullptr;
+void replacement_tutorial_loader(void *instance, const void *method) {
+    const auto key = read_text_object_id(instance, "key");
+    limbus_text_provenance::ScopedTextKey scope(g_ui_text_key, key.empty() ? std::string() : "@tutorial:" + key);
+    g_original_tutorial_loader(instance, method);
+}
+
+typedef void *(*story_asset_name_fn)(void *, void *, int32_t, const void *);
+story_asset_name_fn g_original_story_asset_name = nullptr, g_original_story_asset_title = nullptr;
+void *translate_story_asset_display(void *result, void *model_key, const char *field) {
+    if (!result || !model_key || !g_string_length || !g_string_chars || g_string_length(result) <= 0)
+        return result;
+    const auto length = g_string_length(model_key);
+    std::string key;
+    if (length <= 0 || length > 256 || !utf16_to_utf8(g_string_chars(model_key), length, &key) ||
+        key.find('\x1f') != std::string::npos) return result;
+    key = "@scenario-model:" + key;
+    if (!g_model_fields.count(key + '\x1f' + field)) return result;
+    return translate_managed_string(result, key, field);
+}
+void *replacement_story_asset_name(void *instance, void *key, int32_t language, const void *method) {
+    void *result = g_original_story_asset_name(instance, key, language, method);
+    return translate_story_asset_display(result, key, "name");
+}
+void *replacement_story_asset_title(void *instance, void *key, int32_t language, const void *method) {
+    void *result = g_original_story_asset_title(instance, key, language, method);
+    return translate_story_asset_display(result, key, "nickName");
+}
 void replacement_ui_loader(void *instance, const void *method) {
     retry_empty_startup_table(nullptr);
     limbus_text_provenance::ScopedTextKey scope(g_ui_text_key, read_text_object_id(instance, "key"));
@@ -4245,6 +4274,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
     void *rich_text_matcher_class = nullptr, *material_writer_class = nullptr, *material_reference_class = nullptr;
     void *story_dialog_class = nullptr;
     void *story_data_class = nullptr;
+    void *story_asset_loader_class = nullptr, *tutorial_loader_class = nullptr;
     void *text_data_set_class = nullptr, *gift_popup_data_class = nullptr;
     void *text_data_manager_class = nullptr, *custom_localize_class = nullptr;
     void *localize_model_base = nullptr;
@@ -4335,6 +4365,10 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         }
         if (story_data_class == nullptr)
             story_data_class = class_from_name(image, "StorySystem", "StoryData");
+        if (!story_asset_loader_class)
+            story_asset_loader_class = class_from_name(image, "StorySystem", "StoryAssetLoader");
+        if (!tutorial_loader_class)
+            tutorial_loader_class = class_from_name(image, "", "TutorialTextDataLoader");
         if (ui_text_data_class == nullptr)
             ui_text_data_class = class_from_name(image, "", "TextData_UI");
         if (g_skill_text_class == nullptr)
@@ -4374,7 +4408,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         }
         if (!text_data_set_class) text_data_set_class = class_from_name(image, "", "TextDataSet");
         if (!text_data_manager_class) text_data_manager_class = class_from_name(image, "", "TextDataManager");
-        if (!custom_localize_class) custom_localize_class = class_from_name(image, "", "CustomLocalizeManager");
+        if (!custom_localize_class) custom_localize_class = class_from_name(image, "ProjectMoon.CustomLocalization", "CustomLocalizeManager");
         if (!gift_popup_data_class) gift_popup_data_class = class_from_name(image, "MainUI", "EgoGiftPopupData");
         if (!localize_resource_class)
             localize_resource_class = class_from_name(image, "TextAssetPatch", "TextAssetPatchManager");
@@ -5728,6 +5762,32 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 }
             }
             append_native_metadata("font-state.log", g_original_story_scenario ? "story_scenario_context=1" : "story_scenario_context=0");
+            auto hook_story_asset = [&](const char *name, story_asset_name_fn replacement,
+                                        story_asset_name_fn *original) {
+                const void *entry = find_method_by_signature(story_asset_loader_class, name, "System.String,LOCALIZE_LANGUAGE");
+                uint32_t flags = 0;
+                if (!entry || !method_get_class || !method_is_generic || !class_from_type || !class_is_enum ||
+                    !class_get_field_from_name || method_get_class(entry) != story_asset_loader_class ||
+                    method_is_generic(entry) || (method_get_flags(entry, &flags) & 0x0010u)) return;
+                void *language = class_from_type(method_get_param(entry, 1));
+                const void *value = language && class_is_enum(language) ? class_get_field_from_name(language, "value__") : nullptr;
+                char *underlying = value ? type_get_name(field_get_type(value)) : nullptr;
+                char *return_name = type_get_name(method_get_return_type(entry));
+                bool valid = underlying && strcmp(underlying, "System.Int32") == 0 &&
+                        return_name && strcmp(return_name, "System.String") == 0;
+                if (underlying) il2cpp_free(underlying);
+                if (return_name) il2cpp_free(return_name);
+                void *pointer = nullptr; memcpy(&pointer, entry, sizeof(pointer));
+                if (!valid || acquisition_pointers.count(pointer) || !has_inline_hook_space(story_asset_loader_class, pointer)) return;
+                hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement), reinterpret_cast<void **>(original));
+                if (*original) acquisition_pointers.insert(pointer);
+            };
+            hook_story_asset("GetTellerName", replacement_story_asset_name, &g_original_story_asset_name);
+            hook_story_asset("GetTellerTitle", replacement_story_asset_title, &g_original_story_asset_title);
+            char story_assets[80];
+            snprintf(story_assets, sizeof(story_assets), "story_asset_context name=%d title=%d",
+                    g_original_story_asset_name != nullptr, g_original_story_asset_title != nullptr);
+            append_native_metadata("font-state.log", story_assets);
             auto hook_collection_getter = [&](void *klass, const char *name, const char *element,
                                                bool dictionary, acquisition0_fn replacement,
                                                acquisition0_fn *original) {
@@ -5806,10 +5866,13 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             };
             hook_ui_loader(ui_loader_class, replacement_ui_loader, &g_original_ui_loader);
             hook_ui_loader(ui_parameter_loader_class, replacement_ui_parameter_loader, &g_original_ui_parameter_loader);
+            if (choice_field(tutorial_loader_class, "key", "System.String"))
+                hook_ui_loader(tutorial_loader_class, replacement_tutorial_loader, &g_original_tutorial_loader);
             char ui_loaders[80];
             snprintf(ui_loaders, sizeof(ui_loaders), "ui_loader=%d ui_parameter_loader=%d",
                      g_original_ui_loader != nullptr, g_original_ui_parameter_loader != nullptr);
             append_native_metadata("font-state.log", ui_loaders);
+            append_native_metadata("font-state.log", g_original_tutorial_loader ? "tutorial_loader=1" : "tutorial_loader=0");
             const void *implicit_method = find_method_by_signature(
                     ui_text_data_class, "op_Implicit", "TextData_UI");
             uint32_t implicit_flags = 0;

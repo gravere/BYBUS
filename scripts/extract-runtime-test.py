@@ -89,12 +89,18 @@ end = source.index("\nvoid *finish_formatted_translation(", start)
 start = source.index("    auto diagnostic_method =")
 end = source.index("    const void *material_keyword_method =", start)
 (output / "runtime-method-binding-under-test.inc").write_text(source[start:end], encoding="utf-8")
+start = source.index("        if (!custom_localize_class)")
+end = source.index("\n", start)
+(output / "runtime-custom-class-under-test.inc").write_text(source[start:end], encoding="utf-8")
 start = source.index("thread_local unsigned g_localization_load_depth =")
 end = source.index("\nthread_local bool g_startup_localization_recovering", start)
 (output / "runtime-localization-scope.inc").write_text(source[start:end], encoding="utf-8")
 start = source.index("template<size_t Slot>\nvoid replacement_localization_load(")
 end = source.index("\ntypedef void *(*acquisition1_fn)", start)
 (output / "runtime-loading-boundaries-under-test.inc").write_text(source[start:end], encoding="utf-8")
+start = source.index("typedef void (*ui_loader_fn)")
+end = source.index("\nvoid replacement_ui_loader(", start)
+(output / "runtime-story-assets-under-test.inc").write_text(source[start:end], encoding="utf-8")
 start = source.index("limbus_terms::Trie g_term_trie;")
 end = source.index("\nbool g_configured", start)
 pieces = [source[start:end]]
@@ -103,3 +109,11 @@ for signature in ("bool contains_japanese_kana(", "void rebuild_term_trie(", "bo
     end = source.index("\n}", start) + 2
     pieces.append(source[start:end])
 (output / "runtime-terms-under-test.inc").write_text("\n\n".join(pieces), encoding="utf-8")
+
+vm_source = (root / "third_party/virtualapp-upstream/lib/src/main/jni/Foundation/VMHook.cpp").read_text(encoding="utf-8")
+pieces = []
+for signature in ("static bool startsWith(", "static bool isLimbusFindClassFallbackTarget(", "static jclass new_limbus_FindClass("):
+    start = vm_source.index(signature)
+    end = vm_source.index("\n}", start) + 2
+    pieces.append(vm_source[start:end])
+(output / "runtime-findclass-under-test.inc").write_text("\n\n".join(pieces), encoding="utf-8")
