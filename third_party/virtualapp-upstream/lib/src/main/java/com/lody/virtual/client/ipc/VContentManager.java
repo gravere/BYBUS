@@ -12,6 +12,7 @@ import android.content.SyncStatusInfo;
 import android.database.IContentObserver;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.DeadObjectException;
 import android.os.RemoteException;
 
 import com.lody.virtual.helper.utils.IInterfaceUtils;
@@ -31,16 +32,20 @@ public class VContentManager {
         return sInstance;
     }
 
-    private IContentService mService;
+    private volatile IContentService mService;
 
-    public IContentService getService() {
+    public IContentService getService() throws RemoteException {
         if (!IInterfaceUtils.isAlive(mService)) {
             synchronized (this) {
-                Object binder = getRemoteInterface();
-                mService = LocalProxyUtils.genProxy(IContentService.class, binder);
+                if (!IInterfaceUtils.isAlive(mService)) {
+                    Object binder = getRemoteInterface();
+                    mService = LocalProxyUtils.genProxy(IContentService.class, binder);
+                }
             }
         }
-        return mService;
+        IContentService service = mService;
+        if (service == null) throw new DeadObjectException("Virtual content service unavailable");
+        return service;
     }
 
     private Object getRemoteInterface() {
@@ -50,7 +55,17 @@ public class VContentManager {
 
 
     public void unregisterContentObserver(IContentObserver observer) throws RemoteException {
-        getService().unregisterContentObserver(observer);
+        // Observers belong to the server instance which registered them. A missing/dead
+        // server has already lost those registrations; cleanup must not restart it.
+        IContentService service = mService;
+        if (!IInterfaceUtils.isAlive(service)) return;
+        try {
+            service.unregisterContentObserver(observer);
+        } catch (DeadObjectException dead) {
+            synchronized (this) {
+                if (mService == service) mService = null;
+            }
+        }
     }
 
     public void registerContentObserver(Uri uri, boolean notifyForDescendants, IContentObserver observer, int userHandle) throws RemoteException {
@@ -134,6 +149,14 @@ public class VContentManager {
     }
 
     public void removeStatusChangeListener(ISyncStatusObserver callback) throws RemoteException {
-        getService().removeStatusChangeListener(callback);
+        IContentService service = mService;
+        if (!IInterfaceUtils.isAlive(service)) return;
+        try {
+            service.removeStatusChangeListener(callback);
+        } catch (DeadObjectException dead) {
+            synchronized (this) {
+                if (mService == service) mService = null;
+            }
+        }
     }
 }

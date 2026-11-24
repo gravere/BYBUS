@@ -74,7 +74,11 @@ internal object GameMemoryDiagnostics {
         }
         runCatching {
             val faults = GameFaultDiagnostics(context)
-            faultExecutor.scheduleWithFixedDelay({ runCatching { faults.sample() } }, 0, 5, TimeUnit.SECONDS)
+            val startup = GameStartupThreads()
+            faultExecutor.scheduleWithFixedDelay({
+                runCatching { startup.sample() }
+                runCatching { faults.sample() }
+            }, 0, 5, TimeUnit.SECONDS)
         }.onFailure { faultExecutor.shutdownNow() }
     }
 

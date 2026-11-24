@@ -18,7 +18,7 @@ internal class GameFaultDiagnostics(context: Context) {
 
     fun sample() {
         val now = System.currentTimeMillis()
-        val events = readGameLog(since, listOf("--pid=${Process.myPid()}", "Unity:E", "AppSealing:E"),
+        val events = readGameLog(since, listOf("--pid=${Process.myPid()}", "Unity:I", "AppSealing:E"),
             onStatus = { status ->
                 if (status != collectionStatus) {
                     collectionStatus = status

@@ -11,7 +11,6 @@ import android.os.SystemClock;
 import android.util.Log;
 
 import com.lody.virtual.client.core.VirtualCore;
-import com.lody.virtual.client.env.VirtualRuntime;
 import com.lody.virtual.client.ipc.VActivityManager;
 import com.lody.virtual.client.stub.StubManifest;
 import com.lody.virtual.helper.collection.SparseArray;
@@ -174,18 +173,39 @@ public class ActiveServices {
         proxyIntent.setAction(System.currentTimeMillis() + "");
         proxyIntent.setClassName(StubManifest.getStubPackageName(targetApp.is64bit), StubManifest.getStubServiceName(targetApp.vpid));
         RunningServiceData info = userSpace.getOrCreateRunningServiceInfo(serviceInfo, targetApp);
-        int startId = ++info.startId;
+        int previousStartId;
+        int startId;
+        synchronized (userSpace.mRunningServices) {
+            previousStartId = info.startId;
+            startId = ++info.startId;
+        }
         proxyIntent.putExtra("_VA_|_start_id_", startId);
         proxyIntent.putExtra("_VA_|_service_info_", serviceInfo);
         proxyIntent.putExtra("_VA_|_intent_", intent);
         proxyIntent.putExtra("_VA_|_user_id_", userId);
-        VirtualRuntime.getUIHandler().post(new Runnable() {
-            @Override
-            public void run() {
-                mContext.startService(proxyIntent);
+        // Context.startService is a Binder call, not a UI operation. Return its outcome
+        // to the caller instead of reporting success and later crashing the server's
+        // main thread when Android rejects a background start.
+        if (!startProxyService(mContext, proxyIntent)) {
+            synchronized (userSpace.mRunningServices) {
+                if (info.startId == startId) info.startId = previousStartId;
+                if (info.startId == 0 && info.clientCount == 0 && info.stickyIntents.size() == 0
+                        && userSpace.mRunningServices.get(component) == info) {
+                    userSpace.mRunningServices.remove(component);
+                }
             }
-        });
+            return null;
+        }
         return component;
+    }
+
+    static boolean startProxyService(Context context, Intent intent) {
+        try {
+            return context.startService(intent) != null;
+        } catch (IllegalStateException | SecurityException denied) {
+            VLog.w("LimbusVA", "Virtual service start rejected type=%s", denied.getClass().getSimpleName());
+            return false;
+        }
     }
 
     public Intent bindService(int userId, Intent intent, ServiceInfo serviceInfo, final IBinder conn, int flags) {

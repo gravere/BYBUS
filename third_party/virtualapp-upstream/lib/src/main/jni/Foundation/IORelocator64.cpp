@@ -1,4 +1,5 @@
 #include "LimbusTerminationTrace.h"
+#include "LimbusProcessScope.h"
 //
 // VirtualApp Native Project
 //
@@ -71,6 +72,7 @@ int g_api_level;
 bool execve_process = false;
 bool g_limbus_container_process_known = false;
 bool g_limbus_container_process = false;
+static const limbus_process::Scope g_limbus_process_scope;
 static thread_local bool g_proc_redirect_active = false;
 static pthread_mutex_t g_limbus_syscall_hook_lock = PTHREAD_MUTEX_INITIALIZER;
 static std::set<void *> g_limbus_hooked_syscalls;
@@ -154,6 +156,7 @@ char *get_process_name() {
 }
 
 bool is_limbus_container_process() {
+    if (!g_limbus_process_scope.isOwner()) return false;
     if (g_limbus_container_process_known) {
         return g_limbus_container_process;
     }
@@ -1290,13 +1293,15 @@ HOOK_DEF(int, fstatat64, int dirfd, const char *pathname, struct stat *buf, int 
 
 // int kill(pid_t pid, int sig);
 HOOK_DEF(int, kill, pid_t pid, int sig) {
+    const bool blocked = should_block_limbus_terminating_signal(sig)
+            && !g_limbus_process_scope.isDirectChild(pid);
     if (is_limbus_container_process() && limbus_termination::Trace::interesting(sig))
         limbus_termination::trace.record(limbus_termination::Kill, sig, pid,
                 reinterpret_cast<uintptr_t>(__builtin_return_address(0)),
-                should_block_limbus_terminating_signal(sig) ? 1 : 0);
+                blocked ? 1 : 0);
     pid_t self = getpid();
     ALOGE("kill >>> pid : %d, sig : %d, self : %d", pid, sig, self);
-    if (should_block_limbus_terminating_signal(sig)) {
+    if (blocked) {
         ALOGE("kill >>> blocked Limbus container signal : %d target : %d", sig, pid);
         return block_limbus_signal_int();
     }
@@ -2196,7 +2201,8 @@ HOOK_DEF(long, syscall, long number, ...) {
         if (limbus_termination::Trace::interesting(observed_signal))
             limbus_termination::trace.record(limbus_termination::Syscall, observed_signal,
                     static_cast<int>(a1), reinterpret_cast<uintptr_t>(__builtin_return_address(0)),
-                    should_block_limbus_terminating_signal(observed_signal) ? 1 : 0);
+                    (should_block_limbus_terminating_signal(observed_signal)
+                     && !(number == __NR_kill && g_limbus_process_scope.isDirectChild(static_cast<pid_t>(a1)))) ? 1 : 0);
 #ifdef __NR_exit
         if (number == __NR_exit || number == __NR_exit_group)
             limbus_termination::trace.record(limbus_termination::Exit, static_cast<int>(a1),
@@ -2276,7 +2282,8 @@ HOOK_DEF(long, syscall, long number, ...) {
             ALOGE("syscall >>> blocked Limbus container kill self SIGALRM");
             return 0;
         }
-        if (number == __NR_kill && should_block_limbus_terminating_signal(static_cast<int>(a2))) {
+        if (number == __NR_kill && should_block_limbus_terminating_signal(static_cast<int>(a2))
+                && !g_limbus_process_scope.isDirectChild(static_cast<pid_t>(a1))) {
             ALOGE("syscall >>> blocked Limbus container kill signal : %ld target : %ld", a2, a1);
             return block_limbus_signal_long();
         }

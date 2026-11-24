@@ -6,10 +6,12 @@ import android.content.pm.ProviderInfo;
 import android.database.IContentObserver;
 import android.net.Uri;
 import android.os.Build;
+import android.os.RemoteException;
 
 import com.lody.virtual.client.ipc.VContentManager;
 import com.lody.virtual.client.ipc.VPackageManager;
 import com.lody.virtual.helper.Keep;
+import com.lody.virtual.helper.utils.VLog;
 import com.lody.virtual.os.VUserHandle;
 
 import java.lang.reflect.Method;
@@ -50,7 +52,13 @@ public class MethodProxies {
         IContentObserver observer = (IContentObserver) args[0];
 //        VContentService.get().unregisterContentObserver(observer);
 
-        VContentManager.get().unregisterContentObserver(observer);
+        try {
+            VContentManager.get().unregisterContentObserver(observer);
+        } catch (RemoteException unavailable) {
+            // Framework observers (Unity volume, settings, WebView) still need cleanup
+            // when the independent virtual content service has disconnected.
+            VLog.w("LimbusVA", "Content observer cleanup: virtual service unavailable");
+        }
         return method.invoke(who, args);
     }
 

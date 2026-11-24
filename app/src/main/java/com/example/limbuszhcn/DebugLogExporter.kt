@@ -118,10 +118,12 @@ internal class DebugLogExporter(private val context: Context) {
                     logcat.startsWith("[truncated to recent data]") -> "collected_truncated"
                     logcat.startsWith("command=") && logcat.contains("\nexitCode=0\n") -> "collected_bounded"
                     logcat.startsWith("command=") && logcat.contains("\nexitCode=bounded_read\n") -> "collected_truncated"
+                    logcat.startsWith("command=") && logcat.contains("\ncollection=incomplete\n") -> "collected_incomplete"
                     else -> "unavailable"
                 }}")
                 appendLine("gameEvents=${when {
                     startup.contains("unavailable") -> "unavailable"
+                    startup.contains("\ncollection=incomplete\n") -> "collected_incomplete"
                     startup.contains("no_markers") -> "no_retained_events"
                     else -> "collected_bounded"
                 }}")
@@ -131,6 +133,7 @@ internal class DebugLogExporter(private val context: Context) {
                 appendLine("classLookup=first_32_fallback_results_per_process")
                 appendLine("memory=5_second_startup_samples_then_30_seconds_with_summary_categories")
                 appendLine("gameFaultPersistence=5_second_current_process_fixed_marker_capture")
+                appendLine("startupThreads=three_startup_samples_fixed_roles_and_stack_methods_only")
                 appendLine("javaFaults=own_uid_exception_types_and_stack_methods_only")
                 appendLine("nativeTerminationFiles=${nativeTraces.size}")
                 appendLine("logPersistence=bounded_per_process_rotation")
@@ -257,7 +260,7 @@ internal class DebugLogExporter(private val context: Context) {
             // Upstream Google components may log billing arguments. Export only our metadata
             // and crash tags; regex redaction alone cannot safely strip arbitrary receipts.
             "LimbusZhCNApp:I", "LimbusLauncher:I", "LimbusContainer:I", "LimbusVA:I",
-            "LimbusZhCN:I", "LimbusSIG:I", "GameMemory:I", "PackageQueries:I", "LimbusJNI:I", "GameExit:I", "GameFault:I",
+            "LimbusZhCN:I", "LimbusSIG:I", "GameMemory:I", "PackageQueries:I", "LimbusJNI:I", "GameExit:I", "GameFault:I", "GameStartup:I",
             "NativeEngine:I", "AndroidRuntime:E", "libc:F", "*:S"
         )
         val result = exportLogReader.read({ ProcessBuilder(command).redirectErrorStream(true).start() }) {

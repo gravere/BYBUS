@@ -48,6 +48,8 @@ int g_api_level;
 bool execve_process = false;
 bool g_limbus_container_process_known = false;
 bool g_limbus_container_process = false;
+#include "LimbusProcessScope.h"
+static const limbus_process::Scope g_limbus_process_scope;
 static thread_local bool g_proc_redirect_active = false;
 
 #include "utils/zString.h"
@@ -81,6 +83,7 @@ char *get_process_name() {
 }
 
 bool is_limbus_container_process() {
+    if (!g_limbus_process_scope.isOwner()) return false;
     if (g_limbus_container_process_known) {
         return g_limbus_container_process;
     }
@@ -327,7 +330,7 @@ HOOK_DEF(int, fstatat64, int dirfd, const char *pathname, struct stat *buf, int 
 HOOK_DEF(int, kill, pid_t pid, int sig) {
     pid_t self = getpid();
     ALOGE("kill >>> pid : %d, sig : %d, self : %d", pid, sig, self);
-    if (should_block_limbus_terminating_signal(sig)) {
+    if (should_block_limbus_terminating_signal(sig) && !g_limbus_process_scope.isDirectChild(pid)) {
         ALOGE("kill >>> blocked Limbus container signal : %d target : %d", sig, pid);
         return block_limbus_signal_int();
     }
@@ -504,7 +507,8 @@ HOOK_DEF(long, syscall, long number, ...) {
             ALOGE("syscall >>> blocked Limbus container kill self SIGALRM");
             return 0;
         }
-        if (number == __NR_kill && should_block_limbus_terminating_signal(static_cast<int>(a2))) {
+        if (number == __NR_kill && should_block_limbus_terminating_signal(static_cast<int>(a2))
+                && !g_limbus_process_scope.isDirectChild(static_cast<pid_t>(a1))) {
             ALOGE("syscall >>> blocked Limbus container kill signal : %ld target : %ld", a2, a1);
             return block_limbus_signal_long();
         }
