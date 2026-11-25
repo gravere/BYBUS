@@ -37,6 +37,9 @@ public abstract class PersistenceLayer {
     public void onPersistenceFileDamage() {
     }
 
+    protected void onPersistenceReadFailure(Exception error) {
+    }
+
     public void save() {
         Parcel p = Parcel.obtain();
         try {
@@ -66,6 +69,7 @@ public abstract class PersistenceLayer {
             int fileVersion = p.readInt();
             readPersistenceData(p, fileVersion);
         } catch (Exception e) {
+            onPersistenceReadFailure(e);
             if (!(e instanceof FileNotFoundException)) {
                 e.printStackTrace();
             }

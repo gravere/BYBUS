@@ -153,6 +153,7 @@ public class PackageSetting implements Parcelable {
         this.appId = in.readInt();
         this.appMode = in.readInt();
         this.userState = in.readSparseArray(PackageUserState.class.getClassLoader());
+        if (in.dataAvail() < 20) throw new IllegalStateException("Truncated package settings");
         this.flag = in.readInt();
         this.firstInstallTime = in.readLong();
         this.lastUpdateTime = in.readLong();

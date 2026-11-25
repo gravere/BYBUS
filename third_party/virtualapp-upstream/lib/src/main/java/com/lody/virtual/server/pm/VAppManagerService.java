@@ -218,23 +218,27 @@ public class VAppManagerService extends IAppManager.Stub {
         }
     }
 
-    private void cleanUpResidualFiles(PackageSetting ps) {
-        VLog.e(TAG, "cleanup residual files for : %s", ps.packageName);
-        uninstallPackageFully(ps, false);
-    }
-
-
     public void onUserCreated(VUserInfo userInfo) {
         VEnvironment.getUserDataDirectory(userInfo.id).mkdirs();
     }
 
 
     synchronized boolean loadPackage(PackageSetting setting) {
-        if (!loadPackageInnerLocked(setting)) {
-            cleanUpResidualFiles(setting);
-            return false;
+        mPersistenceLayer.retain(setting);
+        try {
+            if (loadPackageInnerLocked(setting)) return true;
+        } catch (Throwable error) {
+            VLog.e(TAG, "Package scan failed package=%s error=%s; guest data retained",
+                    setting.packageName, error.getClass().getSimpleName());
         }
-        return true;
+        // A missing APK or an unreadable cache is not an uninstall request.
+        // Preserve identity, per-user state and every guest data directory.
+        PackageCacheManager.remove(setting.packageName);
+        if ("com.ProjectMoon.LimbusCompany".equals(setting.packageName)) {
+            com.lody.virtual.helper.compat.ContainerRuntimeEvent.GAME_REGISTRATION_DEFERRED.record(setting.appMode);
+        }
+        VLog.e(TAG, "Package scan deferred package=%s; registration and guest data retained", setting.packageName);
+        return false;
     }
 
     private boolean loadPackageInnerLocked(PackageSetting ps) {
@@ -250,10 +254,11 @@ public class VAppManagerService extends IAppManager.Stub {
         } catch (Throwable e) {
             e.printStackTrace();
         }
-        if (pkg == null || pkg.packageName == null) {
+        if (pkg == null || !ps.packageName.equals(pkg.packageName)) {
             //重新解析apk
-            File apkFile = VEnvironment.getPackageResourcePath(ps.packageName);
-            if (!apkFile.exists()) {
+            String apkPath = ps.getApkPath(ps.isRunPluginProcess());
+            File apkFile = apkPath == null ? null : new File(apkPath);
+            if (apkFile == null || !apkFile.isFile()) {
                 VLog.e(TAG, "parse failed 1:not found apk %s", ps.packageName);
                 return false;
             }
@@ -266,12 +271,15 @@ public class VAppManagerService extends IAppManager.Stub {
                 return false;
             }
             //save pkg
-            if (pkg == null || pkg.packageName == null) {
+            if (pkg == null || !ps.packageName.equals(pkg.packageName)) {
                 //parse failed.
                 return false;
             }
             //save cache
             PackageParserEx.savePackageCache(pkg);
+            if ("com.ProjectMoon.LimbusCompany".equals(ps.packageName)) {
+                com.lody.virtual.helper.compat.ContainerRuntimeEvent.GAME_PACKAGE_CACHE_REBUILT.record(ps.appMode);
+            }
         }
         PackageCacheManager.put(pkg, ps);
         if (modeUseOutsideApk) {
@@ -373,6 +381,9 @@ public class VAppManagerService extends IAppManager.Stub {
     }
 
     private InstallResult installPackageImpl(String path, InstallOptions options, boolean loadingApp) {
+        if (!mPersistenceLayer.canWrite()) {
+            return InstallResult.makeFailure("容器安装记录暂时无法读取，已保留原数据；请导出诊断，不要清除数据或卸载");
+        }
         long installTime = System.currentTimeMillis();
         if (path == null) {
             return InstallResult.makeFailure("path = NULL");
@@ -401,7 +412,16 @@ public class VAppManagerService extends IAppManager.Stub {
         res.packageName = pkg.packageName;
         // PackageCache holds all packages, try to check if we need to update.
         VPackage existOne = PackageCacheManager.get(pkg.packageName);
-        PackageSetting existSetting = existOne != null ? (PackageSetting) existOne.mExtras : null;
+        PackageSetting existSetting = existOne != null ? (PackageSetting) existOne.mExtras
+                : mPersistenceLayer.retainedSetting(pkg.packageName);
+        if (existSetting != null) {
+            // A repair restores the same installation, including account identity.
+            mPersistenceLayer.retain(existSetting);
+            res.isUpdate = true;
+            if (existOne == null && options.updateStrategy != InstallOptions.UpdateStrategy.FORCE_UPDATE) {
+                return InstallResult.makeFailure("Package registration needs an explicit repair update.");
+            }
+        }
         if (existOne != null) {
             if (options.updateStrategy == InstallOptions.UpdateStrategy.IGNORE_NEW_VERSION) {
                 res.isUpdate = true;
@@ -520,7 +540,7 @@ public class VAppManagerService extends IAppManager.Stub {
 
         ps.appMode = useSourceLocationApk ? MODE_APP_USE_OUTSIDE_APK : MODE_APP_COPY_APK;
         ps.packageName = pkg.packageName;
-        ps.appId = VUserHandle.getAppId(mUidSystem.getOrCreateUid(pkg));
+        if (existSetting == null) ps.appId = VUserHandle.getAppId(mUidSystem.getOrCreateUid(pkg));
         if (res.isUpdate) {
             ps.lastUpdateTime = installTime;
         } else {
@@ -729,6 +749,9 @@ public class VAppManagerService extends IAppManager.Stub {
     }
 
     public boolean cleanPackageData(String pkg, int userId) {
+        if ("com.ProjectMoon.LimbusCompany".equals(pkg)) {
+            com.lody.virtual.helper.compat.ContainerRuntimeEvent.GAME_DATA_CLEAR_REQUESTED.record(userId);
+        }
         PackageSetting ps = PackageCacheManager.getSetting(pkg);
         if (ps == null) {
             return false;
@@ -739,7 +762,13 @@ public class VAppManagerService extends IAppManager.Stub {
     }
 
     private void uninstallPackageFully(PackageSetting ps, boolean notify) {
+        if (!mPersistenceLayer.canWrite()) {
+            throw new IllegalStateException("Package registry unavailable; refusing to delete guest data");
+        }
         String packageName = ps.packageName;
+        if ("com.ProjectMoon.LimbusCompany".equals(packageName)) {
+            com.lody.virtual.helper.compat.ContainerRuntimeEvent.GAME_UNINSTALL_REQUESTED.record(notify ? 1 : 0);
+        }
         try {
             AttributeCache.instance().removePackage(packageName);
             BroadcastSystem.get().stopApp(packageName);
@@ -760,6 +789,7 @@ public class VAppManagerService extends IAppManager.Stub {
                 V64BitHelper.uninstallPackage64(-1, packageName);
             }
             PackageCacheManager.remove(packageName);
+            mPersistenceLayer.forget(packageName);
             mPersistenceLayer.save();
             File cacheFile = VEnvironment.getPackageCacheFile(packageName);
             cacheFile.delete();
@@ -987,14 +1017,6 @@ public class VAppManagerService extends IAppManager.Stub {
     public int getAppId(String packageName) {
         PackageSetting setting = PackageCacheManager.getSetting(packageName);
         return setting != null ? setting.appId : -1;
-    }
-
-    void restoreFactoryState() {
-        VLog.w(TAG, "Warning: Restore the factory state...");
-        VEnvironment.getDalvikCacheDirectory().delete();
-        VEnvironment.getUserSystemDirectory().delete();
-        VEnvironment.getUserDeSystemDirectory().delete();
-        VEnvironment.getDataAppDirectory().delete();
     }
 
     public void savePersistenceData() {

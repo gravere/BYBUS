@@ -521,6 +521,44 @@ def inspect_process_launch(release):
             adb("shell", "rmdir", remote, check=False)
 
 
+def inspect_package_retention(release, verifier):
+    """Fault injection only in the owned emulator; no real game or account data."""
+    adb("root", check=False)
+    adb("wait-for-device", timeout=45)
+    if adb("shell", "id", "-u").strip() != "0":
+        raise RuntimeError("Disposable emulator must expose its fixture directory")
+    digest = install_component_probe(release, verifier)
+    adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
+    marker = f"/data/user/0/{PACKAGE}/files/package-retention-probe.allowed"
+    remote = f"/data/user/0/{PACKAGE}/files/package-retention-result.json"
+    adb("shell", "touch", marker)
+    try:
+        adb("shell", "rm", "-f", remote)
+        adb("shell", "am", "broadcast", "--receiver-foreground", "-n",
+            f"{PACKAGE}/{NAMESPACE}.PackageQueryProbeReceiver", "--es", "stage", "package-retention", timeout=45)
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            raw = adb("shell", "cat", remote, check=False)
+            if raw.lstrip().startswith("{"):
+                try: result = json.loads(raw)
+                except json.JSONDecodeError:
+                    time.sleep(.5)
+                    continue
+                (OUT / "package-retention.json").write_text(raw, encoding="utf-8")
+                if not result.get("passed") or result.get("check_count", 0) < 10:
+                    raise RuntimeError("Guest data retention failed: " + str(result.get("error")))
+                if not all(value is True for value in result.get("checks", {}).values()):
+                    raise RuntimeError("One of the retention cases failed")
+                REPORT["package_retention"] = dict(result, probe_sha256=digest)
+                REPORT["result"] = "production metadata fault injection passed; no game or real account tested"
+                return
+            time.sleep(.5)
+        raise RuntimeError("Guest data retention fixture timed out")
+    finally:
+        adb("shell", "rm", "-f", marker, check=False)
+        adb("shell", "am", "force-stop", PACKAGE, check=False)
+
+
 def inspect_package_metadata(release, verifier):
     """Actual release startup, then cold-cache production queries in a disposable Debug process."""
     adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
@@ -1546,6 +1584,9 @@ def main():
     if "Success" not in installed:
         raise RuntimeError("APK installation did not succeed: " + installed[-1000:])
     REPORT["checks"].append("published APK signature/hash and installation")
+    if os.environ.get("RUNTIME_MODE") == "package-retention":
+        inspect_package_retention(release, verifier)
+        return
     if os.environ.get("RUNTIME_MODE") == "package-metadata":
         inspect_package_metadata(release, verifier)
         return

@@ -131,15 +131,16 @@ public class PackageParserEx {
         Parcel p = Parcel.obtain();
         try {
             File cacheFile = VEnvironment.getPackageCacheFile(packageName);
-            FileInputStream is = new FileInputStream(cacheFile);
-            byte[] bytes = FileUtils.toByteArray(is);
-            is.close();
+            byte[] bytes = com.lody.virtual.helper.utils.DurableFile.read(cacheFile, 32 * 1024 * 1024);
             p.unmarshall(bytes, 0, bytes.length);
             p.setDataPosition(0);
             if (p.readInt() != 4) {
                 throw new IllegalStateException("Invalid version.");
             }
             VPackage pkg = new VPackage(p);
+            if (!packageName.equals(pkg.packageName) || p.dataAvail() != 0) {
+                throw new IllegalStateException("Invalid package cache identity or trailing data");
+            }
             addOwner(pkg);
             return pkg;
         } catch (Exception e) {
@@ -157,13 +158,11 @@ public class PackageParserEx {
         }
         Parcel p = Parcel.obtain();
         try {
-            FileInputStream fis = new FileInputStream(signatureFile);
-            byte[] bytes = FileUtils.toByteArray(fis);
-            fis.close();
+            byte[] bytes = com.lody.virtual.helper.utils.DurableFile.read(signatureFile, 2 * 1024 * 1024);
             p.unmarshall(bytes, 0, bytes.length);
             p.setDataPosition(0);
             pkg.mSignatures = p.createTypedArray(Signature.CREATOR);
-        } catch (IOException e) {
+        } catch (Exception e) {
             e.printStackTrace();
         } finally {
             p.recycle();
@@ -173,40 +172,31 @@ public class PackageParserEx {
     public static void savePackageCache(VPackage pkg) {
         final String packageName = pkg.packageName;
         File cacheFile = VEnvironment.getPackageCacheFile(packageName);
-        if (cacheFile.exists()) {
-            cacheFile.delete();
-        }
         File signatureFile = VEnvironment.getSignatureFile(packageName);
-        if (signatureFile.exists()) {
-            signatureFile.delete();
-        }
         Parcel p = Parcel.obtain();
 
         try {
             p.writeInt(4);
             pkg.writeToParcel(p, 0);
-            FileOutputStream fos = new FileOutputStream(cacheFile);
-            fos.write(p.marshall());
-            fos.close();
+            com.lody.virtual.helper.utils.DurableFile.write(cacheFile, p.marshall());
         } catch (Exception e) {
-            e.printStackTrace();
+            throw new IllegalStateException("Unable to commit package cache; original cache retained", e);
         } finally {
             p.recycle();
         }
         Signature[] signatures = pkg.mSignatures;
         if (signatures != null) {
-            if (signatureFile.exists() && !signatureFile.delete()) {
-                VLog.w(TAG, "Unable to delete the signatures of " + packageName);
-            }
             p = Parcel.obtain();
             try {
                 p.writeTypedArray(signatures, 0);
-                FileUtils.writeParcelToFile(p, signatureFile);
+                com.lody.virtual.helper.utils.DurableFile.write(signatureFile, p.marshall());
             } catch (IOException e) {
-                e.printStackTrace();
+                throw new IllegalStateException("Unable to commit package signatures", e);
             } finally {
                 p.recycle();
             }
+        } else if (signatureFile.exists() && !signatureFile.delete()) {
+            throw new IllegalStateException("Unable to remove stale package signatures");
         }
     }
 

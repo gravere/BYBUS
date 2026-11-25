@@ -539,6 +539,19 @@ launch errors describe the applicable boundary. Unknown game structures fail clo
 
 ## Notes
 
+### Container metadata recovery
+
+Installed-package records and parsed APK caches are metadata, not permission to
+delete guest data. A failed scan retains the package identity, virtual users,
+login files and downloaded resources. It must never invoke uninstall or factory
+reset. When an outside APK cache is unreadable, reparse the current installed APK;
+do not look for a copied APK that this installation mode never created. Packages
+that cannot yet be reparsed remain in the persistent registry for a later repair.
+Invalid registry input is read completely before applying it and prevents writes
+of a partial replacement. Parsed APK and signature caches use atomic replacement.
+
+Explicit uninstall and confirmed resource clearing remain separate operations.
+
 Container startup always releases its initialization gate, including on failure.
 Provider initialization then returns the original failure instead of waiting forever
 or continuing with a partially initialized engine. The gate signals completion,

@@ -31,6 +31,7 @@ public class PackageUserState implements Parcelable {
     }
 
     protected PackageUserState(Parcel in) {
+        if (in.dataAvail() < 12) throw new IllegalStateException("Truncated package user state");
         this.launched = in.readByte() != 0;
         this.hidden = in.readByte() != 0;
         this.installed = in.readByte() != 0;
