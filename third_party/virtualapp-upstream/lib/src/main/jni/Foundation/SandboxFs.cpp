@@ -179,8 +179,12 @@ const char *relocate_path_internal(const char *path, char *const buffer, const s
         if (match_path(item.is_folder, item.orig_size, item.orig_path, path, len)) {
             if (len < item.orig_size) {
                 // remove last /
-                std::string relocated_path(item.new_path, 0, item.new_size - 1);
-                return strdup(relocated_path.c_str());
+                // chdir/execve may reach this after fork. Use the caller's buffer,
+                // including for the exact directory root; no heap or leaked copy.
+                if (item.new_size == 0 || size < item.new_size) return NULL;
+                memcpy(buffer, item.new_path, item.new_size - 1);
+                buffer[item.new_size - 1] = '\0';
+                return buffer;
             } else {
                 const size_t remain_size = len - item.orig_size + 1u;
                 if (size < item.new_size + remain_size) {

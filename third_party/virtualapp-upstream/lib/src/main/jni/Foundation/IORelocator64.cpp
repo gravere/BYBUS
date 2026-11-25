@@ -1,5 +1,6 @@
 #include "LimbusTerminationTrace.h"
 #include "LimbusProcessScope.h"
+#include "ExecEnvironment.h"
 //
 // VirtualApp Native Project
 //
@@ -3084,129 +3085,29 @@ HOOK_DEF(int, statfs, __const char *__file, struct statfs *__buf) {
     return -1;
 }
 
-static char **relocate_envp(const char *pathname, char *const envp[]) {
-    if (strstr(pathname, "libweexjsb.so")) {
-        return const_cast<char **>(envp);
-    }
-    char *soPath = getenv("V_SO_PATH");
-    char *soPath64 = getenv("V_SO_PATH_64");
-
-    char *env_so_path = NULL;
-    FILE *fd = fopen(pathname, "r");
-    if (!fd) {
-        return const_cast<char **>(envp);
-    }
-    for (int i = 0; i < 4; ++i) {
-        fgetc(fd);
-    }
-    int type = fgetc(fd);
-    if (type == ELFCLASS32) {
-        env_so_path = soPath;
-    } else if (type == ELFCLASS64) {
-        env_so_path = soPath64;
-    }
-    fclose(fd);
-    if (env_so_path == NULL) {
-        return const_cast<char **>(envp);
-    }
-    int len = 0;
-    int ld_preload_index = -1;
-    int self_so_index = -1;
-    while (envp[len]) {
-        /* find LD_PRELOAD element */
-        if (ld_preload_index == -1 && !strncmp(envp[len], "LD_PRELOAD=", 11)) {
-            ld_preload_index = len;
+// Read the ELF prefix through the original kernel entry. Calling fopen here
+// re-enters the file hooks, allocator and logging while a fork child has only
+// one surviving thread. The Java parent is waiting for this child's exec pipe.
+static int exec_elf_class(const char *path) {
+    const int saved_errno = errno;
+    unsigned char ident[5] = {};
+    int fd = static_cast<int>(orig_syscall(__NR_openat, AT_FDCWD, path,
+                                          O_RDONLY | O_CLOEXEC | O_NONBLOCK, 0));
+    size_t used = 0;
+    if (fd >= 0) {
+        while (used < sizeof(ident)) {
+            const long result = orig_syscall(__NR_read, fd, ident + used, sizeof(ident) - used);
+            if (result < 0 && errno == EINTR) continue;
+            if (result <= 0) break;
+            used += static_cast<size_t>(result);
         }
-        if (self_so_index == -1 && !strncmp(envp[len], "V_SO_PATH=", 10)) {
-            self_so_index = len;
-        }
-        ++len;
+        orig_syscall(__NR_close, fd);
     }
-    /* append LD_PRELOAD element */
-    if (ld_preload_index == -1) {
-        ++len;
-    }
-    /* append V_env element */
-    if (self_so_index == -1) {
-        // V_SO_PATH
-        // V_API_LEVEL
-        // V_PREVIEW_API_LEVEL
-        // V_NATIVE_PATH
-        len += 4;
-        if (soPath64) {
-            // V_SO_PATH_64
-            len++;
-        }
-        len += get_keep_item_count();
-        len += get_forbidden_item_count();
-        len += get_replace_item_count() * 2;
-    }
-
-    /* append NULL element */
-    ++len;
-
-    char **relocated_envp = (char **) malloc(len * sizeof(char *));
-    memset(relocated_envp, 0, len * sizeof(char *));
-    for (int i = 0; envp[i]; ++i) {
-        if (i != ld_preload_index) {
-            relocated_envp[i] = strdup(envp[i]);
-        }
-    }
-    char LD_PRELOAD_VARIABLE[PATH_MAX];
-    if (ld_preload_index == -1) {
-        ld_preload_index = len - 2;
-        sprintf(LD_PRELOAD_VARIABLE, "LD_PRELOAD=%s", env_so_path);
-    } else {
-        const char *orig_ld_preload = envp[ld_preload_index] + 11;
-        sprintf(LD_PRELOAD_VARIABLE, "LD_PRELOAD=%s:%s", env_so_path, orig_ld_preload);
-    }
-    relocated_envp[ld_preload_index] = strdup(LD_PRELOAD_VARIABLE);
-    int index = 0;
-    while (relocated_envp[index]) index++;
-    if (self_so_index == -1) {
-        char element[PATH_MAX] = {0};
-        sprintf(element, "V_SO_PATH=%s", soPath);
-        relocated_envp[index++] = strdup(element);
-        if (soPath64) {
-            sprintf(element, "V_SO_PATH_64=%s", soPath64);
-            relocated_envp[index++] = strdup(element);
-        }
-        sprintf(element, "V_API_LEVEL=%s", getenv("V_API_LEVEL"));
-        relocated_envp[index++] = strdup(element);
-        sprintf(element, "V_PREVIEW_API_LEVEL=%s", getenv("V_PREVIEW_API_LEVEL"));
-        relocated_envp[index++] = strdup(element);
-        sprintf(element, "V_NATIVE_PATH=%s", getenv("V_NATIVE_PATH"));
-        relocated_envp[index++] = strdup(element);
-
-        for (int i = 0; i < get_keep_item_count(); ++i) {
-            PathItem &item = get_keep_items()[i];
-            char env[PATH_MAX] = {0};
-            sprintf(env, "V_KEEP_ITEM_%d=%s", i, item.path);
-            relocated_envp[index++] = strdup(env);
-        }
-
-        for (int i = 0; i < get_forbidden_item_count(); ++i) {
-            PathItem &item = get_forbidden_items()[i];
-            char env[PATH_MAX] = {0};
-            sprintf(env, "V_FORBID_ITEM_%d=%s", i, item.path);
-            relocated_envp[index++] = strdup(env);
-        }
-
-        for (int i = 0; i < get_replace_item_count(); ++i) {
-            ReplaceItem &item = get_replace_items()[i];
-            char src[PATH_MAX] = {0};
-            char dst[PATH_MAX] = {0};
-            sprintf(src, "V_REPLACE_ITEM_SRC_%d=%s", i, item.orig_path);
-            sprintf(dst, "V_REPLACE_ITEM_DST_%d=%s", i, item.new_path);
-            relocated_envp[index++] = strdup(src);
-            relocated_envp[index++] = strdup(dst);
-        }
-    }
-    return relocated_envp;
+    errno = saved_errno;
+    return used == sizeof(ident) && ident[0] == 0x7f && ident[1] == 'E'
+        && ident[2] == 'L' && ident[3] == 'F' ? ident[4] : 0;
 }
 
-
-// int (*origin_execve)(const char *pathname, char *const argv[], char *const envp[]);
 HOOK_DEF(int, execve, const char *pathname, char *argv[], char *const envp[]) {
     char temp[PATH_MAX];
     const char *relocated_path = relocate_path(pathname, temp, sizeof(temp));
@@ -3214,18 +3115,13 @@ HOOK_DEF(int, execve, const char *pathname, char *argv[], char *const envp[]) {
         errno = EACCES;
         return -1;
     }
-
-    char **relocated_envp = relocate_envp(relocated_path, envp);
-    int ret = static_cast<int>(syscall(__NR_execve, relocated_path, argv, relocated_envp));
-    if (relocated_envp != envp) {
-        int i = 0;
-        while (relocated_envp[i] != nullptr) {
-            free(relocated_envp[i]);
-            ++i;
-        }
-        free(relocated_envp);
-    }
-    return ret;
+    if (strstr(relocated_path, "libweexjsb.so"))
+        return static_cast<int>(orig_syscall(__NR_execve, relocated_path, argv, envp));
+    container_exec::Environment environment;
+    if (!environment.build(envp, environ, exec_elf_class(relocated_path))) return -1;
+    // No heap cleanup after failure: preserve the real kernel errno so Java can
+    // complete its failure handshake (including PATH search for ENOENT).
+    return static_cast<int>(orig_syscall(__NR_execve, relocated_path, argv, environment.values()));
 }
 
 HOOK_DEF(void *, dlopen_CI, const char *filename, int flag) {

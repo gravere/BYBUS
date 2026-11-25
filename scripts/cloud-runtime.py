@@ -437,6 +437,32 @@ def install_component_probe(release, verifier, name="bybus-ui-probe.apk"):
     return digest
 
 
+def inspect_native_exec(release):
+    asset = next((a for a in release["assets"] if a["name"] == "bybus-exec-probe"), None)
+    if asset is None:
+        return
+    if not release["draft"] or os.environ.get("RUNTIME_CANDIDATE") != "true":
+        raise RuntimeError("Native exec fixture requires a staged candidate")
+    data = request(asset["url"], 2 * 1024 * 1024, asset=True)
+    digest = hashlib.sha256(data).hexdigest()
+    if len(data) != asset["size"] or asset.get("digest") != "sha256:" + digest:
+        raise RuntimeError("Native exec fixture digest mismatch")
+    local = OUT / "bybus-exec-probe"
+    local.write_bytes(data)
+    remote = "/data/local/tmp/bybus-exec-probe"
+    adb("push", str(local), remote)
+    adb("shell", "chmod", "700", remote)
+    try:
+        result = adb("shell", remote, timeout=20)
+        (OUT / "native-exec.txt").write_text(result, encoding="utf-8")
+        if "FIFO, failure handshake passed" not in result:
+            raise RuntimeError("Native exec fixture did not complete")
+        REPORT["native_exec"] = dict(passed=True, sha256=digest,
+                                      abi="x86_64", game_started=False)
+    finally:
+        adb("shell", "rm", "-f", remote, check=False)
+
+
 def inspect_package_metadata(release, verifier):
     """Actual release startup, then cold-cache production queries in a disposable Debug process."""
     adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/{NAMESPACE}.MainActivity", timeout=90)
@@ -1485,6 +1511,7 @@ def main():
                 raise RuntimeError("Release host did not stay running")
             locate(hierarchy("release-home"), "设置与工具")
             REPORT["checks"].append("signed release main activity stays visible and running")
+            inspect_native_exec(release)
         adb("root")
         adb("wait-for-device", timeout=30)
         if adb("shell", "id", "-u").strip() != "0":
