@@ -630,6 +630,9 @@ public class NativeEngine {
 
     public static native boolean nativeGetDecryptState();
 
+    /** Numeric, process-local startup observations; contains no command or environment data. */
+    public static native long[] nativeReadExecLaunchTrace();
+
     private static native void nativeIOReadOnly(String path);
 
     private static native void nativeEnableIORedirect(String soPath, String soPath64, String cachePath, int apiLevel, int previewApiLevel);

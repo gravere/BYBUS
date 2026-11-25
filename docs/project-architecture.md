@@ -97,6 +97,20 @@ App-version notices use the independent metadata-only foreground check described
 - `DeviceCompatibility`: Android API 26+ / ARM64 prerequisites, actual 4 KiB or 16 KiB page size, process architecture, low-RAM/background-policy inspection and OEM settings fallback. Native structure qualification remains separate; see [Android portability](android-runtime-portability.md).
 - `PersistentDiagnosticLog` / `DebugLogExporter`: per-process bounded logs, uncaught exception capture, redaction, exit reasons, and Issue ZIP generation.
 
+When a startup stack remains in `UNIXProcess.forkAndExec`, the three existing startup
+observations also record the matching native thread's wait channel and syscall number,
+and at most four of its direct children. Command lines, environment variables, syscall
+arguments, account data and arbitrary file contents are excluded. Kernel access denial
+is reported as unavailable. The exec wrapper maintains a small shared-memory phase
+record initialized before IO hooks, so a child cannot acquire a diagnostic lock or open
+a diagnostic file between vfork and exec. These observations distinguish a blocked
+creation call, exec preparation and the parent's error-pipe wait; they do not change
+commands, results or the game's decisions.
+Google guest framework-call failures are recorded before rethrowing the same exception,
+with a per-process limit and framework-only method names. This retains the originating
+failure when Chromium terminates in JNI before Android's uncaught-exception handler;
+argument values, exception messages, URLs and account fields are never included.
+
 ## Startup latency and handoff (2026-10-12)
 
 Service connection wrappers serialize cache creation and Binder-death removal.

@@ -2,6 +2,7 @@
 // VirtualApp Native Project
 //
 #include <Foundation/IORelocator.h>
+#include <Foundation/ExecLaunchTrace.h>
 #include <Foundation/LimbusTranslationRuntime.h>
 #include <Foundation/Log.h>
 #include <sys/ptrace.h>
@@ -24,6 +25,14 @@ static void jni_nativeLaunchEngine(JNIEnv *env, jclass clazz, jobjectArray javaM
 
 static void jni_nativeHookLimbusProcessExit(JNIEnv *env, jclass clazz) {
     hookLimbusProcessExit(env);
+}
+
+static jlongArray jni_nativeReadExecLaunchTrace(JNIEnv *env, jclass) {
+    int64_t values[container_exec::LaunchTrace::kEntries * container_exec::LaunchTrace::kFields]{};
+    const int count = container_exec::launchTrace().snapshot(values, sizeof(values) / sizeof(values[0]));
+    jlongArray result = env->NewLongArray(count);
+    if (result && count) env->SetLongArrayRegion(result, 0, count, reinterpret_cast<const jlong *>(values));
+    return result;
 }
 
 static void jni_nativeHookLimbusFindClass(JNIEnv *env, jclass clazz) {
@@ -185,6 +194,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *_vm, void *) {
     static JNINativeMethod methods[] = {
             {"nativeLaunchEngine",                     "([Ljava/lang/Object;Ljava/lang/String;ZIII)V",                (void *) jni_nativeLaunchEngine},
             {"nativeHookLimbusProcessExit",            "()V",                                                         (void *) jni_nativeHookLimbusProcessExit},
+            {"nativeReadExecLaunchTrace",             "()[J",                                                       (void *) jni_nativeReadExecLaunchTrace},
             {"nativeHookLimbusFindClass",              "()V",                                                         (void *) jni_nativeHookLimbusFindClass},
             {"nativeScanLimbusNativeSyscalls",         "(Ljava/lang/String;)V",                                       (void *) jni_nativeScanLimbusNativeSyscalls},
             {"nativeMaintainLimbusAppSealingPatches",  "()I",                                                        (void *) jni_nativeMaintainLimbusAppSealingPatches},

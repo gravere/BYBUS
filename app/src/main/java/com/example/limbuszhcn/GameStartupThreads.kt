@@ -25,6 +25,23 @@ internal class GameStartupThreads {
             }.sorted().take(8)
             PersistentDiagnosticLog.info("GameStartup", "ageMs=$age enumerated=${snapshot.size} summarized=${threads.size}")
             threads.forEach { PersistentDiagnosticLog.info("GameStartup", "ageMs=$age $it") }
+            if (snapshot.any { (thread, frames) -> thread.name == "UnityMain" && frames.any {
+                    it.className == "java.lang.UNIXProcess" && it.methodName == "forkAndExec"
+                } }) {
+                val pid = android.os.Process.myPid()
+                val tids = java.io.File("/proc/$pid/task").list().orEmpty().mapNotNull(String::toIntOrNull)
+                forkExecKernelSnapshot(pid, tids).forEach {
+                    PersistentDiagnosticLog.info("GameStartup", "ageMs=$age $it")
+                }
+                runCatching { com.lody.virtual.client.NativeEngine.nativeReadExecLaunchTrace() }
+                    .onSuccess { values ->
+                        val phases = execPhaseSnapshot(values)
+                        PersistentDiagnosticLog.info("GameStartup", "ageMs=$age observedExecChildren=${phases.size}")
+                        phases.forEach { PersistentDiagnosticLog.info("GameStartup", "ageMs=$age $it") }
+                    }.onFailure {
+                        PersistentDiagnosticLog.info("GameStartup", "ageMs=$age execPhases=unavailable")
+                    }
+            }
         }.onFailure {
             PersistentDiagnosticLog.warn("GameStartup", "ageMs=$age enumeration=unavailable")
         }

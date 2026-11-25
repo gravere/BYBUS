@@ -210,6 +210,8 @@ public class MethodInvocationStub<T> {
                 if (exception instanceof InvocationTargetException && ((InvocationTargetException) exception).getTargetException() != null) {
                     exception = ((InvocationTargetException) exception).getTargetException();
                 }
+                try { com.lody.virtual.helper.compat.FrameworkCallFault.record(method, exception); }
+                catch (Throwable ignored) { /* Preserve the original exception, including JNI callers. */ }
                 throw exception;
 
             } finally {

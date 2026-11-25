@@ -1,5 +1,6 @@
 #include "LimbusTerminationTrace.h"
 #include "LimbusProcessScope.h"
+#include "ExecLaunchTrace.h"
 #include "ExecEnvironment.h"
 //
 // VirtualApp Native Project
@@ -3109,19 +3110,33 @@ static int exec_elf_class(const char *path) {
 }
 
 HOOK_DEF(int, execve, const char *pathname, char *argv[], char *const envp[]) {
+    auto &trace = container_exec::launchTrace();
+    trace.record(container_exec::Entered);
     char temp[PATH_MAX];
     const char *relocated_path = relocate_path(pathname, temp, sizeof(temp));
     if (!relocated_path) {
         errno = EACCES;
+        trace.record(container_exec::Failed, errno);
         return -1;
     }
+    trace.record(container_exec::PathReady);
     if (strstr(relocated_path, "libweexjsb.so"))
         return static_cast<int>(orig_syscall(__NR_execve, relocated_path, argv, envp));
     container_exec::Environment environment;
-    if (!environment.build(envp, environ, exec_elf_class(relocated_path))) return -1;
+    const int elfClass = exec_elf_class(relocated_path);
+    trace.record(container_exec::ElfReady);
+    if (!environment.build(envp, environ, elfClass)) {
+        trace.record(container_exec::Failed, errno);
+        return -1;
+    }
+    trace.record(container_exec::EnvironmentReady);
     // No heap cleanup after failure: preserve the real kernel errno so Java can
     // complete its failure handshake (including PATH search for ENOENT).
-    return static_cast<int>(orig_syscall(__NR_execve, relocated_path, argv, environment.values()));
+    const int result = static_cast<int>(orig_syscall(__NR_execve, relocated_path, argv, environment.values()));
+    const int error = errno;
+    trace.record(container_exec::Failed, error);
+    errno = error;
+    return result;
 }
 
 HOOK_DEF(void *, dlopen_CI, const char *filename, int flag) {
@@ -4942,6 +4957,7 @@ bool relocate_linker(const char* LINKER_PATH) {
 }
 
 void startIOHook(int api_level) {
+    container_exec::launchTrace().initialize();
     // Populate the cache outside signal context and fail before any partial hooks.
     if (!runtime_page::size()) {
         ALOGE("IO hook >>> unsupported or unknown kernel page size");
