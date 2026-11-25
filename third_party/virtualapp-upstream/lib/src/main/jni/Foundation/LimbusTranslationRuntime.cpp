@@ -3701,6 +3701,82 @@ void replacement_tmp_set_text(void *instance, void *managed_text, const void *me
     observe_popup_font(instance, replacement, false);
 }
 
+// The first battle uses this separate presenter, not TutorialTextDataLoader.
+// Only its description target belongs to the tutorial record. Do not put a
+// tutorial key in the global UI scope while the game updates adjacent controls.
+struct StartTutorialBinding {
+    void *owner_class = nullptr, *data_class = nullptr;
+    const void *target = nullptr, *key = nullptr, *from_tutorial = nullptr;
+} g_start_tutorial;
+struct TutorialPosition { float x, y, z; };
+static_assert(sizeof(TutorialPosition) == 12, "Unity Vector3 has three float components");
+using start_tutorial_text_fn = void (*)(void *, void *, const void *);
+using start_tutorial_position_fn = void (*)(void *, void *, TutorialPosition, const void *);
+start_tutorial_text_fn g_original_start_tutorial_text = nullptr;
+start_tutorial_position_fn g_original_start_tutorial_position = nullptr;
+
+std::string start_tutorial_key(void *owner, void *data) {
+    const auto &binding = g_start_tutorial;
+    if (!owner || !data || !binding.target || !binding.key || !binding.from_tutorial ||
+            !g_object_get_class || !g_field_get_value || !g_string_length || !g_string_chars ||
+            g_object_get_class(owner) != binding.owner_class ||
+            g_object_get_class(data) != binding.data_class || !is_unity_main_thread()) return {};
+    bool from_tutorial = false;
+    g_field_get_value(data, binding.from_tutorial, &from_tutorial);
+    if (!from_tutorial) return {}; // Other descriptions can use a different table.
+    void *value = nullptr;
+    g_field_get_value(data, binding.key, &value);
+    if (!value) return {};
+    const int32_t length = g_string_length(value);
+    std::string key;
+    if (length <= 0 || length > 256 || !utf16_to_utf8(g_string_chars(value), length, &key) ||
+            std::any_of(key.begin(), key.end(), [](unsigned char c) { return c < 32; })) return {};
+    return "@tutorial:" + key;
+}
+
+void apply_start_tutorial_text(void *owner, const std::string &key) {
+    if (!owner || key.empty() || !g_tmp_get_text_info || !g_tmp_set_text_info || !g_original_tmp_set_text) return;
+    auto translation = g_model_fields.find(key + '\x1f' + "content");
+    if (translation == g_model_fields.end()) {
+        static std::atomic<bool> missing{false};
+        if (!missing.exchange(true)) append_native_metadata("font-state.log", "start_tutorial_text=missing_record");
+        return;
+    }
+    void *target = nullptr;
+    g_field_get_value(owner, g_start_tutorial.target, &target);
+    auto target_root = limbus_managed::retain(g_gc, target);
+    if (!target_root) return;
+    void *source = invoke_object_getter(g_tmp_get_text_info, target);
+    if (!source || g_string_length(source) <= 0) return;
+    void *translated = translate_managed_string(source, key, "content");
+    // Use the same provenance/font/material path as other translated TMP text.
+    // The game's data object, position, animation and progress are unchanged.
+    if (translated != source) replacement_tmp_set_text(target, translated, g_tmp_set_text_info);
+    if (is_translated_managed_string(translated)) {
+        static std::atomic<uint64_t> applied{0};
+        const auto count = applied.fetch_add(1) + 1;
+        if (count == 1 || count % 50 == 0) {
+            char status[80];
+            snprintf(status, sizeof(status), "start_tutorial_text=applied count=%llu", static_cast<unsigned long long>(count));
+            append_native_metadata("font-state.log", status);
+        }
+    }
+}
+
+template<class Update>
+void update_start_tutorial_text(void *owner, void *data, Update update) {
+    const auto key = start_tutorial_key(owner, data);
+    auto owner_root = key.empty() ? limbus_managed::Ref{} : limbus_managed::retain(g_gc, owner);
+    update(); // Preserve the game's exception and original calls, including null arguments.
+    if (owner_root) apply_start_tutorial_text(owner_root->get(), key);
+}
+void replacement_start_tutorial_text(void *owner, void *data, const void *method) {
+    update_start_tutorial_text(owner, data, [&] { g_original_start_tutorial_text(owner, data, method); });
+}
+void replacement_start_tutorial_position(void *owner, void *data, TutorialPosition position, const void *method) {
+    update_start_tutorial_text(owner, data, [&] { g_original_start_tutorial_position(owner, data, position, method); });
+}
+
 void prepare_notice_body(void *target) {
     if (!target) return;
     pthread_mutex_lock(&g_font_state_lock);
@@ -4381,6 +4457,10 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             story_asset_loader_class = class_from_name(image, "StorySystem", "StoryAssetLoader");
         if (!tutorial_loader_class)
             tutorial_loader_class = class_from_name(image, "", "TutorialTextDataLoader");
+        if (!g_start_tutorial.owner_class)
+            g_start_tutorial.owner_class = class_from_name(image, "StartTutorial", "StartTutorialDescriptionTextObject");
+        if (!g_start_tutorial.data_class)
+            g_start_tutorial.data_class = class_from_name(image, "StartTutorial", "StartTutorialDescriptionTextData");
         if (ui_text_data_class == nullptr)
             ui_text_data_class = class_from_name(image, "", "TextData_UI");
         if (g_skill_text_class == nullptr)
@@ -5862,8 +5942,8 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 }
             }
             append_native_metadata("font-state.log", g_original_skill_level ? "skill_level_context=1" : "skill_level_context=0");
-            auto hook_ui_loader = [&](void *klass, ui_loader_fn replacement, ui_loader_fn *original) {
-                const void *entry = find_method_by_signature(klass, "SetText", "");
+            auto hook_text_presenter = [&](void *klass, const char *name, const char *signature, void *replacement, void **original) {
+                const void *entry = find_method_by_signature(klass, name, signature);
                 uint32_t flags = 0;
                 if (!entry || !method_get_class || !method_is_generic || method_get_class(entry) != klass ||
                     method_is_generic(entry) || (method_get_flags(entry, &flags) & 0x0010u)) return;
@@ -5873,8 +5953,11 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 void *pointer = nullptr;
                 memcpy(&pointer, entry, sizeof(pointer));
                 if (!returns_void || acquisition_pointers.count(pointer) || !has_inline_hook_space(klass, pointer)) return;
-                hook_limbus_owned_function(pointer, reinterpret_cast<void *>(replacement), reinterpret_cast<void **>(original));
+                hook_limbus_owned_function(pointer, replacement, original);
                 if (*original) acquisition_pointers.insert(pointer);
+            };
+            auto hook_ui_loader = [&](void *klass, ui_loader_fn replacement, ui_loader_fn *original) {
+                hook_text_presenter(klass, "SetText", "", reinterpret_cast<void *>(replacement), reinterpret_cast<void **>(original));
             };
             hook_ui_loader(ui_loader_class, replacement_ui_loader, &g_original_ui_loader);
             hook_ui_loader(ui_parameter_loader_class, replacement_ui_parameter_loader, &g_original_ui_parameter_loader);
@@ -5885,6 +5968,34 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                      g_original_ui_loader != nullptr, g_original_ui_parameter_loader != nullptr);
             append_native_metadata("font-state.log", ui_loaders);
             append_native_metadata("font-state.log", g_original_tutorial_loader ? "tutorial_loader=1" : "tutorial_loader=0");
+            g_start_tutorial.target = choice_field(g_start_tutorial.owner_class, "tmp_description", "TMPro.TextMeshProUGUI");
+            g_start_tutorial.key = choice_field(g_start_tutorial.data_class, "<DescriptionKey>k__BackingField", "System.String");
+            g_start_tutorial.from_tutorial = choice_field(g_start_tutorial.data_class, "<IsFromTutorial>k__BackingField", "System.Boolean");
+            if (g_start_tutorial.target && g_start_tutorial.key && g_start_tutorial.from_tutorial &&
+                    g_tmp_get_text_info && g_tmp_set_text_info && g_original_tmp_set_text) {
+                hook_text_presenter(g_start_tutorial.owner_class, "SetText", "StartTutorial.StartTutorialDescriptionTextData",
+                        reinterpret_cast<void *>(replacement_start_tutorial_text), reinterpret_cast<void **>(&g_original_start_tutorial_text));
+                const void *position_method = find_method_by_signature(g_start_tutorial.owner_class, "SetTextAndPosition",
+                        "StartTutorial.StartTutorialDescriptionTextData,UnityEngine.Vector3");
+                auto value_size = resolver.resolve<int32_t (*)(void *, uint32_t *)>("il2cpp_class_value_size");
+                auto is_value_type = resolver.resolve<bool (*)(void *)>("il2cpp_class_is_valuetype");
+                auto field_offset = resolver.resolve<size_t (*)(const void *)>("il2cpp_field_get_offset");
+                void *vector = position_method && class_from_type ? class_from_type(method_get_param(position_method, 1)) : nullptr;
+                const void *x = choice_field(vector, "x", "System.Single"), *y = choice_field(vector, "y", "System.Single"),
+                           *z = choice_field(vector, "z", "System.Single");
+                uint32_t alignment = 0;
+                if (vector && value_size && is_value_type && field_offset && x && y && z && is_value_type(vector) &&
+                        value_size(vector, &alignment) == sizeof(TutorialPosition) && alignment == alignof(TutorialPosition) &&
+                        field_offset(y) == field_offset(x) + sizeof(float) && field_offset(z) == field_offset(y) + sizeof(float)) {
+                    hook_text_presenter(g_start_tutorial.owner_class, "SetTextAndPosition",
+                            "StartTutorial.StartTutorialDescriptionTextData,UnityEngine.Vector3",
+                            reinterpret_cast<void *>(replacement_start_tutorial_position), reinterpret_cast<void **>(&g_original_start_tutorial_position));
+                }
+            }
+            char tutorial_bindings[100];
+            snprintf(tutorial_bindings, sizeof(tutorial_bindings), "start_tutorial_bindings text=%d position=%d",
+                     g_original_start_tutorial_text != nullptr, g_original_start_tutorial_position != nullptr);
+            append_native_metadata("font-state.log", tutorial_bindings);
             const void *implicit_method = find_method_by_signature(
                     ui_text_data_class, "op_Implicit", "TextData_UI");
             uint32_t implicit_flags = 0;

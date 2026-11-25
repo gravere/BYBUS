@@ -12,6 +12,18 @@ for signature in ("bool remember_translated_text(", "void *translate_managed_str
 output = pathlib.Path(sys.argv[1])
 output.mkdir(parents=True, exist_ok=True)
 (output / "runtime-translation-under-test.inc").write_text("\n\n".join(pieces), encoding="utf-8")
+start = source.index("struct StartTutorialBinding {")
+end = source.index("\nvoid prepare_notice_body(void *target) {", start)
+(output / "runtime-start-tutorial-under-test.inc").write_text(source[start:end], encoding="utf-8")
+start = source.index("            auto hook_text_presenter =")
+end = source.index("            auto hook_ui_loader =", start)
+presenter_binding = source[start:end]
+start = source.index("            g_start_tutorial.target = choice_field(")
+end = source.index("            const void *implicit_method =", start)
+(output / "runtime-start-tutorial-binding.inc").write_text(presenter_binding + source[start:end], encoding="utf-8")
+start = source.index("        if (!g_start_tutorial.owner_class)")
+end = source.index("        if (ui_text_data_class == nullptr)", start)
+(output / "runtime-start-tutorial-classes.inc").write_text(source[start:end], encoding="utf-8")
 catalogue = []
 for signature in ("bool utf8_to_utf16(", "bool is_usable_display_text(", "bool is_display_string_field(",
                   "void rebuild_package_line_break_index(",

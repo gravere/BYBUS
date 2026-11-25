@@ -105,6 +105,117 @@ void tutorial_original(void *, const void *) {
     assert(text(translate_managed_string(new_managed_string("Dashboard"), "unrelated", "content")) == "Dashboard");
     throw 9;
 }
+
+// Replay the independent first-battle presenter with production wrappers and
+// production identity matching. Only the IL2CPP/Unity calls are substituted.
+int presenter_class, description_class, other_class, target_field, key_field, tutorial_field, tmp_get, tmp_set;
+struct Presenter { void *target; };
+struct Description { void *key; bool tutorial; };
+std::unordered_map<void *, void *> classes;
+std::unordered_map<void *, void *> component_text;
+auto g_object_get_class = +[](void *object) -> void * { return classes.at(object); };
+auto g_field_get_value = +[](void *object, const void *field, void *out) {
+    if (field == &target_field) *static_cast<void **>(out) = static_cast<Presenter *>(object)->target;
+    else if (field == &key_field) *static_cast<void **>(out) = static_cast<Description *>(object)->key;
+    else { assert(field == &tutorial_field); *static_cast<bool *>(out) = static_cast<Description *>(object)->tutorial; }
+};
+const void *g_tmp_get_text_info = &tmp_get, *g_tmp_set_text_info = &tmp_set;
+bool main_thread = true;
+bool is_unity_main_thread() { return main_thread; }
+std::vector<std::string> tutorial_logs;
+void append_native_metadata(const char *, const char *line) { tutorial_logs.emplace_back(line); }
+void *invoke_object_getter(const void *method, void *object) { assert(method == &tmp_get); return component_text.at(object); }
+void tmp_original(void *object, void *value, const void *method) { assert(method == &tmp_set); component_text[object] = value; }
+auto g_original_tmp_set_text = tmp_original;
+void replacement_tmp_set_text(void *object, void *value, const void *method) {
+    g_original_tmp_set_text(object, prepare_tmp_text(object, value), method);
+    finalize_tmp_text(object, value);
+}
+#include "runtime-start-tutorial-under-test.inc"
+
+std::string presenter_source;
+void *adjacent_button;
+int presenter_calls = 0;
+bool presenter_throws = false, positioned_calls_set_text = false;
+void presenter_original(void *owner, void *, const void *method) {
+    assert(method == story_asset_method);
+    ++presenter_calls;
+    if (presenter_throws) throw 11;
+    if (!owner) return;
+    auto target = static_cast<Presenter *>(owner)->target;
+    if (target) component_text[target] = new_managed_string(presenter_source);
+    component_text[adjacent_button] = translate_managed_string(new_managed_string("Dashboard"));
+}
+void positioned_original(void *owner, void *data, TutorialPosition position, const void *method) {
+    assert(position.x == 1.25f && position.y == -3.5f && position.z == 0.125f);
+    if (positioned_calls_set_text) replacement_start_tutorial_text(owner, data, method);
+    else presenter_original(owner, data, method);
+}
+void test_start_tutorial_presenter() {
+    int target, button;
+    adjacent_button = &button;
+    Presenter owner{&target};
+    Description data{new_managed_string("tuto_00_01_01_02"), true};
+    classes[&owner] = &presenter_class; classes[&data] = &description_class;
+    g_start_tutorial = {&presenter_class, &description_class, &target_field, &key_field, &tutorial_field};
+    g_original_start_tutorial_text = presenter_original;
+    g_original_start_tutorial_position = positioned_original;
+    const std::string translated = "首先请确认<color=#f8c200>仪表盘<color=#ebcaa2>。\n\n您可以通过<color=#f8c200>仪表盘<color=#ebcaa2>来对罪人们下达命令。";
+    g_model_fields["@tutorial:tuto_00_01_01_02\x1f" "content"] = translated;
+    const char *sources[] = {"Please direct your attention to the Dashboard here.\n\nYou will be using the Dashboard to relay your commands to the Sinners.",
+                            "ダッシュボードから囚人たちに指示を出します。", "대시보드를 통해 수감자들에게 명령을 내립니다."};
+    const auto handles_before = handles.size();
+    for (const char *source : sources) {
+        presenter_source = source;
+        // Existing ordinary-loader tests passed even though this entry stayed English.
+        presenter_original(&owner, &data, story_asset_method);
+        assert(text(component_text[&target]) == source);
+        ruby_prepared = ruby_layout_prepared = false;
+        replacement_start_tutorial_text(&owner, &data, story_asset_method);
+        assert(text(component_text[&target]) == translated);
+        assert(ruby_prepared && ruby_layout_prepared);
+        assert(text(component_text[&button]) == "Dashboard");
+        assert(text(data.key) == "tuto_00_01_01_02");
+        for (bool nested : {false, true}) {
+            positioned_calls_set_text = nested;
+            replacement_start_tutorial_position(&owner, &data, {1.25f, -3.5f, 0.125f}, story_asset_method);
+            assert(text(component_text[&target]) == translated);
+            assert(text(component_text[&button]) == "Dashboard");
+        }
+    }
+    assert(!handles.empty() && handles.size() >= handles_before);
+    for (const auto &entry : handles) assert(entry.second.object != &owner && entry.second.object != &target);
+    auto unchanged = [&] {
+        replacement_start_tutorial_text(&owner, &data, story_asset_method);
+        assert(text(component_text[&target]) == presenter_source);
+    };
+    data.tutorial = false; unchanged(); data.tutorial = true;
+    data.key = new_managed_string("missing-record"); unchanged();
+    data.key = new_managed_string("bad\x1f" "record"); unchanged();
+    data.key = new_managed_string(std::string(257, 'x')); unchanged();
+    data.key = nullptr; unchanged();
+    data.key = new_managed_string("tuto_00_01_01_02");
+    classes[&data] = &other_class; unchanged(); classes[&data] = &description_class;
+    classes[&owner] = &other_class; unchanged(); classes[&owner] = &presenter_class;
+    main_thread = false; unchanged(); main_thread = true;
+    font_ready = false; unchanged(); font_ready = true;
+    presenter_source.clear(); unchanged();
+    owner.target = nullptr;
+    replacement_start_tutorial_text(&owner, &data, story_asset_method);
+    replacement_start_tutorial_text(nullptr, nullptr, story_asset_method);
+    owner.target = &target;
+    presenter_source = "Original text before exception";
+    presenter_original(&owner, &data, story_asset_method);
+    presenter_throws = true;
+    try { replacement_start_tutorial_text(&owner, &data, story_asset_method); assert(false); }
+    catch (int error) { assert(error == 11); }
+    presenter_throws = false;
+    assert(text(component_text[&target]) == presenter_source);
+    assert(g_ui_text_key.empty());
+    for (const auto &entry : handles) assert(entry.second.object != &owner && entry.second.object != &target);
+    assert(!tutorial_logs.empty());
+    printf("First-battle presenter: JP/EN/KR, direct/positioned/nested, target isolation, fallback and exception checks passed\n");
+}
 void *format_ruby(void *, void *value, const void *) {
     assert(ruby_prepared); // Font preparation must precede the formatter's measurements.
     assert(ruby_layout_prepared);
@@ -164,6 +275,7 @@ int main() {
     catch (int error) { assert(error == 9); }
     assert(g_ui_text_key.empty());
     assert(text(translate_managed_string(new_managed_string("Dashboard"))) == "Dashboard");
+    test_start_tutorial_presenter();
     g_model_fields["@scenario-model:파우스트\x1f" "name"] = "浮士德";
     g_model_fields["@scenario-model:파우스트\x1f" "nickName"] = "2号罪人";
     g_original_story_asset_name = story_asset_original;

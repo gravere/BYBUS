@@ -553,6 +553,21 @@ launch errors describe the applicable boundary. Unknown game structures fail clo
 
 ## Notes
 
+### First-battle tutorial text
+
+Ordinary tutorial labels and the first-battle description presenter are separate
+entry points. Both resolve released `@tutorial:` record identities. The latter
+reads `DescriptionKey` only when `IsFromTutorial` is true, then updates only its
+verified description target through the existing TMP font/material path. It
+does not set an ambient tutorial identity for other controls. Original game
+data, position, progress and exceptions remain intact. Both text-only and
+positioned setters are matched by full metadata signatures; the positioned
+setter additionally requires a verified three-float Vector3 layout.
+
+Portable regression tests replay both presenter calls, including nested calls,
+language-independent matching, unrelated controls and unavailable translations.
+These checks do not replace visual verification in the running game.
+
 ### Container metadata recovery
 
 Installed-package records and parsed APK caches are metadata, not permission to
