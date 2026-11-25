@@ -39,8 +39,10 @@ internal object GameMemoryDiagnostics {
         }
         val callbacks = object : ComponentCallbacks2 {
             override fun onConfigurationChanged(newConfig: Configuration) = Unit
-            override fun onLowMemory() = onTrimMemory(-1)
-            override fun onTrimMemory(level: Int) {
+            override fun onLowMemory() = queueMemorySample(-1)
+            override fun onTrimMemory(level: Int) = queueMemorySample(level)
+
+            private fun queueMemorySample(level: Int) {
                 trimLevel.set(level)
                 if (!pendingTrim.compareAndSet(false, true)) return
                 runCatching {
