@@ -3154,10 +3154,6 @@ HOOK_DEF(void*, dlsym, void *handle, char *symbol) {
     return orig_dlsym(handle, symbol);
 }
 
-HOOK_DEF(pid_t, vfork) {
-    return fork();
-}
-
 HOOK_DEF(ssize_t, pread64, int fd, void* buf, size_t count, off64_t offset) {
     ssize_t ret = 0;
     bool flag = false;
@@ -5008,7 +5004,12 @@ void startIOHook(int api_level) {
         HOOK_SYMBOL(handle, fread);
         HOOK_SYMBOL(handle, fread_unlocked);
         HOOK_SYMBOL(handle, fgets);
-        HOOK_SYMBOL(handle, vfork);
+        // UNIXProcess deliberately uses Bionic vfork without atfork callbacks.
+        // Replacing it with fork adds callbacks from every loaded native library,
+        // which can deadlock before childProcess/execve is reached. Keep the real
+        // entry untouched; a normal C wrapper around vfork cannot safely return
+        // in both processes. Exec preparation remains allocation-free.
+        ALOGI("IO hook >>> preserve platform vfork and child launch semantics");
         HOOK_SYMBOL(handle, faccessat);
         HOOK_SYMBOL(handle, openat);
         HOOK_SYMBOL(handle, fchmodat);

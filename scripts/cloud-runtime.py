@@ -1,5 +1,6 @@
 """Inspect an unmodified public APK; no Google account, game data, or purchase."""
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import urllib.request
 import urllib.error
 import urllib.parse
 import xml.etree.ElementTree as ET
+import zipfile
 
 PACKAGE = "io.github.gravere.bybus"
 NAMESPACE = "com.example.limbuszhcn"
@@ -96,11 +98,21 @@ def ready():
 
 
 def hierarchy(name):
-    adb("shell", "uiautomator", "dump", "/sdcard/bybus-window.xml", timeout=35)
-    raw = adb("shell", "cat", "/sdcard/bybus-window.xml")
-    raw = raw[raw.index("<?xml"):]
-    (OUT / f"{name}.xml").write_text(raw, encoding="utf-8")
-    return ET.fromstring(raw)
+    for attempt in range(2):
+        # A freshly booted system can return success without producing a root
+        # window. Never reuse an XML left by a previous page or test attempt.
+        adb("shell", "rm", "-f", "/sdcard/bybus-window.xml")
+        dump = adb("shell", "uiautomator", "dump", "/sdcard/bybus-window.xml", timeout=35, check=False)
+        raw = adb("shell", "cat", "/sdcard/bybus-window.xml", check=False)
+        if "<?xml" in raw:
+            raw = raw[raw.index("<?xml"):]
+            tree = ET.fromstring(raw)
+            (OUT / f"{name}.xml").write_text(raw, encoding="utf-8")
+            return tree
+        (OUT / f"{name}-hierarchy-attempt-{attempt + 1}.txt").write_text(dump[-2000:], encoding="utf-8")
+        if attempt == 0:
+            time.sleep(1)
+    raise RuntimeError("UIAutomator did not produce a fresh window hierarchy")
 
 
 def locate(tree, value):
@@ -461,6 +473,52 @@ def inspect_native_exec(release):
                                       abi="x86_64", game_started=False)
     finally:
         adb("shell", "rm", "-f", remote, check=False)
+
+
+def inspect_process_launch(release):
+    asset = next((a for a in release["assets"] if a["name"] == "bybus-process-probe.zip"), None)
+    if asset is None:
+        return
+    if not release["draft"] or os.environ.get("RUNTIME_CANDIDATE") != "true":
+        raise RuntimeError("ProcessBuilder fixture requires a staged candidate")
+    data = request(asset["url"], 2 * 1024 * 1024, asset=True)
+    digest = hashlib.sha256(data).hexdigest()
+    if len(data) != asset["size"] or asset.get("digest") != "sha256:" + digest:
+        raise RuntimeError("ProcessBuilder fixture digest mismatch")
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        names = {"manifest.json", "process-test.jar", "libprocessprobe.so"}
+        if len(archive.infolist()) != 3 or set(archive.namelist()) != names or sum(x.file_size for x in archive.infolist()) > 4 * 1024 * 1024:
+            raise RuntimeError("Unexpected ProcessBuilder fixture contents")
+        manifest = json.loads(archive.read("manifest.json"))
+        if manifest.get("abi") != "x86_64" or manifest.get("baseline") is not False:
+            raise RuntimeError("Unexpected ProcessBuilder fixture variant")
+        source = Path("third_party/virtualapp-upstream/lib/src/main/jni/Foundation/IORelocator64.cpp").read_text("utf-8")
+        wrapper = source[source.index("static int exec_elf_class("):source.index("HOOK_DEF(void *, dlopen_CI")]
+        wrapper += source[source.index("HOOK_DEF(int, chdir,"):source.index("// int truncate64")]
+        if "HOOK_SYMBOL(handle, vfork)" in source or hashlib.sha256(wrapper.encode()).hexdigest() != manifest.get("wrapper_sha256"):
+            raise RuntimeError("ProcessBuilder fixture does not match the release source")
+        remote = "/data/local/tmp/bybus-process-probe"
+        adb("shell", "mkdir", "-p", remote)
+        try:
+            for name in ("process-test.jar", "libprocessprobe.so"):
+                raw = archive.read(name)
+                if hashlib.sha256(raw).hexdigest() != manifest.get("files", {}).get(name):
+                    raise RuntimeError("ProcessBuilder fixture file mismatch")
+                local = OUT / name
+                local.write_bytes(raw)
+                adb("push", str(local), remote + "/" + name)
+            library = remote + "/libprocessprobe.so"
+            result = adb("shell", "timeout", "-s", "KILL", "15", "env", "CLASSPATH=" + remote + "/process-test.jar",
+                         "LD_PRELOAD=" + library, "app_process", "/system/bin", "ProcessLaunchTest", library,
+                         "locked", "no-callbacks", timeout=25)
+            (OUT / "process-launch.txt").write_text(result, encoding="utf-8")
+            if "ProcessBuilder passed:" not in result or "atfork=0" not in result:
+                raise RuntimeError("ProcessBuilder fixture did not complete")
+            REPORT["process_launch"] = dict(passed=True, sha256=digest, abi="x86_64", actual_java_runtime=True,
+                                               simulated_atfork_dependency=True, game_started=False)
+        finally:
+            adb("shell", "rm", "-f", remote + "/process-test.jar", remote + "/libprocessprobe.so", check=False)
+            adb("shell", "rmdir", remote, check=False)
 
 
 def inspect_package_metadata(release, verifier):
@@ -1512,6 +1570,7 @@ def main():
             locate(hierarchy("release-home"), "设置与工具")
             REPORT["checks"].append("signed release main activity stays visible and running")
             inspect_native_exec(release)
+            inspect_process_launch(release)
         adb("root")
         adb("wait-for-device", timeout=30)
         if adb("shell", "id", "-u").strip() != "0":
