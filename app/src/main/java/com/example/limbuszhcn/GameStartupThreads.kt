@@ -19,10 +19,14 @@ internal class GameStartupThreads {
             PersistentDiagnosticLog.info("GameStartup", "mainHeartbeat ageMs=$age delayMs=${SystemClock.elapsedRealtime() - requested}")
         }
         runCatching {
-            val threads = Thread.getAllStackTraces().mapNotNull { (thread, frames) ->
+            val snapshot = Thread.getAllStackTraces()
+            val threads = snapshot.mapNotNull { (thread, frames) ->
                 startupThreadSummary(thread.name, thread.state, frames)
             }.sorted().take(8)
+            PersistentDiagnosticLog.info("GameStartup", "ageMs=$age enumerated=${snapshot.size} summarized=${threads.size}")
             threads.forEach { PersistentDiagnosticLog.info("GameStartup", "ageMs=$age $it") }
+        }.onFailure {
+            PersistentDiagnosticLog.warn("GameStartup", "ageMs=$age enumeration=unavailable")
         }
     }
 }
@@ -33,6 +37,7 @@ internal fun startupThreadSummary(name: String, state: Thread.State, frames: Arr
         name == "UnityMain" -> "unity"
         name == "bybus-log-read" -> "diagnostic_reader"
         name == "bybus-log-cleanup" -> "diagnostic_cleanup"
+        name == "bybus-fault" -> "diagnostic_sampler"
         frames.any { it.className.startsWith("com.google.firebase.") } -> "firebase"
         else -> return null
     }

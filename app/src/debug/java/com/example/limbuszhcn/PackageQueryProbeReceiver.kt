@@ -16,6 +16,8 @@ class PackageQueryProbeReceiver : BroadcastReceiver() {
             try {
                 val result = runCatching {
                     when (stage) {
+                        "fault-prepare" -> GuestFaultProviderProbe.register(intent.getIntExtra("pid", 0), true)
+                        "fault-cleanup" -> GuestFaultProviderProbe.register(0, false)
                         "framework-prepare" -> PackageQueryProbe.frameworkRegistry(context, true)
                         "framework-cleanup" -> PackageQueryProbe.frameworkRegistry(context, false)
                         "physical-profile" -> FrameworkProfileProbe.inspect(context)
@@ -27,7 +29,7 @@ class PackageQueryProbeReceiver : BroadcastReceiver() {
                     JSONObject().put("passed", false).put("error", it.stackTraceToString().take(8000))
                 }
                 val stem = when (stage) {
-                    "framework-prepare", "framework-cleanup", "physical-profile", "package-metadata", "application-state" -> stage
+                    "framework-prepare", "framework-cleanup", "physical-profile", "package-metadata", "application-state", "fault-prepare", "fault-cleanup" -> stage
                     else -> "package-query"
                 }
                 File(context.filesDir, "$stem-result.json").writeText(result.toString())

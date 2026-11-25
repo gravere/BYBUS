@@ -28,6 +28,9 @@ public abstract class SettingConfig {
 
     public void onLimbusApplicationCreated(android.app.Application application) { }
 
+    /** Server-only; the Binder provider has verified the UID and registered game PID. */
+    public Bundle collectLimbusFaultMarkers(int callerPid, long sinceMillis) { return null; }
+
     /** Bounded class family/result only; never class-loader contents or exception messages. */
     public void onLimbusClassLookup(String summary) { }
 

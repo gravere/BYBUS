@@ -132,7 +132,7 @@ internal class DebugLogExporter(private val context: Context) {
                 appendLine("packageQueries=first_64_supported_calls_with_game_metadata_plus_first_8_late_errors")
                 appendLine("classLookup=first_32_fallback_results_per_process")
                 appendLine("memory=5_second_startup_samples_then_30_seconds_with_summary_categories")
-                appendLine("gameFaultPersistence=5_second_current_process_fixed_marker_capture")
+                appendLine("gameFaultPersistence=5_second_game_pid_fixed_markers_via_container_service")
                 appendLine("startupThreads=three_startup_samples_fixed_roles_and_stack_methods_only")
                 appendLine("javaFaults=own_uid_exception_types_and_stack_methods_only")
                 appendLine("nativeTerminationFiles=${nativeTraces.size}")

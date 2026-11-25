@@ -1,13 +1,19 @@
 package com.example.limbuszhcn
 
 import android.content.Context
-import android.os.Process
+import android.os.Bundle
+import com.lody.virtual.client.core.VirtualCore
+import com.lody.virtual.client.ipc.ProviderCall
+import com.lody.virtual.server.BinderProvider
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.LinkOption
 
-/** Own-process, fixed categories only. Never retains Unity's message payload. */
-internal class GameFaultDiagnostics(context: Context) {
+/** Fixed categories for this game PID, collected outside Unity's hooked process. */
+internal class GameFaultDiagnostics(
+    context: Context,
+    private val readSnapshot: (Long) -> Bundle? = ::requestGameFaultSnapshot
+) {
     private var since = System.currentTimeMillis() - 1_000
     private var collectionStatus = ""
     private val seen = linkedSetOf<String>()
@@ -18,13 +24,14 @@ internal class GameFaultDiagnostics(context: Context) {
 
     fun sample() {
         val now = System.currentTimeMillis()
-        val events = readGameLog(since, listOf("--pid=${Process.myPid()}", "Unity:I", "AppSealing:E"),
-            onStatus = { status ->
-                if (status != collectionStatus) {
-                    collectionStatus = status
-                    PersistentDiagnosticLog.info("GameFault", "capture=$status intervalSeconds=5 scope=current_process")
-                }
-            }) { lines -> lines.take(2048).mapNotNull(::safeGameFaultMarker).take(128).toList() }
+        // The service process has no guest IO hooks. Never fork a logcat child in Unity.
+        val snapshot = runCatching { readSnapshot(since) }.getOrNull()
+        val status = snapshot?.getString("status") ?: "unavailable"
+        if (status != collectionStatus) {
+            collectionStatus = status
+            PersistentDiagnosticLog.info("GameFault", "capture=$status intervalSeconds=5 scope=current_process collector=container_service")
+        }
+        val events = snapshot?.getStringArrayList("markers").orEmpty()
         // A failed read must not discard its time window. Bound recovery to a
         // minute, so an unavailable log service cannot grow the next read forever.
         since = maxOf(since, now - if (collectionStatus == "available") 1_000 else 60_000)
@@ -55,6 +62,25 @@ internal class GameFaultDiagnostics(context: Context) {
             }.take(24).joinToString(",")
         }
     }.getOrDefault("")
+}
+
+internal fun requestGameFaultSnapshot(sinceMillis: Long): Bundle? =
+    ProviderCall.call(VirtualCore.getConfig().binderProviderAuthority,
+        VirtualCore.get().context, BinderProvider.GAME_FAULT_MARKERS, null,
+        Bundle().apply { putLong("since", sinceMillis) }, 0)
+
+/** Called only in the unhooked service process, after Binder caller verification. */
+internal fun collectGameFaultMarkers(pid: Int, sinceMillis: Long): Bundle {
+    var status = "unavailable"
+    val events = readGameLog(sinceMillis, listOf("--pid=$pid", "Unity:I", "AppSealing:E"),
+        onStatus = { status = it }) { lines ->
+        lines.take(2048).mapNotNull(::safeGameFaultMarker)
+            .filter { it.contains(" pid=$pid ") }.take(128).toList()
+    }
+    return Bundle().apply {
+        putString("status", status)
+        putStringArrayList("markers", ArrayList(events))
+    }
 }
 
 internal fun pruneNativeTerminationTraces(context: Context) {

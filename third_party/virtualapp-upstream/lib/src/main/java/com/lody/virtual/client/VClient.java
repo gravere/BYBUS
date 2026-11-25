@@ -419,7 +419,7 @@ public final class VClient extends IVClient.Stub {
         }
         systemPid = VActivityManager.get().getSystemPid();
         try {
-            setupUncaughtHandler();
+            setupUncaughtHandler(packageName);
         } catch (Throwable e) {
             e.printStackTrace();
         }
@@ -963,7 +963,16 @@ public final class VClient extends IVClient.Stub {
         }
     }
 
-    private void setupUncaughtHandler() {
+    private void setupUncaughtHandler(String packageName) {
+        if (LIMBUS_PACKAGE_NAME.equals(packageName)
+                || GmsSupport.GMS_PKG.equals(packageName)
+                || GmsSupport.VENDING_PKG.equals(packageName)) {
+            // BYBUS already records failures through the normal default-handler chain.
+            // Reparenting Android's live thread groups hides workers from enumeration
+            // (the legacy wrapper has no child count) and interferes with SDK handlers.
+            // Keep both the platform hierarchy and the current handlers untouched.
+            return;
+        }
         ThreadGroup root = Thread.currentThread().getThreadGroup();
         while (root.getParent() != null) {
             root = root.getParent();

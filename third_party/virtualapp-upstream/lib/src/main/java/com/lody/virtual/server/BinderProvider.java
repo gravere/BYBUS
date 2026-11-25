@@ -9,6 +9,7 @@ import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Binder;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Process;
@@ -52,6 +53,7 @@ import java.util.List;
  */
 public final class BinderProvider extends ContentProvider {
     private static final String TAG = "BinderProvider";
+    public static final String GAME_FAULT_MARKERS = "bybus.game_fault_markers";
 
     private final ServiceFetcher mServiceFetcher = new ServiceFetcher();
     private static boolean sInitialized = false;
@@ -239,6 +241,19 @@ public final class BinderProvider extends ContentProvider {
             Bundle bundle = new Bundle();
             BundleCompat.putBinder(bundle, "_VA_|_binder_", mServiceFetcher);
             return bundle;
+        }
+        if (GAME_FAULT_MARKERS.equals(method)) {
+            // Identity comes from Binder and the server registry, never from extras.
+            int pid = Binder.getCallingPid();
+            if (Binder.getCallingUid() != Process.myUid() || pid <= 0
+                    || !"com.ProjectMoon.LimbusCompany".equals(
+                            VActivityManagerService.get().getInitialPackage(pid))) {
+                return null;
+            }
+            long now = System.currentTimeMillis();
+            long since = extras == null ? now - 1_000 : extras.getLong("since", now - 1_000);
+            since = Math.max(now - 60_000, Math.min(now, since));
+            return VirtualCore.getConfig().collectLimbusFaultMarkers(pid, since);
         }
         return null;
     }

@@ -97,6 +97,9 @@ class LimbusZhCNApplication : Application() {
             GameMemoryDiagnostics.start(VirtualCore.get().context, application)
         }
 
+        override fun collectLimbusFaultMarkers(callerPid: Int, sinceMillis: Long): android.os.Bundle =
+            collectGameFaultMarkers(callerPid, sinceMillis)
+
         override fun prepareLimbusTranslationResources(): Boolean {
             // Run before the guest Application too: repeatedly failing early
             // launches must not accumulate native trace files indefinitely.

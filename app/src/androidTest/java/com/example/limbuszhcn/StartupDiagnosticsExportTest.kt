@@ -15,10 +15,17 @@ import java.util.zip.ZipFile
 /** Synthetic events on a disposable emulator; never starts or diagnoses a real guest game. */
 @RunWith(AndroidJUnit4::class)
 class StartupDiagnosticsExportTest {
+    @Test fun hostCannotRequestAnotherProcessThroughGuestCollector() {
+        // Actual Binder call to the existing server: the host is not a registered guest.
+        assertNull(requestGameFaultSnapshot(0))
+    }
+
     @Test fun runtimeFaultsRemainInPersistentExportAfterTheCollectorAdvances() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         PersistentDiagnosticLog.install(context)
-        val sampler = GameFaultDiagnostics(context)
+        // The test is not a registered guest PID. Exercise the same collector directly
+        // in this unhooked process; provider identity rejection is checked separately.
+        val sampler = GameFaultDiagnostics(context) { collectGameFaultMarkers(Process.myPid(), it) }
         val privateMessage = "PRIVATE_FAULT_TEST_SENTINEL_ACCOUNT"
         Log.e("Unity", "NullReferenceException: $privateMessage")
         Log.e("Unity", "at StageScript_Cromer.CheckTrigger (System.String $privateMessage)")
@@ -63,7 +70,11 @@ class StartupDiagnosticsExportTest {
                 assertFalse(timeline.contains("PRIVATE_TEST_SENTINEL_ACCOUNT"))
                 val status = zip.getInputStream(zip.getEntry("capture-status.txt")).bufferedReader().use { it.readText() }
                 assertTrue(status.contains("scope=own_uid_only"))
-                assertTrue(status.contains("gameEvents=collected_bounded"))
+                // A bounded read can close the pipe before logcat exits. Required events
+                // still must be present, but the archive must report that as incomplete.
+                val expected = if (timeline.contains("\ncollection=incomplete\n"))
+                    "collected_incomplete" else "collected_bounded"
+                assertTrue(status, status.contains("gameEvents=$expected"))
                 assertTrue(status.contains("signalSender=not_exposed_by_ApplicationExitInfo"))
                 assertTrue(status.contains("missingEvidence=not_a_success_result"))
                 val javaFaults = zip.getInputStream(zip.getEntry("java-faults.txt")).bufferedReader().use { it.readText() }
