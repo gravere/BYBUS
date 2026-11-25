@@ -579,7 +579,8 @@ def inspect_framework_permissions(package_jni=False, component_settings=False, p
             if result.get("sdk") != expected_sdk or result.get("game_started") is not False:
                 raise RuntimeError("Package interface fixture used an unexpected platform or game")
             if result.get("runtime_methods", 0) <= 0 or not all(result.get(key) for key in (
-                    "activity_thread_concrete", "binder_concrete", "reinjection_stable", "metadata_query_preserved")):
+                    "activity_thread_concrete", "binder_concrete", "reinjection_stable", "metadata_query_preserved",
+                    "thread_hierarchy_preserved", "crash_handler_preserved")):
                 raise RuntimeError("Package interface forwarding or reinjection failed")
             return
         if component_settings:

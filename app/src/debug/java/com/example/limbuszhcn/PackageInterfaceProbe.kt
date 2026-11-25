@@ -12,6 +12,20 @@ import java.lang.reflect.Proxy
 /** Disposable emulator process; no guest Application, account or game resource is opened. */
 internal object PackageInterfaceProbe {
     fun inspect(context: Context): JSONObject {
+        val client = com.lody.virtual.client.VClient.get()
+        val setup = client.javaClass.getDeclaredMethod("setupUncaughtHandler", String::class.java)
+            .apply { isAccessible = true }
+        val caller = Thread.currentThread()
+        val main = android.os.Looper.getMainLooper().thread
+        val handler = Thread.getDefaultUncaughtExceptionHandler()
+        val parents = generateSequence(caller.threadGroup) { it.parent }.map { it to it.parent }.toList()
+        for (pkg in listOf("com.ProjectMoon.LimbusCompany", "com.google.android.gms", "com.android.vending")) {
+            setup.invoke(client, pkg)
+            val threads = Thread.getAllStackTraces()
+            check(threads.containsKey(caller) && threads.containsKey(main)) { "Guest setup hid platform threads" }
+            check(parents.all { (group, parent) -> group.parent === parent })
+            check(Thread.getDefaultUncaughtExceptionHandler() === handler)
+        }
         val before = mirror.android.app.ActivityThread.sPackageManager.get()
         check(Proxy.isProxyClass(before.javaClass)) { "Expected original container dispatch" }
         PackageManagerStub.prepareGameInterface("com.ProjectMoon.LimbusCompany")
@@ -36,5 +50,6 @@ internal object PackageInterfaceProbe {
             .put("sdk", android.os.Build.VERSION.SDK_INT).put("game_started", false)
             .put("activity_thread_concrete", true).put("binder_concrete", true)
             .put("reinjection_stable", true).put("metadata_query_preserved", true)
+            .put("thread_hierarchy_preserved", true).put("crash_handler_preserved", true)
     }
 }
