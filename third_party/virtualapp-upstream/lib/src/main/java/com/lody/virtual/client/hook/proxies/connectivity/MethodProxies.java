@@ -2,6 +2,7 @@ package com.lody.virtual.client.hook.proxies.connectivity;
 
 import com.lody.virtual.client.core.VirtualCore;
 import com.lody.virtual.client.hook.base.MethodProxy;
+import com.lody.virtual.helper.compat.ConnectivityCallerIdentity;
 
 import java.lang.reflect.Method;
 
@@ -11,6 +12,19 @@ import java.lang.reflect.Method;
  * @Descrip:
  */
 public class MethodProxies {
+
+    static class GetNetworkCapabilities extends MethodProxy {
+        @Override public String getMethodName() { return "getNetworkCapabilities"; }
+
+        @Override public boolean beforeCall(Object who, Method method, Object... args) {
+            // WebView may keep a manager created from a derived Google Context. Fixing only
+            // the Application Context or the game's cached manager misses that caller.
+            ConnectivityCallerIdentity.rewriteCapabilitiesCaller(method, args, getAppPkg(), getHostPkg());
+            return true;
+        }
+
+        @Override public boolean isEnable() { return isAppProcess(); }
+    }
 
     static class PrepareVpn extends MethodProxy {
 

@@ -53,6 +53,31 @@ providers use the original resolver with the host identity. No OEM name, phone m
 the normal route. A compile-only `IContentProvider` declaration supplies the
 hidden platform type; it must never be packaged in the app or test APK.
 
+## Connectivity identity
+
+Google components retain their virtual package for account and billing operations.
+For the real `IConnectivityManager.getNetworkCapabilities` call, the caller package
+must instead belong to the actual Binder UID. A manager obtained from a derived
+Context can outlive the Context fix, so this mapping belongs in the connectivity
+service proxy, not just in the game's cached manager. Match the Android 11
+`(Network, String)` or Android 12+ `(Network, String, String)` signature and replace
+only the current guest's calling-package argument. Preserve the network,
+attribution tag, returned capabilities and system exceptions. Older and unknown
+signatures, other callers and explicit foreign packages pass through unchanged.
+
+`ConnectivityCallerIdentityTest` exercises the actual platform service: a Google
+package under the host UID is rejected, while the same query with the mapped host
+package returns real capabilities. This does not establish completed Google login
+on every OEM WebView.
+
+The game and Google Activity processes bind the private `GuestRuntimeService`
+before Activity creation. The system can then keep the engine at the importance
+of its visible clients, including a standalone Google login opened from settings.
+Without this dependency the cached-process freezer can freeze the engine while
+the login page is still visible; its next synchronous settings query kills the
+frozen server and fails with `DeadObjectException`. Use the existing bound
+service, with no permanent foreground notification or global freezer exemption.
+
 ## Verification boundaries
 
 Exercise stable and unstable clients, cached acquisition, release, system and

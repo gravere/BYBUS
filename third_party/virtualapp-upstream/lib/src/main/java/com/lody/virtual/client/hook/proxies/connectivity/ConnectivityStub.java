@@ -18,6 +18,7 @@ public class ConnectivityStub extends BinderInvocationProxy {
     @Override
     protected void onBindMethods() {
         super.onBindMethods();
+        addMethodProxy(new MethodProxies.GetNetworkCapabilities());
         addMethodProxy(new ResultStaticMethodProxy("isTetheringSupported", true));
         addMethodProxy(new MethodProxies.PrepareVpn());
     }

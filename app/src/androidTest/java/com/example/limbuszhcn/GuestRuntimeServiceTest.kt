@@ -17,6 +17,15 @@ import java.util.concurrent.TimeUnit
 
 @RunWith(AndroidJUnit4::class)
 class GuestRuntimeServiceTest {
+    @Test fun gameAndGoogleWindowsKeepTheirEngineDependency() {
+        listOf("com.ProjectMoon.LimbusCompany", "com.google.android.gms", "com.android.vending").forEach {
+            assertTrue(GuestRuntimeService.needsEngineBinding(it))
+        }
+        listOf("io.github.gravere.bybus", "another.guest", "", null).forEach {
+            assertFalse(GuestRuntimeService.needsEngineBinding(it))
+        }
+    }
+
     @Test fun boundEngineIsPrivateAndDoesNotPublishAServiceNotification() {
         val app = InstrumentationRegistry.getInstrumentation().targetContext
         val component = ComponentName(app, GuestRuntimeService::class.java)

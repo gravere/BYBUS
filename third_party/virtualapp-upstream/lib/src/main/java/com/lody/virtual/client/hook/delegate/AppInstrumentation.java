@@ -219,7 +219,7 @@ public final class AppInstrumentation extends InstrumentationDelegate implements
                 && MICROG_LOGIN_ACTIVITY.equals(activity.getClass().getName())) {
             installActivityClientCallerProxyIfNeeded();
         }
-        com.lody.virtual.client.stub.GuestRuntimeService.bindForGame();
+        com.lody.virtual.client.stub.GuestRuntimeService.bindForGuest();
         super.callActivityOnCreate(activity, icicle);
         com.lody.virtual.helper.compat.MicrogActivityInsets.apply(activity);
         prepareMicrogLoginWebView(activity);

@@ -9,6 +9,7 @@ import android.os.Binder;
 import android.os.IBinder;
 import com.lody.virtual.client.VClient;
 import com.lody.virtual.client.core.VirtualCore;
+import com.lody.virtual.helper.compat.MicrogBillingIdentityPolicy;
 import com.lody.virtual.helper.utils.VLog;
 
 /** The visible guest owns the engine's process importance, without a permanent started service. */
@@ -16,9 +17,13 @@ public final class GuestRuntimeService extends Service {
     private final IBinder binder = new Binder();
     private static ServiceConnection guestConnection;
 
-    public static synchronized void bindForGame() {
-        if (!"com.ProjectMoon.LimbusCompany".equals(VClient.get().getCurrentPackage())
-                || guestConnection != null) return;
+    public static boolean needsEngineBinding(String packageName) {
+        return "com.ProjectMoon.LimbusCompany".equals(packageName)
+                || MicrogBillingIdentityPolicy.isGoogleComponent(packageName);
+    }
+
+    public static synchronized void bindForGuest() {
+        if (!needsEngineBinding(VClient.get().getCurrentPackage()) || guestConnection != null) return;
         final Context context = VirtualCore.get().getContext();
         ServiceConnection connection = new ServiceConnection() {
             @Override public void onServiceConnected(ComponentName name, IBinder service) { }

@@ -20,6 +20,14 @@ class JavaFaultDiagnosticsTest {
         assertNotNull(safeJavaFaultMarker(prefix.replace("E chromium", "W System.err") + "java.lang.IllegalStateException: payload omitted"))
     }
 
+    @Test fun appOpsRejectionWithoutTheWordUidKeepsOnlyItsCategory() {
+        val marker = safeJavaFaultMarker(prefix + "java.lang.SecurityException: Package private.example.account does not belong to 10174; token=secret-value")
+        assertEquals("time=1795524380.763 pid=2523 event=java_exception type=java.lang.SecurityException category=package_uid_mismatch", marker)
+        assertFalse(marker!!.contains("private"))
+        assertFalse(marker.contains("10174"))
+        assertFalse(marker.contains("secret"))
+    }
+
     @Test fun nativeFatalMarkerIsAcceptedButArbitraryBrowserTextIsNot() {
         assertEquals("time=1795524380.763 pid=2523 event=chromium_jni_fatal",
             safeJavaFaultMarker(prefix + "[FATAL:jni_android.cc(306)] Please include Java exception stack in crash report"))
