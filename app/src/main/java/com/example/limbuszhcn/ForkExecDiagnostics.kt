@@ -4,6 +4,7 @@ package com.example.limbuszhcn
 internal fun forkExecKernelSnapshot(
     ownerPid: Int,
     tids: List<Int>,
+    observedChildren: List<Int> = emptyList(),
     read: (String, Int) -> String? = ::readStartupProc
 ): List<String> {
     fun state(base: String): String {
@@ -19,6 +20,15 @@ internal fun forkExecKernelSnapshot(
     }
     if (ownerPid <= 0) return emptyList()
     return buildList {
+        val inspected = mutableSetOf<Int>()
+        fun childState(pid: Int) {
+            if (inspected.size >= 16 || !inspected.add(pid)) return
+            val child = "/proc/$pid"
+            val status = read("$child/status", 4096).orEmpty()
+            val parent = Regex("(?m)^PPid:\\s+(\\d+)\\s*$").find(status)?.groupValues?.get(1)?.toIntOrNull()
+            if (parent == ownerPid) add("childPid=$pid ${state(child)}")
+            else add("childPid=$pid state=unavailable_or_exited")
+        }
         var observed = 0
         for (tid in tids.asSequence().filter { it > 0 }.distinct().take(512)) {
             val base = "/proc/$ownerPid/task/$tid"
@@ -30,17 +40,15 @@ internal fun forkExecKernelSnapshot(
                 val ids = children.trim().split(Regex("\\s+"))
                     .mapNotNull(String::toIntOrNull).filter { it > 0 && it != ownerPid }.distinct().take(4)
                 add("thread=unity children=${ids.size}")
-                for (pid in ids) {
-                    val child = "/proc/$pid"
-                    val status = read("$child/status", 4096).orEmpty()
-                    val parent = Regex("(?m)^PPid:\\s+(\\d+)\\s*$").find(status)?.groupValues?.get(1)?.toIntOrNull()
-                    if (parent == ownerPid) add("childPid=$pid ${state(child)}")
-                    else add("childPid=$pid state=unavailable_or_exited")
-                }
+                ids.forEach(::childState)
             }
             if (++observed == 2) break
         }
         if (isEmpty()) add("thread=unity kernelState=unavailable")
+        // Some kernels deny task/children but still allow own-UID child status.
+        // The trace is a candidate only; always validate its current PPid first.
+        observedChildren.asSequence().filter { it > 0 && it != ownerPid }.distinct()
+            .take(16).forEach(::childState)
     }
 }
 

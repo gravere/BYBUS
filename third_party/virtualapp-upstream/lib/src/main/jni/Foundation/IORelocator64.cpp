@@ -3,6 +3,7 @@
 #include "ExecLaunchTrace.h"
 #include "StartupProcReader.h"
 #include "ExecEnvironment.h"
+#include "ExecSyscallEntry.h"
 //
 // VirtualApp Native Project
 //
@@ -1194,13 +1195,7 @@ void IOUniformer::init_env_before_all() {
     }
 }
 
-static inline void
-hook_function(void *handle, const char *symbol, void *new_func, void **old_func) {
-    void *addr = dlsym(handle, symbol);
-    if (addr == NULL) {
-        ALOGE("Not found symbol : %s", symbol);
-        return;
-    }
+static bool hook_io_address(void *addr, const char *symbol, void *new_func, void **old_func) {
     static LimbusIoHookRegistry registry;
     static pthread_mutex_t install_lock = PTHREAD_MUTEX_INITIALIZER;
     pthread_mutex_lock(&install_lock);
@@ -1210,6 +1205,17 @@ hook_function(void *handle, const char *symbol, void *new_func, void **old_func)
             });
     pthread_mutex_unlock(&install_lock);
     if (!installed) ALOGE("IO hook rejected conflicting or unavailable symbol: %s", symbol);
+    return installed;
+}
+
+static inline void
+hook_function(void *handle, const char *symbol, void *new_func, void **old_func) {
+    void *addr = dlsym(handle, symbol);
+    if (addr == NULL) {
+        ALOGE("Not found symbol : %s", symbol);
+        return;
+    }
+    hook_io_address(addr, symbol, new_func, old_func);
 }
 
 void onSoLoaded(const char *name, void *handle);
@@ -5024,6 +5030,55 @@ bool relocate_linker(const char* LINKER_PATH) {
     return false;
 }
 
+struct ExecEntrySearch {
+    uintptr_t libc_base;
+    void *entry = nullptr;
+    unsigned matches = 0;
+};
+
+static int find_libc_exec_entry(dl_phdr_info *info, size_t, void *opaque) {
+    auto &search = *static_cast<ExecEntrySearch *>(opaque);
+    if (!info || !info->dlpi_phdr || info->dlpi_addr != search.libc_base) return 0;
+    for (ElfW(Half) i = 0; i < info->dlpi_phnum; ++i) {
+        const auto &segment = info->dlpi_phdr[i];
+        if (segment.p_type != PT_LOAD || (segment.p_flags & (PF_R | PF_X)) != (PF_R | PF_X)
+                || segment.p_memsz < 24 || segment.p_memsz > 32u * 1024u * 1024u) continue;
+        const auto *code = reinterpret_cast<const uint32_t *>(info->dlpi_addr + segment.p_vaddr);
+        const size_t words = segment.p_memsz / sizeof(*code);
+        for (size_t n = 0; n + 6 <= words; ++n) {
+            if (!container_exec::isExecSyscallEntry(code + n, words - n)) continue;
+            search.entry = const_cast<uint32_t *>(code + n);
+            ++search.matches;
+        }
+    }
+    return 1;
+}
+
+static void hook_exec_family(void *handle) {
+    void *exported = dlsym(handle, "execve");
+    Dl_info origin{};
+    ExecEntrySearch search{};
+    if (exported && dladdr(exported, &origin) && origin.dli_fbase) {
+        search.libc_base = reinterpret_cast<uintptr_t>(origin.dli_fbase);
+        // Resolve before patching the exported entry: on older Bionic they are
+        // the same address. No file/proc scan, API-number guess or lazy child work.
+        dl_iterate_phdr(find_libc_exec_entry, &search);
+    }
+    void *internal_original = nullptr;
+    bool internal = search.matches == 1 && hook_io_address(search.entry, "__execve",
+            reinterpret_cast<void *>(new_execve), &internal_original);
+    if (internal && search.entry == exported) {
+        orig_execve = reinterpret_cast<decltype(orig_execve)>(internal_original);
+    } else if (exported) {
+        const size_t required = (reinterpret_cast<uintptr_t>(exported) & 7u) ? 5 : 4;
+        if (arm64_entry_has_room(static_cast<const uint32_t *>(exported), 5, required))
+            hook_io_address(exported, "execve", reinterpret_cast<void *>(new_execve),
+                    reinterpret_cast<void **>(&orig_execve));
+    }
+    ALOGI("IO hook >>> exec routing internal=%d matches=%u exported=%d",
+            internal, search.matches, orig_execve != nullptr);
+}
+
 void startIOHook(int api_level) {
     container_exec::launchTrace().initialize();
     // Populate the cache outside signal context and fail before any partial hooks.
@@ -5063,7 +5118,7 @@ void startIOHook(int api_level) {
         HOOK_SYMBOL(handle, symlinkat);
         HOOK_SYMBOL(handle, utimensat);
         HOOK_SYMBOL(handle, chdir);
-        HOOK_SYMBOL(handle, execve);
+        hook_exec_family(handle);
         HOOK_SYMBOL(handle, statfs64);
         HOOK_SYMBOL(handle, kill);
         HOOK_SYMBOL(handle, alarm);

@@ -30,17 +30,21 @@ internal class GameStartupThreads {
                 } }) {
                 val pid = android.os.Process.myPid()
                 val tids = java.io.File("/proc/$pid/task").list().orEmpty().mapNotNull(String::toIntOrNull)
-                forkExecKernelSnapshot(pid, tids).forEach {
-                    PersistentDiagnosticLog.info("GameStartup", "ageMs=$age $it")
-                }
+                var children = emptyList<Int>()
                 runCatching { com.lody.virtual.client.NativeEngine.nativeReadExecLaunchTrace() }
                     .onSuccess { values ->
+                        children = values.asList().chunked(3).take(16).mapNotNull { row ->
+                            row.firstOrNull()?.takeIf { it in 1..Int.MAX_VALUE.toLong() }?.toInt()
+                        }
                         val phases = execPhaseSnapshot(values)
                         PersistentDiagnosticLog.info("GameStartup", "ageMs=$age observedExecChildren=${phases.size}")
                         phases.forEach { PersistentDiagnosticLog.info("GameStartup", "ageMs=$age $it") }
                     }.onFailure {
                         PersistentDiagnosticLog.info("GameStartup", "ageMs=$age execPhases=unavailable")
                     }
+                forkExecKernelSnapshot(pid, tids, children).forEach {
+                    PersistentDiagnosticLog.info("GameStartup", "ageMs=$age $it")
+                }
             }
         }.onFailure {
             PersistentDiagnosticLog.warn("GameStartup", "ageMs=$age enumeration=unavailable")

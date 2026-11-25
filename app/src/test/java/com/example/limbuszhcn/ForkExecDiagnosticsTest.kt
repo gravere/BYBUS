@@ -40,4 +40,23 @@ class ForkExecDiagnosticsTest {
             "childPid=31 phase=setting_descriptor_flags errno=0", "childPid=32 phase=setting_working_directory errno=0"),
             execPhaseSnapshot(longArrayOf(30, 6, 0, 31, 7, 0, 32, 8, 0)))
     }
+
+    @Test fun `trace child remains observable when task children are denied`() {
+        val paths = mutableListOf<String>()
+        val data = mapOf(
+            "/proc/20/task/21/comm" to "UnityMain",
+            "/proc/30/status" to "PPid:\t20\nState:\tS\n",
+            "/proc/30/wchan" to "futex_wait_queue_me",
+            "/proc/31/status" to "PPid:\t99\nState:\tR\n"
+        )
+        val report = forkExecKernelSnapshot(20, listOf(21), listOf(30, 31, 30, -1, 20)) { path, _ ->
+            paths += path; data[path]
+        }.joinToString("\n")
+        assertTrue(report.contains("children=unavailable"))
+        assertTrue(report.contains("childPid=30 state=S wchan=futex_wait_queue_me"))
+        assertTrue(report.contains("childPid=31 state=unavailable_or_exited"))
+        assertFalse(paths.contains("/proc/31/wchan"))
+        assertFalse(paths.contains("/proc/20/status"))
+        assertEquals(1, paths.count { it == "/proc/30/wchan" })
+    }
 }
