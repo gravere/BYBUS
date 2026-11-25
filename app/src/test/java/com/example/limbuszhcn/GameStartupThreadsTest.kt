@@ -4,6 +4,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class GameStartupThreadsTest {
+    @Test fun `repeated firebase workers cannot evict the blocked game thread`() {
+        val unity = "thread=unity state=RUNNABLE frames=java.lang.UNIXProcess.forkAndExec:native"
+        val main = "thread=main state=RUNNABLE frames=android.os.MessageQueue.nativePollOnce:native"
+        val workers = List(20) { "thread=firebase state=WAITING frames=worker${it % 10}" }
+        val result = selectStartupThreadSummaries(workers + main + unity + workers)
+        assertEquals(listOf(unity, main), result.take(2))
+        assertEquals(8, result.size)
+        assertEquals(result.distinct(), result)
+    }
+
     @Test fun `startup thread report retains blocking frames without thread names or file contents`() {
         val frames = arrayOf(
             StackTraceElement("java.lang.Object", "wait", "private-file.txt", -2),

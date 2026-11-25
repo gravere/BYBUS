@@ -1,12 +1,10 @@
 package com.example.limbuszhcn
 
-import java.io.File
-
 /** Only sampled with a blocked Java process-launch stack, never starts another process. */
 internal fun forkExecKernelSnapshot(
     ownerPid: Int,
     tids: List<Int>,
-    read: (String, Int) -> String? = ::readBoundedProc
+    read: (String, Int) -> String? = ::readStartupProc
 ): List<String> {
     fun state(base: String): String {
         val wchan = read("$base/wchan", 128)?.trim()
@@ -54,20 +52,23 @@ internal fun execPhaseSnapshot(values: LongArray): List<String> = values.asList(
         3L -> "elf_read"
         4L -> "exec_syscall_entered"
         5L -> "exec_failed"
+        6L -> "preparing_descriptors"
+        7L -> "setting_descriptor_flags"
+        8L -> "setting_working_directory"
         else -> return@mapNotNull null
     }
     "childPid=${row[0]} phase=$phase errno=${row[2].coerceIn(0, 4095)}"
 }
 
-private fun readBoundedProc(path: String, limit: Int): String? = runCatching {
-    File(path).inputStream().use { input ->
-        val bytes = ByteArray(limit)
-        var used = 0
-        while (used < limit) {
-            val count = input.read(bytes, used, limit - used)
-            if (count <= 0) break
-            used += count
-        }
-        bytes.decodeToString(0, used)
-    }
-}.getOrNull()
+private val startupProcPath = Regex("^/proc/([1-9][0-9]*)(?:/task/([1-9][0-9]*))?/(comm|status|wchan|syscall|children)$")
+private val startupProcFields = listOf("comm", "status", "wchan", "syscall", "children")
+
+private fun readStartupProc(path: String, limit: Int): String? {
+    val match = startupProcPath.matchEntire(path) ?: return null
+    val pid = match.groupValues[1].toIntOrNull() ?: return null
+    val tid = match.groupValues[2].toIntOrNull() ?: 0
+    val kind = startupProcFields.indexOf(match.groupValues[3])
+    return runCatching {
+        com.lody.virtual.client.NativeEngine.nativeReadStartupProc(pid, tid, kind)?.take(limit)
+    }.getOrNull()
+}

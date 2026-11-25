@@ -49,6 +49,7 @@ bool execve_process = false;
 bool g_limbus_container_process_known = false;
 bool g_limbus_container_process = false;
 #include "LimbusProcessScope.h"
+#include "StartupProcReader.h"
 static const limbus_process::Scope g_limbus_process_scope;
 static thread_local bool g_proc_redirect_active = false;
 
@@ -585,6 +586,11 @@ static int fake_limbus_proc_file(const char *pathname, int flags, int mode) {
         return 0;
     }
     return redirect_proc_file_guarded(relocated_path, flags, mode);
+}
+
+bool container_exec::readStartupProcFromKernel(pid_t pid, pid_t tid, int kind, std::string &out) {
+    auto entry = orig_syscall ? orig_syscall : syscall;
+    return readStartupProcUsing(entry, pid, tid, kind, out);
 }
 
 HOOK_DEF(int, open, const char *pathname, int flags, int mode) {

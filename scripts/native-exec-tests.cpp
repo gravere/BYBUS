@@ -14,6 +14,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include "ExecEnvironment.h"
+#include "ExecLaunchTrace.h"
 #include "SandboxFs.h"
 
 static pthread_mutex_t hook_lock = PTHREAD_MUTEX_INITIALIZER;

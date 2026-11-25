@@ -1,6 +1,7 @@
 #include "LimbusTerminationTrace.h"
 #include "LimbusProcessScope.h"
 #include "ExecLaunchTrace.h"
+#include "StartupProcReader.h"
 #include "ExecEnvironment.h"
 //
 // VirtualApp Native Project
@@ -2182,6 +2183,14 @@ HOOK_DEF(long, syscall, long number, ...) {
     long a6 = va_arg(args, long);
     va_end(args);
 
+    if (!g_limbus_process_scope.isOwner()) {
+        // libcore deliberately uses raw close/openat/getdents while preparing
+        // a child. Retain that contract instead of re-entering parent hooks.
+        if (number == __NR_close || number == __NR_dup || number == __NR_dup3
+                || number == __NR_getdents64 || number == __NR_openat)
+            container_exec::launchTrace().record(container_exec::Descriptors);
+        return orig_syscall(number, a1, a2, a3, a4, a5, a6);
+    }
     if (is_limbus_container_process()) {
         int observed_signal = 0;
         if (number == __NR_kill) observed_signal = static_cast<int>(a2);
@@ -2910,6 +2919,7 @@ HOOK_DEF(int, truncate, const char *pathname, off_t length) {
 
 // int chdir(const char *path);
 HOOK_DEF(int, chdir, const char *pathname) {
+    container_exec::launchTrace().record(container_exec::WorkingDirectory);
     char temp[PATH_MAX];
     const char *relocated_path = relocate_path(pathname, temp, sizeof(temp));
     if (__predict_true(relocated_path)) {
@@ -3034,6 +3044,12 @@ HOOK_DEF(int, openat, int fd, const char *pathname, int flags, int mode) {
 }
 
 HOOK_DEF(int, close, int __fd) {
+    // A vfork child can share these globals with its suspended parent. Never
+    // clear the parent's virtual FD table, release objects or acquire its locks.
+    if (!g_limbus_process_scope.isOwner()) {
+        container_exec::launchTrace().record(container_exec::Descriptors);
+        return static_cast<int>(orig_syscall(__NR_close, __fd));
+    }
     int ret;
     LOGE("close fd[%d]", __fd);
     xdja::zs::sp<virtualFileDescribe> vfd(virtualFileDescribeSet::getVFDSet().get(__fd));
@@ -3085,6 +3101,12 @@ HOOK_DEF(int, statfs, __const char *__file, struct statfs *__buf) {
     errno = EACCES;
     return -1;
 }
+
+bool container_exec::readStartupProcFromKernel(pid_t pid, pid_t tid, int kind, std::string &out) {
+    auto entry = orig_syscall ? orig_syscall : syscall;
+    return readStartupProcUsing(entry, pid, tid, kind, out);
+}
+
 
 // Read the ELF prefix through the original kernel entry. Calling fopen here
 // re-enters the file hooks, allocator and logging while a fork child has only
@@ -3220,6 +3242,7 @@ HOOK_DEF(ssize_t, pwrite64, int fd, const void *buf, size_t count, off64_t offse
 }
 
 HOOK_DEF(ssize_t, read, int fd, void *buf, size_t count) {
+    if (!g_limbus_process_scope.isOwner()) return orig_syscall(__NR_read, fd, buf, count);
     ssize_t ret = 0;
     bool flag = false;
 
@@ -3296,6 +3319,7 @@ HOOK_DEF(char *, fgets, char *s, int size, FILE *stream) {
 }
 
 HOOK_DEF(ssize_t, write, int fd, const void* buf, size_t count) {
+    if (!g_limbus_process_scope.isOwner()) return orig_syscall(__NR_write, fd, buf, count);
     ssize_t ret = 0;
     bool flag = false;
 
@@ -3871,6 +3895,10 @@ HOOK_DEF(ssize_t, sendfile64, int out_fd, int in_fd, off64_t* offset, size_t cou
 //int dup(int oldfd);
 HOOK_DEF(int, dup, int oldfd)
 {
+    if (!g_limbus_process_scope.isOwner()) {
+        container_exec::launchTrace().record(container_exec::Descriptors);
+        return static_cast<int>(orig_syscall(__NR_dup, oldfd));
+    }
     int ret = static_cast<int>(syscall(__NR_dup, oldfd));
 
     zString path, path2;
@@ -3941,6 +3969,46 @@ HOOK_DEF(int, fcntl, int fd, int cmd, ...) {
     va_list arg;
     int ret = -1;
     va_start (arg, cmd);
+    if (!g_limbus_process_scope.isOwner()) {
+        container_exec::launchTrace().record(container_exec::DescriptorFlags);
+        // fcntl has no-argument, integer-argument and pointer-argument commands.
+        // Do not fetch a nonexistent argument for the getter commands.
+        unsigned long value = 0;
+        switch (cmd) {
+            case F_GETFD: case F_GETFL: case F_GETOWN:
+#ifdef F_GETSIG
+            case F_GETSIG:
+#endif
+#ifdef F_GETLEASE
+            case F_GETLEASE:
+#endif
+#ifdef F_GETPIPE_SZ
+            case F_GETPIPE_SZ:
+#endif
+#ifdef F_GET_SEALS
+            case F_GET_SEALS:
+#endif
+                break;
+            case F_SETFD: case F_SETFL: case F_SETOWN:
+            case F_DUPFD: case F_DUPFD_CLOEXEC:
+#ifdef F_SETSIG
+            case F_SETSIG:
+#endif
+#ifdef F_SETLEASE
+            case F_SETLEASE:
+#endif
+#ifdef F_SETPIPE_SZ
+            case F_SETPIPE_SZ:
+#endif
+#ifdef F_ADD_SEALS
+            case F_ADD_SEALS:
+#endif
+                value = static_cast<unsigned long>(va_arg(arg, int)); break;
+            default: value = reinterpret_cast<unsigned long>(va_arg(arg, void *)); break;
+        }
+        va_end(arg);
+        return static_cast<int>(orig_syscall(__NR_fcntl, fd, cmd, value));
+    }
     switch (cmd) {
         case F_DUPFD:
         case F_DUPFD_CLOEXEC: {

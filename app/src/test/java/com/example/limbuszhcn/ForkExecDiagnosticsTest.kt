@@ -34,4 +34,10 @@ class ForkExecDiagnosticsTest {
         assertEquals(listOf("childPid=30 phase=exec_syscall_entered errno=0", "childPid=31 phase=exec_failed errno=2"),
             execPhaseSnapshot(longArrayOf(30, 4, 0, 31, 5, 2, -1, 9, 22, 32)))
     }
+
+    @Test fun `pre exec descriptor work is distinguishable from missing child observations`() {
+        assertEquals(listOf("childPid=30 phase=preparing_descriptors errno=0",
+            "childPid=31 phase=setting_descriptor_flags errno=0", "childPid=32 phase=setting_working_directory errno=0"),
+            execPhaseSnapshot(longArrayOf(30, 6, 0, 31, 7, 0, 32, 8, 0)))
+    }
 }

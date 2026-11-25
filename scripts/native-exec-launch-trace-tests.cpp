@@ -14,10 +14,13 @@ int main() {
         const pid_t pid = shared ? vfork() : fork();
         assert(pid >= 0);
         if (pid == 0) {
+            trace.record(container_exec::Descriptors);
+            trace.record(container_exec::DescriptorFlags);
             trace.record(container_exec::Entered);
             trace.record(container_exec::EnvironmentReady);
             errno = ENOENT;
             trace.record(container_exec::Failed, errno);
+            trace.record(container_exec::Descriptors); // Error-pipe cleanup must not erase exec errno.
             _exit(errno == ENOENT ? 0 : 1);
         }
         int status = -1;

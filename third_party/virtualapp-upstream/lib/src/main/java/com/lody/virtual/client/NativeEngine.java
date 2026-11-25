@@ -633,6 +633,9 @@ public class NativeEngine {
     /** Numeric, process-local startup observations; contains no command or environment data. */
     public static native long[] nativeReadExecLaunchTrace();
 
+    /** Fixed, sanitized kernel fields for own tasks / verified direct children only. */
+    public static native String nativeReadStartupProc(int pid, int tid, int kind);
+
     private static native void nativeIOReadOnly(String path);
 
     private static native void nativeEnableIORedirect(String soPath, String soPath64, String cachePath, int apiLevel, int previewApiLevel);

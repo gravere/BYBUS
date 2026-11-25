@@ -8,7 +8,8 @@
 
 namespace container_exec {
 
-enum Phase { Entered = 1, PathReady = 2, ElfReady = 3, EnvironmentReady = 4, Failed = 5 };
+enum Phase { Entered = 1, PathReady = 2, ElfReady = 3, EnvironmentReady = 4, Failed = 5,
+    Descriptors = 6, DescriptorFlags = 7, WorkingDirectory = 8 };
 
 // Initialized in the parent before hooks. MAP_SHARED also covers Bionic's
 // non-CLONE_VM vfork fallback. Child writes contain no paths, commands or locks.
@@ -42,6 +43,12 @@ public:
         // concurrent children can collide: discard a busy slot, never wait.
         uint32_t sequence = entry.sequence.load(std::memory_order_relaxed);
         if ((sequence & 1) || !entry.sequence.compare_exchange_strong(sequence, sequence + 1)) return;
+        const int previous = entry.phase.load(std::memory_order_relaxed);
+        if (phase >= Descriptors && entry.pid.load(std::memory_order_relaxed) == pid
+                && previous >= Entered && previous <= Failed) {
+            entry.sequence.store(sequence + 2, std::memory_order_release);
+            return;
+        }
         entry.pid.store(pid, std::memory_order_relaxed);
         entry.phase.store(phase, std::memory_order_relaxed);
         entry.error.store(error, std::memory_order_relaxed);

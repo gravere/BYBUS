@@ -10,6 +10,7 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 #include "ExecEnvironment.h"
+#include "ExecLaunchTrace.h"
 #include "SandboxFs.h"
 #include "LimbusProcessScope.h"
 static const limbus_process::Scope process_scope;

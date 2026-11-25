@@ -20,9 +20,9 @@ internal class GameStartupThreads {
         }
         runCatching {
             val snapshot = Thread.getAllStackTraces()
-            val threads = snapshot.mapNotNull { (thread, frames) ->
+            val threads = selectStartupThreadSummaries(snapshot.mapNotNull { (thread, frames) ->
                 startupThreadSummary(thread.name, thread.state, frames)
-            }.sorted().take(8)
+            })
             PersistentDiagnosticLog.info("GameStartup", "ageMs=$age enumerated=${snapshot.size} summarized=${threads.size}")
             threads.forEach { PersistentDiagnosticLog.info("GameStartup", "ageMs=$age $it") }
             if (snapshot.any { (thread, frames) -> thread.name == "UnityMain" && frames.any {
@@ -46,6 +46,16 @@ internal class GameStartupThreads {
             PersistentDiagnosticLog.warn("GameStartup", "ageMs=$age enumeration=unavailable")
         }
     }
+}
+
+internal fun selectStartupThreadSummaries(summaries: List<String>): List<String> {
+    fun priority(value: String) = when (value.substringBefore(' ')) {
+        "thread=unity" -> 0
+        "thread=main" -> 1
+        "thread=firebase" -> 2
+        else -> 3
+    }
+    return summaries.distinct().sortedWith(compareBy(::priority).thenBy { it }).take(8)
 }
 
 internal fun startupThreadSummary(name: String, state: Thread.State, frames: Array<StackTraceElement>): String? {

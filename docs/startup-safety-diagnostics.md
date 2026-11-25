@@ -42,3 +42,16 @@
 用例为 `/proc/self/cmdline`、`/proc/self/status`、`/proc/self/comm`、`/proc/self/maps`、
 `/proc/modules`、`cache_failure`、`forward_overflow`、`reverse_overflow`、
 `connect_unix`、`sendto_unix`、`connect_inet`。执行器用三秒闹钟终止死锁，正常退出码为零。
+
+## 子进程启动与线程快照
+
+游戏进程派生的执行助手不能复用父进程的文件描述符对象、锁或日志回调。执行前的
+close、dup、fcntl 和错误管道写入使用系统原语，保留真实返回值与 errno；路径重定向
+仍由现有 chdir/execve 路径完成，不改命令、账号或游戏返回结果。
+
+启动快照优先保留 Unity 和主线程，再去重并限量记录辅助线程。读取自身线程的
+等待状态时须绕开容器给访客提供的 proc 文件视图，否则任务 comm 被归一化后无法
+找到 UnityMain。原始读取只允许当前进程的任务和经 PPid 核对的直属子进程，输出
+固定角色、状态、等待函数及系统调用编号；不输出命令、参数、环境或任意线程名称。
+权限拒绝仍显示 unavailable。执行前的描述符准备与 exec 阶段分别记录，不再把
+“未到 exec”解释为“没有子进程”。这些边界检查不代替受影响设备的游戏启动验收。
