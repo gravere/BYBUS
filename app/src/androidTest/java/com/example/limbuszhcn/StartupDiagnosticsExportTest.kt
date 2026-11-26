@@ -78,6 +78,7 @@ class StartupDiagnosticsExportTest {
         Log.i("LimbusVA", "VClient.bindApplication before makeApplication package=$game process=$game info=diagnostic-fixture")
         Log.e("AppSealing", "!!! Kill Process ........[99001]")
         Log.e("AppSealing", "PRIVATE_TEST_SENTINEL_ACCOUNT")
+        Log.w("LimbusIntegrity", "report code=50025 callerOffset=75940 forwarded=1")
         Log.e("chromium", "[ERROR:jni_android.cc(306)] java.lang.SecurityException: PRIVATE_JAVA_SENTINEL_ACCOUNT does not belong to uid 123")
         Log.w("System.err", "    at android.app.IActivityManager\$Stub\$Proxy.bindServiceInstance(IActivityManager.java:5219)")
         val started = SystemClock.elapsedRealtime()
@@ -87,6 +88,7 @@ class StartupDiagnosticsExportTest {
                 val timeline = zip.getInputStream(zip.getEntry("game-startup.txt")).bufferedReader().use { it.readText() }
                 assertTrue(timeline.contains("pid=${Process.myPid()} event=game_process_bound role=main"))
                 assertTrue(timeline.contains("pid=${Process.myPid()} event=game_reported_exit code=99001"))
+                assertTrue(timeline.contains("pid=${Process.myPid()} event=game_report_site code=50025 callerOffset=75940 forwarded=1"))
                 assertFalse(timeline.contains("PRIVATE_TEST_SENTINEL_ACCOUNT"))
                 val status = zip.getInputStream(zip.getEntry("capture-status.txt")).bufferedReader().use { it.readText() }
                 assertTrue(status.contains("scope=own_uid_only"))

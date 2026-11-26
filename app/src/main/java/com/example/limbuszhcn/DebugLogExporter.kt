@@ -282,7 +282,7 @@ internal class DebugLogExporter(private val context: Context) {
     /** Export fixed engine/bind/exit events, never arbitrary SDK logs or payloads. */
     private fun collectGameStartup(): String {
         val command = listOf("logcat", "-d", "-b", "main", "-v", "epoch",
-            "--uid=${Process.myUid()}", "-t", "6000", "Unity:I", "LimbusVA:I", "AppSealing:E", "*:S")
+            "--uid=${Process.myUid()}", "-t", "6000", "Unity:I", "LimbusVA:I", "AppSealing:E", "LimbusIntegrity:W", "*:S")
         val result = startupLogReader.read({ ProcessBuilder(command).redirectErrorStream(true).start() }) { lines ->
             lines.take(6000).mapNotNull(::safeGameTimelineMarker).toList().takeLast(256)
         }
@@ -609,6 +609,9 @@ private val GAME_BIND_LOG = Regex("""(\d{1,11})\.(\d{3,9})\s+(\d+)\s+\d+\s+I\s+L
 /** This timeline may span launches; it does not assign a helper's error to the main game. */
 internal fun safeGameTimelineMarker(line: String): String? {
     safeGameStartupMarker(line)?.let { return it }
+    // A game can exit before the periodic collector runs. Export retained
+    // report sites directly as well, while still stripping every raw payload.
+    safeGameReportMarker(line)?.let { return it }
     val value = line.trim()
     GAME_EXIT_LOG.matchEntire(value)?.let { match ->
         val pid = match.groupValues[3].toIntOrNull()?.takeIf { it > 0 } ?: return null

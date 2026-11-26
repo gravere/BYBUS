@@ -102,11 +102,13 @@ private val EXCEPTIONS = listOf("NullReferenceException", "IndexOutOfRangeExcept
 private val GAME_FRAME = Regex("""(?:at\s+)?([A-Za-z_][A-Za-z0-9_.$+`<>]{0,159}\.[A-Za-z_<][A-Za-z0-9_.$+`<>]{0,100})\s*\(.*""")
 private val REPORT_SITE = Regex("""(\d{1,11}\.\d{3,9})\s+(\d{1,10})\s+\d+\s+W\s+LimbusIntegrity\s*:\s*report code=([1-9][0-9]{4}) callerOffset=([0-9a-f]{1,8}) forwarded=1""")
 
+internal fun safeGameReportMarker(line: String): String? =
+    REPORT_SITE.matchEntire(line.trim())?.let {
+        "time=${it.groupValues[1]} pid=${it.groupValues[2]} event=game_report_site code=${it.groupValues[3]} callerOffset=${it.groupValues[4]} forwarded=1"
+    }
+
 internal fun safeGameFaultMarker(line: String): String? {
     safeGameTimelineMarker(line)?.let { return it }
-    REPORT_SITE.matchEntire(line.trim())?.let {
-        return "time=${it.groupValues[1]} pid=${it.groupValues[2]} event=game_report_site code=${it.groupValues[3]} callerOffset=${it.groupValues[4]} forwarded=1"
-    }
     val match = UNITY_FAULT.matchEntire(line.trim()) ?: return null
     val message = match.groupValues[3].trim()
     val category = EXCEPTIONS.firstOrNull { message.startsWith(it + ":") || message == it }
