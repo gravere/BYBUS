@@ -204,6 +204,16 @@ void hook_limbus_owned_function(void *target, void *replacement, void **original
 struct LimbusDetachResult { uintptr_t value; uintptr_t continuation; };
 
 extern "C" LimbusReportDecision limbus_report_dispatch_impl(uintptr_t code, uintptr_t caller) {
+    // Observe the exact report site without altering its result or exit path.
+    // Several unrelated branches use 50025; the number alone is not a root cause.
+    if (report_base && caller >= report_base + 0x17130 && caller < report_base + 0x14cdc0 &&
+            code == 50025) {
+        static std::atomic<unsigned> reports{0};
+        if (reports.fetch_add(1, std::memory_order_relaxed) < 4)
+            __android_log_print(ANDROID_LOG_WARN, "LimbusIntegrity",
+                    "report code=%u callerOffset=%lx forwarded=1", static_cast<unsigned>(code),
+                    static_cast<unsigned long>(caller - report_base));
+    }
     if (has_stable_report_bridge()
             && code == 50048 && caller == report_base + 0x4e568) {
         if (limbus_report_matches(code, caller - report_base,

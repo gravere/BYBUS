@@ -15,6 +15,20 @@ import java.util.zip.ZipFile
 /** Synthetic events on a disposable emulator; never starts or diagnoses a real guest game. */
 @RunWith(AndroidJUnit4::class)
 class StartupDiagnosticsExportTest {
+    @Test fun runningBuildAndNetworkSummaryMatchInstalledHost() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val info = context.packageManager.getPackageInfo(context.packageName, 0)
+        @Suppress("DEPRECATION")
+        val installed = if (android.os.Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
+        assertEquals(installed, RunningBuild.code(context))
+        assertEquals(installed, context.resources.getInteger(R.integer.app_version_code).toLong())
+        val network = gameNetworkSnapshot(context)
+        assertTrue(network, network.startsWith("networkSnapshot=available"))
+        assertTrue(network, network.contains("vpnVisibleForHost="))
+        assertFalse(network.contains("ssid", ignoreCase = true))
+        assertFalse(network.contains("192.168."))
+    }
+
     @Test fun hostCannotRequestAnotherProcessThroughGuestCollector() {
         // Actual Binder call to the existing server: the host is not a registered guest.
         assertNull(requestGameFaultSnapshot(0))
@@ -29,6 +43,9 @@ class StartupDiagnosticsExportTest {
         val privateMessage = "PRIVATE_FAULT_TEST_SENTINEL_ACCOUNT"
         Log.e("Unity", "NullReferenceException: $privateMessage")
         Log.e("Unity", "at StageScript_Cromer.CheckTrigger (System.String $privateMessage)")
+        Log.w("Unity", "InvalidCastException: $privateMessage")
+        Log.e("Unity", "at SkillButton.OnPointerEnter (PointerEventData $privateMessage)")
+        Log.w("LimbusIntegrity", "report code=50025 callerOffset=75940 forwarded=1")
         sampler.sample()
         sampler.sample() // overlapping windows must not duplicate the event
         val native = File(context.filesDir, "translation-cache/translation-index/termination-99999999.log")
@@ -43,6 +60,9 @@ class StartupDiagnosticsExportTest {
                 }
                 assertTrue(persistent.contains("event=managed_exception type=NullReferenceException"))
                 assertTrue(persistent.contains("event=managed_frame method=StageScript_Cromer.CheckTrigger"))
+                assertTrue(persistent.contains("event=managed_exception type=InvalidCastException"))
+                assertTrue(persistent.contains("event=managed_frame method=SkillButton.OnPointerEnter"))
+                assertTrue(persistent.contains("event=game_report_site code=50025 callerOffset=75940 forwarded=1"))
                 assertFalse(persistent.contains(privateMessage))
                 val trace = zip.getInputStream(zip.getEntry("native/${native.name}")).bufferedReader().use { it.readText() }
                 assertTrue(trace.contains("event=1 value=9"))
@@ -80,8 +100,14 @@ class StartupDiagnosticsExportTest {
                 val runtime = zip.getInputStream(zip.getEntry("runtime.txt")).bufferedReader().use { it.readText() }
                 assertTrue(runtime.contains("runtimeLaunchAppVersionCode="))
                 assertTrue(runtime.contains("runtimeLaunchRelation="))
+                assertTrue(runtime.contains("runningAppVersionCode=${RunningBuild.code(context)}"))
                 val javaFaults = zip.getInputStream(zip.getEntry("java-faults.txt")).bufferedReader().use { it.readText() }
-                assertTrue(javaFaults, javaFaults.contains("collection=available"))
+                // EOF and process exit can race on a cold emulator. Required
+                // markers must survive in either case; never relabel a partial read.
+                val javaCollection = javaFaults.lineSequence().first { it.startsWith("collection=") }
+                assertTrue(javaFaults, javaCollection in setOf("collection=available", "collection=incomplete"))
+                if (javaCollection == "collection=incomplete")
+                    assertTrue(javaFaults.contains("exitCode="))
                 assertTrue(javaFaults.contains("type=java.lang.SecurityException category=package_uid_mismatch"))
                 assertTrue(javaFaults.contains("method=android.app.IActivityManager\$Stub\$Proxy.bindServiceInstance"))
                 assertFalse(javaFaults.contains("PRIVATE_JAVA_SENTINEL_ACCOUNT"))

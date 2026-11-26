@@ -169,6 +169,7 @@ internal class DebugLogExporter(private val context: Context) {
             appendLine("timezone=${ZoneId.systemDefault().id}")
             appendLine("appVersionName=${packageInfo.versionName}")
             appendLine("appVersionCode=$versionCode")
+            appendLine("runningAppVersionCode=${RunningBuild.code(context)}")
             appendLine("buildType=${BuildConfig.BUILD_TYPE}")
             appendLine("package=${context.packageName}")
             appendLine("uid=${Process.myUid()}")
@@ -176,6 +177,9 @@ internal class DebugLogExporter(private val context: Context) {
             appendLine("elapsedRealtimeMillis=${android.os.SystemClock.elapsedRealtime()}")
             appendLine("hostTargetSdk=${context.applicationInfo.targetSdkVersion}")
             appendLine("hostAppFlags=0x${Integer.toHexString(context.applicationInfo.flags)}")
+            appendLine("androidBuildType=${Build.TYPE}")
+            appendLine("androidBuildTags=${Build.TAGS}")
+            appendLine(gameNetworkSnapshot(context))
             appendLine("lastUpdateTime=${Instant.ofEpochMilli(packageInfo.lastUpdateTime)}")
             appendLine("hostExceptionHandlerInstalled=${PersistentDiagnosticLog.ownsExceptionHandler()}")
             val launcher = runCatching { context.packageManager.getLaunchIntentForPackage(context.packageName) }.getOrNull()
@@ -260,7 +264,7 @@ internal class DebugLogExporter(private val context: Context) {
             // Upstream Google components may log billing arguments. Export only our metadata
             // and crash tags; regex redaction alone cannot safely strip arbitrary receipts.
             "LimbusZhCNApp:I", "LimbusLauncher:I", "LimbusContainer:I", "LimbusVA:I",
-            "LimbusZhCN:I", "LimbusSIG:I", "GameMemory:I", "PackageQueries:I", "LimbusJNI:I", "GameExit:I", "GameFault:I", "GameStartup:I",
+            "LimbusZhCN:I", "LimbusSIG:I", "GameMemory:I", "GameNetwork:I", "PackageQueries:I", "LimbusJNI:I", "GameExit:I", "GameFault:I", "GameStartup:I",
             "NativeEngine:I", "AndroidRuntime:E", "libc:F", "*:S"
         )
         val result = exportLogReader.read({ ProcessBuilder(command).redirectErrorStream(true).start() }) {
@@ -334,7 +338,7 @@ internal class DebugLogExporter(private val context: Context) {
                 appendLine("appVersionCode=${code ?: "unavailable"}")
                 appendLine("buildRelation=" + when (code) {
                     null -> "unknown"
-                    BuildConfig.VERSION_CODE.toLong() -> "same_build"
+                    RunningBuild.code(context) -> "same_build"
                     else -> "different_build"
                 })
                 appendLine("importance=${reason.importance}")

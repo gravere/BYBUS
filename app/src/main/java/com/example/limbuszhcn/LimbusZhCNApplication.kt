@@ -24,6 +24,7 @@ class LimbusZhCNApplication : Application() {
      */
     override fun attachBaseContext(base: Context) {
         super.attachBaseContext(base)
+        RunningBuild.code(base)
         // 在 VirtualApp 初始化前安装持久日志，才能保留 vivo 等系统在启动早期杀进程时的现场。
         PersistentDiagnosticLog.install(base)
         SystemStartupDiagnostics.checkpoint(base, SystemStartupDiagnostics.Phase.ATTACH)

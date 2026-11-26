@@ -20,7 +20,7 @@ internal object SystemStartupDiagnostics {
         if (Build.VERSION.SDK_INT < 30 || phase == lastPhase) return
         lastPhase = phase
         runCatching {
-            val bytes = "bybus:1:${BuildConfig.VERSION_CODE}:${phase.name}".toByteArray(Charsets.US_ASCII)
+            val bytes = "bybus:1:${RunningBuild.code(context)}:${phase.name}".toByteArray(Charsets.US_ASCII)
             context.getSystemService(ActivityManager::class.java)?.setProcessStateSummary(bytes)
         }.onFailure {
             // Android can throttle this API. Never retry on the launch path or replace its handler.

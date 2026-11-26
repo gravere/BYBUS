@@ -72,10 +72,10 @@ internal fun requestGameFaultSnapshot(sinceMillis: Long): Bundle? =
 /** Called only in the unhooked service process, after Binder caller verification. */
 internal fun collectGameFaultMarkers(pid: Int, sinceMillis: Long): Bundle {
     var status = "unavailable"
-    val events = readGameLog(sinceMillis, listOf("--pid=$pid", "Unity:I", "AppSealing:E"),
+    val events = readGameLog(sinceMillis, listOf("--pid=$pid", "Unity:I", "AppSealing:E", "LimbusIntegrity:W"),
         onStatus = { status = it }) { lines ->
         lines.take(2048).mapNotNull(::safeGameFaultMarker)
-            .filter { it.contains(" pid=$pid ") }.take(128).toList()
+            .filter { it.contains(" pid=$pid ") }.toList().takeLast(128)
     }
     return Bundle().apply {
         putString("status", status)
@@ -91,14 +91,22 @@ internal fun pruneNativeTerminationTraces(context: Context) {
     }.sortedByDescending(File::lastModified).drop(6).forEach { it.delete() }
 }
 
-private val UNITY_FAULT = Regex("""(\d{1,11}\.\d{3,9})\s+(\d{1,10})\s+\d+\s+[EF]\s+Unity\s*:\s*(.{0,8192})""")
+private val UNITY_FAULT = Regex("""(\d{1,11}\.\d{3,9})\s+(\d{1,10})\s+\d+\s+[WEF]\s+Unity\s*:\s*(.{0,8192})""")
 private val EXCEPTIONS = listOf("NullReferenceException", "IndexOutOfRangeException", "ArgumentOutOfRangeException",
     "OutOfMemoryException", "InvalidOperationException", "MissingReferenceException", "TypeLoadException",
-    "FormatException", "StackOverflowException", "DllNotFoundException", "ExecutionEngineException")
-private val GAME_FRAME = Regex("""(?:at\s+)?((?:TMPro\.|UnityEngine\.|StorySystem\.|System\.|StageScript_|PatternScript_|AbnormalityAppearance_|Battle|TextData_)[A-Za-z0-9_.$+`<>]{1,160})\s*\(.*""")
+    "FormatException", "StackOverflowException", "DllNotFoundException", "ExecutionEngineException",
+    "ArgumentException", "ArgumentNullException", "InvalidCastException", "MissingMethodException",
+    "NotSupportedException", "NotImplementedException", "ObjectDisposedException", "KeyNotFoundException")
+// Method identities only. A narrow class-prefix list discarded game UI callbacks
+// between the exception and EventSystems, leaving just an apparent engine fault.
+private val GAME_FRAME = Regex("""(?:at\s+)?([A-Za-z_][A-Za-z0-9_.$+`<>]{0,159}\.[A-Za-z_<][A-Za-z0-9_.$+`<>]{0,100})\s*\(.*""")
+private val REPORT_SITE = Regex("""(\d{1,11}\.\d{3,9})\s+(\d{1,10})\s+\d+\s+W\s+LimbusIntegrity\s*:\s*report code=([1-9][0-9]{4}) callerOffset=([0-9a-f]{1,8}) forwarded=1""")
 
 internal fun safeGameFaultMarker(line: String): String? {
     safeGameTimelineMarker(line)?.let { return it }
+    REPORT_SITE.matchEntire(line.trim())?.let {
+        return "time=${it.groupValues[1]} pid=${it.groupValues[2]} event=game_report_site code=${it.groupValues[3]} callerOffset=${it.groupValues[4]} forwarded=1"
+    }
     val match = UNITY_FAULT.matchEntire(line.trim()) ?: return null
     val message = match.groupValues[3].trim()
     val category = EXCEPTIONS.firstOrNull { message.startsWith(it + ":") || message == it }

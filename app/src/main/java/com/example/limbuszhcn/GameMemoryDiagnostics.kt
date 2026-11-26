@@ -31,10 +31,16 @@ internal object GameMemoryDiagnostics {
         }
         val pendingTrim = AtomicBoolean()
         val trimLevel = AtomicInteger()
+        var lastNetwork = ""
         fun sample(cause: String) {
             runCatching {
                 PersistentDiagnosticLog.info("GameMemory",
                     "cause=$cause ageMs=${SystemClock.elapsedRealtime() - since} ${snapshot(context)}")
+                val network = gameNetworkSnapshot(context)
+                if (network != lastNetwork) {
+                    lastNetwork = network
+                    PersistentDiagnosticLog.info("GameNetwork", network)
+                }
             } // Diagnostic failures must not end the task or affect the game.
         }
         val callbacks = object : ComponentCallbacks2 {

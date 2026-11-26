@@ -5223,8 +5223,6 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         g_font_face_info = font_face_method;
         g_face_point_size_info = face_point_method;
         g_font_atlas_padding_info = font_padding_method;
-        hook_limbus_owned_function(tmp_pointer, reinterpret_cast<void *>(replacement_tmp_set_text),
-                       reinterpret_cast<void **>(&g_original_tmp_set_text));
         auto has_inline_hook_space = [&](void *klass, void *pointer) {
             if (klass == nullptr || pointer == nullptr) return false;
             uintptr_t address = reinterpret_cast<uintptr_t>(pointer);
@@ -5233,6 +5231,20 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                     position + 1 != managed_method_addresses.end() &&
                     *(position + 1) - address >= ((address & 7u) ? 20u : 16u);
         };
+        // The core setters need the same bounds check as optional formatters.
+        // IL2CPP may shorten a setter to a thunk in a later build; writing a
+        // 16/20-byte branch must never overwrite the next managed entry.
+        if (has_inline_hook_space(tmp_text_class, tmp_pointer)) {
+            hook_limbus_owned_function(tmp_pointer, reinterpret_cast<void *>(replacement_tmp_set_text),
+                           reinterpret_cast<void **>(&g_original_tmp_set_text));
+        } else {
+            // ParseInputText still needs the original callable setter when its
+            // entry is too short to hook. Do not confuse it with a trampoline.
+            g_original_tmp_set_text = reinterpret_cast<tmp_set_text_fn>(tmp_pointer);
+            LT_LOGW("Skip unsafe adjacent TMP text setter; retain parser fallback");
+        }
+        const bool core_setter_hooked = g_original_tmp_set_text != nullptr &&
+                reinterpret_cast<void *>(g_original_tmp_set_text) != tmp_pointer;
         std::unordered_map<void *, std::pair<int, size_t>> table_addresses;
         size_t table_counts[3] = {};
         for (const auto &target : table_targets) {
@@ -5731,14 +5743,17 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         void *set_text_one_pointer = nullptr;
         if (tmp_set_text_one_method != nullptr) {
             memcpy(&set_text_one_pointer, tmp_set_text_one_method, sizeof(void *));
-            hook_limbus_owned_function(set_text_one_pointer,
+            if (set_text_one_pointer != tmp_pointer && has_inline_hook_space(tmp_text_class, set_text_one_pointer))
+                hook_limbus_owned_function(set_text_one_pointer,
                            reinterpret_cast<void *>(replacement_tmp_set_text_one),
                            reinterpret_cast<void **>(&g_original_tmp_set_text_one));
         }
         void *set_text_string_pointer = nullptr;
         if (tmp_set_text_string_method != nullptr) {
             memcpy(&set_text_string_pointer, tmp_set_text_string_method, sizeof(void *));
-            hook_limbus_owned_function(set_text_string_pointer,
+            if (set_text_string_pointer != tmp_pointer && set_text_string_pointer != set_text_one_pointer &&
+                    has_inline_hook_space(tmp_text_class, set_text_string_pointer))
+                hook_limbus_owned_function(set_text_string_pointer,
                            reinterpret_cast<void *>(replacement_tmp_set_text_string),
                            reinterpret_cast<void **>(&g_original_tmp_set_text_string));
         }
@@ -6191,7 +6206,8 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                 }
             }
         }
-        g_hook_installed = g_original_tmp_set_text != nullptr;
+        g_hook_installed = core_setter_hooked || g_original_tmp_parse_input != nullptr ||
+                g_original_tmp_set_text_one != nullptr || g_original_tmp_set_text_string != nullptr;
         LT_LOGI("TMP translation hook installed=%d setter=%p/%p SetText1=%p/%p SetText2=%p/%p",
                 g_hook_installed, tmp_pointer, reinterpret_cast<void *>(g_original_tmp_set_text),
                 set_text_one_pointer, reinterpret_cast<void *>(g_original_tmp_set_text_one),
