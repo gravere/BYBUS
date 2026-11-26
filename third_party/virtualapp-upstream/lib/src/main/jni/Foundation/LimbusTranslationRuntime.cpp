@@ -185,6 +185,7 @@ struct TmpComponentState {
     limbus_text_provenance::LayoutOverride<int32_t> wrapping;
     limbus_text_provenance::LayoutOverride<int32_t> overflow;
     limbus_text_provenance::LayoutOverride<float> spacing;
+    limbus_text_provenance::LayoutOverride<float> label_size;
     void *font = nullptr;
     void *shared_material = nullptr;
     limbus_managed::Ref font_root;
@@ -396,6 +397,10 @@ const void *g_game_object_get_active_info = nullptr;
 const void *g_tmp_runtime_type = nullptr;
 const void *g_content_fitter_runtime_type = nullptr;
 const void *g_content_fitter_vertical_info = nullptr;
+const void *g_content_fitter_horizontal_info = nullptr;
+const void *g_fixed_label_preferred_info = nullptr;
+const void *g_fixed_label_margin_info = nullptr;
+const void *g_fixed_label_size_info = nullptr;
 const void *g_click_handler_runtime_type = nullptr;
 const void *g_layout_get_component_info = nullptr;
 const void *g_material_get_float_info = nullptr;
@@ -2968,6 +2973,14 @@ bool replacement_tmp_validate_tag(void *instance, void *text, int32_t start, int
     return valid;
 }
 
+void restore_fixed_label_size(void *instance, const TmpComponentState &state) {
+    float current = 0;
+    bool automatic = true;
+    if (invoke_bool_getter(g_tmp_get_auto_sizing_info, instance, &automatic) && !automatic &&
+            invoke_float_getter(g_tmp_get_font_size_info, instance, &current) && state.label_size.restore(current))
+        invoke_float_setter(g_fixed_label_size_info, instance, state.label_size.original);
+}
+
 void restore_tmp_component_state(void *instance) {
     TmpComponentState state;
     int32_t id = component_id(instance);
@@ -2981,6 +2994,7 @@ void restore_tmp_component_state(void *instance) {
     if (g_tmp_set_font != nullptr) g_tmp_set_font(instance, state.font, g_tmp_set_font_info);
     if (state.shared_material != nullptr)
         invoke_object_setter(g_tmp_set_shared_material_info, instance, state.shared_material);
+    restore_fixed_label_size(instance, state);
     int32_t wrap = 0, overflow = 0; float spacing = 0;
     if (read_tmp_wrapping(instance, &wrap) && state.wrapping.restore(wrap))
         write_tmp_wrapping(instance, state.wrapping.original);
@@ -3080,6 +3094,7 @@ void save_tmp_layout_state(void *instance, const TmpComponentState &state) {
     pthread_mutex_lock(&g_font_state_lock);
     if (auto saved = g_original_tmp_states.find(instance, id)) {
         saved->wrapping = state.wrapping; saved->overflow = state.overflow; saved->spacing = state.spacing;
+        saved->label_size = state.label_size;
     }
     pthread_mutex_unlock(&g_font_state_lock);
 }
@@ -3108,18 +3123,94 @@ float read_tmp_layout_size(void *instance) {
     return std::isfinite(size) && size > 0 ? size : 0;
 }
 
+// The fitter owns either dimension, or its contract is unknown: leave sizing to it.
+bool fixed_label_dimensions(void *instance) {
+    if (!g_content_fitter_runtime_type || !g_content_fitter_horizontal_info ||
+            !g_content_fitter_vertical_info || !g_component_get_component_info ||
+            !g_behaviour_get_active_info || !g_runtime_invoke) return false;
+    void *args[] = {const_cast<void *>(g_content_fitter_runtime_type)}, *exception = nullptr;
+    void *fitter = g_runtime_invoke(g_component_get_component_info, instance, args, &exception);
+    if (exception) return false;
+    if (!fitter) return true;
+    bool enabled = true;
+    if (!invoke_bool_getter(g_behaviour_get_active_info, fitter, &enabled)) return false;
+    if (!enabled) return true;
+    int32_t horizontal = -1, vertical = -1;
+    return invoke_int_getter(g_content_fitter_horizontal_info, fitter, &horizontal) &&
+            invoke_int_getter(g_content_fitter_vertical_info, fitter, &vertical) &&
+            horizontal == 0 && vertical == 0;
+}
+
+thread_local bool g_fitting_fixed_label = false;
+void fit_fixed_tmp_label(void *instance, void *managed_text, const std::string &text,
+                         bool single, ComponentRect rect, TmpComponentState &state) {
+    if (g_fitting_fixed_label) return;
+    bool automatic = true;
+    float current = 0;
+    if (!invoke_bool_getter(g_tmp_get_auto_sizing_info, instance, &automatic) ||
+            !invoke_float_getter(g_tmp_get_font_size_info, instance, &current)) return;
+    if (automatic) { state.label_size.active = false; return; }
+    const float baseline = state.label_size.observe(current);
+    if (!std::isfinite(baseline) || baseline <= 0 || !std::isfinite(current) || current <= 0) return;
+    bool han = false;
+    const auto *chars = g_string_chars(managed_text);
+    const int32_t length = g_string_length(managed_text);
+    for (int32_t i = 0; chars && i < length; ++i)
+        han |= (chars[i] >= 0x3400 && chars[i] <= 0x9fff) || (chars[i] >= 0xf900 && chars[i] <= 0xfaff);
+    float desired = baseline;
+    const bool eligible = single && han && count_visible_codepoints(text) <= 12 &&
+            text.find_first_of("<\r\n") == std::string::npos && rect.height > 0 &&
+            rect.height <= baseline * 1.8f && rect.width >= baseline &&
+            std::isfinite(rect.width) && fixed_label_dimensions(instance);
+    if (eligible && g_fixed_label_preferred_info && g_fixed_label_margin_info &&
+            g_fixed_label_size_info && g_runtime_invoke && g_object_unbox) {
+        struct Guard { Guard() { g_fitting_fixed_label = true; } ~Guard() { g_fitting_fixed_label = false; } } guard;
+        // TMP measurements can re-enter ParseInputText; nested fitting is inert.
+        void *error = nullptr;
+        void *boxed = g_runtime_invoke(g_fixed_label_margin_info, instance, nullptr, &error);
+        const auto *m = !error && boxed ? static_cast<float *>(g_object_unbox(boxed)) : nullptr;
+        if (m && std::isfinite(m[0]) && std::isfinite(m[2]) && m[0] >= 0 && m[2] >= 0) {
+            const float margins = m[0] + m[2];
+            void *args[] = {managed_text}; error = nullptr;
+            boxed = g_runtime_invoke(g_fixed_label_preferred_info, instance, args, &error);
+            const auto *preferred = !error && boxed ? static_cast<float *>(g_object_unbox(boxed)) : nullptr;
+            // TMP includes positive margins in preferred width. Do not scale
+            // them with glyphs, or infer widths from byte/character counts.
+            if (preferred && std::isfinite(preferred[0]) && preferred[0] > margins && rect.width > margins) {
+                const float fitted = current * (rect.width - margins) / (preferred[0] - margins);
+                // Small labels may shrink modestly, never enlarge or become
+                // unreadably tiny. Rich text and paragraphs are excluded above.
+                if (std::isfinite(fitted) && fitted >= baseline * 0.5f) desired = std::min(baseline, fitted);
+                if (std::fabs(desired - current) < 0.05f) desired = current;
+            }
+        }
+    }
+    if (desired != current) invoke_float_setter(g_fixed_label_size_info, instance, desired);
+    state.label_size.record(desired);
+}
+
 void apply_translated_tmp_style(void *instance, void *managed_text,
                                 const TmpComponentState &previous) {
+    if (g_fitting_fixed_label) return;
     if (!managed_text || !g_string_length || !g_string_chars) return;
     const int32_t length = g_string_length(managed_text);
     std::string text;
     if (length < 0 || length > 1024 * 1024 ||
         !utf16_to_utf8(g_string_chars(managed_text), length, &text)) return;
     if (is_announcer_description(instance) || is_choice_text(instance) ||
-        (is_ruby_text(instance) && limbus_text_provenance::positioned_ruby(text))) return;
-    const float size = read_tmp_layout_size(instance);
-    if (size <= 0) return;
+        (is_ruby_text(instance) && limbus_text_provenance::positioned_ruby(text))) {
+        auto state = previous;
+        restore_fixed_label_size(instance, state);
+        state.label_size.active = false;
+        save_tmp_layout_state(instance, state);
+        return;
+    }
     auto state = previous;
+    const float live_size = read_tmp_layout_size(instance);
+    bool automatic = true;
+    invoke_bool_getter(g_tmp_get_auto_sizing_info, instance, &automatic);
+    const float size = !automatic && state.label_size.restore(live_size) ? state.label_size.original : live_size;
+    if (size <= 0) return;
     int32_t current_wrap = 0, current_overflow = 0;
     const bool has_wrap = read_tmp_wrapping(instance, &current_wrap);
     const bool has_overflow = invoke_int_getter(g_tmp_get_overflow_mode_info, instance, &current_overflow);
@@ -3155,12 +3246,15 @@ void apply_translated_tmp_style(void *instance, void *managed_text,
         if (current_spacing != desired) invoke_float_setter(g_tmp_set_line_spacing_info, instance, desired);
         state.spacing.record(desired);
     }
-    // Do not write size, min/max or auto-sizing here. TMP owns their live values.
+    fit_fixed_tmp_label(instance, managed_text, text, single, rect, state);
+    // Auto-sizing and its bounds remain game-owned. Only proven fixed short
+    // labels have a reversible, measured width fit; there is no page/name rule.
     save_tmp_layout_state(instance, state);
     const auto decisions = g_layout_decisions.fetch_add(1, std::memory_order_relaxed) + 1;
     if (decisions <= 20 || decisions % 500 == 0)
-        LT_LOGI("TMP layout decision=%llu chars=%zu rect=%.1fx%.1f font=%.1f single=%d fitted=%d",
-                static_cast<unsigned long long>(decisions), visible, rect.width, rect.height, size, single, fitted);
+        LT_LOGI("TMP layout decision=%llu chars=%zu rect=%.1fx%.1f font=%.1f single=%d fitted=%d labelSize=%.1f",
+                static_cast<unsigned long long>(decisions), visible, rect.width, rect.height, size, single, fitted,
+                state.label_size.active ? state.label_size.applied : size);
 }
 
 void *apply_tmp_component_layout_markup(void *instance, void *managed_text) {
@@ -5108,7 +5202,15 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         for (const char *fit_type : {"UnityEngine.UI.ContentSizeFitter.FitMode", "UnityEngine.UI.ContentSizeFitter/FitMode"}) {
             if (!g_content_fitter_vertical_info)
                 g_content_fitter_vertical_info = diagnostic_method(content_fitter_class, "get_verticalFit", "", fit_type, false);
+            if (!g_content_fitter_horizontal_info)
+                g_content_fitter_horizontal_info = diagnostic_method(content_fitter_class, "get_horizontalFit", "", fit_type, false);
         }
+        g_fixed_label_preferred_info = diagnostic_method(tmp_text_class, "GetPreferredValues", "System.String", "UnityEngine.Vector2", false);
+        g_fixed_label_margin_info = diagnostic_method(tmp_text_class, "get_margin", "", "UnityEngine.Vector4", false);
+        g_fixed_label_size_info = diagnostic_method(tmp_text_class, "set_fontSize", "System.Single", "System.Void", false);
+        append_native_metadata("font-state.log", g_fixed_label_preferred_info && g_fixed_label_margin_info &&
+                g_fixed_label_size_info && g_content_fitter_horizontal_info && g_content_fitter_vertical_info ?
+                "fixed_label_fit_apis=1" : "fixed_label_fit_apis=0");
         append_native_metadata("font-state.log", g_transform_get_child_info && g_transform_get_child_count_info &&
                 g_component_get_component_info && g_behaviour_get_active_info && g_tmp_runtime_type &&
                 g_component_get_game_object_info && g_game_object_get_active_info ?

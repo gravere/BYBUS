@@ -12,10 +12,11 @@ struct TmpComponentState {
     limbus_text_provenance::LayoutOverride<int32_t> wrapping;
     limbus_text_provenance::LayoutOverride<int32_t> overflow;
     limbus_text_provenance::LayoutOverride<float> spacing;
+    limbus_text_provenance::LayoutOverride<float> label_size;
 };
 struct UiComponentState { limbus_text_provenance::LayoutOverride<int32_t> horizontal, vertical; };
 struct ComponentRect { float width = 300, height = 40; };
-enum { Wrap=1, Overflow, Minimum, Maximum, Size, AutoSize, Spacing, Horizontal, Base };
+enum { Wrap=1, Overflow, Minimum, Maximum, Size, AutoSize, Spacing, Horizontal, Base, FitterEnabled, FitX, FitY };
 struct Control {
     ComponentRect rect;
     std::map<int,float> values{{Size,30},{Minimum,5},{Maximum,300},{AutoSize,1},{Wrap,0},{Overflow,0},{Spacing,0},{Horizontal,1},{Base,30}};
@@ -24,6 +25,9 @@ struct Control {
     UiComponentState ui;
     bool announcer=false,choice=false,ruby=false,fitted=false;
     bool clickable=false,reflection_error=false;
+    bool fitter=false,measure_error=false,reenter=false;
+    float margins[4]={0,0,0,0},preferred[2]={0,0},glyph_em=2;
+    int measurements=0;
     Control *parent=nullptr;
     std::string name;
 };
@@ -40,6 +44,10 @@ const void *g_tmp_base_size_field=&base_field;
 void field_get(void *i,const void *field,void *out) {assert(field==&base_field);*static_cast<float *>(out)=static_cast<Control *>(i)->values.at(Base);}
 auto g_field_get_value=field_get;
 int g_tmp_get_font_size_info=Size,g_tmp_get_line_spacing_info=Spacing,g_tmp_set_line_spacing_info=Spacing;
+int g_fixed_label_size_info=Size,g_fixed_label_preferred_info=101,g_fixed_label_margin_info=102;
+int g_content_fitter_horizontal_info=FitX,g_content_fitter_vertical_info=FitY;
+int g_component_get_component_info=103,g_behaviour_get_active_info=FitterEnabled,fitter_type;
+const void *g_content_fitter_runtime_type=&fitter_type;
 int g_ui_get_rect_transform_info=0,g_ui_get_font_size_info=Size;
 int g_ui_get_horizontal_overflow_info=Horizontal,g_ui_set_horizontal_overflow_info=Horizontal;
 int g_ui_get_vertical_overflow_info=Overflow;
@@ -57,13 +65,25 @@ bool has_content_fitted_height(void *i) {return static_cast<Control *>(i)->fitte
 int g_component_get_transform_info=1,g_transform_get_parent_info=2,g_layout_get_component_info=3,click_type;
 const void *g_click_handler_runtime_type=&click_type;
 void *invoke_object_getter(int key,void *i) {return key==1?i:static_cast<Control *>(i)->parent;}
+void apply_translated_tmp_style(void *,void *,const TmpComponentState &);
 void *invoke_component(int key,void *i,void **args,void **error) {
-    assert(key==3 && args[0]==g_click_handler_runtime_type);
     auto c=static_cast<Control *>(i);
     if(c->reflection_error){*error=c;return nullptr;}
+    if(key==103){assert(args[0]==g_content_fitter_runtime_type);return c->fitter?i:nullptr;}
+    if(key==102)return c->margins;
+    if(key==101){
+        ++c->measurements;
+        if(c->measure_error){*error=c;return nullptr;}
+        if(c->reenter)apply_translated_tmp_style(i,args[0],c->tmp);
+        c->preferred[0]=c->glyph_em*c->values[Size]+c->margins[0]+c->margins[2]+0.01f;
+        return c->preferred;
+    }
+    assert(key==3 && args[0]==g_click_handler_runtime_type);
     return c->clickable?i:nullptr;
 }
 auto g_runtime_invoke=invoke_component;
+void *unbox(void *p){return p;}
+auto g_object_unbox=unbox;
 #include "runtime-interactive-owner-under-test.inc"
 ComponentRect read_component_rect(void *i,int) {return static_cast<Control *>(i)->rect;}
 std::string read_unity_object_name(void *i) {return static_cast<Control *>(i)->name;}
@@ -72,6 +92,7 @@ void save_tmp_layout_state(void *i,const TmpComponentState &s) {static_cast<Cont
 void save_ui_layout_state(void *i,const UiComponentState &s) {static_cast<Control *>(i)->ui=s;}
 std::atomic<uint64_t> g_layout_decisions{0};
 #define LT_LOGI(...) ((void)0)
+#include "runtime-label-restore-under-test.inc"
 #include "runtime-layout-under-test.inc"
 #include "runtime-ui-layout-under-test.inc"
 std::unordered_map<std::string,std::string> g_package_line_breaks;
@@ -96,6 +117,51 @@ void legacy(Control &c,const std::string &text) {
     for(int key:{Size,Minimum,Maximum,AutoSize,Spacing,Overflow}) assert(c.values.at(key)==before.at(key));
 }
 int main() {
+    // Real result prefabs (story / battle / alternate mode): EXP has a fixed
+    // 66x40 rectangle, 50pt text, no auto-size or horizontal fitter. Its +value
+    // is a separate child. Two full-width CJK glyphs at 50pt cannot fit.
+    Control exp;exp.rect={66,40};exp.values[Size]=50;exp.values[AutoSize]=0;exp.reenter=true;
+    auto translated=codec.from_bytes("经验");
+    apply_translated_tmp_style(&exp,&translated,exp.tmp);
+    assert(exp.values[Size]>32.9f && exp.values[Size]<=33.f && exp.values[Wrap]==0);
+    assert(exp.tmp.label_size.active && exp.tmp.label_size.original==50 && exp.measurements==1);
+    const auto fitted_size=exp.values[Size];
+    apply_translated_tmp_style(&exp,&translated,exp.tmp);
+    assert(exp.values[Size]==fitted_size); // no cumulative shrink / recursive fit
+    assert(exp.values[Minimum]==5 && exp.values[Maximum]==300 && exp.values[AutoSize]==0);
+    restore_fixed_label_size(&exp,exp.tmp);assert(exp.values[Size]==50);
+    apply_translated_tmp_style(&exp,&translated,exp.tmp);
+    exp.values[Size]=44;restore_fixed_label_size(&exp,exp.tmp);assert(exp.values[Size]==44);
+    exp.values[Size]=fitted_size;exp.values[AutoSize]=1;
+    restore_fixed_label_size(&exp,exp.tmp);assert(exp.values[Size]==fitted_size);
+    exp.values[AutoSize]=0;
+    exp.rect.width=120;apply_translated_tmp_style(&exp,&translated,exp.tmp);
+    assert(exp.values[Size]==50 && !exp.tmp.label_size.active); // resized container
+    exp.rect.width=66;exp.margins[0]=4;exp.margins[2]=2;
+    apply_translated_tmp_style(&exp,&translated,exp.tmp);
+    assert(exp.values[Size]>29.9f && exp.values[Size]<=30);
+    exp.values[Size]=40;exp.margins[0]=exp.margins[2]=0;
+    apply_translated_tmp_style(&exp,&translated,exp.tmp);
+    assert(exp.tmp.label_size.original==40); // newer game write is authoritative
+    exp.rect.height=160;apply_translated_tmp_style(&exp,&translated,exp.tmp);
+    assert(exp.values[Size]==40 && !exp.tmp.label_size.active); // reuse as paragraph
+    exp.rect.height=40;apply_translated_tmp_style(&exp,&translated,exp.tmp);
+    exp.choice=true;apply_translated_tmp_style(&exp,&translated,exp.tmp);
+    assert(exp.values[Size]==40 && !exp.tmp.label_size.active); // reuse as managed text flow
+    for(const char *value:{"+20","50/356","EXP","<size=50>经验</size>","第一行\n第二行"}) {
+        Control excluded;excluded.rect={66,40};excluded.values[Size]=50;excluded.values[AutoSize]=0;
+        apply(excluded,value);assert(excluded.measurements==0);
+    }
+    for(int mode:{4,5,6}){Control c;c.rect={66,40};c.values[Size]=50;c.values[AutoSize]=0;c.values[Overflow]=mode;
+        apply(c,"经验");assert(c.measurements==0);}
+    for(int axis:{FitX,FitY}) {
+        Control c;c.rect={66,40};c.values[Size]=50;c.values[AutoSize]=0;c.fitter=true;
+        c.values[FitterEnabled]=1;c.values[FitX]=c.values[FitY]=0;c.values[axis]=2;
+        apply(c,"经验");assert(c.measurements==0);
+    }
+    for(int failure=0;failure<3;++failure){Control c;c.rect={66,40};c.values[Size]=50;c.values[AutoSize]=0;
+        c.reflection_error=failure==0;c.measure_error=failure==1;if(failure==2)c.glyph_em=10;
+        apply(c,"经验");}
     // Actual serialized mirror pack-search configuration: no-wrap, auto 20..45,
     // base 40; HorizontalLayoutGroup stretches its text slot to about 133 x 97.
     Control pack_button,pack_row,pack_text;
@@ -183,5 +249,5 @@ int main() {
     }
     Control old;old.values[Size]=8;old.rect.height=180;legacy(old,"旧式正文也保持游戏设置的字号。");
     assert(old.values[Horizontal]==0&&old.values[Size]==8&&old.values[Maximum]==300);
-    puts("Production layout: sizes/best-fit untouched, horizontal controls, body wrapping, live game writes and scoped restoration passed");
+    puts("Production layout: fixed-label measured fit, exclusions, reentry, resize/reuse, game auto-size and body layout passed");
 }
