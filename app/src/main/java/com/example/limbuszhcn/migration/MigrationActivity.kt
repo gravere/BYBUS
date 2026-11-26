@@ -39,7 +39,7 @@ internal object MigrationAccess {
         !preferences(context).getBoolean("complete", false) && sourceIsOurs(context)
 }
 
-internal enum class MigrationOperation { Inspect, Legacy, Resources, Export }
+internal enum class MigrationOperation { Inspect, Legacy, Resources, RootResources, Export }
 
 internal data class MigrationState(val busy: Boolean = false, val copied: Long = 0, val total: Long = 0,
     val done: Boolean = false, val message: String = "正在读取旧版数据…", val ready: Boolean = false,
@@ -55,6 +55,8 @@ internal class MigrationModel private constructor(application: Application) {
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var input: ParcelFileDescriptor? = null
     private val exportCancelled = java.util.concurrent.atomic.AtomicBoolean()
+    private val rootCancelled = java.util.concurrent.atomic.AtomicBoolean()
+    @Volatile private var rootSession: RootResourceSession? = null
     private val exportState = ResourceExportState(context.filesDir.toPath().resolve("resource-exports"))
     private val runtime by lazy {
         AndroidContainerRuntimeFactory.create(context, context.filesDir.toPath().resolve("container-workspace"))
@@ -274,6 +276,78 @@ internal class MigrationModel private constructor(application: Application) {
     private fun invalidateResourceIndex() =
         com.example.limbuszhcn.translation.CoverageStore(context.filesDir.toPath().resolve("translation-cache")).resourcesReplaced()
 
+    fun cancelRootImport() {
+        if (!state.busy || state.operation != MigrationOperation.RootResources) return
+        rootCancelled.set(true)
+        state = state.copy(message = "正在取消导入，保留已有资源…")
+        rootSession?.close()
+    }
+
+    fun importRootResources() {
+        if (state.busy || state.pending) return
+        rootCancelled.set(false)
+        state = state.copy(busy = true, done = false, failed = false, copied = 0, total = 0,
+            operation = MigrationOperation.RootResources, progressFiles = false, notice = null, message = "正在准备从原版导入…")
+        executor.execute {
+            runCatching {
+                OperationLock.run(context.filesDir.toPath()) {
+                    check(!MigrationAccess.preferences(context).getBoolean("pending", false)) { "请先完成上次迁移" }
+                    try {
+                        if (rootCancelled.get()) throw CancellationException()
+                        prepareGame()
+                        stopOwnedContainerProcesses()
+                        if (rootCancelled.get()) throw CancellationException()
+                        check(MigrationAccess.preferences(context).edit().putBoolean("resource_pending", true)
+                            .putBoolean("pending", true).commit()) { "无法保存导入状态，请释放空间后重试" }
+                        publish(state.copy(pending = true, message = "请允许 Root 授权，正在读取原版资源…"))
+                        val result = RootResourceSession(context).use { session ->
+                            rootSession = session
+                            if (rootCancelled.get()) { session.close(); throw CancellationException() }
+                            try {
+                                resourceTransfer(cancelled = { rootCancelled.get() || Thread.currentThread().isInterrupted }) { update ->
+                                    publish(state.copy(busy = true, pending = true, copied = update.bytes, total = update.total,
+                                        progressFiles = update.phase == "正在合并资源", message = update.phase))
+                                }.importResources(session.input, session::verifyFinished)
+                            } catch (error: Exception) {
+                                if (rootCancelled.get()) throw CancellationException()
+                                // Preserve useful disk/checksum failures; EOF before the ZIP header usually means su denial.
+                                if (error is java.io.EOFException || error.message == "不是有效的 Limbus 资源迁移包")
+                                    throw java.io.IOException(session.errorMessage(), error)
+                                throw error
+                            }
+                        }
+                        rootSession = null
+                        com.example.limbuszhcn.PersistentDiagnosticLog.info("RootResourceImport",
+                            "Imported files=${result.files} kept=${result.keptExisting} bytes=${result.bytes} sourceVersion=${result.sourceVersion}")
+                        TranslationRedirectGate(context).close()
+                        clearResourcePending()
+                        context.getSharedPreferences(RootImportReminder.PREFS, 0).edit()
+                            .putBoolean(RootImportReminder.HANDLED, true).apply()
+                        publish(MigrationState(done = true, copied = result.bytes, total = result.bytes,
+                            operation = MigrationOperation.RootResources,
+                            message = "已导入 ${result.files} 个资源文件；原版、已有资源和账号均已保留。"))
+                    } finally {
+                        rootSession?.close(); rootSession = null
+                        if (MigrationAccess.preferences(context).getBoolean("resource_pending", false)) {
+                            resourceTransfer().recoverInterruptedImports()
+                            clearResourcePending()
+                        }
+                    }
+                }
+            }.onFailure { error ->
+                val pending = MigrationAccess.preferences(context).getBoolean("pending", false)
+                val cancelled = rootCancelled.get() && !pending
+                if (!cancelled) com.example.limbuszhcn.PersistentDiagnosticLog.warn("RootResourceImport",
+                    "Import failed pending=$pending", error)
+                publish(state.copy(busy = false, failed = !cancelled, pending = pending,
+                    message = if (cancelled) "已取消导入，原版和已有资源均已保留。"
+                        else if (error is PackageManager.NameNotFoundException) "请先在这台设备上安装官方边狱巴士"
+                        else error.message ?: "导入未完成，请重新检测后重试",
+                    notice = if (cancelled) "已取消导入，原版和已有资源均已保留。" else null))
+            }
+        }
+    }
+
     fun importResources(uri: Uri, prepareTarget: Boolean) {
         if (state.busy || state.pending) return
         state = state.copy(busy = true, done = false, failed = false, copied = 0, total = 0,
@@ -377,7 +451,8 @@ open class MigrationActivity : ComponentActivity() {
                     onOpenLegacy = {
                         packageManager.getLaunchIntentForPackage(MigrationArchive.LEGACY)?.let(::startActivity)
                     }, onFinish = ::leaveMigration,
-                    onExport = { confirmation = ConfirmedOperation.ExportResources }, onCancelExport = model::cancelExport)
+                    onExport = { confirmation = ConfirmedOperation.ExportResources }, onCancelExport = model::cancelExport,
+                    onRootImport = { confirmation = ConfirmedOperation.ImportRootResources }, onCancelRootImport = model::cancelRootImport)
                 confirmation?.let { operation ->
                     OperationConfirmation(operation, enabled = !state.busy,
                         onDismiss = { confirmation = null; selectedResource = null }) {
@@ -386,6 +461,7 @@ open class MigrationActivity : ComponentActivity() {
                         selectedResource = null
                         if (!state.busy) when (operation) {
                             ConfirmedOperation.Migrate -> model.start(prepareTarget())
+                            ConfirmedOperation.ImportRootResources -> model.importRootResources()
                             ConfirmedOperation.ExportResources -> runCatching { exportPicker.launch("BYBUS-resources.zip") }.onFailure(model::pickerFailed)
                             ConfirmedOperation.ImportResources -> resource?.let {
                                 val uri = Uri.parse(it)

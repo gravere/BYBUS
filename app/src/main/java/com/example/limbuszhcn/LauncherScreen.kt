@@ -62,7 +62,9 @@ internal fun LauncherScreen(
     onHomeProjectSource: (String?) -> Unit = {},
     onDismissAiCancellation: () -> Unit = {},
     onConfirmAiCancellation: () -> Unit = {},
-    onAutomaticAppUpdates: (Boolean) -> Unit = {}
+    onAutomaticAppUpdates: (Boolean) -> Unit = {},
+    onDismissRootImport: () -> Unit = {},
+    onContinueRootLaunch: () -> Unit = {}
 ) {
     var sheet by rememberSaveable { mutableStateOf<String?>(null) }
     var parentSheets by rememberSaveable { mutableStateOf(emptyList<String>()) }
@@ -213,6 +215,8 @@ internal fun LauncherScreen(
                             readCount = translationActions.coverageCount, onSelected = { request ->
                                 requestedAiScope = null; requestedAiEntries = null; requestedCoverage = request; openChild("ai-translation")
                             })
+                    } else if (active == "desktop-icon") {
+                        DesktopIconPane()
                     } else if (active == "repair") {
                         RepairPane(state, { confirmation = ConfirmedOperation.Repair }, onExport)
                     } else if (active == "clear-data") {
@@ -252,6 +256,7 @@ internal fun LauncherScreen(
                             onCoverage = ::openCoverage, onProject = { openChild("project") },
                             onMigration = onMigration, onRepair = { openChild("repair") },
                             onClearData = { openChild("clear-data") },
+                            onDesktopIcon = { openChild("desktop-icon") },
                             onExport = { close(); onExport() }, onSettings = { close(); onSettings() },
                             onGoogleSettings = { openChild("google"); onCheckGooglePayment() },
                             onRefresh = { if (active != "status") close(); onRefresh() }, onAbout = { openChild("about") })
@@ -289,6 +294,14 @@ internal fun LauncherScreen(
         confirmZeroSource = false
         translationActions.select("zero")
     }
+    if (state.rootImportOffer) BybusDialog(onDismissRequest = onDismissRootImport,
+        title = { Text("可以导入原版资源") },
+        text = { Text("检测到 Root 环境。若原版已下载资源，可到「数据迁移」授权导入，减少重复下载。此提醒只显示一次。") },
+        confirmButton = { TextButton(enabled = !state.busy, onClick = {
+            onDismissRootImport()
+            onMigration()
+        }) { Text("去导入") } },
+        dismissButton = { TextButton(enabled = !state.busy, onClick = onContinueRootLaunch) { Text("继续启动") } })
     confirmation?.let { operation ->
         OperationConfirmation(operation, enabled = !state.busy, onDismiss = { confirmation = null }) {
             confirmation = null

@@ -102,7 +102,7 @@ internal fun LauncherDetailSurface(layout: LauncherLayout, page: String,
                         "tools" -> "设置与工具"; "status" -> "运行状态"; "error" -> "准备未完成"
                         "project" -> "翻译项目"; "coverage" -> "汉化覆盖"; "updates" -> "游戏更新"; "app-update" -> "应用更新"
                         "translation" -> "汉化源与更新"; "ai-translation" -> "AI 翻译"; "ai-entries" -> "翻译条目"; "ai-base-update" -> "更新原包译文"; "clear-data" -> "清除数据"
-                        "repair" -> "修复"; "resource-preparation" -> "准备游戏资源"; "google" -> "Google 账号与付款"; else -> "使用说明与版本"
+                        "repair" -> "修复"; "resource-preparation" -> "准备游戏资源"; "google" -> "Google 账号与付款"; "desktop-icon" -> "桌面图标"; else -> "使用说明与版本"
                     }, style = MaterialTheme.typography.headlineSmall)
                 }
                 ActionIconButton(Glyph.Close, "关闭面板", requestDismiss)

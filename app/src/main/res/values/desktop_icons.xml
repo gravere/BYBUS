@@ -1,0 +1,6 @@
+<resources>
+    <color name="desktop_icon_light_background">#F7F7F2</color>
+    <color name="desktop_icon_dark_background">#171D1B</color>
+    <!-- Adaptive icon backgrounds are opaque; avoid OEM-dependent black fills for transparent artwork. -->
+    <color name="desktop_icon_wordmark_background">#171D1B</color>
+</resources>

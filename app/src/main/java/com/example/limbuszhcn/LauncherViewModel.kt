@@ -37,6 +37,8 @@ internal class LauncherViewModel(application: Application) : AndroidViewModel(ap
     }
     val state: LauncherUiState get() = coordinator.state.withMigrationTask(com.example.limbuszhcn.migration.MigrationModel.currentState())
     fun launch() = coordinator.launch()
+    fun dismissRootImportOffer() = coordinator.dismissRootImportOffer()
+    fun continueRootLaunch() = coordinator.continueRootLaunch()
     fun requestAiTask(cancelSession: String? = null, resumeTaskId: String? = null, cancelTaskId: String? = null) =
         coordinator.requestAiTask(cancelSession, resumeTaskId, cancelTaskId)
     fun dismissAiCancellation() = coordinator.dismissAiCancellation()

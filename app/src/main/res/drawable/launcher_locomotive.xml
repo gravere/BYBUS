@@ -1,0 +1,3 @@
+<inset xmlns:android="http://schemas.android.com/apk/res/android" android:inset="22%">
+    <bitmap android:src="@drawable/limbus_locomotive" android:gravity="fill" android:filter="true" />
+</inset>

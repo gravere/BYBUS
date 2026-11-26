@@ -32,62 +32,10 @@ class GameResourceTransfer(
 
     fun exportResources(output: OutputStream): ResourceTransferResult = synchronized(LOCK) {
         recoverUnlocked()
-        require(roots.isNotEmpty()) { "当前存储不支持资源迁移" }
-        val files = mutableListOf<Pair<String, Path>>()
-        roots.toSortedMap().forEach { (alias, root) ->
-            require(alias.matches(Regex("[a-z][a-z0-9-]{0,63}"))) { "无效的资源目录标识" }
-            if (!Files.isDirectory(root, NOFOLLOW_LINKS)) return@forEach
-            Files.walk(root).use { paths -> paths.forEach { file ->
-                checkCancelled()
-                require(!Files.isSymbolicLink(file)) { "资源目录包含符号链接，不能迁出" }
-                if (Files.isRegularFile(file, NOFOLLOW_LINKS)) {
-                    val name = "$alias/${root.relativize(file).toString().replace('\\', '/')}"
-                    if (allowed(name)) files += name to file
-                    require(files.size <= MAX_FILES) { "资源文件数量超过迁移上限" }
-                }
-            } }
-        }
-        files.sortBy { it.first }
-        val total = files.sumOf { Files.size(it.second).also { size -> require(size <= MAX_FILE_BYTES) { "单个资源过大" } } }
-        require(total in 1..MAX_BYTES && files.isNotEmpty()) { "没有可迁出的资源，或资源总量超过上限" }
-        val entries = mutableListOf<Entry>()
-        var copied = 0L
-        ZipOutputStream(BufferedOutputStream(output)).use { zip ->
-            zip.setLevel(Deflater.NO_COMPRESSION)
-            zip.putNextEntry(ZipEntry(HEADER))
-            Properties().apply {
-                setProperty("format", FORMAT)
-                setProperty("package", PACKAGE)
-                setProperty("versionCode", gameVersion.toString())
-                setProperty("files", files.size.toString())
-                setProperty("bytes", total.toString())
-            }.store(zip, "Limbus resources only")
-            zip.closeEntry()
-            files.forEach { (name, file) ->
-                val size = Files.size(file)
-                val digest = MessageDigest.getInstance("SHA-256")
-                zip.putNextEntry(ZipEntry("data/$name"))
-                val actual = Files.newInputStream(file).use { input -> copy(input, zip, size) { chunk, count ->
-                    digest.update(chunk, 0, count)
-                    copied += count
-                    report("正在迁出资源", copied, total)
-                } }
-                require(actual == size && Files.size(file) == size) { "迁出期间资源发生变化，请退出游戏后重试" }
-                zip.closeEntry()
-                entries += Entry(name, actual, hex(digest.digest()))
-            }
-            require(copied == total) { "迁出期间资源发生变化，请重试" }
-            zip.putNextEntry(ZipEntry(INDEX))
-            val index = DataOutputStream(zip)
-            index.writeInt(entries.size)
-            entries.forEach { index.writeUTF(it.path); index.writeLong(it.size); index.writeUTF(it.hash) }
-            zip.closeEntry()
-        }
-        progress(ResourceTransferProgress("迁出完成", copied, total))
-        ResourceTransferResult(files.size, copied, sourceVersion = gameVersion)
+        ResourceArchiveWriter(roots, gameVersion, cancelled, progress).write(output)
     }
 
-    fun importResources(input: InputStream): ResourceTransferResult = synchronized(LOCK) {
+    fun importResources(input: InputStream, validateSource: () -> Unit = {}): ResourceTransferResult = synchronized(LOCK) {
         recoverUnlocked()
         Files.createDirectories(stagingRoot)
         val stage = Files.createDirectory(stagingRoot.resolve("transfer-${UUID.randomUUID()}"))
@@ -99,7 +47,11 @@ class GameResourceTransfer(
             var sourceVersion = 0L
             var total = 0L
             var count = 0
-            ZipInputStream(BufferedInputStream(input)).use { zip ->
+            BufferedInputStream(input).use { source ->
+              // ZipInputStream stops at the central directory, before the producing process has
+              // necessarily finished writing. Keep the pipe open until the bounded tail reaches EOF.
+              val borrowed = object : FilterInputStream(source) { override fun close() = Unit }
+              ZipInputStream(borrowed).use { zip ->
                 require(zip.nextEntry?.name == HEADER) { "不是有效的 Limbus 资源迁移包" }
                 val metadata = Properties().apply { load(ByteArrayInputStream(readBounded(zip, 16 * 1024))) }
                 require(metadata.getProperty("format") == FORMAT && metadata.getProperty("package") == PACKAGE) { "迁移包格式或游戏不匹配" }
@@ -142,6 +94,17 @@ class GameResourceTransfer(
                     zip.closeEntry()
                     entry = zip.nextEntry
                 }
+              }
+              val tail = ByteArray(32 * 1024)
+              var tailBytes = 0L
+              while (true) {
+                  checkCancelled()
+                  val read = source.read(tail)
+                  if (read < 0) break
+                  tailBytes += read
+                  require(tailBytes <= MAX_FILES * 1024L + 65536L) { "迁移包尾部数据过大" }
+              }
+              validateSource()
             }
             val expected = requireNotNull(index) { "迁移包缺少 SHA-256 校验清单" }
             require(actual.size == count && copied == total && expected.size == actual.size &&
@@ -213,15 +176,7 @@ class GameResourceTransfer(
         return target
     }
 
-    private fun allowed(name: String): Boolean {
-        if (name.toByteArray(Charsets.UTF_8).size > 512 || name.contains('\\') || name.contains(':') ||
-            name.any { it.code < 32 } || name.startsWith('/')) return false
-        val parts = name.split('/')
-        if (parts.size < 2 || parts.any { it.isEmpty() || it == "." || it == ".." } || parts.first() !in roots) return false
-        val denied = setOf("shared_prefs", "databases", "playerprefs", "accounts", "cookies", "temp")
-        if (parts.any { it.lowercase() in denied || "playerprefs" in it.lowercase() }) return false
-        return !parts.last().lowercase().let { it.endsWith(".apk") || it.endsWith(".dex") || it.endsWith(".so") || it.endsWith(".tmp") }
-    }
+    private fun allowed(name: String): Boolean = ResourceArchivePaths.allowed(name, roots.keys)
 
     private fun safeStagePath(stage: Path, name: String): Path {
         require(allowed(name)) { "暂存资源路径无效" }

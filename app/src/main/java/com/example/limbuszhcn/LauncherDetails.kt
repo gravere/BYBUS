@@ -27,7 +27,8 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
     onExport: () -> Unit, onSettings: () -> Unit,
     onMigration: () -> Unit, onRepair: () -> Unit, onClearData: () -> Unit,
     onGoogleSettings: () -> Unit,
-    onRefresh: () -> Unit, onAbout: () -> Unit, onAi: () -> Unit = {}, onCoverage: () -> Unit = {}, onProject: () -> Unit = {}) {
+    onRefresh: () -> Unit, onAbout: () -> Unit, onAi: () -> Unit = {}, onCoverage: () -> Unit = {}, onProject: () -> Unit = {},
+    onDesktopIcon: () -> Unit = {}) {
     val enabled = !state.busy
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         when (page) {
@@ -51,6 +52,8 @@ internal fun LauncherDetails(page: String, state: LauncherUiState,
                     SheetAction(Glyph.Import, "数据迁移", navigation = true, onClick = onMigration)
                 }
                 DetailActionSection("应用与维护") {
+                    SheetAction(Glyph.Image, "桌面图标", navigation = true, onClick = onDesktopIcon)
+                    DetailActionDivider()
                     SheetAction(Glyph.Upgrade, "应用更新", showUpdate = appUpdateAvailable, navigation = true, onClick = onAppUpdate)
                     DetailActionDivider()
                     SheetAction(Glyph.Repair, "修复", navigation = true, onClick = onRepair)
@@ -162,6 +165,8 @@ private fun AboutPane() {
         "首页翻译项目可跟随当前汉化源，也可固定显示；都市零协会可查看 GitHub 更新和翻译进度。"))
     GuideSection("数据与维护", listOf(
         "「数据迁移」可导入、导出游戏资源 ZIP。账号与 API 密钥不包含在资源包中。",
+        "已 Root 且原版下载过资源时，可选「从原版导入（Root）」。复制需要额外空间，原版和已有文件都会保留。",
+        "「桌面图标」可切换内置样式，也可用自己的图片添加桌面入口。自选图片不会替换应用列表中的原图标。",
         "汉化或安装文件异常时用「修复」，会保留账号和已下载资源。仍有问题可「导出诊断」反馈。",
         "「清除数据」会删除游戏下载资源，下次需重新下载。覆盖更新 BYBUS 会保留数据，卸载或系统清除应用数据会删除它们。"))
 }

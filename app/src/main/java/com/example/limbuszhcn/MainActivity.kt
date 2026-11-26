@@ -48,6 +48,7 @@ class MainActivity : ComponentActivity() {
      */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        runCatching { DesktopIcons(this).repairEntry() }
         logEntry("create", restored = savedInstanceState != null)
         SystemStartupDiagnostics.checkpoint(this, SystemStartupDiagnostics.Phase.MAIN_ENTRY)
         val migration = com.example.limbuszhcn.migration.MigrationAccess
@@ -214,6 +215,8 @@ class MainActivity : ComponentActivity() {
                             .onFailure { appUpdater.releasePageError() }
                     },
                     onLaunch = model::launch,
+                    onDismissRootImport = model::dismissRootImportOffer,
+                    onContinueRootLaunch = model::continueRootLaunch,
                     onRefresh = model::refresh,
                     onUpdate = model::updateTranslation,
                     onCheckGameUpdate = model::checkGameUpdate,

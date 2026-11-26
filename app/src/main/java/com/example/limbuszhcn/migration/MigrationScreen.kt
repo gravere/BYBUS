@@ -36,7 +36,8 @@ import com.example.limbuszhcn.ui.theme.LauncherColors as C
 @Composable
 internal fun MigrationScreen(state: MigrationState, onBack: () -> Unit, onRefresh: () -> Unit,
     onMigrate: () -> Unit, onSelectFile: () -> Unit, onOpenLegacy: () -> Unit, onFinish: () -> Unit,
-    onExport: () -> Unit = {}, onCancelExport: () -> Unit = {}) {
+    onExport: () -> Unit = {}, onCancelExport: () -> Unit = {},
+    onRootImport: () -> Unit = {}, onCancelRootImport: () -> Unit = {}) {
     var exporting by rememberSaveable { mutableStateOf(false) }
     Surface(Modifier.fillMaxSize(), color = C.Background, contentColor = C.Ink) {
         BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding(), contentAlignment = Alignment.TopCenter) {
@@ -61,7 +62,7 @@ internal fun MigrationScreen(state: MigrationState, onBack: () -> Unit, onRefres
                     Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(scroll)
                         .padding(top = 16.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                         if (state.busy || state.done) {
-                            MigrationTransferCard(state, onFinish, onCancelExport)
+                            MigrationTransferCard(state, onFinish, onCancelExport, onCancelRootImport)
                         } else {
                             if (!state.pending) SourceTabs(listOf(false, true), exporting,
                                 { if (it) "迁出" else "迁入" }, "迁移方向", { exporting = it })
@@ -73,10 +74,12 @@ internal fun MigrationScreen(state: MigrationState, onBack: () -> Unit, onRefres
                                 Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                                     ResourceActionCard(state, exporting, if (exporting) onExport else onSelectFile,
                                         Modifier.weight(1f).fillMaxHeight(), stretch = true)
-                                    MigrationSteps(exporting, Modifier.weight(1f).fillMaxHeight())
+                                    if (exporting) MigrationSteps(true, Modifier.weight(1f).fillMaxHeight())
+                                    else RootResourceCard(onRootImport, Modifier.weight(1f).fillMaxHeight(), stretch = true)
                                 }
                             } else {
                                 ResourceActionCard(state, exporting, if (exporting) onExport else onSelectFile)
+                                if (!exporting) RootResourceCard(onRootImport)
                                 MigrationSteps(exporting)
                             }
                             if (!state.pending && !exporting && state.hasLegacy) LegacySourceCard(state, onMigrate, onOpenLegacy)
@@ -85,6 +88,20 @@ internal fun MigrationScreen(state: MigrationState, onBack: () -> Unit, onRefres
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun RootResourceCard(onImport: () -> Unit, modifier: Modifier = Modifier, stretch: Boolean = false) {
+    MigrationPanel(modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            IconTile(Glyph.Folder, accent = true)
+            Text("从本机原版导入", style = MaterialTheme.typography.titleMedium)
+        }
+        Text("适用于已 Root 的设备。复制原版下载过的资源，减少重复下载。",
+            style = MaterialTheme.typography.bodyMedium)
+        if (stretch) Spacer(Modifier.weight(1f))
+        MigrationPrimaryButton("从原版导入（Root）", onImport, Glyph.Import)
     }
 }
 
@@ -148,7 +165,7 @@ private fun ResourceActionCard(state: MigrationState, exporting: Boolean, onActi
 @Composable
 private fun MigrationSteps(exporting: Boolean, modifier: Modifier = Modifier) {
     MigrationPanel(modifier) {
-        Text(if (exporting) "保存后怎么用" else "迁入步骤", style = MaterialTheme.typography.titleMedium)
+        Text(if (exporting) "保存后怎么用" else "资源包导入步骤", style = MaterialTheme.typography.titleMedium)
         val steps = if (exporting) listOf("把保存的 ZIP 传到接收设备。",
             "接收设备安装官方游戏和 BYBUS，在「迁入」中选择这个包。", "登录游戏，按提示补齐更新资源。")
             else listOf("先安装官方游戏，无需打开原版下载资源。", "导入资源包，保留本机已有文件。", "导入后从 BYBUS 启动游戏，补齐版本差异。")
@@ -174,7 +191,8 @@ private fun MigrationPrimaryButton(label: String, onClick: () -> Unit, glyph: Gl
 }
 
 @Composable
-private fun MigrationTransferCard(state: MigrationState, onFinish: () -> Unit, onCancelExport: () -> Unit) {
+private fun MigrationTransferCard(state: MigrationState, onFinish: () -> Unit, onCancelExport: () -> Unit,
+    onCancelRootImport: () -> Unit) {
     val inspecting = state.operation == MigrationOperation.Inspect
     val exporting = state.operation == MigrationOperation.Export
     val hasProgress = state.total > 0 && (state.copied > 0 || state.progressFiles)
@@ -201,6 +219,7 @@ private fun MigrationTransferCard(state: MigrationState, onFinish: () -> Unit, o
             HorizontalDivider(color = C.Line)
             Text(when {
                 exporting -> "本机数据已保留。把 ZIP 传到接收设备，在 BYBUS 的「数据迁移 → 迁入」中选择它。"
+                state.operation == MigrationOperation.RootResources -> "原版和 BYBUS 已有资源均已保留。回到首页启动游戏，登录账号并补齐版本差异即可。"
                 state.operation == MigrationOperation.Resources -> "已有资源和账号已保留。回到首页启动游戏，补齐版本差异即可。"
                 else -> "旧版数据已保留。先确认游戏正常，再卸载旧版；账号如需授权，请重新登录。"
             }, style = MaterialTheme.typography.bodyMedium)
@@ -223,6 +242,9 @@ private fun MigrationTransferCard(state: MigrationState, onFinish: () -> Unit, o
             if (exporting) {
                 Text("请保持页面打开，完成后再传输资源包。", style = MaterialTheme.typography.bodyMedium)
                 OutlinedButton(onClick = onCancelExport, modifier = Modifier.fillMaxWidth()) { Text("取消迁出") }
+            }
+            if (state.operation == MigrationOperation.RootResources) {
+                OutlinedButton(onClick = onCancelRootImport, modifier = Modifier.fillMaxWidth()) { Text("取消导入") }
             }
         }
     }

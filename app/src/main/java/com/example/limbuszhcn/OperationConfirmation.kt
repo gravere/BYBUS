@@ -13,6 +13,7 @@ internal enum class ConfirmedOperation(val title: String, val message: String, v
     ClearResources("清除游戏资源？", "将关闭游戏并删除 BYBUS 内下载的游戏资源与缓存。此操作无法撤销，下次进入游戏需要重新下载。账号、Google 服务和系统原版游戏会保留。", "确认清除", true),
     Migrate("导入旧版数据？", "将关闭容器内的游戏与服务，用旧版数据替换新版的同名数据和账号配置。旧版中的数据会保留。", "确认迁移", true),
     ImportResources("导入游戏资源？", "将关闭容器内的游戏与服务，校验并导入所选资源包。已有文件和账号会保留。", "确认导入"),
+    ImportRootResources("从原版导入资源？", "将申请 Root 权限，关闭原版和容器内游戏，复制原版已下载的资源。需要额外存储空间；原版文件、BYBUS 已有资源和账号均会保留。", "授权并导入"),
     ExportResources("迁出游戏资源？", "选好保存位置后，将关闭游戏并生成资源 ZIP。本机数据会保留；迁出包不包含账号、汉化源或应用设置。", "选择保存位置")
 }
 

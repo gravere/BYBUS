@@ -18,6 +18,7 @@
 -dontwarn com.google.android.gms.tasks.Task
 -keep class org.lsposed.** { *; }
 -keep class com.example.limbuszhcn.LauncherViewModel { public <init>(android.app.Application); }
+-keep class com.example.limbuszhcn.migration.RootResourceMain { public static void main(java.lang.String[]); }
 -keepattributes RuntimeVisibleAnnotations,AnnotationDefault,Signature,InnerClasses,EnclosingMethod
 -keepclasseswithmembernames,includedescriptorclasses class * { native <methods>; }
 -keep class ** implements java.io.Serializable { *; }

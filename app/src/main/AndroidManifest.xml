@@ -66,6 +66,9 @@
             android:permission="android.permission.BIND_JOB_SERVICE" tools:targetApi="34" />
         <receiver android:name=".translation.AiTaskService$PauseReceiver" android:exported="false" />
         <receiver android:name=".update.GameInstallReceiver" android:exported="false" />
+        <receiver android:name=".DesktopIconReceiver" android:exported="false">
+            <intent-filter><action android:name="android.intent.action.MY_PACKAGE_REPLACED" /></intent-filter>
+        </receiver>
         <activity android:name=".migration.MigrationActivity" android:exported="false" />
         <provider
             android:name=".selfupdate.AppUpdateFileProvider"
@@ -82,14 +85,70 @@
             android:resizeableActivity="true"
             android:label="@string/app_name"
             android:theme="@style/Theme.LimbusZhCN">
+        </activity>
+        <activity-alias android:name=".LauncherDefault" android:targetActivity=".MainActivity"
+            android:enabled="true" android:exported="true" android:icon="@mipmap/ic_launcher" android:label="@string/app_name">
             <meta-data android:name="android.app.shortcuts" android:resource="@xml/launcher_shortcuts" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
-        </activity>
+        </activity-alias>
+        <activity-alias android:name=".LauncherLight" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@mipmap/ic_launcher_light" android:label="@string/app_name">
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/launcher_shortcuts" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".LauncherDark" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@mipmap/ic_launcher_dark" android:label="@string/app_name">
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/launcher_shortcuts" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".LauncherWordmark" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@mipmap/ic_launcher_wordmark" android:label="@string/app_name">
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/launcher_shortcuts" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".LauncherStackedWordmark" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@mipmap/ic_launcher_stacked_wordmark" android:label="@string/app_name">
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/launcher_shortcuts" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".LauncherLocomotive" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@mipmap/ic_launcher_locomotive" android:label="@string/app_name">
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/launcher_shortcuts" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".LauncherFullLogo" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:icon="@mipmap/ic_launcher_full_logo" android:label="@string/app_name">
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/launcher_shortcuts" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity-alias>
     </application>
 
 </manifest>

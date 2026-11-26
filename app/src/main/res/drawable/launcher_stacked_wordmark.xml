@@ -1,0 +1,4 @@
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:insetLeft="18%" android:insetRight="18%" android:insetTop="29.95%" android:insetBottom="29.95%">
+    <bitmap android:src="@drawable/limbus_wordmark_stacked" android:gravity="fill" android:filter="true" />
+</inset>

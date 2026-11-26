@@ -24,5 +24,6 @@
         <activity android:name=".ResourceImportProbeActivity" android:exported="true" />
         <activity android:name=".TranslationSourceProbeActivity" android:exported="true" />
         <activity android:name=".IconRenderingProbeActivity" android:exported="true" />
+        <activity android:name=".DesktopIconProbeActivity" android:exported="true" />
     </application>
 </manifest>

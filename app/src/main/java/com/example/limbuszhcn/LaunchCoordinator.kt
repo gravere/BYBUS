@@ -34,6 +34,7 @@ internal data class LauncherUiState(
     val importReview: ImportCoverageReview? = null,
     val aiUpstreamOffer: AiUpstreamOffer? = null,
     val aiPreparingLaunch: Boolean = false,
+    val rootImportOffer: Boolean = false,
     val container: ContainerStatus? = null,
     val installedVersion: Long? = null,
     val installedVersionName: String? = null,
@@ -1315,7 +1316,20 @@ internal class LaunchCoordinator private constructor(application: Application) {
         publish { it.copy(canResumeGame = false) }
     }
 
+    fun dismissRootImportOffer() {
+        val reminder = com.example.limbuszhcn.migration.RootImportReminder
+        app.getSharedPreferences(reminder.PREFS, 0).edit().putBoolean(reminder.HANDLED, true).apply()
+        state = state.copy(rootImportOffer = false)
+    }
+
+    fun continueRootLaunch() {
+        if (state.busy || !state.rootImportOffer) return
+        dismissRootImportOffer()
+        launch()
+    }
+
     fun launch(prepareResources: Boolean = false, update: AiUpstreamDecision? = null) {
+        if (state.rootImportOffer) return
         // A Play/DNS outage must not stall the existing translation/launch path.
         checkGameUpdate(force = true)
         perform("准备启动", foregroundAi = update?.choice == AiUpdateChoice.Supplement) {
@@ -1325,6 +1339,13 @@ internal class LaunchCoordinator private constructor(application: Application) {
                 return@perform "已返回游戏"
             }
             publish { it.copy(canResumeGame = false) }
+            val rootReminder = com.example.limbuszhcn.migration.RootImportReminder
+            if (update == null && rootReminder.shouldOffer(
+                    app.getSharedPreferences(rootReminder.PREFS, 0).getBoolean(rootReminder.HANDLED, false),
+                    com.example.limbuszhcn.migration.RootResourcePaths.findSu() != null, false)) {
+                publish { it.copy(rootImportOffer = true) }
+                return@perform "可先导入原版已下载的资源"
+            }
             stage("检查游戏兼容性", 0)
             val localCandidate = com.example.limbuszhcn.update.TranslationRepository(
                 app.filesDir.toPath().resolve("translation-cache")).hasLaunchCandidate()

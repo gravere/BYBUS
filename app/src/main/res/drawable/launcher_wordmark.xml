@@ -1,0 +1,5 @@
+<!-- Relative insets scale with the launcher's icon size. Preserve the original artwork ratio. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:insetLeft="18%" android:insetRight="18%" android:insetTop="43.55%" android:insetBottom="43.55%">
+    <bitmap android:src="@drawable/limbus_wordmark" android:gravity="fill" android:filter="true" />
+</inset>
