@@ -2614,6 +2614,7 @@ bool capture_tmp_component_state(void *instance, void *font, TmpComponentState *
     if (auto previous = g_original_tmp_states.find(instance, id)) {
         candidate.wrapping = previous->wrapping; candidate.overflow = previous->overflow;
         candidate.spacing = previous->spacing;
+        candidate.label_size = previous->label_size;
     }
     bool saved = g_original_tmp_states.put(instance, id, candidate);
     pthread_mutex_unlock(&g_font_state_lock);

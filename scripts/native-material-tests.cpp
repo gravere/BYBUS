@@ -1,6 +1,7 @@
 #include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusFontMaterials.h"
 #include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusFontProof.h"
 #include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusFontScale.h"
+#include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusTextProvenance.h"
 #include <cassert>
 #include <cstdio>
 #include <mutex>
@@ -12,7 +13,10 @@
 #include <cstring>
 
 struct TmpComponentState {
+    limbus_text_provenance::LayoutOverride<int32_t> wrapping, overflow;
+    limbus_text_provenance::LayoutOverride<float> spacing, label_size;
     void *font = nullptr;
+    limbus_managed::Ref font_root;
     void *shared_material = nullptr;
     limbus_managed::Ref material_root;
     limbus_font_materials::Lease converted_material;
@@ -211,14 +215,8 @@ limbus_font_proof::Catalogue fonts;
 bool is_translated_managed_string(void *text) { return fonts.contains(codec.to_bytes(*static_cast<std::u16string *>(text))); }
 bool is_translated_tmp_fragment(void *, void *, std::vector<void *> * = nullptr) { return false; }
 namespace limbus_ui_labels { std::string translate_status(const std::string &) { return {}; } }
-bool capture_tmp_component_state(void *object, void *font, TmpComponentState *out) {
-    TmpComponentState state;
-    state.font = font;
-    state.shared_material = static_cast<Component *>(object)->material;
-    state.material_root = limbus_managed::retain(g_gc, state.shared_material);
-    *out = state;
-    return g_original_tmp_states.put(object, component_id(object), state);
-}
+const void *g_object_is_alive_info = &dirty_method;
+#include "runtime-style-capture-under-test.inc"
 void set_font(void *object, void *font, const void *) {
     static_cast<Component *>(object)->font = font;
     static_cast<Component *>(object)->material = font == g_tmp_font_asset ? &chinese_material : game_font_material;
@@ -271,6 +269,15 @@ void forget(Component &component) {
 }
 
 int main() {
+    {
+        Component label{999,&japanese_font};label.material=&source_font_material;
+        TmpComponentState state;assert(capture_tmp_component_state(&label,label.font,&state));
+        state.label_size.observe(50);state.label_size.record(33);
+        assert(g_original_tmp_states.put(&label,label.id,state));
+        assert(capture_tmp_component_state(&label,label.font,&state));
+        assert(state.label_size.active && state.label_size.original==50 && state.label_size.applied==33);
+        assert(g_original_tmp_states.take(&label,label.id,&state));
+    }
     for (const auto label : {"经验", "纺锤采光 ({0})", "暴食", "是否跳过战斗？"}) fonts.add(label);
     g_original_tmp_states.set_alive([](void *object) { return static_cast<Component *>(object)->alive; });
     Component first{1, &japanese_font}, second{2, &chinese_font};
