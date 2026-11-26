@@ -77,6 +77,9 @@ class StartupDiagnosticsExportTest {
                 assertTrue(status, status.contains("gameEvents=$expected"))
                 assertTrue(status.contains("signalSender=not_exposed_by_ApplicationExitInfo"))
                 assertTrue(status.contains("missingEvidence=not_a_success_result"))
+                val runtime = zip.getInputStream(zip.getEntry("runtime.txt")).bufferedReader().use { it.readText() }
+                assertTrue(runtime.contains("runtimeLaunchAppVersionCode="))
+                assertTrue(runtime.contains("runtimeLaunchRelation="))
                 val javaFaults = zip.getInputStream(zip.getEntry("java-faults.txt")).bufferedReader().use { it.readText() }
                 assertTrue(javaFaults, javaFaults.contains("collection=available"))
                 assertTrue(javaFaults.contains("type=java.lang.SecurityException category=package_uid_mismatch"))

@@ -149,4 +149,49 @@ class RuntimeLaunchStatusTest {
         receipt.recordSafetyAlert(101, LimbusSafetyAlert.summarize(2, "Error code: 70036"))
         assertTrue(receipt.status { error("不应覆盖游戏的提示") }.issue!!.contains("70036"))
     }
+
+    @Test fun confirmedBattleExitIsVisibleWithoutReadingAnEntireSession() {
+        receipt.beginLaunch(181)
+        val start = System.currentTimeMillis() - 3_600_000
+        Files.setLastModifiedTime(root.resolve("launch.request"), FileTime.fromMillis(start))
+        record("state=hooks_installed\nfontState=ready\nliveResourceMerges=1")
+        val exit = GameProcessExit(101, System.currentTimeMillis() - 1_000, "Android 因内存不足结束了游戏进程。", true, 181)
+        val status = receipt.status({ pid, from, until ->
+            assertEquals(101, pid)
+            assertEquals(exit.timestamp - 60_000, from)
+            assertEquals(exit.timestamp, until)
+            emptyList()
+        }) { exit }
+        assertEquals("游戏运行中已退出", status.result)
+        assertEquals(exit.detail, status.issue)
+        assertEquals("已读取汉化文本", status.translation)
+        // A different slot, build or pre-launch exit must not be attributed to this session.
+        for (other in listOf(exit.copy(pid = 102), exit.copy(versionCode = 180),
+            exit.copy(timestamp = start - 1), exit.copy(gameCheckpoint = false))) {
+            assertNull(receipt.status { other }.issue)
+        }
+    }
+
+    @Test fun updatingTheAppDoesNotRelabelTheLastGamesBuild() {
+        receipt.beginLaunch(169)
+        record("state=hooks_installed\nfontState=ready")
+        val summary = receipt.diagnosticSummary(181)
+        assertTrue(summary.contains("runtimeLaunchAppVersionCode=169\n"))
+        assertTrue(summary.contains("runtimeLaunchRelation=different_build\n"))
+        assertTrue(receipt.diagnosticSummary(169).contains("runtimeLaunchRelation=same_build\n"))
+        receipt.beginLaunch(181)
+        assertTrue(receipt.diagnosticSummary(181).contains("runtimeLaunchRelation=same_build\n"))
+    }
+
+    @Test fun legacyLaunchIsMarkedAsPredatingTheUpdateWithoutInventingItsVersion() {
+        receipt.beginLaunch()
+        val start = requireNotNull(receipt.status().startedAtMillis)
+        val summary = receipt.diagnosticSummary(181, start + 1)
+        assertTrue(summary.contains("runtimeLaunchAppVersionCode=unavailable\n"))
+        assertTrue(summary.contains("runtimeLaunchRelation=before_app_update\n"))
+        assertTrue(receipt.diagnosticSummary(181, start - 1).contains("runtimeLaunchRelation=unknown\n"))
+        // A mismatched context file must not assign another launch's version.
+        root.resolve("launch-context.properties").writeText("request=stale\nappVersionCode=123\n")
+        assertTrue(receipt.diagnosticSummary(181).contains("runtimeLaunchAppVersionCode=unavailable\n"))
+    }
 }

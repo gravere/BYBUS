@@ -60,7 +60,7 @@ internal object PersistentDiagnosticLog {
             TAG,
             "persistent log installed pid=${Process.myPid()} process=$processName " +
                 "device=${Build.MANUFACTURER}/${Build.MODEL} sdk=${Build.VERSION.SDK_INT} " +
-                "abis=${Build.SUPPORTED_ABIS.joinToString(",")}"
+                "abis=${Build.SUPPORTED_ABIS.joinToString(",")} appVersionCode=${BuildConfig.VERSION_CODE}"
         )
     }
 

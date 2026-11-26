@@ -94,6 +94,7 @@ class LimbusZhCNApplication : Application() {
         }
 
         override fun onLimbusApplicationCreated(application: Application) {
+            SystemStartupDiagnostics.checkpoint(VirtualCore.get().context, SystemStartupDiagnostics.Phase.GAME_BOUND)
             GameMemoryDiagnostics.start(VirtualCore.get().context, application)
         }
 

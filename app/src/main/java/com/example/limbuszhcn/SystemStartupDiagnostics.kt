@@ -9,11 +9,10 @@ import android.os.Build
 import android.os.Process
 import androidx.annotation.RequiresApi
 import com.example.limbuszhcn.container.GameProcessExit
-import com.example.limbuszhcn.selfupdate.AppUpdatePackage
 
 /** Own-process metadata only. None of these best-effort diagnostics controls startup. */
 internal object SystemStartupDiagnostics {
-    enum class Phase { ATTACH, MAIN_ENTRY, HOME_FRAME, INSTALLER_HANDOFF }
+    enum class Phase { ATTACH, MAIN_ENTRY, HOME_FRAME, INSTALLER_HANDOFF, GAME_BOUND }
 
     @Volatile private var lastPhase: Phase? = null
 
@@ -21,7 +20,7 @@ internal object SystemStartupDiagnostics {
         if (Build.VERSION.SDK_INT < 30 || phase == lastPhase) return
         lastPhase = phase
         runCatching {
-            val bytes = "bybus:1:${AppUpdatePackage.installedCode(context)}:${phase.name}".toByteArray(Charsets.US_ASCII)
+            val bytes = "bybus:1:${BuildConfig.VERSION_CODE}:${phase.name}".toByteArray(Charsets.US_ASCII)
             context.getSystemService(ActivityManager::class.java)?.setProcessStateSummary(bytes)
         }.onFailure {
             // Android can throttle this API. Never retry on the launch path or replace its handler.
@@ -36,6 +35,8 @@ internal object SystemStartupDiagnostics {
         val pattern = Regex("bybus:1:[1-9][0-9]{0,9}:(?:${Phase.entries.joinToString("|") { it.name }})")
         return value.takeIf(pattern::matches) ?: "unrecognized"
     }
+
+    fun exitVersionCode(bytes: ByteArray?): Long? = exitCheckpoint(bytes).split(':').getOrNull(2)?.toLongOrNull()
 
     @RequiresApi(30)
     private fun ownedSlotExit(context: Context, pid: Int): ApplicationExitInfo? {
@@ -66,7 +67,9 @@ internal object SystemStartupDiagnostics {
                 ApplicationExitInfo.REASON_INITIALIZATION_FAILURE -> "Android 记录到游戏进程初始化失败。"
                 else -> return null
             }
-            GameProcessExit(pid, info.timestamp, detail)
+            GameProcessExit(pid, info.timestamp, detail,
+                exitCheckpoint(info.processStateSummary).endsWith(":GAME_BOUND"),
+                exitVersionCode(info.processStateSummary))
         }.getOrNull()
     }
 

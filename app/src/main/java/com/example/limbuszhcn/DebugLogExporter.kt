@@ -224,7 +224,7 @@ internal class DebugLogExporter(private val context: Context) {
             val startup = com.example.limbuszhcn.container.TranslationIndexStore(indexRoot).bootstrapManifest()
             appendLine("translationStartupAvailable=${startup != null}")
             appendLine("translationStartupRecords=${startup?.getProperty("sourceRecordCount")?.toIntOrNull() ?: 0}")
-            append(com.example.limbuszhcn.container.RuntimeReceipt(indexRoot).diagnosticSummary { pid, started ->
+            append(com.example.limbuszhcn.container.RuntimeReceipt(indexRoot).diagnosticSummary(versionCode, packageInfo.lastUpdateTime) { pid, started ->
                 val exit = SystemStartupDiagnostics.gameProcessExit(context, pid)
                 val until = exit?.timestamp?.takeIf { it >= started } ?: Long.MAX_VALUE
                 readGameExitCodes(context, pid, started, until)
@@ -330,6 +330,13 @@ internal class DebugLogExporter(private val context: Context) {
                 appendLine("reason=${exitReasonName(reason.reason)}(${reason.reason})")
                 appendLine("status=${reason.status}")
                 appendLine("checkpoint=${SystemStartupDiagnostics.exitCheckpoint(reason.processStateSummary)}")
+                val code = SystemStartupDiagnostics.exitVersionCode(reason.processStateSummary)
+                appendLine("appVersionCode=${code ?: "unavailable"}")
+                appendLine("buildRelation=" + when (code) {
+                    null -> "unknown"
+                    BuildConfig.VERSION_CODE.toLong() -> "same_build"
+                    else -> "different_build"
+                })
                 appendLine("importance=${reason.importance}")
                 appendLine("pssKb=${reason.pss}")
                 appendLine("rssKb=${reason.rss}")

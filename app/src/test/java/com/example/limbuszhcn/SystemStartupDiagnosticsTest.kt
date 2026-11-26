@@ -8,6 +8,9 @@ class SystemStartupDiagnosticsTest {
         fun parse(value: String) = SystemStartupDiagnostics.exitCheckpoint(value.toByteArray())
         assertEquals("bybus:1:82:HOME_FRAME", parse("bybus:1:82:HOME_FRAME"))
         assertEquals("unavailable", SystemStartupDiagnostics.exitCheckpoint(null))
+        assertEquals("bybus:1:181:GAME_BOUND", parse("bybus:1:181:GAME_BOUND"))
+        assertEquals(169L, SystemStartupDiagnostics.exitVersionCode("bybus:1:169:ATTACH".toByteArray()))
+        assertEquals(null, SystemStartupDiagnostics.exitVersionCode("bybus:1:169:private".toByteArray()))
         for (value in listOf("bybus:1:82:HOME_FRAME\nsecret", "token=private", "A".repeat(129),
             "bybus:1:82:account@example.com", "bybus:2:82:HOME_FRAME")) {
             assertEquals("unrecognized", parse(value))

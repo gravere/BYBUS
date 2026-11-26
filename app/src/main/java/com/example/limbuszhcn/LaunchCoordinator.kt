@@ -852,7 +852,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
             publish { it.copy(translation = null, resourcePreparation = null) }
             gameCompatibility.requireUnchanged(approved)
             stage("启动游戏下载原文", 2)
-            receipt().beginLaunch()
+            receipt().beginLaunch(BuildConfig.VERSION_CODE.toLong())
             runtime.launchGame()
             publish { it.copy(canResumeGame = runtime.hasRunningGame(), runtimeStatus = receipt().status()) }
             "下载结束后返回 AI 翻译页，读取原文即可开始"
@@ -1374,7 +1374,7 @@ internal class LaunchCoordinator private constructor(application: Application) {
             else preparationPreferences.edit().putBoolean("pending", true).apply()
             stage("启动容器内游戏", 2)
             gameCompatibility.requireUnchanged(approvedBuild)
-            receipt().beginLaunch()
+            receipt().beginLaunch(BuildConfig.VERSION_CODE.toLong())
             val runtimeStatus = receipt().status()
             publish { it.copy(runtimeStatus = runtimeStatus) }
             measureStartup("container_launch") { runtime.launchGame() }
