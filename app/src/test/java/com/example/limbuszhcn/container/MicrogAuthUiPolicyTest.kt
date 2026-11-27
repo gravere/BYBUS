@@ -5,6 +5,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MicrogAuthUiPolicyTest {
+    @Test fun permissionControllerUsesOnlyTheHostRuntimePermissionBoundary() {
+        val request = "android.content.pm.action.REQUEST_PERMISSIONS"
+        assertTrue(P.isSystemPermissionRequest(P.GMS, request))
+        assertTrue(P.isSystemPermissionRequest("com.android.vending", request))
+        assertFalse(P.isSystemPermissionRequest(P.GAME, request))
+        assertFalse(P.isSystemPermissionRequest("foreign.app", request))
+        assertFalse(P.isSystemPermissionRequest(P.GMS, "android.intent.action.VIEW"))
+        assertFalse(P.isSystemPermissionRequest(null, null))
+    }
     @Test fun consentResultRequiresGoogleOwnedRequestAndParent() {
         for (page in listOf("org.microg.gms.auth.AskPermissionActivity", "org.microg.gms.auth.AskPackageOverrideActivity")) {
             assertTrue(P.isConsentTarget(P.GMS, P.GMS, page))

@@ -132,3 +132,17 @@ Android 17 另将 Google 设置所属进程置于冻结状态，读取内核 `cg
 - [Android Binder 调用身份](https://developer.android.com/reference/android/os/Binder#getCallingUid())
 - [Google Play Billing 错误定义](https://developer.android.com/google/play/billing/errors)
 - [Android 16 的 PermissionEnforcer](https://github.com/aosp-mirror/platform_frameworks_base/blob/android16-release/core/java/android/os/PermissionEnforcer.java)
+
+## 登录页面与系统权限
+
+内置 microG 的 IdentitySignInService 与 AuthorizationService 保留相同的游戏业务包名，
+避免账号选择、授权缓存、signOut 使用不同的应用身份。宿主 GMS 等未知目标仍遵循
+系统调用者身份要求；不依赖品牌，也不改账号、客户端 ID、证书或真实授权结果。
+microG 自检申请运行时权限时，调用系统 PermissionController 必须使用宿主实际包名，
+目标权限、返回 Activity 与系统的同意/拒绝结果保持原样。之前显式目标包的提前返回
+绕过了调用者转换，可能触发包名与 UID 不一致的 SecurityException。
+
+依据固定版本 [IdentitySignInService](https://github.com/microg/GmsCore/blob/v0.3.18.252432/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/identity/IdentitySignInService.kt)
+及 [AssistedSignInActivity](https://github.com/microg/GmsCore/blob/v0.3.18.252432/play-services-core/src/main/kotlin/org/microg/gms/auth/signin/AssistedSignInActivity.kt)。
+诊断只保留固定阶段名称和结果是否回传，不保存请求参数、账号、令牌或完整错误消息；
+组件回传验证不等同于 Google 真实账号已完成登录。

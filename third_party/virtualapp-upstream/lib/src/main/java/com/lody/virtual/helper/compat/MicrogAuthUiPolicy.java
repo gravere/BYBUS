@@ -11,6 +11,11 @@ public final class MicrogAuthUiPolicy {
 
     private MicrogAuthUiPolicy() { }
 
+    public static boolean isSystemPermissionRequest(String caller, String action) {
+        return (GMS.equals(caller) || "com.android.vending".equals(caller))
+                && LimbusActivityCompat.isRuntimePermissionRequestAction(action);
+    }
+
     public static boolean isConsentTarget(String creator, String targetPackage, String activity) {
         return GMS.equals(creator) && GMS.equals(targetPackage)
                 && ("org.microg.gms.auth.AskPermissionActivity".equals(activity)

@@ -75,7 +75,8 @@ internal fun collectGameFaultMarkers(pid: Int, sinceMillis: Long): Bundle {
     // microG callbacks run in another process of our UID. A game-PID filter
     // discarded the authorize result while retaining only the bind request.
     val events = readGameLog(sinceMillis, listOf("Unity:I", "AppSealing:E", "LimbusIntegrity:W",
-        "AuthorizationService:D", "IdentitySignInService:D", "AuthSignInActivity:D"),
+        "AuthorizationService:D", "IdentitySignInService:D", "AuthSignInActivity:D",
+        "AssistedSignInActivity:D", "AssistedSignInFragment:D", "LimbusVA:I"),
         onStatus = { status = it }) { lines ->
         lines.take(2048).mapNotNull { line ->
             safeGoogleAuthMarker(line) ?: safeGameFaultMarker(line)?.takeIf { it.contains(" pid=$pid ") }
@@ -87,12 +88,36 @@ internal fun collectGameFaultMarkers(pid: Int, sinceMillis: Long): Bundle {
     }
 }
 
-private val GOOGLE_AUTH_EVENT = Regex("""(\d{1,11}\.\d{3,9})\s+(\d{1,10})\s+\d+\s+[VDIWEF]\s+(AuthorizationService|IdentitySignInService|AuthSignInActivity)\s*:\s*(.{0,8192})""")
+private val GOOGLE_AUTH_EVENT = Regex("""(\d{1,11}\.\d{3,9})\s+(\d{1,10})\s+\d+\s+[VDIWEF]\s+(AuthorizationService|IdentitySignInService|AuthSignInActivity|AssistedSignInActivity|AssistedSignInFragment|LimbusVA)\s*:\s*(.{0,8192})""")
 
 internal fun safeGoogleAuthMarker(line: String): String? {
     val match = GOOGLE_AUTH_EVENT.matchEntire(line.trim()) ?: return null
     val message = match.groupValues[4]
-    val stage = when {
+    val component = match.groupValues[3]
+    // Select stages before exporting; never retain a request, result Bundle,
+    // status message, account name, credential or authentication URL.
+    val stage = when (component) {
+        "LimbusVA" -> when {
+            message.startsWith("Stored IntentSender result bridge") -> "result_route_saved"
+            message.startsWith("Dispatch filled Google Identity UI through VAMS") -> "identity_ui_started"
+            message.startsWith("Relay Google Identity UI result resultCode=-1 ") -> "identity_ui_returned"
+            message.startsWith("Relay Google Identity UI result resultCode=0 ") -> "identity_ui_cancelled"
+            else -> return null
+        }
+        "AssistedSignInActivity" -> when {
+            message.startsWith("onCreate: clientPackageName:") -> "identity_ui_created"
+            message.startsWith("errorResult:") -> "identity_ui_failed"
+            message.startsWith("loginResult: googleSignInAccount:") -> "identity_result_prepared"
+            else -> return null
+        }
+        "AssistedSignInFragment" -> when {
+            message.startsWith("checkAccountAuthStatus:") && message.contains("auth error") -> "account_check_failed"
+            message == "startLogin: error" -> "sign_in_failed"
+            message == "cancelLogin" -> "sign_in_cancelled"
+            else -> return null
+        }
+        "AuthSignInActivity" -> if (message.startsWith("Result:")) "account_ui_returned" else return null
+        else -> when {
         message.startsWith("handleServiceRequest start") -> "service_request"
         message.startsWith("authorize called") -> "authorize_requested"
         message.startsWith("authorize resolved: pendingIntent") -> "consent_required"
@@ -100,7 +125,10 @@ internal fun safeGoogleAuthMarker(line: String): String? {
         message.startsWith("authorize: invalid account") -> "account_unavailable"
         message.startsWith("authorize failed, falling back to PendingIntent") -> "authorize_retry_consent"
         message.startsWith("verifyWithGoogle failed") -> "verification_failed"
+        message.startsWith("method 'beginSignIn' called") -> "begin_sign_in"
+        message.startsWith("method 'getSignInIntent' called") -> "get_sign_in_intent"
         else -> return null
+        }
     }
     return "time=${match.groupValues[1]} pid=${match.groupValues[2]} event=google_auth stage=$stage component=${match.groupValues[3]}"
 }

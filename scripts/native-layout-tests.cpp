@@ -28,7 +28,7 @@ struct Control {
     bool announcer=false,choice=false,ruby=false,fitted=false;
     bool clickable=false,reflection_error=false;
     bool fitter=false,measure_error=false,reenter=false,measuring=false;
-    Control *skill_owner=nullptr,*material_owner=nullptr,*label=nullptr,*counter=nullptr;
+    Control *skill_owner=nullptr,*material_owner=nullptr,*exp_owner=nullptr,*label=nullptr,*counter=nullptr;
     float bounds[6]={300,0,0,50,20,0},local_rect[4]={0,-20,400,40};
     float margins[4]={0,0,0,0},preferred[2]={0,0},glyph_em=2;
     int measurements=0;
@@ -45,7 +45,7 @@ int g_tmp_get_wrapping_mode_info=Wrap,g_tmp_set_wrapping_mode_info=Wrap;
 int g_tmp_set_overflow_mode_info=Overflow,g_tmp_get_overflow_mode_info=Overflow;
 int g_tmp_get_auto_sizing_info=AutoSize,base_field;
 const void *g_tmp_base_size_field=&base_field;
-int measuring_field,label_field,counter_field,skill_type,material_type;
+int measuring_field,label_field,counter_field,skill_type,material_type,exp_type;
 void field_get(void *i,const void *field,void *out) {
     auto c=static_cast<Control *>(i);
     if(field==&measuring_field){*static_cast<bool *>(out)=c->measuring;return;}
@@ -82,7 +82,7 @@ void *invoke_component(int key,void *i,void **args,void **error) {
     if(key==107)return static_cast<Control *>(args[1])->bounds;
     auto c=static_cast<Control *>(i);
     if(c->reflection_error){*error=c;return nullptr;}
-    if(key==104){assert(args[1]&&*static_cast<bool *>(args[1]));return args[0]==&skill_type?c->skill_owner:c->material_owner;}
+    if(key==104){assert(args[1]&&*static_cast<bool *>(args[1]));return args[0]==&skill_type?c->skill_owner:args[0]==&exp_type?c->exp_owner:c->material_owner;}
     if(key==105){std::copy(static_cast<float *>(args[0]),static_cast<float *>(args[0])+4,c->margins);return nullptr;}
     if(key==106)return c->local_rect;
     if(key==103){assert(args[0]==g_content_fitter_runtime_type);return c->fitter?i:nullptr;}
@@ -143,6 +143,7 @@ int main() {
     g_tmp_measuring_field=&measuring_field;
     g_skill_label_owner={&skill_type,&label_field,nullptr};
     g_material_label_owner={&material_type,&label_field,&counter_field};
+    g_exp_gain_owner={&exp_type,&label_field,nullptr};
     Control skill_owner,skill;
     skill_owner.label=&skill;skill.skill_owner=&skill_owner;
     skill.values[Size]=36;skill.values[AutoSize]=0;skill.values[Wrap]=1;skill.values[Overflow]=3;
@@ -153,7 +154,7 @@ int main() {
     // Another child of the skill UI is not its dynamic name field.
     skill_owner.label=nullptr;skill.rect={70,40};
     auto skill_text=codec.from_bytes("切割攻击");
-    apply_translated_tmp_style(&skill,&skill_text,skill.tmp);assert(skill.measurements==1);
+    apply_translated_tmp_style(&skill,&skill_text,skill.tmp);assert(skill.measurements==0);
     skill_owner.label=&skill;apply_translated_tmp_style(&skill,&skill_text,skill.tmp);
     assert(skill.values[Size]==36 && !skill.tmp.label_size.active);
     Control measurement;measurement.rect={66,40};measurement.values[Size]=50;
@@ -194,6 +195,8 @@ int main() {
     // 66x40 rectangle, 50pt text, no auto-size or horizontal fitter. Its +value
     // is a separate child. Two full-width CJK glyphs at 50pt cannot fit.
     Control exp;exp.rect={66,40};exp.values[Size]=50;exp.values[AutoSize]=0;exp.reenter=true;
+    Control gauge,exp_row,gain;gauge.label=&gain;gain.parent=&exp_row;
+    exp.exp_owner=&gauge;exp.parent=&exp_row;exp.name="[Tmpro]ExpTitle";
     auto translated=codec.from_bytes("经验");
     apply_translated_tmp_style(&exp,&translated,exp.tmp);
     assert(exp.values[Size]>32.9f && exp.values[Size]<=33.f && exp.values[Wrap]==0);
@@ -221,6 +224,28 @@ int main() {
     exp.rect.height=40;apply_translated_tmp_style(&exp,&translated,exp.tmp);
     exp.choice=true;apply_translated_tmp_style(&exp,&translated,exp.tmp);
     assert(exp.values[Size]==40 && !exp.tmp.label_size.active); // reuse as managed text flow
+    exp.choice=false;apply_translated_tmp_style(&exp,&translated,exp.tmp);
+    exp.exp_owner=nullptr;apply_translated_tmp_style(&exp,&translated,exp.tmp);
+    assert(exp.values[Size]==40 && !exp.tmp.label_size.active); // reused outside the owning gauge
+    exp.exp_owner=&gauge;gain.parent=nullptr;apply_translated_tmp_style(&exp,&translated,exp.tmp);
+    assert(exp.values[Size]==40 && exp.margins[2]==0); // same owner, different row: not a caption
+    gain.parent=&exp_row;exp.name="unrelated label";apply_translated_tmp_style(&exp,&translated,exp.tmp);
+    assert(exp.values[Size]==40); // same dimensions and parent are insufficient
+    // Official UnitInformationPersonalitySkillTypeButton uses 36pt fixed text
+    // in a 70.29 x 50 slot and intentionally overflows into a much wider tab.
+    // No text-length heuristic may shrink skills 1/2/3 relative to defence.
+    for(const char *label:{"技能1","技能2","技能3","守备","E.G.O","通行证任务"}) {
+        Control tab;tab.rect={70.29f,50};tab.values[Size]=36;tab.values[AutoSize]=0;
+        tab.glyph_em=3;apply(tab,label);
+        assert(tab.values[Size]==36 && tab.measurements==0 && tab.values[Overflow]==0);
+    }
+    // Remove an earlier BYBUS size override once the role no longer matches;
+    // a later game-written size still takes precedence.
+    Control reused;reused.rect={70.29f,50};reused.values[Size]=24;reused.values[AutoSize]=0;
+    reused.tmp.label_size.observe(36);reused.tmp.label_size.record(24);
+    auto tab_text=codec.from_bytes("技能1");apply_translated_tmp_style(&reused,&tab_text,reused.tmp);
+    assert(reused.values[Size]==36 && !reused.tmp.label_size.active);
+    reused.values[Size]=32;apply(reused,"技能2");assert(reused.values[Size]==32);
     for(const char *value:{"+20","50/356","EXP","<size=50>经验</size>","第一行\n第二行"}) {
         Control excluded;excluded.rect={66,40};excluded.values[Size]=50;excluded.values[AutoSize]=0;
         apply(excluded,value);assert(excluded.measurements==0);

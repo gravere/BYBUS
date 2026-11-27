@@ -670,6 +670,15 @@ class MethodProxies {
             String resolvedType = (String) args[intentIndex + 1];
             Intent intent = (Intent) args[intentIndex];
 
+            // The PermissionController validates its caller against the physical UID.
+            // microG's self-check requests went through the explicit-package early
+            // return below, before the ordinary host-caller rewrite.
+            if (com.lody.virtual.helper.compat.MicrogAuthUiPolicy.isSystemPermissionRequest(
+                    getAppPkg(), intent.getAction())) {
+                MethodParameterUtils.replaceFirstAppPkg(args);
+                return method.invoke(who, args);
+            }
+
             Intent appleWindow = com.lody.virtual.helper.compat.LimbusAppleAuthBridge.browserIntent(getAppPkg(), intent);
             if (appleWindow != null) {
                 args[intentIndex] = appleWindow;

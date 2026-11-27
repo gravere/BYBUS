@@ -25,8 +25,10 @@ public final class LimbusActivityCompat {
 
     /**
      * Restore the OAuth client identity after the GMS broker request has crossed the host Binder
-     * boundary. The broker must use the host package for Android's UID ownership checks, while
-     * Google OAuth must still receive the original game package and certificate identity.
+     * boundary on the legacy system-service route. Bundled microG identity and authorization
+     * services retain the game package end to end, including account selection and sign-out.
+     * A real system service still requires the physical host caller; its OAuth UI restores
+     * the game identity here without changing account or credential data.
      */
     public static boolean restoreGoogleOAuthClientPackage(
             Intent intent,

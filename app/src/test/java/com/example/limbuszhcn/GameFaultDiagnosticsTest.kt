@@ -24,6 +24,25 @@ class GameFaultDiagnosticsTest {
         assertNull(safeGoogleAuthMarker(prefix + "token=SECRET"))
         assertNull(safeGoogleAuthMarker(prefix.replace("AuthorizationService", "OtherApp") + "authorize called"))
     }
+    @Test fun identityUiStagesDoNotExportResultPayloadsOrBorrowOtherTags() {
+        fun marker(tag: String, message: String) = safeGoogleAuthMarker("1795759354.000 1234 1234 I $tag : $message")
+        for ((tag, message) in listOf(
+            "AssistedSignInActivity" to "loginResult: googleSignInAccount: SECRET@example.com",
+            "AssistedSignInActivity" to "errorResult: Status{message=SECRET}",
+            "AuthSignInActivity" to "Result: Bundle{token=SECRET}",
+            "AssistedSignInFragment" to "checkAccountAuthStatus: account:SECRET auth error",
+            "LimbusVA" to "Relay Google Identity UI result resultCode=-1 dataPresent=true"
+        )) {
+            val result = marker(tag, message)
+            assertNotNull(result)
+            assertFalse(result!!.contains("SECRET"))
+            assertFalse(result.contains("Bundle"))
+        }
+        assertTrue(marker("LimbusVA", "Relay Google Identity UI result resultCode=0 dataPresent=false")!!.contains("cancelled"))
+        assertNull(marker("AuthSignInActivity", "authorize called SECRET"))
+        assertNull(marker("LimbusVA", "account=SECRET"))
+        assertNull(marker("Other", "Result: SECRET"))
+    }
     @Test fun inputExceptionsKeepGameCallbacksAndExcludeMessages() {
         val prefix = "1795681302.441 32346 32520 W Unity : "
         for (type in listOf("ArgumentException", "InvalidCastException", "MissingMethodException",

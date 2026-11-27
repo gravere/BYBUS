@@ -257,7 +257,8 @@ public class ServiceConnectionDelegate extends IServiceConnection.Stub {
             String targetClassName
     ) {
         return GMS_PACKAGE.equals(targetPackage)
-                && MICROG_IDENTITY_AUTHORIZATION_SERVICE.equals(targetClassName);
+                && (MICROG_IDENTITY_AUTHORIZATION_SERVICE.equals(targetClassName)
+                    || "org.microg.gms.auth.credentials.identity.IdentitySignInService".equals(targetClassName));
     }
 
     private static IInterface createGmsBrokerProxy(
@@ -416,7 +417,7 @@ public class ServiceConnectionDelegate extends IServiceConnection.Stub {
             return;
         }
         if (preserveLimbusBusinessPackage) {
-            Log.i(TAG, "Preserve Limbus package for virtual microG Identity Authorization");
+            Log.i(TAG, "Preserve Limbus package for virtual microG identity service");
             return;
         }
         int replaced = 0;

@@ -2988,7 +2988,7 @@ struct TextRowBinding {
     void *type = nullptr;
     const void *target = nullptr, *counter = nullptr;
 };
-TextRowBinding g_skill_label_owner, g_material_label_owner;
+TextRowBinding g_skill_label_owner, g_material_label_owner, g_exp_gain_owner;
 const void *g_text_owner_info = nullptr, *g_text_margin_set_info = nullptr;
 const void *g_text_relative_bounds_info = nullptr;
 const void *g_tmp_measuring_field = nullptr;
@@ -3245,6 +3245,29 @@ bool reserve_material_counter(void *instance, TmpComponentState &state) {
 }
 
 thread_local bool g_fitting_fixed_label = false;
+
+// This static caption has no serialized field of its own. Identify its role
+// through the game's typed gauge and gain-value field, then require the exact
+// sibling relationship of the shipped prefab. A small text rect alone is not
+// a clipping contract: skill tabs deliberately overflow into their wider button.
+bool is_exp_counter_caption(void *target) {
+    if (!target || !g_exp_gain_owner.type || !g_exp_gain_owner.target ||
+            !g_text_owner_info || !g_runtime_invoke || !g_field_get_value ||
+            !g_component_get_transform_info || !g_transform_get_parent_info ||
+            read_unity_object_name(target) != "[Tmpro]ExpTitle") return false;
+    bool inactive = true;
+    void *args[] = {g_exp_gain_owner.type, &inactive}, *error = nullptr;
+    void *owner = g_runtime_invoke(g_text_owner_info, target, args, &error);
+    if (error || !owner) return false;
+    void *gain = nullptr;
+    g_field_get_value(owner, g_exp_gain_owner.target, &gain);
+    if (!gain || gain == target) return false;
+    void *caption_transform = invoke_object_getter(g_component_get_transform_info, target);
+    void *gain_transform = invoke_object_getter(g_component_get_transform_info, gain);
+    void *parent = caption_transform ? invoke_object_getter(g_transform_get_parent_info, caption_transform) : nullptr;
+    return parent && gain_transform && parent == invoke_object_getter(g_transform_get_parent_info, gain_transform);
+}
+
 void fit_fixed_tmp_label(void *instance, void *managed_text, const std::string &text,
                          bool single, bool material_name, ComponentRect rect, TmpComponentState &state) {
     if (g_fitting_fixed_label) return;
@@ -3261,7 +3284,8 @@ void fit_fixed_tmp_label(void *instance, void *managed_text, const std::string &
     for (int32_t i = 0; chars && i < length; ++i)
         han |= (chars[i] >= 0x3400 && chars[i] <= 0x9fff) || (chars[i] >= 0xf900 && chars[i] <= 0xfaff);
     float desired = baseline;
-    const bool eligible = single && han && count_visible_codepoints(text) <= (material_name ? 128 : 12) &&
+    const bool eligible = (material_name || is_exp_counter_caption(instance)) &&
+            single && han && count_visible_codepoints(text) <= (material_name ? 128 : 12) &&
             text.find_first_of("<\r\n") == std::string::npos && rect.height > 0 &&
             rect.height <= baseline * 1.8f && rect.width >= baseline &&
             std::isfinite(rect.width) && fixed_label_dimensions(instance);
@@ -4590,6 +4614,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
                                         "FontSetter", "FontTypesCategorySetter", "FixedFontSetter", "PretendardFontSetter"};
     void *localized_layout_classes[2] = {}, *localized_layout_item_classes[2] = {};
     void *skill_label_class = nullptr, *material_label_class = nullptr, *rect_utility_class = nullptr;
+    void *exp_gauge_class = nullptr;
     const char *localized_layout_names[] = {"TextSizeByLocalize", "TextMarginByLocalize"};
     const char *localized_layout_item_names[] = {"TextChangeInfoByLocalize", "TextMarginInfoByLocalize"};
     void *announcer_ui_class = nullptr;
@@ -4714,6 +4739,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             if (!language_font_classes[slot]) language_font_classes[slot] = class_from_name(image, "UtilityUI", language_font_names[slot]);
         if (!skill_label_class) skill_label_class = class_from_name(image, "BattleUI.BattleUnit.SkillInfoUI", "SkillAndCoinUI");
         if (!material_label_class) material_label_class = class_from_name(image, "MainUI", "GrowthIngredientsItem");
+        if (!exp_gauge_class) exp_gauge_class = class_from_name(image, "MainUI", "ExpGaugeUI");
         if (!rect_utility_class) rect_utility_class = class_from_name(image, "UnityEngine", "RectTransformUtility");
         for (size_t slot = 0; slot < 2; ++slot) {
             if (!localized_layout_classes[slot]) localized_layout_classes[slot] =
@@ -5654,8 +5680,13 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             g_material_label_owner.counter = choice_field(material_label_class, "tmp_count", "TMPro.TextMeshProUGUI");
             if (g_material_label_owner.target && g_material_label_owner.counter)
                 g_material_label_owner.type = type_get_object(class_get_type(material_label_class));
+            for (const char *type : {"TMPro.TMP_Text", "TMPro.TextMeshProUGUI"})
+                if (!g_exp_gain_owner.target)
+                    g_exp_gain_owner.target = choice_field(exp_gauge_class, "tmp_gainExpText", type);
+            if (g_exp_gain_owner.target) g_exp_gain_owner.type = type_get_object(class_get_type(exp_gauge_class));
         }
         append_native_metadata("font-state.log", g_skill_label_owner.type ? "skill_layout_owner=1" : "skill_layout_owner=0");
+        append_native_metadata("font-state.log", g_exp_gain_owner.type ? "fixed_label_scope=counter_roles" : "fixed_label_scope=material_only");
         append_native_metadata("font-state.log", g_material_label_owner.type && g_text_margin_set_info &&
                 g_text_relative_bounds_info ? "material_name_bounds=1" : "material_name_bounds=0");
         g_choice_result_log_field = choice_field(g_choice_result_log_class, "_resultLog", "System.String");

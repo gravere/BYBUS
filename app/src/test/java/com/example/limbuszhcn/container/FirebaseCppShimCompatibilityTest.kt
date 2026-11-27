@@ -75,10 +75,15 @@ class FirebaseCppShimCompatibilityTest {
     }
 
     @Test
-    fun `only virtual microG authorization preserves the game broker package`() {
+    fun `virtual identity and authorization share the same game package`() {
         assertTrue(ServiceConnectionDelegate.shouldPreserveLimbusGmsBusinessPackage(
             "com.google.android.gms",
             "org.microg.gms.auth.credentials.identity.AuthorizationService"))
+        assertTrue(ServiceConnectionDelegate.shouldPreserveLimbusGmsBusinessPackage(
+            "com.google.android.gms",
+            "org.microg.gms.auth.credentials.identity.IdentitySignInService"))
+        assertFalse(ServiceConnectionDelegate.shouldPreserveLimbusGmsBusinessPackage(
+            "other.package", "org.microg.gms.auth.credentials.identity.IdentitySignInService"))
         assertFalse(ServiceConnectionDelegate.shouldPreserveLimbusGmsBusinessPackage(
             "com.google.android.gms",
             "org.microg.gms.measurement.MeasurementService"))
