@@ -340,9 +340,10 @@ private class VirtualAppBridge(
     @Suppress("DEPRECATION")
     private fun readMicrogIdentity(apk: File): MicrogPackageIdentity {
         val info = context.packageManager.getPackageArchiveInfo(apk.absolutePath,
-            if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES)
+            com.lody.virtual.helper.compat.ApkSignatureCompat.queryFlags(Build.VERSION.SDK_INT))
             ?: throw ContainerRuntimeUnavailableException("无法识别 Google 组件安装文件")
-        val signers = if (Build.VERSION.SDK_INT >= 28) info.signingInfo?.apkContentsSigners else info.signatures
+        val signers = com.lody.virtual.helper.compat.ApkSignatureCompat.currentSigners(info)
+        require(signers.isNotEmpty()) { "无法读取 Google 组件签名，已保留现有数据" }
         return MicrogPackageIdentity(info.packageName,
             if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong(),
             signers.orEmpty().map { signer ->

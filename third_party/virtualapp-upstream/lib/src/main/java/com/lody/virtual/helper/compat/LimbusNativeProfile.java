@@ -22,8 +22,7 @@ public final class LimbusNativeProfile {
     private LimbusNativeProfile() {}
     public static final String GAME_PACKAGE = "com.ProjectMoon.LimbusCompany";
     public static final String OFFICIAL_CERTIFICATE = "9ea88fdc27195dfef99050f88a889cad86cdf1a80faca2e22d6464d47f973145";
-    public static final int SIGNATURE_FLAGS = Build.VERSION.SDK_INT >= 28
-            ? PackageManager.GET_SIGNING_CERTIFICATES : PackageManager.GET_SIGNATURES;
+    public static final int SIGNATURE_FLAGS = ApkSignatureCompat.queryFlags(Build.VERSION.SDK_INT);
     private static String cachedIdentity;
     private static Match cachedMatch;
 
@@ -140,8 +139,7 @@ public final class LimbusNativeProfile {
 
     @SuppressWarnings("deprecation")
     private static boolean hasOfficialSigner(PackageInfo info) throws Exception {
-        Signature[] signers = Build.VERSION.SDK_INT >= 28 && info.signingInfo != null
-                ? info.signingInfo.getApkContentsSigners() : info.signatures;
+        Signature[] signers = ApkSignatureCompat.currentSigners(info);
         if (signers == null || signers.length != 1) return false;
         return OFFICIAL_CERTIFICATE.equals(LimbusNativeStructure.hex(MessageDigest.getInstance("SHA-256")
                 .digest(signers[0].toByteArray())));

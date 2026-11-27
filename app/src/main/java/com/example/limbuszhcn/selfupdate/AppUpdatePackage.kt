@@ -1,7 +1,7 @@
 package com.example.limbuszhcn.selfupdate
 
 import android.content.Context
-import android.content.pm.PackageManager
+import com.lody.virtual.helper.compat.ApkSignatureCompat
 import android.os.Build
 import androidx.core.content.FileProvider
 import com.android.apksig.ApkVerifier
@@ -29,9 +29,9 @@ internal object AppUpdatePackage {
         val verification = ApkVerifier.Builder(file).setMinCheckedPlatformVersion(Build.VERSION.SDK_INT)
             .setMaxCheckedPlatformVersion(Build.VERSION.SDK_INT).build().verify()
         require(verification.isVerified) { "安装包签名验证失败" }
-        val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
+        val flags = ApkSignatureCompat.queryFlags(Build.VERSION.SDK_INT)
         val installed = context.packageManager.getPackageInfo(context.packageName, flags)
-        val currentSignatures = if (Build.VERSION.SDK_INT >= 28) requireNotNull(installed.signingInfo).apkContentsSigners else installed.signatures
+        val currentSignatures = ApkSignatureCompat.currentSigners(installed)
         fun digest(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).toList()
         val trusted = requireNotNull(currentSignatures).map { digest(it.toByteArray()) }.toSet()
         require(trusted.isNotEmpty() && verification.signerCertificates.map { digest(it.encoded) }.toSet() == trusted) {

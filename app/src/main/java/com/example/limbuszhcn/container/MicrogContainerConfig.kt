@@ -1,7 +1,7 @@
 package com.example.limbuszhcn.container
 
 import android.content.Context
-import android.content.pm.PackageManager
+import com.lody.virtual.helper.compat.ApkSignatureCompat
 import java.io.File
 import java.io.InputStream
 import java.net.URL
@@ -164,8 +164,7 @@ class MicrogContainerConfig(private val context: Context) {
     private fun verifyBundledApk(apk: File, entry: BundledMicrogEntry) {
         val info = context.packageManager.getPackageArchiveInfo(
             apk.absolutePath,
-            if (android.os.Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES
-            else PackageManager.GET_SIGNATURES
+            ApkSignatureCompat.queryFlags(android.os.Build.VERSION.SDK_INT)
         ) ?: error("Unable to parse bundled microG APK: ${entry.assetName}")
         require(info.packageName == entry.packageName) {
             "Bundled microG package mismatch asset=${entry.assetName} expected=${entry.packageName} actual=${info.packageName}"
@@ -174,12 +173,12 @@ class MicrogContainerConfig(private val context: Context) {
         require(version == entry.versionCode) {
             "Bundled microG version mismatch package=${entry.packageName} expected=${entry.versionCode} actual=$version"
         }
-        val signers = if (android.os.Build.VERSION.SDK_INT >= 28) info.signingInfo?.apkContentsSigners else info.signatures
-        require(!signers.isNullOrEmpty()) { "Bundled microG signing info missing package=${entry.packageName}" }
+        val signers = ApkSignatureCompat.currentSigners(info)
+        require(signers.isNotEmpty()) { "Bundled microG signing info missing package=${entry.packageName}" }
         val certificateDigests = signers.map { signature ->
             MessageDigest.getInstance("SHA-256").digest(signature.toByteArray()).toHex()
         }
-        require(entry.certificateSha256 in certificateDigests) {
+        require(certificateDigests.toSet() == setOf(entry.certificateSha256)) {
             "Bundled microG certificate mismatch package=${entry.packageName}"
         }
     }
