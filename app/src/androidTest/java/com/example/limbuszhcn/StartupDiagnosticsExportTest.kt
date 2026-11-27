@@ -46,6 +46,14 @@ class StartupDiagnosticsExportTest {
         Log.w("Unity", "InvalidCastException: $privateMessage")
         Log.e("Unity", "at SkillButton.OnPointerEnter (PointerEventData $privateMessage)")
         Log.w("LimbusIntegrity", "report code=50025 callerOffset=75940 forwarded=1")
+        Log.e("Unity", "Curl error 28: https://private.invalid/?token=$privateMessage")
+        Log.d("AuthorizationService", "authorize resolved: silent, account=$privateMessage")
+        // Authorization is emitted by a different process of the same host UID.
+        val otherPid = collectGameFaultMarkers(99999999, System.currentTimeMillis() - 10_000)
+            .getStringArrayList("markers").orEmpty().joinToString("\n")
+        assertTrue(otherPid, otherPid.contains("event=google_auth stage=authorize_completed"))
+        assertFalse(otherPid.contains("event=network_request_failed"))
+        assertFalse(otherPid.contains(privateMessage))
         sampler.sample()
         sampler.sample() // overlapping windows must not duplicate the event
         val native = File(context.filesDir, "translation-cache/translation-index/termination-99999999.log")
@@ -63,6 +71,8 @@ class StartupDiagnosticsExportTest {
                 assertTrue(persistent.contains("event=managed_exception type=InvalidCastException"))
                 assertTrue(persistent.contains("event=managed_frame method=SkillButton.OnPointerEnter"))
                 assertTrue(persistent.contains("event=game_report_site code=50025 callerOffset=75940 forwarded=1"))
+                assertTrue(persistent.contains("event=network_request_failed curl=28 reason=timeout"))
+                assertTrue(persistent.contains("event=google_auth stage=authorize_completed"))
                 assertFalse(persistent.contains(privateMessage))
                 val trace = zip.getInputStream(zip.getEntry("native/${native.name}")).bufferedReader().use { it.readText() }
                 assertTrue(trace.contains("event=1 value=9"))

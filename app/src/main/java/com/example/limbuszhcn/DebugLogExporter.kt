@@ -594,12 +594,34 @@ internal fun safeGameStartupMarker(line: String): String? {
         message.contains("Unable to initialize the Unity Engine", true) -> "engine_initialization_failed"
         message.contains("Failed to extract resources", true) -> "resource_extraction_failed"
         message.contains("Unable to load", true) && message.contains("global-metadata.dat", true) -> "il2cpp_metadata_unreadable"
-        message.contains("Curl error", true) -> "network_request_failed"
+        message.contains("Curl error", true) -> "network_request_failed" + safeCurlFailureDetails(message)
         message.contains("FMOD", true) && message.contains("error", true) -> "audio_resource_failed"
         else -> return null
     }
     // Only a numeric timestamp, PID and our category can leave this parser.
     return "time=${match.groupValues[1]} pid=${match.groupValues[2]} event=$category"
+}
+
+// Keep machine-readable failure evidence, never URLs, headers or response bodies.
+internal fun safeCurlFailureDetails(message: String): String {
+    val code = Regex("""\bCurl error\s*[:=]?\s*(\d{1,3})\b""", RegexOption.IGNORE_CASE)
+        .find(message)?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it in 1..999 }
+        ?: return " reason=unspecified"
+    val reason = when (code) {
+        5, 6 -> "dns"
+        7 -> "connect"
+        18 -> "partial_transfer"
+        23 -> "local_write"
+        28 -> "timeout"
+        35 -> "tls_handshake"
+        51, 60, 77 -> "certificate"
+        52 -> "empty_reply"
+        55 -> "send"
+        56 -> "receive"
+        92 -> "http2_stream"
+        else -> "other"
+    }
+    return " curl=$code reason=$reason"
 }
 
 private const val EARLY_GAME_EXIT_MS = 30_000L

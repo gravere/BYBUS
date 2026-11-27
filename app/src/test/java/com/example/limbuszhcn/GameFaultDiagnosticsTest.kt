@@ -5,6 +5,25 @@ import org.junit.Test
 import java.io.File
 
 class GameFaultDiagnosticsTest {
+    @Test fun curlFailuresRetainCodeButNeverConnectionPayload() {
+        val prefix = "1795742733.611 576 688 E Unity : "
+        for ((code, reason) in mapOf(6 to "dns", 18 to "partial_transfer", 23 to "local_write",
+                28 to "timeout", 35 to "tls_handshake", 60 to "certificate", 56 to "receive")) {
+            assertEquals("time=1795742733.611 pid=576 event=network_request_failed curl=$code reason=$reason",
+                safeGameFaultMarker(prefix + "Curl error $code: https://secret.example/download?token=PRIVATE"))
+        }
+        assertEquals(" reason=unspecified", safeCurlFailureDetails("Curl error PRIVATE"))
+    }
+
+    @Test fun googleAuthStagesExcludeAccountsAndTokens() {
+        val prefix = "1795705125.432 14812 14812 D AuthorizationService : "
+        assertEquals("time=1795705125.432 pid=14812 event=google_auth stage=authorize_requested component=AuthorizationService",
+            safeGoogleAuthMarker(prefix + "authorize called, packageName=private request=secret@example.com"))
+        assertTrue(safeGoogleAuthMarker(prefix + "authorize resolved: silent, grantedScopes=2")!!.contains("stage=authorize_completed"))
+        assertTrue(safeGoogleAuthMarker(prefix + "authorize failed, falling back to PendingIntent")!!.contains("stage=authorize_retry_consent"))
+        assertNull(safeGoogleAuthMarker(prefix + "token=SECRET"))
+        assertNull(safeGoogleAuthMarker(prefix.replace("AuthorizationService", "OtherApp") + "authorize called"))
+    }
     @Test fun inputExceptionsKeepGameCallbacksAndExcludeMessages() {
         val prefix = "1795681302.441 32346 32520 W Unity : "
         for (type in listOf("ArgumentException", "InvalidCastException", "MissingMethodException",

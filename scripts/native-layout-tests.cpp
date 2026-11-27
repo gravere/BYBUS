@@ -8,11 +8,13 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
+#include "../third_party/virtualapp-upstream/lib/src/main/jni/Foundation/LimbusManagedState.h"
 struct TmpComponentState {
     limbus_text_provenance::LayoutOverride<int32_t> wrapping;
     limbus_text_provenance::LayoutOverride<int32_t> overflow;
     limbus_text_provenance::LayoutOverride<float> spacing;
     limbus_text_provenance::LayoutOverride<float> label_size;
+    limbus_text_provenance::LayoutOverride<float> right_margin;
 };
 struct UiComponentState { limbus_text_provenance::LayoutOverride<int32_t> horizontal, vertical; };
 struct ComponentRect { float width = 300, height = 40; };
@@ -25,7 +27,9 @@ struct Control {
     UiComponentState ui;
     bool announcer=false,choice=false,ruby=false,fitted=false;
     bool clickable=false,reflection_error=false;
-    bool fitter=false,measure_error=false,reenter=false;
+    bool fitter=false,measure_error=false,reenter=false,measuring=false;
+    Control *skill_owner=nullptr,*material_owner=nullptr,*label=nullptr,*counter=nullptr;
+    float bounds[6]={300,0,0,50,20,0},local_rect[4]={0,-20,400,40};
     float margins[4]={0,0,0,0},preferred[2]={0,0},glyph_em=2;
     int measurements=0;
     Control *parent=nullptr;
@@ -41,11 +45,19 @@ int g_tmp_get_wrapping_mode_info=Wrap,g_tmp_set_wrapping_mode_info=Wrap;
 int g_tmp_set_overflow_mode_info=Overflow,g_tmp_get_overflow_mode_info=Overflow;
 int g_tmp_get_auto_sizing_info=AutoSize,base_field;
 const void *g_tmp_base_size_field=&base_field;
-void field_get(void *i,const void *field,void *out) {assert(field==&base_field);*static_cast<float *>(out)=static_cast<Control *>(i)->values.at(Base);}
+int measuring_field,label_field,counter_field,skill_type,material_type;
+void field_get(void *i,const void *field,void *out) {
+    auto c=static_cast<Control *>(i);
+    if(field==&measuring_field){*static_cast<bool *>(out)=c->measuring;return;}
+    if(field==&label_field){*static_cast<void **>(out)=c->label;return;}
+    if(field==&counter_field){*static_cast<void **>(out)=c->counter;return;}
+    assert(field==&base_field);*static_cast<float *>(out)=c->values.at(Base);
+}
 auto g_field_get_value=field_get;
 int g_tmp_get_font_size_info=Size,g_tmp_get_line_spacing_info=Spacing,g_tmp_set_line_spacing_info=Spacing;
 int g_fixed_label_size_info=Size,g_fixed_label_preferred_info=101,g_fixed_label_margin_info=102;
 int g_content_fitter_horizontal_info=FitX,g_content_fitter_vertical_info=FitY;
+int g_rect_transform_get_rect_info=106;
 int g_component_get_component_info=103,g_behaviour_get_active_info=FitterEnabled,fitter_type;
 const void *g_content_fitter_runtime_type=&fitter_type;
 int g_ui_get_rect_transform_info=0,g_ui_get_font_size_info=Size;
@@ -53,7 +65,7 @@ int g_ui_get_horizontal_overflow_info=Horizontal,g_ui_set_horizontal_overflow_in
 int g_ui_get_vertical_overflow_info=Overflow;
 bool invoke_float_getter(int key,void *i,float *out) {*out=static_cast<Control *>(i)->values.at(key);return true;}
 bool invoke_int_getter(int key,void *i,int32_t *out) {*out=static_cast<Control *>(i)->values.at(key);return true;}
-bool invoke_bool_getter(int key,void *i,bool *out) {*out=static_cast<Control *>(i)->values.at(key)!=0;return true;}
+bool invoke_bool_getter(int key,void *i,bool *out) {auto &v=static_cast<Control *>(i)->values;*out=key==FitterEnabled&&!v.count(key)?true:v.at(key)!=0;return true;}
 void invoke_float_setter(int key,void *i,float v) {auto &c=*static_cast<Control *>(i);c.values[key]=v;c.writes.push_back(key);}
 void invoke_int_setter(int key,void *i,int32_t v) {invoke_float_setter(key,i,v);}
 void invoke_bool_setter(int key,void *i,bool v) {invoke_float_setter(key,i,v);}
@@ -64,11 +76,15 @@ bool is_ruby_text(void *i) {return static_cast<Control *>(i)->ruby;}
 bool has_content_fitted_height(void *i) {return static_cast<Control *>(i)->fitted;}
 int g_component_get_transform_info=1,g_transform_get_parent_info=2,g_layout_get_component_info=3,click_type;
 const void *g_click_handler_runtime_type=&click_type;
-void *invoke_object_getter(int key,void *i) {return key==1?i:static_cast<Control *>(i)->parent;}
+void *invoke_object_getter(int key,void *i) {return key==0||key==1?i:static_cast<Control *>(i)->parent;}
 void apply_translated_tmp_style(void *,void *,const TmpComponentState &);
 void *invoke_component(int key,void *i,void **args,void **error) {
+    if(key==107)return static_cast<Control *>(args[1])->bounds;
     auto c=static_cast<Control *>(i);
     if(c->reflection_error){*error=c;return nullptr;}
+    if(key==104){assert(args[1]&&*static_cast<bool *>(args[1]));return args[0]==&skill_type?c->skill_owner:c->material_owner;}
+    if(key==105){std::copy(static_cast<float *>(args[0]),static_cast<float *>(args[0])+4,c->margins);return nullptr;}
+    if(key==106)return c->local_rect;
     if(key==103){assert(args[0]==g_content_fitter_runtime_type);return c->fitter?i:nullptr;}
     if(key==102)return c->margins;
     if(key==101){
@@ -81,7 +97,8 @@ void *invoke_component(int key,void *i,void **args,void **error) {
     assert(key==3 && args[0]==g_click_handler_runtime_type);
     return c->clickable?i:nullptr;
 }
-auto g_runtime_invoke=invoke_component;
+void *invoke_component(const void *key,void *i,void **args,void **error) {return invoke_component(static_cast<int>(reinterpret_cast<uintptr_t>(key)),i,args,error);}
+struct RuntimeInvoke {explicit operator bool() const {return true;} void *operator()(int k,void *i,void **a,void **e){return invoke_component(k,i,a,e);} void *operator()(const void *k,void *i,void **a,void **e){return invoke_component(k,i,a,e);}} g_runtime_invoke;
 void *unbox(void *p){return p;}
 auto g_object_unbox=unbox;
 #include "runtime-interactive-owner-under-test.inc"
@@ -93,6 +110,9 @@ void save_ui_layout_state(void *i,const UiComponentState &s) {static_cast<Contro
 std::atomic<uint64_t> g_layout_decisions{0};
 #define LT_LOGI(...) ((void)0)
 #include "runtime-label-restore-under-test.inc"
+void *retain(void *p,bool){return p;} void *ref_target(void *p){return p;} void ref_release(void *){}
+limbus_managed::GcApi g_gc{retain,retain,ref_target,ref_release};
+#include "runtime-text-row-under-test.inc"
 #include "runtime-layout-under-test.inc"
 #include "runtime-ui-layout-under-test.inc"
 std::unordered_map<std::string,std::string> g_package_line_breaks;
@@ -106,10 +126,10 @@ void *new_managed_string(const std::string &text) {
 }
 #include "runtime-title-layout-under-test.inc"
 void apply(Control &c,const std::string &text) {
-    auto s=codec.from_bytes(text);auto before=c.values;
+    auto s=codec.from_bytes(text);auto before=c.values;const auto first_write=c.writes.size();
     apply_translated_tmp_style(&c,&s,c.tmp);
     for(int key:{Size,Minimum,Maximum,AutoSize}) assert(c.values.at(key)==before.at(key));
-    for(int key:c.writes) assert(key!=Size&&key!=Minimum&&key!=Maximum&&key!=AutoSize);
+    for(size_t i=first_write;i<c.writes.size();++i){int key=c.writes[i];assert(key!=Size&&key!=Minimum&&key!=Maximum&&key!=AutoSize);}
 }
 void legacy(Control &c,const std::string &text) {
     auto s=codec.from_bytes(text);auto before=c.values;
@@ -117,6 +137,59 @@ void legacy(Control &c,const std::string &text) {
     for(int key:{Size,Minimum,Maximum,AutoSize,Spacing,Overflow}) assert(c.values.at(key)==before.at(key));
 }
 int main() {
+    g_text_owner_info=reinterpret_cast<void *>(104);
+    g_text_margin_set_info=reinterpret_cast<void *>(105);
+    g_text_relative_bounds_info=reinterpret_cast<void *>(107);
+    g_tmp_measuring_field=&measuring_field;
+    g_skill_label_owner={&skill_type,&label_field,nullptr};
+    g_material_label_owner={&material_type,&label_field,&counter_field};
+    Control skill_owner,skill;
+    skill_owner.label=&skill;skill.skill_owner=&skill_owner;
+    skill.values[Size]=36;skill.values[AutoSize]=0;skill.values[Wrap]=1;skill.values[Overflow]=3;
+    for(float width:{0.f,72.f,185.91f,270.f}) {
+        skill.rect={width,55};apply(skill,"切割攻击");
+        assert(skill.values[Wrap]==1&&skill.values[Overflow]==3&&skill.measurements==0);
+    }
+    // Another child of the skill UI is not its dynamic name field.
+    skill_owner.label=nullptr;skill.rect={70,40};
+    auto skill_text=codec.from_bytes("切割攻击");
+    apply_translated_tmp_style(&skill,&skill_text,skill.tmp);assert(skill.measurements==1);
+    skill_owner.label=&skill;apply_translated_tmp_style(&skill,&skill_text,skill.tmp);
+    assert(skill.values[Size]==36 && !skill.tmp.label_size.active);
+    Control measurement;measurement.rect={66,40};measurement.values[Size]=50;
+    measurement.values[AutoSize]=0;measurement.measuring=true;apply(measurement,"经验");
+    assert(measurement.measurements==0 && measurement.writes.empty());
+    Control row,name,count;row.label=&name;row.counter=&count;name.material_owner=&row;
+    name.local_rect[2]=400;name.rect={400,40};name.values[AutoSize]=0;name.values[Size]=30;name.glyph_em=10;
+    count.bounds[0]=350;count.bounds[3]=50;
+    auto material=codec.from_bytes("第八赛季同步与异想解析专用材料");
+    apply_translated_tmp_style(&name,&material,name.tmp);
+    assert(name.margins[2]==108 && name.values[Size]>29.1f && name.values[Size]<29.3f);
+    assert(name.values[Wrap]==0 && count.writes.empty() && name.tmp.right_margin.original==0);
+    auto margin=name.margins[2];apply_translated_tmp_style(&name,&material,name.tmp);
+    assert(name.margins[2]==margin); // no cumulative margin or shrink
+    count.bounds[0]=650;apply_translated_tmp_style(&name,&material,name.tmp);
+    assert(name.margins[2]==0 && name.values[Size]==30); // resized row no longer overlaps
+    count.bounds[0]=350;apply_translated_tmp_style(&name,&material,name.tmp);
+    name.margins[2]=20;apply_translated_tmp_style(&name,&material,name.tmp);
+    assert(name.tmp.right_margin.original==20); // later game margin wins
+    name.material_owner=nullptr;apply_translated_tmp_style(&name,&material,name.tmp);
+    assert(name.margins[2]==20 && !name.tmp.right_margin.active);
+    row.label=nullptr;name.material_owner=&row;apply(name,"另一条文本");
+    assert(name.margins[2]==20); // field identity required
+    row.label=&name;name.values[AutoSize]=1;name.values[Size]=18;
+    apply(name,"第八赛季同步与异想解析专用材料");
+    assert(name.margins[2]==108 && name.values[Size]==18 && name.values[Minimum]==5 && name.values[Maximum]==300);
+    count.values[FitterEnabled]=0;apply(name,"第八赛季同步与异想解析专用材料");
+    assert(name.margins[2]==20); // hidden count no longer reserves space
+    count.values[FitterEnabled]=1;name.measuring=true;apply(name,"第八赛季同步与异想解析专用材料");
+    assert(name.margins[2]==20); // measurement does not change bounds
+    name.measuring=false;apply(name,"第八赛季同步与异想解析专用材料");
+    assert(name.margins[2]==108);
+    restore_text_row_margin(&name,name.tmp);assert(name.margins[2]==20);
+    name.margins[2]=25;restore_text_row_margin(&name,name.tmp);assert(name.margins[2]==25);
+    Control unknown;row.label=&unknown;unknown.material_owner=&row;unknown.reflection_error=true;
+    apply(unknown,"不匹配的材料");assert(unknown.margins[2]==0);
     // Real result prefabs (story / battle / alternate mode): EXP has a fixed
     // 66x40 rectangle, 50pt text, no auto-size or horizontal fitter. Its +value
     // is a separate child. Two full-width CJK glyphs at 50pt cannot fit.

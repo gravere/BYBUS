@@ -14,7 +14,7 @@
 
 struct TmpComponentState {
     limbus_text_provenance::LayoutOverride<int32_t> wrapping, overflow;
-    limbus_text_provenance::LayoutOverride<float> spacing, label_size;
+    limbus_text_provenance::LayoutOverride<float> spacing, label_size, right_margin;
     void *font = nullptr;
     limbus_managed::Ref font_root;
     void *shared_material = nullptr;

@@ -186,6 +186,7 @@ struct TmpComponentState {
     limbus_text_provenance::LayoutOverride<int32_t> overflow;
     limbus_text_provenance::LayoutOverride<float> spacing;
     limbus_text_provenance::LayoutOverride<float> label_size;
+    limbus_text_provenance::LayoutOverride<float> right_margin;
     void *font = nullptr;
     void *shared_material = nullptr;
     limbus_managed::Ref font_root;
@@ -2615,6 +2616,7 @@ bool capture_tmp_component_state(void *instance, void *font, TmpComponentState *
         candidate.wrapping = previous->wrapping; candidate.overflow = previous->overflow;
         candidate.spacing = previous->spacing;
         candidate.label_size = previous->label_size;
+        candidate.right_margin = previous->right_margin;
     }
     bool saved = g_original_tmp_states.put(instance, id, candidate);
     pthread_mutex_unlock(&g_font_state_lock);
@@ -2982,6 +2984,57 @@ void restore_fixed_label_size(void *instance, const TmpComponentState &state) {
         invoke_float_setter(g_fixed_label_size_info, instance, state.label_size.original);
 }
 
+struct TextRowBinding {
+    void *type = nullptr;
+    const void *target = nullptr, *counter = nullptr;
+};
+TextRowBinding g_skill_label_owner, g_material_label_owner;
+const void *g_text_owner_info = nullptr, *g_text_margin_set_info = nullptr;
+const void *g_text_relative_bounds_info = nullptr;
+const void *g_tmp_measuring_field = nullptr;
+
+// Match the actual field on a typed owner, not a node name, a translated word,
+// or an ancestor's presence alone. Other text in the same panel is unaffected.
+void *text_layout_owner(void *target, const TextRowBinding &binding) {
+    if (!target || !binding.type || !binding.target || !g_text_owner_info ||
+            !g_runtime_invoke || !g_field_get_value) return nullptr;
+    // The shipped Unity player retains the Type + includeInactive overload;
+    // its one-argument Type overload can be stripped from IL2CPP metadata.
+    bool include_inactive = true;
+    void *args[] = {binding.type, &include_inactive}, *error = nullptr;
+    void *owner = g_runtime_invoke(g_text_owner_info, target, args, &error);
+    if (error || !owner) return nullptr;
+    void *actual = nullptr;
+    g_field_get_value(owner, binding.target, &actual);
+    return actual == target ? owner : nullptr;
+}
+
+bool read_text_margin(void *target, float (&margin)[4]) {
+    if (!g_fixed_label_margin_info || !g_runtime_invoke || !g_object_unbox) return false;
+    void *error = nullptr;
+    void *boxed = g_runtime_invoke(g_fixed_label_margin_info, target, nullptr, &error);
+    const auto *value = !error && boxed ? static_cast<float *>(g_object_unbox(boxed)) : nullptr;
+    if (!value) return false;
+    for (int i = 0; i < 4; ++i) { if (!std::isfinite(value[i])) return false; margin[i] = value[i]; }
+    return true;
+}
+
+bool write_text_margin(void *target, float (&margin)[4]) {
+    if (!g_text_margin_set_info || !g_runtime_invoke) return false;
+    void *args[] = {margin}, *error = nullptr;
+    g_runtime_invoke(g_text_margin_set_info, target, args, &error);
+    return !error;
+}
+
+void restore_text_row_margin(void *target, const TmpComponentState &state) {
+    if (!state.right_margin.active) return;
+    float margin[4];
+    if (read_text_margin(target, margin) && state.right_margin.restore(margin[2])) {
+        margin[2] = state.right_margin.original;
+        write_text_margin(target, margin);
+    }
+}
+
 void restore_tmp_component_state(void *instance) {
     TmpComponentState state;
     int32_t id = component_id(instance);
@@ -2996,6 +3049,7 @@ void restore_tmp_component_state(void *instance) {
     if (state.shared_material != nullptr)
         invoke_object_setter(g_tmp_set_shared_material_info, instance, state.shared_material);
     restore_fixed_label_size(instance, state);
+    restore_text_row_margin(instance, state);
     int32_t wrap = 0, overflow = 0; float spacing = 0;
     if (read_tmp_wrapping(instance, &wrap) && state.wrapping.restore(wrap))
         write_tmp_wrapping(instance, state.wrapping.original);
@@ -3096,6 +3150,7 @@ void save_tmp_layout_state(void *instance, const TmpComponentState &state) {
     if (auto saved = g_original_tmp_states.find(instance, id)) {
         saved->wrapping = state.wrapping; saved->overflow = state.overflow; saved->spacing = state.spacing;
         saved->label_size = state.label_size;
+        saved->right_margin = state.right_margin;
     }
     pthread_mutex_unlock(&g_font_state_lock);
 }
@@ -3142,9 +3197,56 @@ bool fixed_label_dimensions(void *instance) {
             horizontal == 0 && vertical == 0;
 }
 
+bool reserve_material_counter(void *instance, TmpComponentState &state) {
+    void *owner = text_layout_owner(instance, g_material_label_owner);
+    if (!owner && !state.right_margin.active) return false;
+    float margin[4];
+    if (!read_text_margin(instance, margin)) return false;
+    const float baseline = state.right_margin.observe(margin[2]);
+    float desired = baseline;
+    if (owner && g_material_label_owner.counter && g_text_relative_bounds_info &&
+            g_rect_transform_get_rect_info && g_object_unbox) {
+        auto root = limbus_managed::retain(g_gc, owner);
+        void *counter = nullptr;
+        if (root) g_field_get_value(root->get(), g_material_label_owner.counter, &counter);
+        auto counter_root = limbus_managed::retain(g_gc, counter);
+        bool enabled = false;
+        void *rect = invoke_object_getter(g_tmp_get_rect_transform_info, instance);
+        void *counter_rect = counter_root ? invoke_object_getter(g_tmp_get_rect_transform_info, counter_root->get()) : nullptr;
+        if (rect && counter_rect && invoke_bool_getter(g_behaviour_get_active_info, counter, &enabled) && enabled) {
+            void *error = nullptr;
+            void *boxed = g_runtime_invoke(g_rect_transform_get_rect_info, rect, nullptr, &error);
+            const auto *r = !error && boxed ? static_cast<float *>(g_object_unbox(boxed)) : nullptr;
+            float box[4] = {};
+            if (r) std::copy(r, r + 4, box);
+            void *args[] = {rect, counter_rect}; error = nullptr;
+            boxed = r ? g_runtime_invoke(g_text_relative_bounds_info, nullptr, args, &error) : nullptr;
+            // Unity Bounds: center xyz followed by extents xyz, in the name's
+            // coordinate system. This also handles differently scaled parents.
+            const auto *b = !error && boxed ? static_cast<float *>(g_object_unbox(boxed)) : nullptr;
+            if (b && std::all_of(box, box + 4, [](float v) { return std::isfinite(v); }) &&
+                    std::all_of(b, b + 6, [](float v) { return std::isfinite(v); }) &&
+                    box[2] > 0 && box[3] > 0 && b[3] > 0 && b[4] > 0 &&
+                    b[1] + b[4] > box[1] && b[1] - b[4] < box[1] + box[3]) {
+                const float left = b[0] - b[3];
+                const float gap = std::min(8.0f, box[3] * .2f);
+                const float available = left - box[0] - margin[0] - gap;
+                if (left > box[0] && left < box[0] + box[2] && available >= box[2] * .35f)
+                    desired = std::max(baseline, box[0] + box[2] - left + gap);
+            }
+        }
+    }
+    if (margin[2] != desired) {
+        margin[2] = desired;
+        if (!write_text_margin(instance, margin)) return false;
+    }
+    state.right_margin.record(desired);
+    return owner != nullptr;
+}
+
 thread_local bool g_fitting_fixed_label = false;
 void fit_fixed_tmp_label(void *instance, void *managed_text, const std::string &text,
-                         bool single, ComponentRect rect, TmpComponentState &state) {
+                         bool single, bool material_name, ComponentRect rect, TmpComponentState &state) {
     if (g_fitting_fixed_label) return;
     bool automatic = true;
     float current = 0;
@@ -3159,7 +3261,7 @@ void fit_fixed_tmp_label(void *instance, void *managed_text, const std::string &
     for (int32_t i = 0; chars && i < length; ++i)
         han |= (chars[i] >= 0x3400 && chars[i] <= 0x9fff) || (chars[i] >= 0xf900 && chars[i] <= 0xfaff);
     float desired = baseline;
-    const bool eligible = single && han && count_visible_codepoints(text) <= 12 &&
+    const bool eligible = single && han && count_visible_codepoints(text) <= (material_name ? 128 : 12) &&
             text.find_first_of("<\r\n") == std::string::npos && rect.height > 0 &&
             rect.height <= baseline * 1.8f && rect.width >= baseline &&
             std::isfinite(rect.width) && fixed_label_dimensions(instance);
@@ -3193,6 +3295,11 @@ void fit_fixed_tmp_label(void *instance, void *managed_text, const std::string &
 void apply_translated_tmp_style(void *instance, void *managed_text,
                                 const TmpComponentState &previous) {
     if (g_fitting_fixed_label) return;
+    // Preferred-size queries re-enter ParseInputText before layout is complete.
+    // Do not change any layout property while TMP is measuring the game UI.
+    bool measuring = false;
+    if (g_tmp_measuring_field && g_field_get_value) g_field_get_value(instance, g_tmp_measuring_field, &measuring);
+    if (measuring) return;
     if (!managed_text || !g_string_length || !g_string_chars) return;
     const int32_t length = g_string_length(managed_text);
     std::string text;
@@ -3202,11 +3309,28 @@ void apply_translated_tmp_style(void *instance, void *managed_text,
         (is_ruby_text(instance) && limbus_text_provenance::positioned_ruby(text))) {
         auto state = previous;
         restore_fixed_label_size(instance, state);
-        state.label_size.active = false;
+        restore_text_row_margin(instance, state);
+        state.label_size.active = state.right_margin.active = false;
         save_tmp_layout_state(instance, state);
         return;
     }
     auto state = previous;
+    if (text_layout_owner(instance, g_skill_label_owner)) {
+        // SkillAndCoinUI calculates width and size repeatedly during clashes.
+        // Font replacement must not participate in that size feedback loop.
+        restore_fixed_label_size(instance, state);
+        restore_text_row_margin(instance, state);
+        state.label_size.active = state.right_margin.active = false;
+        int32_t mode = 0;
+        if (read_tmp_wrapping(instance, &mode) && state.wrapping.restore(mode))
+            write_tmp_wrapping(instance, state.wrapping.original);
+        if (invoke_int_getter(g_tmp_get_overflow_mode_info, instance, &mode) && state.overflow.restore(mode))
+            invoke_int_setter(g_tmp_set_overflow_mode_info, instance, state.overflow.original);
+        state.wrapping.active = state.overflow.active = false;
+        save_tmp_layout_state(instance, state);
+        return;
+    }
+    const bool material_name = reserve_material_counter(instance, state);
     const float live_size = read_tmp_layout_size(instance);
     bool automatic = true;
     invoke_bool_getter(g_tmp_get_auto_sizing_info, instance, &automatic);
@@ -3225,7 +3349,7 @@ void apply_translated_tmp_style(void *instance, void *managed_text,
     const bool fitted = has_content_fitted_height(instance);
     const bool interactive = has_wrap && !original_wrap && !fitted && !explicit_break && visible <= 48 &&
             original_overflow < 4 && rect.height > size * 1.8f && has_interactive_text_owner(instance);
-    const bool single = limbus_text_provenance::single_line_label(visible, explicit_break,
+    const bool single = (material_name && !explicit_break && !managed_flow) || limbus_text_provenance::single_line_label(visible, explicit_break,
             has_wrap && !original_wrap, rect.height, size, original_overflow, fitted, interactive);
     const bool title = !managed_flow && explicit_break && read_unity_object_name(instance) == "[Text]GroupName";
     const bool body = fitted || explicit_break || visible > 48 || rect.height > size * 1.8f || original_wrap;
@@ -3247,7 +3371,7 @@ void apply_translated_tmp_style(void *instance, void *managed_text,
         if (current_spacing != desired) invoke_float_setter(g_tmp_set_line_spacing_info, instance, desired);
         state.spacing.record(desired);
     }
-    fit_fixed_tmp_label(instance, managed_text, text, single, rect, state);
+    fit_fixed_tmp_label(instance, managed_text, text, single, material_name, rect, state);
     // Auto-sizing and its bounds remain game-owned. Only proven fixed short
     // labels have a reversible, measured width fit; there is no page/name rule.
     save_tmp_layout_state(instance, state);
@@ -4465,6 +4589,7 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
     const char *language_font_names[] = {"TextMeshProLanguageSetter", "TextMeshProLanguageSetterWithStatus",
                                         "FontSetter", "FontTypesCategorySetter", "FixedFontSetter", "PretendardFontSetter"};
     void *localized_layout_classes[2] = {}, *localized_layout_item_classes[2] = {};
+    void *skill_label_class = nullptr, *material_label_class = nullptr, *rect_utility_class = nullptr;
     const char *localized_layout_names[] = {"TextSizeByLocalize", "TextMarginByLocalize"};
     const char *localized_layout_item_names[] = {"TextChangeInfoByLocalize", "TextMarginInfoByLocalize"};
     void *announcer_ui_class = nullptr;
@@ -4587,6 +4712,9 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
         if (!localize_model_base) localize_model_base = class_from_name(image, "", "LocalizeTextData");
         for (size_t slot = 0; slot < kLanguageFontBindingCount; ++slot)
             if (!language_font_classes[slot]) language_font_classes[slot] = class_from_name(image, "UtilityUI", language_font_names[slot]);
+        if (!skill_label_class) skill_label_class = class_from_name(image, "BattleUI.BattleUnit.SkillInfoUI", "SkillAndCoinUI");
+        if (!material_label_class) material_label_class = class_from_name(image, "MainUI", "GrowthIngredientsItem");
+        if (!rect_utility_class) rect_utility_class = class_from_name(image, "UnityEngine", "RectTransformUtility");
         for (size_t slot = 0; slot < 2; ++slot) {
             if (!localized_layout_classes[slot]) localized_layout_classes[slot] =
                     class_from_name(image, "UtilityUI", localized_layout_names[slot]);
@@ -5514,6 +5642,22 @@ bool report_il2cpp_resolver(const limbus_runtime::Symbols &resolver, bool query_
             return nullptr;
         };
         g_tmp_base_size_field = choice_field(tmp_text_class, "m_fontSizeBase", "System.Single");
+        g_tmp_measuring_field = choice_field(tmp_text_class, "m_isCalculatingPreferredValues", "System.Boolean");
+        g_text_owner_info = diagnostic_method(component_class, "GetComponentInParent", "System.Type,System.Boolean", "UnityEngine.Component", false);
+        g_text_margin_set_info = diagnostic_method(tmp_text_class, "set_margin", "UnityEngine.Vector4", "System.Void", false);
+        g_text_relative_bounds_info = diagnostic_method(rect_utility_class, "CalculateRelativeRectTransformBounds",
+                "UnityEngine.Transform,UnityEngine.Transform", "UnityEngine.Bounds", true);
+        if (class_get_type && type_get_object && g_text_owner_info) {
+            g_skill_label_owner.target = choice_field(skill_label_class, "tmp_skillName", "TMPro.TextMeshProUGUI");
+            if (g_skill_label_owner.target) g_skill_label_owner.type = type_get_object(class_get_type(skill_label_class));
+            g_material_label_owner.target = choice_field(material_label_class, "tmp_name", "TMPro.TextMeshProUGUI");
+            g_material_label_owner.counter = choice_field(material_label_class, "tmp_count", "TMPro.TextMeshProUGUI");
+            if (g_material_label_owner.target && g_material_label_owner.counter)
+                g_material_label_owner.type = type_get_object(class_get_type(material_label_class));
+        }
+        append_native_metadata("font-state.log", g_skill_label_owner.type ? "skill_layout_owner=1" : "skill_layout_owner=0");
+        append_native_metadata("font-state.log", g_material_label_owner.type && g_text_margin_set_info &&
+                g_text_relative_bounds_info ? "material_name_bounds=1" : "material_name_bounds=0");
         g_choice_result_log_field = choice_field(g_choice_result_log_class, "_resultLog", "System.String");
         g_choice_button_text_field = choice_field(choice_button_class, "tmp_button", "TMPro.TextMeshProUGUI");
         g_choice_button_result_field = choice_field(choice_button_class, "_activeResultDesc", "TMPro.TextMeshProUGUI");

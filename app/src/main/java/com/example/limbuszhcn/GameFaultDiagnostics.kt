@@ -9,7 +9,7 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.LinkOption
 
-/** Fixed categories for this game PID, collected outside Unity's hooked process. */
+/** Fixed game-PID and same-UID authorization categories, collected outside Unity. */
 internal class GameFaultDiagnostics(
     context: Context,
     private val readSnapshot: (Long) -> Bundle? = ::requestGameFaultSnapshot
@@ -29,7 +29,7 @@ internal class GameFaultDiagnostics(
         val status = snapshot?.getString("status") ?: "unavailable"
         if (status != collectionStatus) {
             collectionStatus = status
-            PersistentDiagnosticLog.info("GameFault", "capture=$status intervalSeconds=5 scope=current_process collector=container_service")
+            PersistentDiagnosticLog.info("GameFault", "capture=$status intervalSeconds=5 scope=game_pid_and_same_uid_auth collector=container_service")
         }
         val events = snapshot?.getStringArrayList("markers").orEmpty()
         // A failed read must not discard its time window. Bound recovery to a
@@ -72,15 +72,37 @@ internal fun requestGameFaultSnapshot(sinceMillis: Long): Bundle? =
 /** Called only in the unhooked service process, after Binder caller verification. */
 internal fun collectGameFaultMarkers(pid: Int, sinceMillis: Long): Bundle {
     var status = "unavailable"
-    val events = readGameLog(sinceMillis, listOf("--pid=$pid", "Unity:I", "AppSealing:E", "LimbusIntegrity:W"),
+    // microG callbacks run in another process of our UID. A game-PID filter
+    // discarded the authorize result while retaining only the bind request.
+    val events = readGameLog(sinceMillis, listOf("Unity:I", "AppSealing:E", "LimbusIntegrity:W",
+        "AuthorizationService:D", "IdentitySignInService:D", "AuthSignInActivity:D"),
         onStatus = { status = it }) { lines ->
-        lines.take(2048).mapNotNull(::safeGameFaultMarker)
-            .filter { it.contains(" pid=$pid ") }.toList().takeLast(128)
+        lines.take(2048).mapNotNull { line ->
+            safeGoogleAuthMarker(line) ?: safeGameFaultMarker(line)?.takeIf { it.contains(" pid=$pid ") }
+        }.toList().takeLast(128)
     }
     return Bundle().apply {
         putString("status", status)
         putStringArrayList("markers", ArrayList(events))
     }
+}
+
+private val GOOGLE_AUTH_EVENT = Regex("""(\d{1,11}\.\d{3,9})\s+(\d{1,10})\s+\d+\s+[VDIWEF]\s+(AuthorizationService|IdentitySignInService|AuthSignInActivity)\s*:\s*(.{0,8192})""")
+
+internal fun safeGoogleAuthMarker(line: String): String? {
+    val match = GOOGLE_AUTH_EVENT.matchEntire(line.trim()) ?: return null
+    val message = match.groupValues[4]
+    val stage = when {
+        message.startsWith("handleServiceRequest start") -> "service_request"
+        message.startsWith("authorize called") -> "authorize_requested"
+        message.startsWith("authorize resolved: pendingIntent") -> "consent_required"
+        message.startsWith("authorize resolved: silent") -> "authorize_completed"
+        message.startsWith("authorize: invalid account") -> "account_unavailable"
+        message.startsWith("authorize failed, falling back to PendingIntent") -> "authorize_retry_consent"
+        message.startsWith("verifyWithGoogle failed") -> "verification_failed"
+        else -> return null
+    }
+    return "time=${match.groupValues[1]} pid=${match.groupValues[2]} event=google_auth stage=$stage component=${match.groupValues[3]}"
 }
 
 internal fun pruneNativeTerminationTraces(context: Context) {
