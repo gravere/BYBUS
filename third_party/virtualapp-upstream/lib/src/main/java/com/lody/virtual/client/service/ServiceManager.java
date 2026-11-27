@@ -156,6 +156,8 @@ public class ServiceManager {
         IBinder binder = record.service.onBind(intent);
         com.lody.virtual.helper.compat.MicrogAuthenticatorCompat.prepare(
                 record.service, serviceInfo, intent, binder);
+        binder = com.lody.virtual.helper.compat.MicrogIdentityCallbackCompat.wrap(
+                VClient.get().getCurrentPackage(), serviceInfo, binder);
         record.setBinder(intent, binder);
         return binder;
     }

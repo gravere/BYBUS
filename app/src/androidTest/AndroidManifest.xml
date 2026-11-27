@@ -1,5 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
+        <!-- Separate test APK UID: exported only in the disposable instrumentation APK. -->
+        <service android:name="com.lody.virtual.helper.compat.MicrogIdentityCallbackCompatTest$Recipient"
+            android:process=":identityRecipient" android:exported="true" />
         <!-- Disposable fixture data only. These providers never enter the production APK. -->
         <provider android:name="com.example.limbuszhcn.ProviderProbe"
             android:authorities="io.github.gravere.bybus.test.routing"

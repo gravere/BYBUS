@@ -114,6 +114,18 @@ Android 17 另将 Google 设置所属进程置于冻结状态，读取内核 `cg
    结算页与交易完成是四个不同结果；没有实际交易证据不能宣称付款已完全修复。
    不自动选择商品、确认购买、消费或伪造票据。
 
+## 账号回调与客户端退出
+
+容器内固定版本 microG 的身份服务可能在游戏进程退出后，继续回传异步退出登录结果。
+这个已失效的 Binder 不应让 Google 服务一并崩溃。服务端只对游戏发起的
+`IdentitySignInService` 请求包装回调；保留请求、账号操作与真实结果，仅在结果接收方
+已经死亡时结束投递。权限异常、其他远程错误、其他服务及付款回调不属于这个处理范围。
+包装须留在 Google 服务进程，不能放在随游戏一同退出的进程中。
+
+依据：固定版本的
+[身份服务](https://github.com/microg/GmsCore/blob/v0.3.18.252432/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/identity/IdentitySignInService.kt)
+与 [Binder 协议](https://github.com/microg/GmsCore/blob/v0.3.18.252432/play-services-auth/src/main/aidl/com/google/android/gms/auth/api/identity/internal/ISignInService.aidl)。
+
 ## 来源
 
 - [microG 固定版本及变更](https://github.com/microg/GmsCore/releases/tag/v0.3.18.252432)
