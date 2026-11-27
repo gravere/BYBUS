@@ -62,6 +62,10 @@ class GameFaultDiagnosticsTest {
             safeGameFaultMarker(prefix + "report code=50025 callerOffset=75940 forwarded=1"))
         assertNull(safeGameFaultMarker(prefix + "report code=50025 callerOffset=/private/path forwarded=1"))
         assertNull(safeGameFaultMarker(prefix + "report code=50025 callerOffset=75940 forwarded=1 secret"))
+        assertEquals("time=1795681302.441 pid=32346 event=game_report_context site=94e90 flags=00000020 probeCode=0 forwarded=1",
+            safeGameFaultMarker(prefix + "report_context site=94e90 flags=00000020 probeCode=0 forwarded=1"))
+        assertNull(safeGameFaultMarker(prefix + "report_context site=94e90 flags=00000020 probeCode=0 forwarded=1 private"))
+        assertNull(safeGameFaultMarker(prefix + "report_context site=other flags=00000020 probeCode=0 forwarded=1"))
     }
     @Test fun errorsPreserveCategoryAndFrameWithoutPayload() {
         val prefix = "1795512900.987 4470 4587 E Unity : "

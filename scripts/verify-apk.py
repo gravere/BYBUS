@@ -37,6 +37,7 @@ def provider_dex_contract(data):
         name = types[u32(offset)]
         assert name != 'Landroid/content/IContentProvider;', 'Compile-only platform stub was packaged'
         assert not name.startswith('Lcom/example/limbuszhcn/ProviderProbe'), 'Test provider was packaged'
+        assert name != 'Lcom/example/limbuszhcn/NativeSyscallProbe;', 'Native syscall fixture was packaged'
         if name != 'Lcom/lody/virtual/client/hook/providers/RoutedContentResolver;': continue
         cursor = u32(offset + 24)
         counts = []
@@ -63,6 +64,7 @@ def digest_entries(archive, names):
 
 with zipfile.ZipFile(apk) as archive:
     names = archive.namelist()
+    assert not any('libbybus_syscall_probe.so' in name for name in names), 'Native test library was packaged'
     provider_methods = set()
     for name in names:
         if name.startswith('classes') and name.endswith('.dex'):

@@ -73,6 +73,14 @@ c++ -std=c++17 -I/path/to/temp scripts/native-legacy-font-tests.cpp -o /path/to/
 ./gradlew :app:testDebugUnitTest --tests '*ReceiverRegistrationCompatTest' --tests '*MicrogAuthUiPolicyTest' --tests '*LimbusAuthenticationCompatTest' --tests '*LimbusBillingBroadcastPolicyTest' --tests '*LimbusBillingUiPolicyTest'
 ```
 
+原始 ARM64 系统调用桥接还有独立的设备用例：先运行
+`python scripts/build-direct-syscall-probe.py`，再构建 `:app:assembleDebug`
+和 `:app:assembleDebugAndroidTest`，运行 `DirectSyscallDeviceTest`。
+它比较旧桥接与当前桥接的寄存器、返回地址、向量、状态标志及错误返回，
+不启动游戏。`AlarmFallbackDeviceTest` 验证缺少精确定时权限时普通重连任务仍可提交给系统；
+不符合权限前提的设备会跳过该用例，不能记为已验证。
+两者只进入调试包，正式包检查会拒绝包含测试入口或测试原生库的 APK。
+
 ## 签名与发行文件
 
 在本地 `signing/keystore.properties` 配置 `storeFile`、`storePassword`、`keyAlias` 和 `keyPassword`，然后运行 `:app:assembleRelease`。覆盖升级必须沿用 BYBUS 的原签名。

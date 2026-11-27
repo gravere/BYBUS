@@ -8,6 +8,7 @@ import android.os.WorkSource;
 import com.lody.virtual.client.core.VirtualCore;
 import com.lody.virtual.client.hook.base.BinderInvocationProxy;
 import com.lody.virtual.client.hook.base.MethodProxy;
+import com.lody.virtual.client.hook.base.ReplaceCallingPkgMethodProxy;
 import com.lody.virtual.helper.utils.ArrayUtils;
 
 import java.lang.reflect.Method;
@@ -43,6 +44,7 @@ public class AlarmManagerStub extends BinderInvocationProxy {
         addMethodProxy(new Set());
         addMethodProxy(new SetTime());
         addMethodProxy(new SetTimeZone());
+        addMethodProxy(new ReplaceCallingPkgMethodProxy("canScheduleExactAlarms"));
     }
 
     private static class SetTimeZone extends MethodProxy {
@@ -93,12 +95,7 @@ public class AlarmManagerStub extends BinderInvocationProxy {
 
         @Override
         public Object call(Object who, Method method, Object... args) throws Throwable {
-            try {
-                return super.call(who, method, args);
-            } catch (Throwable e) {
-                e.printStackTrace();
-            }
-            return 0;
+            return GuestAlarmCompat.invoke(getAppPkg(), who, method, args);
         }
     }
 }

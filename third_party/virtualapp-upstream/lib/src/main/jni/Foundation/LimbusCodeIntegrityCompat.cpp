@@ -213,6 +213,22 @@ extern "C" LimbusReportDecision limbus_report_dispatch_impl(uintptr_t code, uint
             __android_log_print(ANDROID_LOG_WARN, "LimbusIntegrity",
                     "report code=%u callerOffset=%lx forwarded=1", static_cast<unsigned>(code),
                     static_cast<unsigned long>(caller - report_base));
+        // The shared report loses the preceding probe result. Record only its two
+        // numeric fields, after checking both the exact reader and the mapped data.
+        // No strings, paths, pointers or account data are read; the verdict is unchanged.
+        static std::atomic<bool> context_recorded{false};
+        const uint32_t reader[] = {0xf00007e0, 0xf9419000, 0xb9402c17,
+                0xaa1603e0, 0x97fe084a, 0x37280cb7};
+        if (caller == report_base + 0x94e90
+                && mapped_range(report_base, 0x1b1be8, 0x34, PF_R | PF_W)
+                && memcmp(reinterpret_cast<const void *>(report_base + 0x94c58), reader, sizeof(reader)) == 0
+                && !context_recorded.exchange(true, std::memory_order_relaxed)) {
+            const auto *record = reinterpret_cast<const uint32_t *>(report_base + 0x1b1be8);
+            __android_log_print(ANDROID_LOG_WARN, "LimbusIntegrity",
+                    "report_context site=94e90 flags=%08x probeCode=%u forwarded=1",
+                    __atomic_load_n(record + 0x2c / 4, __ATOMIC_RELAXED),
+                    __atomic_load_n(record + 0x30 / 4, __ATOMIC_RELAXED));
+        }
     }
     if (has_stable_report_bridge()
             && code == 50048 && caller == report_base + 0x4e568) {

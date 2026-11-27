@@ -4,6 +4,7 @@
 #include "StartupProcReader.h"
 #include "ExecEnvironment.h"
 #include "ExecSyscallEntry.h"
+#include "LimbusDirectSyscall.h"
 //
 // VirtualApp Native Project
 //
@@ -4337,43 +4338,54 @@ static void patch_limbus_syscall_return_zero(void *func) {
 }
 
 static long limbus_direct_openat(int dirfd, const char *pathname, int flags, mode_t mode) {
+    const int previous_errno = errno;
     char temp[PATH_MAX];
     const char *relocated_path = relocate_path(pathname, temp, sizeof(temp));
     if (relocated_path == nullptr) {
-        errno = EACCES;
-        return -1;
+        errno = previous_errno;
+        return -EACCES;
     }
     int fake_fd = redirect_proc_file_guarded(relocated_path, flags, mode);
     if (fake_fd != 0) {
+        const int error = errno;
         limbus_record_localize_open("direct_openat_fake", pathname, relocated_path, fake_fd, flags, __builtin_return_address(0));
-        return fake_fd;
+        errno = previous_errno;
+        return limbus_direct_syscall::kernelResult(fake_fd, error);
     }
     long ret = syscall(__NR_openat, dirfd, relocated_path, flags, mode);
+    const int error = errno;
     limbus_record_localize_open("direct_openat", pathname, relocated_path, static_cast<int>(ret), flags, __builtin_return_address(0));
-    return ret;
+    errno = previous_errno;
+    return limbus_direct_syscall::kernelResult(ret, error);
 }
 
 static long limbus_direct_read(int fd, void *buf, size_t count) {
+    const int previous_errno = errno;
     long ret = syscall(__NR_read, fd, buf, count);
+    const int error = errno;
     limbus_record_localize_read("direct_read",
                                 fd,
                                 count,
                                 static_cast<ssize_t>(ret),
                                 0,
                                 false);
-    return ret;
+    errno = previous_errno;
+    return limbus_direct_syscall::kernelResult(ret, error);
 }
 
 #ifdef __NR_pread64
 static long limbus_direct_pread64(int fd, void *buf, size_t count, off64_t offset) {
+    const int previous_errno = errno;
     long ret = syscall(__NR_pread64, fd, buf, count, offset);
+    const int error = errno;
     limbus_record_localize_read("direct_pread64",
                                 fd,
                                 count,
                                 static_cast<ssize_t>(ret),
                                 offset,
                                 true);
-    return ret;
+    errno = previous_errno;
+    return limbus_direct_syscall::kernelResult(ret, error);
 }
 #endif
 
@@ -4413,7 +4425,8 @@ static void *allocate_limbus_branch_trampoline(void *source, size_t size) {
 }
 
 static bool patch_limbus_direct_syscall(void *svc, void *handler, const char *label) {
-    if (svc == nullptr) {
+    if (svc == nullptr || handler == nullptr
+            || *reinterpret_cast<const uint32_t *>(svc) != 0xd4000001u) {
         return false;
     }
     const size_t page_size = runtime_page::size();
@@ -4426,12 +4439,17 @@ static bool patch_limbus_direct_syscall(void *svc, void *handler, const char *la
         return false;
     }
 
-    auto *code = reinterpret_cast<uint32_t *>(trampoline);
-    code[0] = 0x58000050; // ldr x16, #8
-    code[1] = 0xD61F0200; // br x16
-    *reinterpret_cast<uint64_t *>(code + 2) = reinterpret_cast<uint64_t>(handler);
+    uint32_t branch = 0;
+    if (!limbus_direct_syscall::build(trampoline, reinterpret_cast<uintptr_t>(svc),
+            reinterpret_cast<uintptr_t>(handler),
+            reinterpret_cast<uintptr_t>(&limbus_direct_syscall::entry))
+            || !limbus_direct_syscall::branch(reinterpret_cast<uintptr_t>(svc),
+                    reinterpret_cast<uintptr_t>(trampoline), branch)) {
+        munmap(trampoline, page_size);
+        return false;
+    }
     __builtin___clear_cache(reinterpret_cast<char *>(trampoline),
-                            reinterpret_cast<char *>(trampoline) + 16);
+                            reinterpret_cast<char *>(trampoline) + limbus_direct_syscall::kTrampolineSize);
     if (mprotect(trampoline, static_cast<size_t>(page_size), PROT_READ | PROT_EXEC) != 0) {
         ALOGE("Limbus direct %s >>> trampoline mprotect failed errno=%d",
               label != nullptr ? label : "(null)",
@@ -4440,16 +4458,6 @@ static bool patch_limbus_direct_syscall(void *svc, void *handler, const char *la
         return false;
     }
 
-    intptr_t delta = reinterpret_cast<uintptr_t>(trampoline) - reinterpret_cast<uintptr_t>(svc);
-    if ((delta & 3) != 0 || delta < -0x08000000LL || delta >= 0x08000000LL) {
-        ALOGE("Limbus direct %s >>> trampoline out of branch range delta=%ld",
-              label != nullptr ? label : "(null)",
-              static_cast<long>(delta));
-        munmap(trampoline, static_cast<size_t>(page_size));
-        return false;
-    }
-    uint32_t branch = 0x94000000
-            | (static_cast<uint32_t>(delta >> 2) & 0x03ffffff); // bl trampoline
     if (!runtime_page::register_executable_page(reinterpret_cast<uintptr_t>(trampoline))) {
         munmap(trampoline, page_size);
         return false;
