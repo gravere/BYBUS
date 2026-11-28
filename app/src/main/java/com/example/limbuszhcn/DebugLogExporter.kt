@@ -77,7 +77,7 @@ internal class DebugLogExporter(private val context: Context) {
                     zip.writeText("legacy-host/${file.name}", text.redactedAndBounded(32 * 1024))
                 }
             // Fixed, bounded runtime metadata only; never include the index or game text.
-            for (name in listOf("font-state.log", "font-hooks.log", "integrity-state.log", "billing-state.log")) {
+            for (name in listOf("font-state.log", "font-hooks.log", "integrity-state.log", "billing-state.log", "google-auth-state.log", "network-state.log")) {
                 val file = File(context.filesDir, "translation-cache/translation-index/$name")
                 if (file.isFile) {
                     val text = file.inputStream().use { String(it.readBounded(32 * 1024), Charsets.UTF_8) }

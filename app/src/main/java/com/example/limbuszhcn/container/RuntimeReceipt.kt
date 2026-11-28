@@ -38,7 +38,7 @@ internal class RuntimeReceipt(private val indexRoot: Path) {
             versionCode?.takeIf { it > 0 }?.let { setProperty("appVersionCode", it.toString()) }
         })
         Files.deleteIfExists(indexRoot.resolve("runtime-state.properties"))
-        for (name in listOf("font-state.log", "font-hooks.log", "integrity-state.log", "billing-state.log", "safety-alert.properties")) {
+        for (name in listOf("font-state.log", "font-hooks.log", "integrity-state.log", "billing-state.log", "google-auth-state.log", "network-state.log", "safety-alert.properties")) {
             Files.deleteIfExists(indexRoot.resolve(name))
         }
         runCatching { Files.deleteIfExists(indexRoot.resolve("game-exit.properties")) }

@@ -31,7 +31,8 @@ def function(text, marker):
 text = (source / 'IORelocator64.cpp').read_text(encoding='utf-8')
 include = args.output / 'runtime-socket-io-under-test.inc'
 include.write_text('\n'.join(function(text, marker) for marker in
-    ['HOOK_DEF(ssize_t, sendto,', 'HOOK_DEF(int, connect,']), encoding='utf-8')
+    ['static void log_limbus_network_io(', 'static void log_limbus_network_bypass(',
+     'HOOK_DEF(ssize_t, sendto,', 'HOOK_DEF(int, connect,', 'HOOK_DEF(int, getaddrinfo,']), encoding='utf-8')
 common = ['--target=' + target, '-O1', '-g', '-I' + str(source), '-I' + str(args.output)]
 obj = args.output / 'canonicalize.o'
 subprocess.run([str(toolchain / ('clang' + suffix)), *common, '-c',

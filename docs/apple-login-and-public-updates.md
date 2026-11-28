@@ -22,6 +22,13 @@ Apple 登录由游戏现有 Firebase OAuth 发起，BYBUS 不注册替代 OAuth 
 
 ## Activity 回调与恢复顺序
 
+Google 身份页与授权页使用同一条有结果的宿主桥接链。保留原 PendingIntent
+的不可变属性，结果目的地由容器服务保存，不依赖给不可变请求追加 extras。
+身份页解析或启动失败时结束桥接并返回取消，不能另起一个无法回传结果的页面。
+身份页创建、恢复、结束和桥接回传写入有上限的独立阶段记录；只记录固定组件别名、
+时间、进程和真实结果码，不保存账号、凭据、Intent 内容或认证网址。
+这条记录不依赖厂商是否开放或加密 logcat。
+
 Firebase Auth 23.2.0 的 `GenericIdpActivity.onNewIntent` 只保存 Intent，实际的结果解密、事件校验和本地广播发生在 `onResume`。Android 12 起，`ActivityThread.handleNewIntent` 接收 `ActivityClientRecord`，旧的 `(IBinder, List)` 镜像不再适用；直接调用该方法还会漏掉标准的 pause/newIntent/resume 顺序。
 
 容器在 Android 9+ 通过系统 `ClientTransactionHandler.executeTransaction` 执行 `NewIntentItem`，由原生命周期执行器恢复页面；按实际方法签名支持 Android 15 的 token-on-item 和 Android 16 的构造器入口。旧系统保留原完整 `performNewIntents` 调用。任务先排入结果再移到前台，避免先恢复旧 Intent 导致 SDK 取消授权。找不到目标或平台接口时显式记录失败，不能静默当成送达，不修改 Firebase 会话或凭据。

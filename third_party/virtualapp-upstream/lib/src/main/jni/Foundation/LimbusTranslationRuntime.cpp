@@ -9,6 +9,7 @@
 #include "LimbusTermTrie.h"
 #include "LimbusMappedIndex.h"
 #include "LimbusTerminationTrace.h"
+#include "LimbusNetworkTrace.h"
 #include "LimbusFlowTextProof.h"
 #include "LimbusManagedState.h"
 #include "LimbusFontMaterials.h"
@@ -6509,6 +6510,8 @@ void configure_limbus_translation_runtime(const char *active_index_pointer, bool
             trace_path.resize(slash + 1);
             trace_path += "termination-" + std::to_string(getpid()) + ".log";
             limbus_termination::trace.open(trace_path.c_str());
+            const auto network_path = trace_path.substr(0, trace_path.rfind('/') + 1) + "network-state.log";
+            limbus_network::trace.open(network_path.c_str());
         }
     }
     g_live_resources = false;

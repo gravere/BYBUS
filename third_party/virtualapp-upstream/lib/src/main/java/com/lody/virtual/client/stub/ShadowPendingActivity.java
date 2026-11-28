@@ -16,6 +16,7 @@ import com.lody.virtual.helper.compat.LimbusActivityCompat;
 import com.lody.virtual.helper.compat.LimbusBillingUiPolicy;
 import com.lody.virtual.helper.compat.LimbusBillingDiagnostics;
 import com.lody.virtual.helper.compat.PendingUiState;
+import com.lody.virtual.helper.compat.GoogleAuthDiagnostics;
 import com.lody.virtual.helper.utils.ComponentUtils;
 import com.lody.virtual.remote.ClientConfig;
 import com.lody.virtual.remote.IntentSenderData;
@@ -157,11 +158,16 @@ public class ShadowPendingActivity extends Activity {
                 LimbusBillingDiagnostics.record("event=billing_ui_bridge_source_unavailable");
             }
             if (isGoogleIdentityUi(finalIntent)) {
+                GoogleAuthDiagnostics.record(GoogleAuthDiagnostics.Event.BRIDGE_START, 0, info != null);
                 pendingUi.begin(GOOGLE_IDENTITY_UI_REQUEST);
                 if (startVirtualPendingUiForResult(finalIntent, info, data.userId, ext, GOOGLE_IDENTITY_UI_REQUEST)) {
                     return;
                 }
                 pendingUi.finish(GOOGLE_IDENTITY_UI_REQUEST);
+                GoogleAuthDiagnostics.record(GoogleAuthDiagnostics.Event.BRIDGE_FAILED, RESULT_CANCELED, false);
+                setResult(RESULT_CANCELED);
+                finish();
+                return;
             }
             if (info != null && com.lody.virtual.helper.compat.MicrogAuthUiPolicy.isConsentTarget(
                     data.creator, info.packageName, info.name)) {
@@ -218,6 +224,7 @@ public class ShadowPendingActivity extends Activity {
             return;
         }
         if (requestCode == GOOGLE_IDENTITY_UI_REQUEST || requestCode == PendingUiState.GOOGLE_CONSENT) {
+            GoogleAuthDiagnostics.record(GoogleAuthDiagnostics.Event.BRIDGE_RESULT, resultCode, data != null);
             Log.i("LimbusVA", "Relay Google Identity UI result resultCode=" + resultCode
                     + " dataPresent=" + (data != null));
             setResult(resultCode, data);
@@ -256,7 +263,8 @@ public class ShadowPendingActivity extends Activity {
                 return false;
             }
             IBinder token = mirror.android.app.Activity.mToken.get(this);
-            if (requestCode == BILLING_UI_REQUEST || requestCode == PendingUiState.GOOGLE_CONSENT) {
+            if (requestCode == BILLING_UI_REQUEST || requestCode == PendingUiState.GOOGLE_CONSENT
+                    || requestCode == GOOGLE_IDENTITY_UI_REQUEST) {
                 intent = new Intent(intent);
                 intent.removeFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             }

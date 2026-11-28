@@ -220,6 +220,7 @@ public final class AppInstrumentation extends InstrumentationDelegate implements
             installActivityClientCallerProxyIfNeeded();
         }
         com.lody.virtual.client.stub.GuestRuntimeService.bindForGuest();
+        com.lody.virtual.helper.compat.GoogleAuthDiagnostics.activity(activity, "CREATE");
         super.callActivityOnCreate(activity, icicle);
         com.lody.virtual.helper.compat.MicrogActivityInsets.apply(activity);
         prepareMicrogLoginWebView(activity);
@@ -531,6 +532,7 @@ public final class AppInstrumentation extends InstrumentationDelegate implements
     @Override
     public void callActivityOnResume(Activity activity) {
         applyLimbusThreadContextClassLoader(mirror.android.app.Activity.mActivityInfo.get(activity), "callActivityOnResume");
+        com.lody.virtual.helper.compat.GoogleAuthDiagnostics.activity(activity, "RESUME");
         super.callActivityOnResume(activity);
         Intent intent = activity.getIntent();
         if (intent != null) {
@@ -567,6 +569,8 @@ public final class AppInstrumentation extends InstrumentationDelegate implements
     @Override
     public void callActivityOnDestroy(Activity activity) {
         try {
+            com.lody.virtual.helper.compat.GoogleAuthDiagnostics.activity(activity,
+                    activity.isChangingConfigurations() ? "RECREATE" : "FINISH");
             super.callActivityOnDestroy(activity);
         } finally {
             MicrogActivityIdentity.forget(mirror.android.app.Activity.mToken.get(activity));

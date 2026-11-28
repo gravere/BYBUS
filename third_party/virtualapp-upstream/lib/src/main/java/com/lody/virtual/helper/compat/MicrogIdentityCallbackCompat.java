@@ -46,6 +46,7 @@ public final class MicrogIdentityCallbackCompat {
                     throws RemoteException {
                 // The pinned broker's getService: IGmsCallbacks, GetServiceRequest.
                 if (code != 46 || !gameCaller.getAsBoolean()) return super.onTransact(code, data, reply, flags);
+                GoogleAuthDiagnostics.record(GoogleAuthDiagnostics.Event.BROKER_REQUEST, 0, true);
                 final int clientPid = Binder.getCallingPid();
                 int position = data.dataPosition();
                 Parcel request = Parcel.obtain();
@@ -75,6 +76,7 @@ public final class MicrogIdentityCallbackCompat {
                     data.enforceInterface(CALLBACKS);
                     int status = data.readInt();
                     IBinder service = data.readStrongBinder();
+                    GoogleAuthDiagnostics.record(GoogleAuthDiagnostics.Event.BROKER_RESULT, status, service != null);
                     result.writeInterfaceToken(CALLBACKS);
                     result.writeInt(status);
                     result.writeStrongBinder(status == 0 && hasDescriptor(service, IDENTITY)
@@ -94,6 +96,9 @@ public final class MicrogIdentityCallbackCompat {
         return new Relay(service, IDENTITY) {
             @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags)
                     throws RemoteException {
+                if (code >= 1 && code <= 4 && Binder.getCallingUid() == Process.myUid()
+                        && Binder.getCallingPid() == clientPid)
+                    GoogleAuthDiagnostics.record(GoogleAuthDiagnostics.Event.SERVICE_REQUEST, code, true);
                 // Only signOut(IStatusCallback, String), from the client that opened this service.
                 if (code != 2 || Binder.getCallingUid() != Process.myUid()
                         || Binder.getCallingPid() != clientPid) return super.onTransact(code, data, reply, flags);
@@ -132,6 +137,7 @@ public final class MicrogIdentityCallbackCompat {
             throws RemoteException {
         try { return target.transact(code, data, reply, flags); }
         catch (DeadObjectException disconnected) {
+            GoogleAuthDiagnostics.record(GoogleAuthDiagnostics.Event.RECIPIENT_GONE, code, false);
             // Acknowledge disposal to the sender only. No result can reach the dead recipient.
             if (reply != null && (flags & IBinder.FLAG_ONEWAY) == 0) {
                 reply.setDataSize(0);

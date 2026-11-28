@@ -561,10 +561,9 @@ class MethodProxies {
                         && isGoogleIdentityPendingUi(intent)) {
                     targetIntent.removeFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                     intent.removeFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    targetIntent.removeFlags(IntentCompat.IMMUTABLE_FLAGS);
-                    intent.removeFlags(IntentCompat.IMMUTABLE_FLAGS);
-                    flags &= ~IntentCompat.IMMUTABLE_FLAGS;
-                    Log.i("LimbusVA", "Cleared NEW_TASK/immutable flags from Google Identity pending UI intent action="
+                    // Result metadata is held by VAMS, including for immutable requests.
+                    // PendingIntent mutability flags are not Activity Intent flags.
+                    Log.i("LimbusVA", "Cleared NEW_TASK from Google Identity pending UI intent action="
                             + intent.getAction() + " component=" + intent.getComponent());
                 }
                 String bridgeKey = creator + ":" + type + ":" + System.nanoTime();

@@ -5,6 +5,9 @@
 #include "ExecEnvironment.h"
 #include "ExecSyscallEntry.h"
 #include "LimbusDirectSyscall.h"
+#include "IoErrno.h"
+#include "LimbusNetworkTrace.h"
+limbus_network::Trace limbus_network::trace;
 //
 // VirtualApp Native Project
 //
@@ -184,6 +187,7 @@ static long block_limbus_signal_long() {
 }
 
 static void log_limbus_network_bypass(const char *api, const char *target) {
+    limbus_io::PreserveErrno preserve_errno;
     if (!is_limbus_container_process()) {
         return;
     }
@@ -199,6 +203,7 @@ static void log_limbus_network_bypass(const char *api, const char *target) {
 }
 
 static void log_limbus_network_io(const char *api, const char *target, long result, int error) {
+    limbus_io::PreserveErrno preserve_errno;
     if (!is_limbus_container_process()) {
         return;
     }
@@ -612,6 +617,7 @@ static void limbus_record_localize_open(const char *op,
                                         int fd,
                                         int flags,
                                         void *caller) {
+    limbus_io::PreserveErrno preserve_errno;
     if (fd < 0 || (!limbus_is_localize_io_path(original) && !limbus_is_localize_io_path(relocated))) {
         return;
     }
@@ -663,6 +669,7 @@ static void limbus_record_localize_open(const char *op,
 static void limbus_record_localize_meta(const char *op,
                                         const char *original,
                                         const char *relocated) {
+    limbus_io::PreserveErrno preserve_errno;
     if (!limbus_is_localize_io_path(original) && !limbus_is_localize_io_path(relocated)) {
         return;
     }
@@ -701,6 +708,7 @@ static void limbus_record_localize_read(const char *op,
                                         ssize_t ret,
                                         off64_t offset,
                                         bool has_offset) {
+    limbus_io::PreserveErrno preserve_errno;
     if (g_limbus_localize_fd_count.load(std::memory_order_relaxed) <= 0) {
         return;
     }
@@ -764,6 +772,7 @@ static void limbus_record_localize_stream_read(const char *op,
                                                FILE *stream,
                                                size_t requested,
                                                ssize_t ret) {
+    limbus_io::PreserveErrno preserve_errno;
     if (stream == nullptr) {
         return;
     }
@@ -775,6 +784,7 @@ static void limbus_record_localize_stream_read(const char *op,
 }
 
 static void limbus_record_localize_close(int fd) {
+    limbus_io::PreserveErrno preserve_errno;
     if (g_limbus_localize_fd_count.load(std::memory_order_relaxed) <= 0) {
         return;
     }
@@ -878,6 +888,7 @@ static void limbus_record_localize_mmap(const char *op,
                                         int flags,
                                         size_t pgoffset,
                                         bool virtual_file) {
+    limbus_io::PreserveErrno preserve_errno;
     LimbusLocalizeFdInfo info{};
     long long elapsed = 0;
     if (!limbus_find_localize_fd_info(fd, &info, &elapsed)
@@ -3907,6 +3918,8 @@ HOOK_DEF(int, dup, int oldfd)
         return static_cast<int>(orig_syscall(__NR_dup, oldfd));
     }
     int ret = static_cast<int>(syscall(__NR_dup, oldfd));
+    if (ret < 0) return ret;
+    limbus_io::PreserveErrno preserve_errno;
 
     zString path, path2;
     getPathFromFd(oldfd, path);
@@ -3976,51 +3989,19 @@ HOOK_DEF(int, fcntl, int fd, int cmd, ...) {
     va_list arg;
     int ret = -1;
     va_start (arg, cmd);
+    const unsigned long value = limbus_io::fcntlArgument(cmd, arg);
+    va_end(arg);
     if (!g_limbus_process_scope.isOwner()) {
         container_exec::launchTrace().record(container_exec::DescriptorFlags);
-        // fcntl has no-argument, integer-argument and pointer-argument commands.
-        // Do not fetch a nonexistent argument for the getter commands.
-        unsigned long value = 0;
-        switch (cmd) {
-            case F_GETFD: case F_GETFL: case F_GETOWN:
-#ifdef F_GETSIG
-            case F_GETSIG:
-#endif
-#ifdef F_GETLEASE
-            case F_GETLEASE:
-#endif
-#ifdef F_GETPIPE_SZ
-            case F_GETPIPE_SZ:
-#endif
-#ifdef F_GET_SEALS
-            case F_GET_SEALS:
-#endif
-                break;
-            case F_SETFD: case F_SETFL: case F_SETOWN:
-            case F_DUPFD: case F_DUPFD_CLOEXEC:
-#ifdef F_SETSIG
-            case F_SETSIG:
-#endif
-#ifdef F_SETLEASE
-            case F_SETLEASE:
-#endif
-#ifdef F_SETPIPE_SZ
-            case F_SETPIPE_SZ:
-#endif
-#ifdef F_ADD_SEALS
-            case F_ADD_SEALS:
-#endif
-                value = static_cast<unsigned long>(va_arg(arg, int)); break;
-            default: value = reinterpret_cast<unsigned long>(va_arg(arg, void *)); break;
-        }
-        va_end(arg);
         return static_cast<int>(orig_syscall(__NR_fcntl, fd, cmd, value));
     }
     switch (cmd) {
         case F_DUPFD:
         case F_DUPFD_CLOEXEC: {
-            int target = va_arg (arg, int);
+            int target = static_cast<int>(value);
             ret = static_cast<int>(syscall(__NR_fcntl, fd, cmd, target));
+            if (ret < 0) return ret;
+            limbus_io::PreserveErrno preserve_errno;
 
             if (getApiLevel() >= 29 && ret > 0) {
                 xdja::zs::sp<virtualFileDescribe> oldVfd(
@@ -4063,13 +4044,10 @@ HOOK_DEF(int, fcntl, int fd, int cmd, ...) {
                     /***********************************************/
                 }
             }
-            va_end(arg);
         }
             break;
         default:
-            void * target = va_arg(arg, void*);
-            ret = orig_fcntl(fd, cmd, target);
-            va_end(arg);
+            ret = orig_fcntl(fd, cmd, value);
             break;
     }
 
@@ -4081,6 +4059,7 @@ HOOK_DEF(int, getaddrinfo,const char *__node, const char *__service, const struc
     int ret = -1;
     if (is_limbus_container_process()) {
         ret = originalInterface::original_getaddrinfo(__node, __service, __hints, __result);
+        limbus_network::trace.record(limbus_network::Resolve, -1, ret, ret == EAI_SYSTEM ? errno : 0);
         log_limbus_network_io("getaddrinfo", __node, ret, ret == 0 ? 0 : errno);
         return ret;
     }
@@ -4184,8 +4163,18 @@ HOOK_DEF(int, getaddrinfo,const char *__node, const char *__service, const struc
 HOOK_DEF(ssize_t, sendto, int fd, const void *buf, size_t n, int flags, struct sockaddr *dst_addr,
          socklen_t dst_addr_length) {
     ssize_t ret = -1;
+    auto observe = [&](ssize_t result) {
+        if (!is_limbus_container_process() || result >= 0 || errno == EAGAIN || errno == EINTR) return;
+        limbus_io::PreserveErrno saved;
+        sockaddr_storage local{};
+        socklen_t length = sizeof(local);
+        if (syscall(__NR_getsockname, fd, &local, &length) == 0
+                && (local.ss_family == AF_INET || local.ss_family == AF_INET6))
+            limbus_network::trace.record(limbus_network::Send, fd, result, saved.value);
+    };
     if (is_limbus_container_process() && getNetWorkState()) {
         ret = syscall(__NR_sendto, fd, buf, n, flags, dst_addr, dst_addr_length);
+    observe(ret);
         // liblog uses local sockets while its logger mutex is held.
         int saved_errno = errno;
         if (dst_addr != nullptr && dst_addr_length >= sizeof(sa_family_t)
@@ -4220,6 +4209,7 @@ HOOK_DEF(ssize_t, sendto, int fd, const void *buf, size_t n, int flags, struct s
         }
     }
     ret = syscall(__NR_sendto, fd, buf, n, flags, dst_addr, dst_addr_length);
+    observe(ret);
     return ret;
 }
 
@@ -4233,6 +4223,7 @@ HOOK_DEF(int, connect, int sd, struct sockaddr *addr, socklen_t socklen) {
                 || (addr->sa_family == AF_INET6 && socklen >= sizeof(sockaddr_in6)))) {
             char target[INET6_ADDRSTRLEN + 24] = {};
             format_limbus_socket_target(addr, target, sizeof(target));
+            limbus_network::trace.record(limbus_network::Connect, sd, ret, ret < 0 ? saved_errno : 0);
             log_limbus_network_io("connect", target, ret, ret < 0 ? saved_errno : 0);
         }
         errno = saved_errno;
